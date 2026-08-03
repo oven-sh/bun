@@ -32,10 +32,8 @@
 
 namespace WebCore {
 
-// The data source for an item read() produced. Bun's counterpart to WebCore's
-// ClipboardItemPasteboardDataSource: upstream keeps a Clipboard back-pointer and
-// re-reads the Pasteboard lazily per type, whereas one Bun read() already
-// returned every supported representation, so this just owns them.
+// Data source for an item read() produced. Bun's counterpart to WebCore's
+// ClipboardItemPasteboardDataSource — owns the data up front rather than re-reading lazily.
 class ClipboardItemPlatformDataSource final : public ClipboardItemDataSource {
     WTF_MAKE_TZONE_ALLOCATED(ClipboardItemPlatformDataSource);
 

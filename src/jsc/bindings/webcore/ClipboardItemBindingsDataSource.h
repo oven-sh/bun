@@ -43,20 +43,9 @@ class Clipboard;
 class DeferredPromise;
 class DOMPromise;
 
-// The data source for an item the ClipboardItem constructor built: one
-// Ref<DOMPromise> per representation, exactly as WebCore does it.
-//
-// Ported from WebCore's ClipboardItemBindingsDataSource. Two deliberate
-// differences:
-//
-//  - Upstream's ClipboardItemTypeLoader is gone. It exists there because
-//    resolving a Blob to bytes needs an asynchronous FileReaderLoader, and it
-//    carries the per-type countdown. Bun's in-memory Blob is already the
-//    collected form, so collectDataForWriting instead awaits one Promise.all
-//    over the representations and converts every settled value in a single
-//    reaction — nothing accumulates across reactions.
-//  - Upstream's markup/SVG/PNG sanitization has no counterpart: it needs a
-//    Document and a Page, which a runtime does not have.
+// Ported from WebCore's ClipboardItemBindingsDataSource. Bun diff: no ClipboardItemTypeLoader
+// (Bun's in-memory Blob is already collected, so one Promise.all reaction converts everything)
+// and no markup/SVG/PNG sanitization (needs a Document/Page, which a runtime lacks).
 class ClipboardItemBindingsDataSource final : public ClipboardItemDataSource {
     WTF_MAKE_TZONE_ALLOCATED(ClipboardItemBindingsDataSource);
 

@@ -23,12 +23,9 @@ bool clipboardBlobNeedsToReadFile(Blob&);
 
 String clipboardBlobContentType(Blob&);
 
-// Whether the new Blob's content type goes through the same normalization the
-// `Blob` constructor applies (Bun promotes text types to carry
-// `;charset=utf-8`) or is stored exactly as given. Values built from a JS
-// representation normalize, so they are indistinguishable from
-// `new Blob([...], { type })`; values read off the platform clipboard stay
-// exact, so a Blob's `type` matches the string its ClipboardItem lists.
+// Whether to normalize `type` like the `Blob` constructor (Bun adds `;charset=utf-8` to
+// text types). JS-built values normalize to match `new Blob([...], { type })`; values
+// read off the platform stay exact so a Blob's `type` matches its ClipboardItem entry.
 enum class MimeNormalization : bool { Exact,
     LikeBlobConstructor };
 

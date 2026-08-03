@@ -49,13 +49,9 @@ class DOMPromise;
 class ScriptExecutionContext;
 template<typename> class ExceptionOr;
 
-// https://w3c.github.io/clipboard-apis/#clipboarditem
-//
-// Ported from WebCore's ClipboardItem, including the two-data-source split:
-// items built by the constructor hold a Ref<DOMPromise> per representation,
-// items produced by read() hold the Blobs the platform already returned. Bun
-// has no Pasteboard, so the second source is handed its data up front rather
-// than re-reading through a Clipboard back-pointer.
+// https://w3c.github.io/clipboard-apis/#clipboarditem — ported from WebCore's ClipboardItem
+// with its two-data-source split (constructor items hold Ref<DOMPromise>s, read() items hold
+// Blobs). Bun diff: no Pasteboard, so the platform source owns its data up front.
 class ClipboardItem : public RefCountedAndCanMakeWeakPtr<ClipboardItem> {
 public:
     ~ClipboardItem();
@@ -72,12 +68,9 @@ public:
     static Ref<ClipboardItem> create(ClipboardItemData&&);
     static Ref<Blob> blobFromString(JSC::JSGlobalObject*, const String& stringData, const String& type);
 
-    // Normalizes one settled ClipboardItemData value to a Blob of `type`, which
-    // is what both getType() and the write path need. A Blob already declaring
-    // that type passes through; a Blob declaring another type is rewrapped over
-    // the same bytes; anything else is ToString-coerced, per WebIDL's
-    // `(DOMString or Blob)`. Returns null with an exception pending when the
-    // coercion throws — a Symbol, or a `toString` that threw.
+    // Normalizes a settled value to a Blob of `type` per WebIDL `(DOMString or Blob)`:
+    // matching Blob passes through, other Blob is rewrapped, anything else is ToString'd.
+    // Returns null with an exception pending when the coercion throws.
     static RefPtr<Blob> blobFromSettledValue(JSC::JSGlobalObject*, JSC::JSValue, const String& type);
 
     Vector<String> types() const;

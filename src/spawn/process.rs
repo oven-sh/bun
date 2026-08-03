@@ -2997,10 +2997,8 @@ mod spawn_process_body {
                 }
             }
 
-            // Signal forwarding rewires process-wide handlers and publishes the
-            // child's pid to the global the C++ forwarder reads, so only the
-            // main thread may arm it; work-pool callers (e.g. the clipboard
-            // helpers) must not touch the user's signal handlers.
+            // Signal forwarding rewires process-wide handlers and writes a global pid, so only
+            // the main thread may arm it; work-pool callers (e.g. clipboard helpers) must not.
             let forward_signals = bun_crash_handler::cli_state::is_main_thread();
             if forward_signals {
                 Bun__currentSyncPID.store(0, core::sync::atomic::Ordering::Relaxed);

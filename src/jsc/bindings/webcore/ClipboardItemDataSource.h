@@ -38,10 +38,8 @@ class Clipboard;
 class ClipboardItem;
 class DeferredPromise;
 
-// Where one ClipboardItem's representations come from: the bindings (values the
-// constructor was handed) or the platform clipboard (bytes a read() produced).
-// Mirrors WebCore's ClipboardItemDataSource; `collectDataForWriting` yields
-// ClipboardItemData instead of PasteboardCustomData.
+// Where one ClipboardItem's representations come from (bindings vs platform). Mirrors
+// WebCore's ClipboardItemDataSource; yields ClipboardItemData instead of PasteboardCustomData.
 class ClipboardItemDataSource {
 public:
     ClipboardItemDataSource(ClipboardItem& item)
@@ -51,22 +49,17 @@ public:
 
     virtual ~ClipboardItemDataSource() = default;
 
-    // Upstream's completion is CompletionHandler<void(std::optional<PasteboardCustomData>)>.
-    // Bun's carries a second argument: when the data is absent, `failureReason`
-    // is the value the representation rejected with (or the exception its WebIDL
-    // coercion threw), so write() can reject with the caller's own reason
-    // instead of a generic NotAllowedError. It is read synchronously by the
-    // completion, so it needs no separate GC root.
+    // Bun adds `failureReason` to upstream's CompletionHandler<void(std::optional<PasteboardCustomData>)>
+    // so write() can reject with the caller's own rejection/coercion exception instead of a
+    // generic NotAllowedError. Read synchronously by the completion, so no separate GC root.
     using CollectCompletionHandler = CompletionHandler<void(std::optional<ClipboardItemData>, JSC::JSValue failureReason)>;
 
     virtual Vector<String> types() const = 0;
     virtual void getType(const String&, Ref<DeferredPromise>&&) = 0;
     virtual void collectDataForWriting(Clipboard& destination, CollectCompletionHandler&&) = 0;
 
-    // Retire an outstanding collect without waiting for its representations.
-    // The completion holds a Ref to the writer that requested it, so a writer
-    // that is going away must call this or that reference — and with it the
-    // item and its GC-guarded aggregate promise — is never released.
+    // Retire an outstanding collect. The completion holds a Ref to the writer, so a writer
+    // going away must call this or that Ref (and the GC-guarded aggregate) is never released.
     virtual void cancelCollect() = 0;
 
 protected:

@@ -6052,7 +6052,6 @@ pub(crate) extern "C" fn Blob__getSize(value: JSValue) -> usize {
 // `src/jsc/bindings/webcore/ClipboardBlob.h`.
 
 /// Borrows the Blob's resident bytes; empty when it has none.
-///
 /// # Safety
 /// `out_ptr` and `out_len` must be valid for writes.
 #[unsafe(no_mangle)]
@@ -6081,7 +6080,6 @@ pub extern "C" fn Blob__implNeedsToReadFile(blob: &Blob) -> bool {
 }
 
 /// Borrows the Blob's content type. The bytes live as long as the Blob.
-///
 /// # Safety
 /// `out_ptr` and `out_len` must be valid for writes.
 #[unsafe(no_mangle)]
@@ -6098,15 +6096,9 @@ pub unsafe extern "C" fn Blob__implGetContentType(
     }
 }
 
-/// Like `Blob__fromBytesWithType`, but normalizes `mime` exactly as the `Blob`
-/// constructor normalizes its `type` option — Bun promotes text types to carry
-/// `;charset=utf-8`, and callers compare against what `Blob.prototype.type`
-/// reports. Takes a length rather than a NUL-terminated string so a caller can
-/// pass an arbitrary WTF::String's UTF-8.
-///
+/// Like `Blob__fromBytesWithType`, but normalizes `mime` like the `Blob` constructor's `type`.
 /// # Safety
-/// `[ptr, ptr+len)` and `[mime, mime+mime_len)` must be readable ranges (or the
-/// pointers null with the lengths 0).
+/// `[ptr, ptr+len)` and `[mime, mime+mime_len)` must be readable (or null with length 0).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Blob__fromBytesWithNormalizedType(
     global_this: &JSGlobalObject,

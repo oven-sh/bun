@@ -62,10 +62,8 @@ Vector<String> ClipboardItemBindingsDataSource::types() const
     });
 }
 
-// Turns one settled representation into a Blob of `type`, or null if the
-// WebIDL coercion threw. `outError` carries a thrown coercion failure back out
-// so getType() can reject with it; the write path discards it and fails the
-// item instead.
+// Turns one settled representation into a Blob of `type`, or null if the WebIDL coercion
+// threw. `outError` carries the thrown value so getType() can reject with it.
 static RefPtr<Blob> blobFromResolvedValue(JSC::JSGlobalObject& globalObject, JSC::JSValue value, const String& type, JSC::JSValue& outError, bool& outTerminated)
 {
     outError = {};
@@ -101,13 +99,9 @@ void ClipboardItemBindingsDataSource::getType(const String& type, Ref<DeferredPr
         return;
     }
 
-    // The item is the only thing keeping m_itemPromises alive across the async
-    // gap, so the reaction holds it strongly. This transitively holds the
-    // item's Ref<DOMPromise>s and so does close a guardedObjects cycle for a
-    // representation that never settles — a bounded per-call leak accepted so
-    // a temporary item is not collected mid-getType() (which would reject with
-    // InvalidStateError). A source that does settle releases everything when
-    // the reaction fires (whenPromiseIsSettled's std::exchange).
+    // Strong-ref the item so m_itemPromises outlives the async gap. This closes a
+    // guardedObjects cycle for a never-settling representation (bounded per-call leak)
+    // in exchange for not rejecting a temporary item mid-getType() with InvalidStateError.
     m_itemPromises[matchIndex].value->whenSettled([this, protectedItem = Ref { m_item.get() }, matchIndex, promise = WTF::move(promise), type]() mutable {
         Ref itemPromise = m_itemPromises[matchIndex].value;
         if (itemPromise->status() != DOMPromise::Status::Fulfilled) {
@@ -285,10 +279,8 @@ void ClipboardItemBindingsDataSource::didSettleAllTypes()
     JSC::MarkedArgumentBuffer resolvedValues;
     resolvedValues.ensureCapacity(m_itemPromises.size());
     JSC::JSValue resolved = allTypesSettled->result();
-    // Promise.all is an ordinary property of the realm's Promise, so a caller
-    // can replace it. Anything but an array of the expected length means the
-    // representations were not actually collected — fail rather than write
-    // whatever it handed back.
+    // Promise.all is a replaceable realm property; anything but an array of the expected
+    // length means the representations were not collected — fail rather than write it.
     auto* resolvedArray = dynamicDowncast<JSC::JSArray>(resolved);
     if (!resolvedArray || resolvedArray->length() < m_itemPromises.size()) {
         invoke(std::nullopt);

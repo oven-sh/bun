@@ -1,20 +1,14 @@
-//! Native `navigator.clipboard` backend: the platform clipboard I/O, and
-//! nothing else.
-//!
-//! WebCore owns every promise and every JS value (see
-//! `src/jsc/bindings/webcore/Clipboard.cpp`). This side is handed a scheduling
-//! call carrying plain bytes and an opaque `WebCore::ClipboardRequest*`, does
-//! the work on the work pool, and hands that handle back on the JS thread
-//! exactly once — which is also what releases it.
+//! Native `navigator.clipboard` platform I/O (https://w3c.github.io/clipboard-apis/).
+//! WebCore (`src/jsc/bindings/webcore/Clipboard.cpp`) owns every promise/JS value; this
+//! side runs bytes + an opaque `ClipboardRequest*` on the work pool and hands it back once.
 
 use core::ffi::c_void;
 use core::ptr;
 
 use bun_jsc::{AnyTaskJob, AnyTaskJobCtx, JSGlobalObject};
 
-/// An opaque `WebCore::ClipboardRequest*`. Only C++ ever dereferences it; the
-/// job just carries it across the thread hop. The job owns the leaked +1 and
-/// must hand it back exactly once — `then()` via `requestComplete`, or `Drop`
+/// Opaque `WebCore::ClipboardRequest*` carried across the thread hop. The job owns the
+/// leaked +1 and hands it back exactly once: `then()` via `requestComplete`, or `Drop`
 /// via `requestAbandon` when the VM shut down before `then()` could run.
 struct RequestHandle(*mut c_void);
 
@@ -231,9 +225,6 @@ fn schedule(global: &JSGlobalObject, op: Op, request: *mut c_void) {
     let _ = AnyTaskJob::create_and_schedule(global, ctx);
 }
 
-/// Copies a borrowed byte range; the backing memory belongs to the caller and
-/// is not valid past the call that handed it over.
-///
 /// # Safety
 /// `[ptr, ptr+len)` must be a readable range, or `ptr` null with `len` 0.
 unsafe fn copy_bytes(ptr: *const u8, len: usize) -> Vec<u8> {
@@ -246,9 +237,7 @@ unsafe fn copy_bytes(ptr: *const u8, len: usize) -> Vec<u8> {
 
 // ─── entry points for WebCore ───────────────────────────────────────────────
 
-/// `ClipboardItem.supports()` and `write()`'s validation: whether this build's
-/// platform backend can represent `mime` on the OS clipboard.
-///
+/// `ClipboardItem.supports()` / `write()` validation.
 /// # Safety
 /// `[mime, mime+len)` must be a readable range of the lowercased MIME type.
 #[unsafe(no_mangle)]
@@ -279,9 +268,7 @@ pub extern "C" fn Bun__Clipboard__scheduleRead(global: &JSGlobalObject, request:
     schedule(global, Op::Read, request);
 }
 
-/// `Clipboard.prototype.writeText`; WebCore already applied the WebIDL
-/// `DOMString` conversion, so these are the exact bytes to place.
-///
+/// `Clipboard.prototype.writeText` (bytes already WebIDL `DOMString`-converted).
 /// # Safety
 /// `[text, text+len)` must be a readable range, or `text` null with `len` 0.
 #[unsafe(no_mangle)]
@@ -296,12 +283,9 @@ pub unsafe extern "C" fn Bun__Clipboard__scheduleWriteText(
     schedule(global, Op::Write(vec![(Mime::TextPlain, bytes)]), request);
 }
 
-/// `Clipboard.prototype.write`, after WebCore collected every representation
-/// into a Blob and checked that this backend supports each type.
-///
+/// `Clipboard.prototype.write` (WebCore already collected Blobs + checked support).
 /// # Safety
-/// `representations[0..count]` must be readable, and each entry's byte ranges
-/// valid for the duration of this call.
+/// `representations[0..count]` and each entry's byte ranges must be readable for this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__Clipboard__scheduleWrite(
     global: &JSGlobalObject,
@@ -368,10 +352,8 @@ impl Unavailable {
 }
 
 // ─── macOS ──────────────────────────────────────────────────────────────────
-// `image_coregraphics_shim.cpp` owns the objc / NSPasteboard plumbing, so the
-// clipboard entry points live beside its image reader. Reading is two calls: one
-// reports the size and hands back a retained NSData, the second copies it out and
-// releases it.
+// NSPasteboard via `image_coregraphics_shim.cpp`. Reading is two calls:
+// one returns size + a retained NSData handle, the second copies + releases it.
 #[cfg(target_os = "macos")]
 mod platform {
     use core::ffi::{CStr, c_char, c_void};
@@ -464,9 +446,8 @@ mod platform {
 }
 
 // ─── Windows ────────────────────────────────────────────────────────────────
-// Raw Win32 like `image/backend_wic.rs`. Text uses `CF_UNICODETEXT`, HTML the
-// registered "HTML Format" (CF_HTML) with its offset envelope, and PNG the
-// registered "PNG" / "image/png" formats browsers and most apps interchange.
+// Raw Win32: `CF_UNICODETEXT` for text, "HTML Format" (CF_HTML) with its offset
+// envelope for HTML, and the registered "PNG" / "image/png" formats for PNG.
 #[cfg(windows)]
 mod platform {
     use core::ffi::{CStr, c_int, c_uint, c_void};
@@ -682,10 +663,8 @@ mod platform {
             }
             Mime::ImagePng => bytes,
         };
-        // `GlobalAlloc(_, 0)` returns a discarded object whose `GlobalLock`
-        // fails, so an empty representation still allocates one byte; zeroed
-        // so no uninitialized heap byte (empty or rounding slack) is ever
-        // handed to the system-wide clipboard.
+        // `GlobalAlloc(_, 0)` returns a discarded object whose `GlobalLock` fails, so
+        // allocate >=1 byte; zeroed so no uninitialized slack reaches the clipboard.
         // SAFETY: `SetClipboardData` requires a `GMEM_MOVEABLE` HGLOBAL.
         let h = unsafe { GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, payload.len().max(1)) };
         if h.is_null() {
@@ -761,9 +740,8 @@ mod platform {
 }
 
 // ─── everything else (Linux, the BSDs, …) ───────────────────────────────────
-// No stable in-process clipboard API exists, so the display server's helper
-// programs run on the work-pool thread: `wl-paste`/`wl-copy` (Wayland),
-// `xclip`, or `xsel` (text only), gated on `$WAYLAND_DISPLAY` / `$DISPLAY`.
+// No in-process API: spawn `wl-paste`/`wl-copy` (Wayland), `xclip`, or `xsel`
+// (text only) on the work pool, gated on `$WAYLAND_DISPLAY` / `$DISPLAY`.
 #[cfg(not(any(target_os = "macos", windows)))]
 mod platform {
     use core::sync::atomic::{AtomicU32, Ordering};
@@ -884,10 +862,8 @@ mod platform {
         command.push(b'\'');
     }
 
-    /// Runs one helper through `/bin/sh` with a 10s watchdog (a hung X11
-    /// selection owner would otherwise block forever): a killed helper
-    /// surfaces as exit 124 and a missing one as 127, both for `classify`.
-    /// `None` ⇔ `/bin/sh` itself could not be spawned.
+    /// Runs one helper through `/bin/sh` with a 10s watchdog (a hung X11 selection owner
+    /// blocks forever): killed → exit 124, missing → 127. `None` ⇔ `/bin/sh` unspawnable.
     fn run_helper(
         argv: &[Box<[u8]>],
         redirect_from: Option<&[u8]>,

@@ -1,9 +1,7 @@
 #pragma once
 
-// The boundary between WebCore's Clipboard and Bun's platform clipboard backend
-// (src/runtime/webcore/clipboard.rs). WebCore owns every promise and every JS
-// value; the backend only ever sees byte ranges and an opaque request handle,
-// which is what lets the platform work happen on the work pool.
+// Boundary to Bun's platform backend (src/runtime/webcore/clipboard.rs). WebCore owns every
+// promise/JS value; the backend sees only byte ranges + an opaque request handle.
 
 #include "root.h"
 #include "ClipboardItemData.h"
@@ -29,13 +27,9 @@ struct ClipboardRepresentation {
 // and hands it back on the JS thread exactly once.
 class ClipboardRequest : public RefCounted<ClipboardRequest> {
 public:
-    // Runs on the JS thread once the platform work is done. `representations` is
-    // what the platform produced — empty is not an error, since a clipboard with
-    // no matching representation simply has none. `failureMessage` is null on
-    // success and otherwise the actionable reason to reject with.
-    //
-    // `Function`, not `CompletionHandler`: a VM that shuts down while the job is
-    // on the work pool drops the request without a live global to call it with.
+    // Runs on the JS thread when done. Empty `representations` is not an error; `failureMessage`
+    // is null on success. `Function` (not `CompletionHandler`): a VM that shuts down while the
+    // job is on the work pool drops the request without a live global to call it with.
     using Completion = Function<void(JSC::JSGlobalObject&, std::span<const ClipboardRepresentation>, const String& failureMessage)>;
 
     static Ref<ClipboardRequest> create(Completion&& completion)

@@ -551,15 +551,8 @@ int64_t bun_coregraphics_clipboard_change_count()
 }
 
 // ── NSPasteboard reader / writer for `navigator.clipboard` ─────────────────
-// A two-phase read: this call reports the representation's size and hands back
-// a retained NSData in `*out_data`, then the caller sizes its buffer and copies
-// with `bun_coregraphics_clipboard_take_data`, which releases the retain. The
-// handle is explicit rather than thread-local state so the two phases cannot be
-// mismatched (a stale stash, a UTI that disagrees with the one probed) and the
-// retain has exactly one owner. `*out_data` is null ⇔ the representation is
-// absent; a present 0-byte NSData is a non-null handle with `*out_len` of 0.
-// The pasteboard server promotes legacy flavours and converts images to
-// `public.png` on demand, so one `dataForType:` per UTI suffices.
+// Two-phase read: this call reports size + a retained NSData in `*out_data`; the caller then
+// copies/releases via `bun_coregraphics_clipboard_take_data`. `*out_data` null ⇔ absent.
 int32_t bun_coregraphics_clipboard_read_type(const char* uti, void** out_data, size_t* out_len)
 {
     *out_data = nullptr;

@@ -42,13 +42,9 @@ class ClipboardItem;
 class DeferredPromise;
 class ScriptExecutionContext;
 
-// https://w3c.github.io/clipboard-apis/#clipboard-interface
-//
-// Ported from WebCore's Clipboard. The differences all follow from there being
-// no Pasteboard, no Document and no permission model in a runtime: the platform
-// transaction is Bun's Rust backend rather than a Pasteboard, and it is
-// asynchronous, so ItemWriter's last step schedules a request and settles when
-// that reports back instead of writing inline.
+// https://w3c.github.io/clipboard-apis/#clipboard-interface — ported from WebCore's Clipboard.
+// Bun diff: no Pasteboard/Document/permissions; the platform transaction is Bun's async Rust
+// backend, so ItemWriter schedules a request and settles on its callback rather than inline.
 class Clipboard final : public RefCounted<Clipboard>, public ContextDestructionObserver, public EventTarget {
     WTF_MAKE_TZONE_ALLOCATED(Clipboard);
 
@@ -110,12 +106,9 @@ private:
         void detachFromClipboard();
 
         WeakPtr<Clipboard, WeakPtrImplWithEventTargetData> m_clipboard;
-        // The writer owns the items for the duration of the write. Nothing else
-        // does: the binding's sequence is a local, and the data source's
-        // reaction holds only a WeakPtr back-edge (a strong one would close a
-        // native<->GC cycle). Without this an item collected mid-write destroys
-        // its data source with the collect completion still armed — a debug
-        // assert, and a permanently pending write() promise in release.
+        // The writer is the only strong owner of the items during a write (the reaction holds
+        // a WeakPtr back-edge to avoid a native<->GC cycle); without this, an item collected
+        // mid-write destroys its data source with the collect completion still armed.
         Vector<RefPtr<ClipboardItem>> m_items;
         RefPtr<DeferredPromise> m_promise;
         Vector<std::optional<ClipboardItemData>> m_dataToWrite;

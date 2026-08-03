@@ -33,12 +33,8 @@
 
 namespace WebCore {
 
-// One item's representations, each already serialized to a refcounted Blob.
-//
-// This is the runtime's stand-in for WebCore::PasteboardCustomData, which holds
-// `String or Ref<SharedBuffer>` per type. Bun has neither Pasteboard nor
-// SharedBuffer, and its Blob is already refcounted over the Rust-owned bytes, so
-// Blob is both the collected form and what the platform transaction reads from.
+// One item's representations as refcounted Blobs — Bun's stand-in for
+// WebCore::PasteboardCustomData (Bun has no Pasteboard/SharedBuffer).
 using ClipboardItemData = Vector<KeyValuePair<String, Ref<Blob>>>;
 
 } // namespace WebCore

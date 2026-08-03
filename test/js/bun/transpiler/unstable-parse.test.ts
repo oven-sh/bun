@@ -245,12 +245,13 @@ describe("Bun.Transpiler.unstable_parse", () => {
     expect(v.value).toBe('héllo 🎉\v\x07\u{1F600}\n\t"\\');
   });
 
-  test("non-finite numbers become null", () => {
+  test("non-finite numbers become null; -0 is preserved", () => {
     // Bun's parser constant-folds `NaN` / `Infinity` identifiers to e_number
     // nodes; the tape f64 slot emits null for non-finite values.
-    const { root } = ts.unstable_parse(`const a = NaN; const b = Infinity;`);
+    const { root } = ts.unstable_parse(`const a = NaN; const b = Infinity; const c = -0;`);
     expect({ ...root.stmts[0].decls[0].value }).toEqual({ kind: "e_number", loc: 10, value: null });
     expect({ ...root.stmts[1].decls[0].value }).toEqual({ kind: "e_number", loc: 25, value: null });
+    expect(Object.is(root.stmts[2].decls[0].value.value, -0)).toBe(true);
   });
 
   test("loader argument overrides constructor default", () => {
@@ -377,6 +378,16 @@ describe("Bun.Transpiler.unstable_parse", () => {
     expect({ ...decl.binding }).toEqual({ kind: "b_identifier", loc: 6, name: "x" });
     expect("name" in decl.binding).toBe(true);
     expect("nope" in decl.binding).toBe(false);
+  });
+
+  test("node proxy inherits Object.prototype", () => {
+    const { root } = ts.unstable_parse(`const x = 1`);
+    const n = root.stmts[0];
+    expect(String(n)).toBe("[object Object]");
+    expect(`${n}`).toBe("[object Object]");
+    expect(n.hasOwnProperty("kind")).toBe(true);
+    expect(n.hasOwnProperty("nope")).toBe(false);
+    expect(n.nope).toBeUndefined();
   });
 
   test("proxies reject mutation", () => {

@@ -120,14 +120,16 @@ export function unstableParse(this: Transpiler, code: any, opts: any) {
     get(target, prop) {
       if (prop === "__off") return target.__off;
       if (prop === "toJSON") return toJSON;
-      if (typeof prop !== "string") return undefined;
-      const off = target.__off;
-      const n = dv.getUint16(off, true);
-      let p = off + 4;
-      for (let i = 0; i < n; i++, p += 12) {
-        if (keyNames[dv.getUint8(p)] === prop) return decodePayload(p, 1);
+      if (typeof prop === "string") {
+        const off = target.__off;
+        const n = dv.getUint16(off, true);
+        let p = off + 4;
+        for (let i = 0; i < n; i++, p += 12) {
+          if (keyNames[dv.getUint8(p)] === prop) return decodePayload(p, 1);
+        }
       }
-      return undefined;
+      // Fall through so toString/valueOf/@@toPrimitive/hasOwnProperty resolve via the target's prototype.
+      return Reflect.get(target, prop);
     },
     has(target, prop) {
       if (prop === "toJSON" || prop === "__off") return true;

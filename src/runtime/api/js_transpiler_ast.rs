@@ -240,10 +240,11 @@ impl<'a> TapeWriter<'a> {
             return self.push_field(k, TY_NULL, 0, 0);
         }
         let i = n as i32;
-        if i as f64 == n {
+        let b = n.to_bits();
+        // Bitwise so `-0.0` (which `==`-compares equal to `+0.0`) keeps the f64 path.
+        if (i as f64).to_bits() == b {
             return self.push_field(k, TY_I32, i as u32, 0);
         }
-        let b = n.to_bits();
         self.push_field(k, TY_F64, b as u32, (b >> 32) as u32);
     }
 

@@ -1521,6 +1521,11 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadableStreamToFormDataFulfilled
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue blob = callFrame->argument(0);
     JSValue contentType = callFrame->argument(1);
+    if (contentType.isFalse()) {
+        // Sentinel from Body.formData() when the MIME check failed: stream is drained, now reject.
+        Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_FORMDATA_PARSE_ERROR, "Can't decode form data from body because of incorrect MIME type/boundary"_s);
+        return {};
+    }
     JSValue constructor = JSDOMFormData::getConstructor(vm, globalObject);
     JSValue fromFunction = constructor.get(globalObject, vm.propertyNames->from);
     RETURN_IF_EXCEPTION(scope, {});

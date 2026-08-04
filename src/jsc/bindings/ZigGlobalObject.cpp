@@ -301,6 +301,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         // useWasmFaultSignalHandler/FastMemory when ASAN_OPTIONS lacks
         // allow_user_segv_handler=1, so we don't force it off here.
         JSC::initialize([&] {
+            if (const char* a = getenv("BUN_IMAGE_JIT_ADDR")) JSC::Options::jitMemoryReservationAddress() = strtoull(a, nullptr, 0); // heap-image experiment: keep the JIT pool out of kernel-placed VA
             JSC::Options::useWasm() = true;
             JSC::Options::useJIT() = true;
             JSC::Options::useBBQJIT() = true;

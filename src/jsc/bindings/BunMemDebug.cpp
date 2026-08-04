@@ -42,6 +42,8 @@
 #include <fcntl.h>
 #if OS(DARWIN)
 #include <mach/mach.h>
+#include <libkern/OSCacheControl.h>
+#include <pthread.h>
 #include <mach/mach_vm.h>
 #include <mach-o/dyld.h>
 #include <mach-o/getsect.h>
@@ -774,7 +776,10 @@ static void imageDump(JSC::VM& vm, const char* path)
             // Only memory we own and place deterministically: mimalloc (tag 240) + Bun bss arenas (hint area >= 0x1f0'0000'0000), JSC OSAllocator regions (tags 63/65).
             // Kernel-placed libSystem regions (OS_ALLOC_ONCE, malloc zones, activity tracing...) belong to the *new* process and must not be overlaid.
             bool ours = tag == 240 || tag == 63 || tag == 65 || (addr >= 0x1f000000000ull && addr < 0x30000000000ull);
-            if (ours && writable && anon && !isStack && !isMallocZone && !isGuard && info.share_mode != SM_SHARED && (info.pages_resident > 0 || info.pages_dirtied > 0 || info.pages_swapped_out > 0)) {
+            if (tag == 64 /* JS JIT */ && (info.protection & VM_PROT_EXECUTE) && anon) {
+                regions.push_back({ addr, size, 0, ((uint64_t)tag << 8) | 2 });
+                if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] JIT region %llx+%llx resident=%u dirty=%u\n", (unsigned long long)addr, (unsigned long long)size, info.pages_resident, info.pages_dirtied);
+            } else if (ours && writable && anon && !isStack && !isMallocZone && !isGuard && info.share_mode != SM_SHARED && (info.pages_resident > 0 || info.pages_dirtied > 0 || info.pages_swapped_out > 0)) {
                 regions.push_back({ addr, size, 0, (uint64_t)tag << 8 });
                 if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] region %llx+%llx tag=%d prot=%x/%x share=%d resident=%u dirty=%u\n", (unsigned long long)addr, (unsigned long long)size, tag, info.protection, 0, info.share_mode, info.pages_resident, info.pages_dirtied);
             }
@@ -802,11 +807,21 @@ static void imageDump(JSC::VM& vm, const char* path)
     hdr.nregions = out.size();
     size_t tableOff = sizeof(ImageHeader); size_t dataOff = (tableOff + out.size() * sizeof(ImageRegion) + pg - 1) & ~(pg - 1);
     size_t fileOff = dataOff, total = 0;
-    for (auto& r : out) { r.fileOff = fileOff; fileOff += r.len; }
+    for (auto& r : out) {
+        if ((r.kind & 0xff) == 2) { // JIT: trim to the resident prefix+suffix span actually used (allocator hands out from both ends); store used length in high bits? keep simple: find last resident page
+            size_t npages = r.len / pg; std::vector<int> disp(npages); mach_vm_size_t dispCount = npages;
+            if (mach_vm_page_range_query(mach_task_self(), r.addr, r.len, (mach_vm_address_t)disp.data(), &dispCount) == KERN_SUCCESS) {
+                size_t last = 0; for (size_t i = 0; i < dispCount; i++) if (disp[i]) last = i + 1;
+                r.fileOff = last * pg; // temporarily stash resident length
+            } else r.fileOff = r.len;
+        }
+    }
+    for (auto& r : out) { size_t used = (r.kind & 0xff) == 2 ? r.fileOff : r.len; r.fileOff = fileOff; fileOff += used; if ((r.kind & 0xff) == 2) r.kind |= (uint64_t)used << 16; }
     for (auto& r : out) {
         // write region contents; non-resident anon pages read as zero which is what a fresh mapping would give anyway
-        if (pwrite(fd, (void*)r.addr, r.len, r.fileOff) != (ssize_t)r.len) { fprintf(stderr, "[image] pwrite failed for %llx+%llx errno %d\n", r.addr, r.len, errno); }
-        total += r.len;
+        size_t used = (r.kind & 0xff) == 2 ? (size_t)(r.kind >> 16) : r.len;
+        if (pwrite(fd, (void*)r.addr, used, r.fileOff) != (ssize_t)used) { fprintf(stderr, "[image] pwrite failed for %llx+%llx errno %d\n", r.addr, (unsigned long long)used, errno); }
+        total += used;
     }
     pwrite(fd, &hdr, sizeof hdr, 0);
     pwrite(fd, out.data(), out.size() * sizeof(ImageRegion), tableOff);
@@ -830,6 +845,17 @@ static void imageRestoreAndRun(const char* path)
     bool verbose = !!getenv("BUN_IMAGE_VERBOSE");
     for (auto& r : regions) {
         if (verbose) { fprintf(stderr, "[image] restoring %llx+%llx kind=%llu tag=%llu\n", r.addr, r.len, r.kind & 0xff, r.kind >> 8); }
+        if ((r.kind & 0xff) == 2) {
+            size_t used = r.kind >> 16;
+            mach_vm_deallocate(mach_task_self(), r.addr, r.len);
+            void* m = mmap((void*)r.addr, r.len, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0); // MAP_JIT|MAP_FIXED is EINVAL; rely on the hint
+            if (m != (void*)r.addr) { fprintf(stderr, "[image] mmap JIT %llx+%llx landed at %p errno %d\n", r.addr, r.len, m, errno); _exit(3); }
+            { std::vector<uint8_t> buf(used); if (pread(fd, buf.data(), used, r.fileOff) != (ssize_t)used) { fprintf(stderr, "[image] pread JIT failed errno %d\n", errno); _exit(3); }
+              pthread_jit_write_protect_np(0); memcpy((void*)r.addr, buf.data(), used); pthread_jit_write_protect_np(1); }
+            sys_icache_invalidate((void*)r.addr, used);
+            copied += used;
+            continue;
+        }
         if ((r.kind & 0xff) == 1) {
             // __DATA of the running binary: make writable and copy (mmap over a segment mapping also works but keep it simple)
             if (mprotect((void*)r.addr, r.len, PROT_READ | PROT_WRITE)) { fprintf(stderr, "[image] mprotect __DATA %llx failed errno %d\n", r.addr, errno); _exit(3); }

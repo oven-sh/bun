@@ -132,6 +132,11 @@ fn level_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<bun
     bun_ast::Level::MAP.from_js(global, value)
 }
 
+#[inline]
+fn is_string_or_buffer_like(value: JSValue) -> bool {
+    value.is_string() || (value.is_cell() && value.js_type().is_array_buffer_like())
+}
+
 /// Deep-clone a [`MacroMap`]. The keys are `Box<[u8]>`, so an owned copy
 /// is needed wherever the map is assigned by value.
 fn clone_macro_map(src: &MacroMap) -> MacroMap {
@@ -1318,6 +1323,9 @@ impl JSTranspiler {
             return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
         };
         args.eat();
+        if !is_string_or_buffer_like(code_arg) {
+            return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
+        }
 
         let loader: Option<Loader> = 'brk: {
             if let Some(arg) = args.next() {
@@ -1480,6 +1488,14 @@ impl JSTranspiler {
         };
 
         args.eat();
+        if !is_string_or_buffer_like(code_arg) {
+            return Err(global.throw_invalid_argument_type(
+                "transformSync",
+                "code",
+                "string or Uint8Array",
+            ));
+        }
+
         let mut js_ctx_value: JSValue = JSValue::ZERO;
         let loader: Option<Loader> = 'brk: {
             if let Some(arg) = args.next() {
@@ -1692,6 +1708,13 @@ impl JSTranspiler {
         };
 
         args.eat();
+        if !is_string_or_buffer_like(code_arg) {
+            return Err(global.throw_invalid_argument_type(
+                "scanImports",
+                "code",
+                "string or Uint8Array",
+            ));
+        }
 
         let mut loader: Loader = self.config.get().default_loader;
         if let Some(arg) = args.next() {

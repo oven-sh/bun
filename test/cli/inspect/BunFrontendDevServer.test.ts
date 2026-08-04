@@ -1000,13 +1000,25 @@ function decodeGraphUpdate(buffer) {
 // agent's constructor, a second inspector client that reconnected and called
 // enable() would never receive any events: m_enabled flipped back to true but
 // every emitter still bailed on the null dispatcher guard.
-test("BunFrontendDevServer domain keeps emitting after an inspector reconnect", async () => {
+test("BunFrontendDevServer and HTTPServer domains keep emitting after an inspector reconnect", async () => {
   using dir = tempDir("bun-frontend-dev-server-reconnect", {
     "index.html": `<!doctype html><script type="module" src="./app.ts"></script><h1>x</h1>`,
     "app.ts": `export const x: number = 0;`,
     "server.ts": `
       import html from "./index.html";
-      const server = Bun.serve({ port: 0, routes: { "/": html }, development: true });
+      const server = Bun.serve({
+        port: 0,
+        development: true,
+        routes: {
+          "/": html,
+          // Each inspector session hits this to make the HTTPServer agent emit
+          // HTTPServer.listen / HTTPServer.close for a throwaway server.
+          "/ping-http-agent": () => {
+            Bun.serve({ port: 0, fetch: () => new Response("") }).stop();
+            return new Response("ok");
+          },
+        },
+      });
       console.log("SERVER_URL=" + server.url);
     `,
   });
@@ -1048,11 +1060,13 @@ test("BunFrontendDevServer domain keeps emitting after an inspector reconnect", 
 
     let nextId = 1;
     const pending = new Map<number, (msg: any) => void>();
-    const firstEvent = Promise.withResolvers<string>();
+    const firstDevServerEvent = Promise.withResolvers<string>();
+    const firstHttpServerEvent = Promise.withResolvers<string>();
     ws.addEventListener("message", ({ data }) => {
       const msg = JSON.parse(String(data));
       if (msg.id !== undefined) pending.get(msg.id)?.(msg);
-      else if (msg.method?.startsWith("BunFrontendDevServer.")) firstEvent.resolve(msg.method);
+      else if (msg.method?.startsWith("BunFrontendDevServer.")) firstDevServerEvent.resolve(msg.method);
+      else if (msg.method?.startsWith("HTTPServer.")) firstHttpServerEvent.resolve(msg.method);
     });
     const send = (method: string) => {
       const id = nextId++;
@@ -1064,22 +1078,26 @@ test("BunFrontendDevServer domain keeps emitting after an inspector reconnect", 
 
     await send("Inspector.enable");
     await send("BunFrontendDevServer.enable");
+    await send("HTTPServer.enable");
     await send("Inspector.initialized");
 
-    // Opening an HMR WebSocket makes the dev server emit
-    // BunFrontendDevServer.clientConnected. If the agent's dispatcher is gone
-    // this resolves to the timeout sentinel instead.
+    // Opening an HMR WebSocket emits BunFrontendDevServer.clientConnected;
+    // hitting /ping-http-agent starts and stops a Bun.serve instance, emitting
+    // HTTPServer.listen. If either agent's dispatcher is gone the
+    // corresponding promise resolves to the timeout sentinel instead.
     const hmr = new WebSocket(hmrUrl);
     hmr.binaryType = "arraybuffer";
     const hmrOpen = Promise.withResolvers<void>();
     hmr.addEventListener("open", () => hmrOpen.resolve());
     hmr.addEventListener("error", e => hmrOpen.reject(e));
     await hmrOpen.promise;
+    await fetch(new URL("/ping-http-agent", serverUrl)).then(r => r.blob());
 
-    const result = await Promise.race([
-      firstEvent.promise,
-      Bun.sleep(3000).then(() => "timeout: no BunFrontendDevServer events"),
-    ]);
+    const timeout = Bun.sleep(3000).then(() => "timeout: no events");
+    const result = {
+      devServer: await Promise.race([firstDevServerEvent.promise, timeout]),
+      httpServer: await Promise.race([firstHttpServerEvent.promise, timeout]),
+    };
     hmr.close();
 
     const closed = Promise.withResolvers<void>();
@@ -1090,11 +1108,16 @@ test("BunFrontendDevServer domain keeps emitting after an inspector reconnect", 
   }
 
   // The first session has always worked; the second and third sessions
-  // previously received zero events for the rest of the process.
-  expect(await session()).toBe("BunFrontendDevServer.clientConnected");
-  expect(await session()).toBe("BunFrontendDevServer.clientConnected");
-  expect(await session()).toBe("BunFrontendDevServer.clientConnected");
-}, 30000);
+  // previously received zero events from either domain for the rest of the
+  // process.
+  const expected = {
+    devServer: "BunFrontendDevServer.clientConnected",
+    httpServer: "HTTPServer.listen",
+  };
+  expect(await session()).toEqual(expected);
+  expect(await session()).toEqual(expected);
+  expect(await session()).toEqual(expected);
+});
 
 function decodeAndAppendServerError(r: DataViewReader) {
   const owner = r.u32();

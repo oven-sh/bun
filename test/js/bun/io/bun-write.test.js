@@ -529,7 +529,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
         () => {},
         e => (caught = e),
       );
-      expect(caught?.code).toBe("ENOENT");
+      expect({ code: caught?.code, path: caught?.path }).toEqual({ code: "ENOENT", path: dest });
       // The open failed before the stream was read, so the body is still intact.
       expect(resp.bodyUsed).toBe(false);
       expect(await resp.text()).toBe("keep");

@@ -729,8 +729,7 @@ impl ShellSubprocess {
                 }
                 #[cfg(windows)]
                 {
-                    // Hand the taken-out pipe slots back so
-                    // `WindowsSpawnResult::drop` routes them through uv_close.
+                    // `WindowsSpawnResult::drop` uv_closes handed-back slots.
                     spawn_result.stdout = spawn_stdout;
                     spawn_result.stderr = spawn_stderr;
                 }
@@ -810,8 +809,7 @@ impl ShellSubprocess {
         // finishes. `stdin` lives inside the Box-allocated `Subprocess` at a
         // stable address, so the self-referential raw pointer is sound for the
         // life of the subprocess. Skipped for ReadableStream stdin, whose
-        // `source` is the upstream ByteStream/FileReader (or `None` for the
-        // JS pump), wired by `Writable::init`.
+        // `source` was wired by `Writable::init`.
         if !stdin_is_stream {
             // Derive `stdin_ptr` from the raw heap pointer (`subprocess`), not
             // the local `subproc: &mut` reborrow — the pointer is stored
@@ -902,10 +900,8 @@ impl ShellSubprocess {
     pub(crate) fn on_process_exit(&mut self, _: &Process, status: &Status, _: &Rusage) {
         log!("onProcessExit({:x})", std::ptr::from_mut(self) as usize);
 
-        // ReadableStream stdin: close the FileSink and mark stdin closed.
-        // Shell stdin is never `Stdio::Pipe`, so `Writable::Pipe` here is the
-        // ReadableStream case and `source` is the upstream source or `None`
-        // (never `ShellWritable`), so the close cannot reassign `self.stdin`.
+        // ReadableStream stdin (the only shell `Writable::Pipe`): close the
+        // FileSink and mark stdin closed.
         let stdin_is_stream_pipe = if let Writable::Pipe(pipe) = &self.stdin {
             debug_assert!(!matches!(
                 *pipe.source.get(),
@@ -1143,8 +1139,7 @@ impl Writable {
                         // Dropping `pipe` derefs (and frees) the sink.
                         return Err(WritableInitError::Sys(e));
                     }
-                    // The fd is a socketpair half (`PosixStdio::Buffer`), same
-                    // as `Bun.spawn`'s stdin path.
+                    // The fd is a socketpair half, same as `Bun.spawn` stdin.
                     pipe.writer.with_mut(|w| {
                         if let Some(poll) = w.handle.get_poll() {
                             poll.set_flag(bun_io::FilePollFlag::Socket);
@@ -1160,17 +1155,14 @@ impl Writable {
         }
     }
 
-    /// Wire `stream` into the stdin `FileSink`: `assign_to_stream` tries
-    /// `wire_native_sink` (`SinkHandle::FileSink`) first and falls back to the
-    /// JS pump. A synchronous throw consumes the sink (drop derefs).
+    /// Wire `stream` into the stdin `FileSink` (native `SinkHandle` wire
+    /// first, JS pump fallback). A synchronous throw consumes the sink.
     fn assign_stream(
         mut pipe: FileSinkPtr,
         stream: &mut webcore::ReadableStream,
         event_loop: EventLoopHandle,
     ) -> Result<Writable, WritableInitError> {
-        // `Stdio::ReadableStream` only exists for JS-origin shells
-        // (`Cmd::init_subproc_redirections` resolves the global first), so the
-        // mini event loop never reaches here.
+        // ReadableStream stdin only exists for JS-origin shells.
         let global_ptr = event_loop.global_object();
         assert!(
             !global_ptr.is_null(),

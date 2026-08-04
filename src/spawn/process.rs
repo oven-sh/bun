@@ -1474,9 +1474,8 @@ impl WindowsSpawnResult {
         self.process.take().unwrap()
     }
 
-    /// Kill and release the child of a spawn whose post-spawn stdio setup
-    /// failed before anything took ownership of the process. Consumes the
-    /// result so `Drop` also closes any stdio pipes still held.
+    /// Kill and release a child whose post-spawn stdio setup failed.
+    /// Consumes the result so `Drop` also closes stdio pipes still held.
     pub fn dispose_failed_spawn(mut self, _event_loop: impl Sized) {
         let proc = self.to_process(());
         // SAFETY: `to_process` hands over the sole owned ref to the live
@@ -1647,8 +1646,7 @@ impl WindowsSpawnOptions {
 pub trait SpawnResultExt {
     fn to_process(self, event_loop: EventLoopHandle) -> *mut Process;
 
-    /// Kill and reap the child of a spawn whose post-spawn stdio setup failed
-    /// before anything took ownership of the process.
+    /// Kill, reap, and release a child whose post-spawn stdio setup failed.
     fn dispose_failed_spawn(self, event_loop: EventLoopHandle);
 }
 
@@ -1659,9 +1657,8 @@ impl SpawnResultExt for PosixSpawnResult {
     }
 
     fn dispose_failed_spawn(self, _event_loop: EventLoopHandle) {
-        // `Process::kill` no-ops while `Poller::Detached` (nothing has called
-        // `watch()` yet), so signal the pid directly, then reap synchronously
-        // (the SIGKILL guarantees the blocking wait terminates).
+        // `Process::kill` no-ops while `Poller::Detached` (pre-`watch()`);
+        // signal the pid directly so the blocking reap terminates.
         unsafe extern "C" {
             #[link_name = "kill"]
             safe fn libc_kill(pid: libc::pid_t, sig: c_int) -> c_int;

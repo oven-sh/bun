@@ -385,6 +385,7 @@ For a suite with thousands of test files, `bun test` has several knobs that stac
 ```yaml title=".github/workflows/test.yml" icon="github"
 jobs:
   test:
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -393,7 +394,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install
-      # last successful run's per-shard timings (nothing on the very first run)
+      # previous run's per-shard timings (nothing on the very first run)
       - uses: actions/cache/restore@v4
         with:
           path: .bun-test-timings

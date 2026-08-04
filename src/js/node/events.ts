@@ -742,6 +742,7 @@ function on(emitter, event, options = kEmptyObject) {
     abortListenerDisposable?.[Symbol.dispose]();
     removeAll();
     finished = true;
+    paused = false;
     const doneResult = createIterResult(undefined, true);
     while (!unconsumedPromises.isEmpty()) {
       unconsumedPromises.shift().resolve(doneResult);

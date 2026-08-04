@@ -4010,14 +4010,35 @@ pub mod args {
                                 },
                             ));
                         }
-                        let max_len = ((buf_len as u64 - args.offset) as i64).min(i32::MAX as i64);
-                        if length > max_len || length < 0 {
+                        // validateOffsetLengthWrite then validateInt32(length, 'length', 0),
+                        // in that order — each stage words its range differently.
+                        let remaining = (buf_len as u64 - args.offset) as i64;
+                        if length > remaining {
+                            return Err(ctx.throw_range_error(
+                                length as f64,
+                                bun_jsc::RangeErrorOptions {
+                                    field_name: b"length",
+                                    max: remaining,
+                                    ..Default::default()
+                                },
+                            ));
+                        }
+                        if length < 0 {
                             return Err(ctx.throw_range_error(
                                 length as f64,
                                 bun_jsc::RangeErrorOptions {
                                     field_name: b"length",
                                     min: 0,
-                                    max: max_len,
+                                    ..Default::default()
+                                },
+                            ));
+                        }
+                        if length > i32::MAX as i64 {
+                            return Err(ctx.throw_range_error(
+                                length as f64,
+                                bun_jsc::RangeErrorOptions {
+                                    field_name: b"length",
+                                    msg: b">= 0 && <= 2147483647",
                                     ..Default::default()
                                 },
                             ));
@@ -4171,9 +4192,12 @@ pub mod args {
 
             let buf_len = buffer.slice().len();
             if buf_len == 0 {
+                let received = JSGlobalObject::inspect_for_error_message(ctx, buffer_value)?;
                 return Err(validators::throw_err_invalid_arg_value(
                     ctx,
-                    format_args!("The argument 'buffer' is empty and cannot be written."),
+                    format_args!(
+                        "The argument 'buffer' is empty and cannot be written. Received {received}"
+                    ),
                 ));
             }
             // validateOffsetLengthRead(offset, length, buffer.byteLength);

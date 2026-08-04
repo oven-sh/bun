@@ -1334,10 +1334,26 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 addon,
             });
         } else {
-            // Same constraint (and message substring) as Node's
-            // ERR_MISSING_OPTION: "--permission is required".
+            // Node's node.cc ProcessGlobalArgs: ERR_MISSING_OPTION when any
+            // --allow-* is passed without --permission.
             for allow_flag in [&b"--allow-fs-read"[..], b"--allow-fs-write"] {
                 if !args.options(allow_flag).is_empty() {
+                    Output::err_generic(
+                        "--permission is required to use {}",
+                        format_args!("{}", BStr::new(allow_flag)),
+                    );
+                    Global::exit(1);
+                }
+            }
+            for allow_flag in [
+                &b"--allow-child-process"[..],
+                b"--allow-worker",
+                b"--allow-inspector",
+                b"--allow-wasi",
+                b"--allow-net",
+                b"--allow-addons",
+            ] {
+                if args.flag(allow_flag) {
                     Output::err_generic(
                         "--permission is required to use {}",
                         format_args!("{}", BStr::new(allow_flag)),

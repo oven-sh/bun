@@ -7,7 +7,7 @@
 // error message is lost.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tls as certs } from "harness";
+import { bunEnv, bunExe, tls as certs, tempDir } from "harness";
 
 test("tls over Duplex: throwing transport write surfaces the thrown Error, not an engine-internal cell", async () => {
   using dir = tempDir("tls-duplex-throw", {

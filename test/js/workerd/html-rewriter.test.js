@@ -1793,6 +1793,21 @@ describe("output ByteStream backpressured when a native sink is wired", () => {
     const { body } = await makeParked();
     expect(await new Response(body).text()).toBe(out);
   });
+
+  it("completes when used as Bun.spawn stdin", async () => {
+    const { body } = await makeParked();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "process.stdout.write(await Bun.stdin.text())"],
+      env: bunEnv,
+      stdin: body,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(out);
+    expect(exitCode).toBe(0);
+  });
 });
 
 const payloads = [

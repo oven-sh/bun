@@ -3224,6 +3224,18 @@ describe("redirect stdin from ReadableStream", () => {
       /ReadableStream cannot be redirected to a builtin command/,
     );
   });
+
+  test.concurrent("direct stream whose pull() throws synchronously fails the command", async () => {
+    const s = new ReadableStream({
+      type: "direct",
+      pull() {
+        throw new Error("boom-sync");
+      },
+    });
+    const out = await $`${BUN} -e ${childPump} < ${s}`.env(bunEnv).nothrow().quiet();
+    expect(out.stderr.toString()).toContain("Failed to pipe ReadableStream to stdin: Error: boom-sync");
+    expect(out.exitCode).toBe(1);
+  });
 });
 
 describe("stdin redirect from a zero-length buffer delivers EOF to the spawned command", () => {

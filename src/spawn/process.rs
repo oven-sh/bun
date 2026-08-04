@@ -1473,6 +1473,20 @@ impl WindowsSpawnResult {
     pub fn to_process(&mut self, _event_loop: impl Sized) -> *mut Process {
         self.process.take().unwrap()
     }
+
+    /// Kill and release the child of a spawn whose post-spawn stdio setup
+    /// failed before anything took ownership of the process. Consumes the
+    /// result so `Drop` also closes any stdio pipes still held.
+    pub fn dispose_failed_spawn(mut self, _event_loop: impl Sized) {
+        let proc = self.to_process(());
+        // SAFETY: `to_process` hands over the sole owned ref to the live
+        // heap-allocated `Process`; `deref` releases it after teardown.
+        unsafe {
+            let _ = (*proc).kill(bun_core::SignalCode::SIGKILL as u8);
+            (*proc).close();
+            Process::deref(proc);
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -1632,12 +1646,33 @@ impl WindowsSpawnOptions {
 /// trait method so callers keep the `.to_process(loop_, sync)` spelling.
 pub trait SpawnResultExt {
     fn to_process(self, event_loop: EventLoopHandle) -> *mut Process;
+
+    /// Kill and reap the child of a spawn whose post-spawn stdio setup failed
+    /// before anything took ownership of the process.
+    fn dispose_failed_spawn(self, event_loop: EventLoopHandle);
 }
 
 #[cfg(unix)]
 impl SpawnResultExt for PosixSpawnResult {
     fn to_process(self, event_loop: EventLoopHandle) -> *mut Process {
         Process::init_posix(&self, event_loop)
+    }
+
+    fn dispose_failed_spawn(self, _event_loop: EventLoopHandle) {
+        // `Process::kill` no-ops while `Poller::Detached` (nothing has called
+        // `watch()` yet), so signal the pid directly, then reap synchronously
+        // (the SIGKILL guarantees the blocking wait terminates).
+        unsafe extern "C" {
+            #[link_name = "kill"]
+            safe fn libc_kill(pid: libc::pid_t, sig: c_int) -> c_int;
+        }
+        let _ = libc_kill(self.pid, bun_core::SignalCode::SIGKILL as c_int);
+        let _ = posix_spawn::wait4(self.pid, 0, None);
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if let Some(pidfd) = self.pidfd {
+            use bun_sys::FdExt as _;
+            Fd::from_native(pidfd).close();
+        }
     }
 }
 

@@ -18,6 +18,7 @@ import { dirname, isAbsolute, join } from "path";
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
 export const isMacOS = process.platform === "darwin";
+export const isOHOS = process.platform === "openharmony";
 export const isLinux = process.platform === "linux";
 export const isFreeBSD = process.platform === "freebsd";
 export const isPosix = isMacOS || isLinux || isFreeBSD;

@@ -1,5 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isArm64,
+  isLinux,
+  isMacOS,
+  isMusl,
+  isOHOS,
+  isPosix,
+  isWindows,
+  nodeExe,
+  tempDir,
+} from "harness";
 import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "node:fs";
 import { join } from "path";
 
@@ -780,6 +792,56 @@ describe("compiled binary in a deleted cwd", () => {
     },
     60_000,
   );
+});
+
+// src/runtime/api/bun/ohos_node_userinfo.rs: the NODE_OPTIONS injection is
+// wired into Bun.spawn itself, so a `bun build --compile` output inherits it
+// automatically (the compile embeds the running runtime) -- this is the one
+// test that actually proves that, as opposed to every other test in this
+// file running against a plain `bun run`.
+const ohosNode = isOHOS ? nodeExe() : null;
+describe.skipIf(!isOHOS || !ohosNode)("HarmonyOS: compiled binary's spawned node child", () => {
+  test("gets a working os.userInfo() with a clean env, simulating a fresh device", async () => {
+    using dir = tempDir("build-compile-ohos-node-userinfo", {
+      "app.js": `
+        const nodePath = process.argv[2];
+        const proc = Bun.spawnSync([
+          nodePath,
+          "-e",
+          "try{console.log(JSON.stringify(require('os').userInfo()))}catch(e){console.log('THROW:'+e.code)}",
+        ]);
+        console.log(proc.stdout.toString().trim());
+      `,
+    });
+
+    const outfile = join(dir + "", "app-ohos-userinfo");
+    const result = await Bun.build({
+      entrypoints: [join(dir + "", "app.js")],
+      compile: { outfile },
+    });
+    expect(result.success).toBe(true);
+
+    // No $USER/$LOGNAME/$NODE_OPTIONS: this dev machine's .zshrc exports
+    // $USER via ohos-whoami, which would otherwise mask the exact failure
+    // this feature exists to fix -- a compiled binary shipped to a device
+    // with no shell profile at all.
+    const cleanEnv = { ...bunEnv, USER: undefined, LOGNAME: undefined, NODE_OPTIONS: undefined };
+
+    await using proc = Bun.spawn({
+      cmd: [result.outputs[0].path, ohosNode!],
+      env: cleanEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim().startsWith("THROW:"), stderr).toBe(false);
+    const info = JSON.parse(stdout.trim());
+    expect(typeof info.username).toBe("string");
+    expect(info.username.length).toBeGreaterThan(0);
+    expect(info.username).not.toBe("unknown");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // file command test works well

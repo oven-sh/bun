@@ -32,6 +32,12 @@ fixtures/test-runner/coverage/*
 !fixtures/test-runner/error-reporter-fail-fast/**
 !fixtures/test-runner/worker-id
 !fixtures/test-runner/worker-id/**
+!fixtures/test-runner/diagnostics-channel-bindstore-end.js
+!fixtures/test-runner/diagnostics-channel-error-test.js
+!fixtures/test-runner/shards
+!fixtures/test-runner/shards/**
+!fixtures/test-runner/randomize
+!fixtures/test-runner/randomize/**
 !fixtures/test-runner/global-setup-teardown
 !fixtures/test-runner/global-setup-teardown/**
 !fixtures/test-runner/test-runner-global-hooks.mjs

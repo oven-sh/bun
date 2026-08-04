@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -72,7 +72,7 @@ function listBunTestFiles() {
   return out.sort();
 }
 
-if (process.argv[1] === __filename) {
+if (process.argv[1] && realpathSync(process.argv[1]) === __filename) {
   const { values: opts } = parseArgs({
     options: {
       builds: { type: "string", default: "300" },

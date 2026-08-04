@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 
 test("Bun.file in CryptoHasher is not supported yet", () => {
   expect(() => Bun.SHA1.hash(Bun.file(import.meta.path))).toThrow();
@@ -187,6 +187,60 @@ test("Bun.sha reads its buffers only after every argument has been coerced", asy
 });
 
 describe("HMAC", () => {
+  test("constructor coerces the algorithm once and reads the key before any later coercion", async () => {
+    // The algorithm argument must be stringified exactly once, and that one
+    // coercion must happen before the hmac key's bytes are read. A second
+    // toString() after the key slice is captured lets user code free the
+    // backing store, so HMAC::init sees recycled heap instead of the key.
+    const source = /* js */ `
+      import { createHmac } from "node:crypto";
+      const N = 1 << 20;
+      const attempts = [];
+      for (let i = 0; i < 5; i++) {
+        const key = new Uint8Array(N).fill(0x41);
+        const orig = key.slice();
+        const spray = [];
+        let calls = 0;
+        const alg = new String("sha256");
+        alg.toString = () => {
+          if (++calls > 1) {
+            key.buffer.transfer(0);
+            for (let j = 0; j < 8; j++) spray.push(new Uint8Array(N).fill(0x5a));
+          }
+          return "sha256";
+        };
+        const got = new Bun.CryptoHasher(alg, key).update("payload").digest("hex");
+        const want = createHmac("sha256", orig).update("payload").digest("hex");
+        attempts.push({ calls, ok: got === want });
+      }
+      console.log(JSON.stringify(attempts));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const attempts = JSON.parse(stdout.trim());
+    expect(attempts).toEqual([
+      { calls: 1, ok: true },
+      { calls: 1, ok: true },
+      { calls: 1, ok: true },
+      { calls: 1, ok: true },
+      { calls: 1, ok: true },
+    ]);
+    expect(exitCode).toBe(0);
+
+    // The non-hostile case: a primitive-string algorithm + buffer key must
+    // produce the same digest as node:crypto's createHmac.
+    const keyBuf = Buffer.alloc(64, 0x41);
+    expect(new Bun.CryptoHasher("sha256", keyBuf).update("payload").digest("hex")).toBe(
+      createHmac("sha256", keyBuf).update("payload").digest("hex"),
+    );
+  });
+
   const hashes = {
     "sha1": "e2e1f7f597941d9b0021978618218a9e08731426",
     "sha256": "c7a7c96c73af32ea6e5b1ca6768b1d822249eb88f85160433d7b09bb2b21e170",

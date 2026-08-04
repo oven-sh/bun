@@ -504,11 +504,11 @@ impl CryptoHasher {
 
         let init = 'brk: {
             if let Some(key) = &hmac_key {
-                // Inlined `JSValue::to_enum_from_map` (the `is_string` guard
-                // already ran above) so the lookup goes through the
-                // length-gated `evp::lookup_ignore_case` directly.
+                // Reuse the `algorithm` ZigString coerced above; coercing
+                // `algorithm_name` again would call user `toString()` a second
+                // time after `key`'s backing slice has been captured.
                 let chosen_algorithm: evp::Algorithm = {
-                    let slice = algorithm_name.to_slice(global)?;
+                    let slice = algorithm.to_slice();
                     match evp::lookup_ignore_case(slice.slice()) {
                         Some(v) => v,
                         None => {

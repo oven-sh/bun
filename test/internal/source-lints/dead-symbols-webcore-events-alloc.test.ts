@@ -7,8 +7,8 @@
 // `existsSync()` checks are avoided because the gate's stash-based src/ revert
 // does not round-trip deletions cleanly.
 
-import { describe, expect, test } from "bun:test";
 import { file } from "bun";
+import { describe, expect, test } from "bun:test";
 import path from "path";
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");

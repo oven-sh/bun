@@ -3334,20 +3334,18 @@ describe("TLS handshake callback throw", () => {
   });
 });
 
-it(
-  "terminating a Worker mid socket dispatch does not re-enter JS with the termination pending",
-  async () => {
-    // A Worker's Bun.listen server is flooded across several sockets so a
-    // single poll tick queues multiple 'data' dispatches back-to-back, then the
-    // Worker is terminated from the parent while those dispatches are in
-    // flight. The termination exception cannot be cleared, so the next socket
-    // dispatch in that tick must observe it and bail instead of materialising a
-    // Buffer/error with it still pending (debug asserts, release wedges).
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+it("terminating a Worker mid socket dispatch does not re-enter JS with the termination pending", async () => {
+  // A Worker's Bun.listen server is flooded across several sockets so a
+  // single poll tick queues multiple 'data' dispatches back-to-back, then the
+  // Worker is terminated from the parent while those dispatches are in
+  // flight. The termination exception cannot be cleared, so the next socket
+  // dispatch in that tick must observe it and bail instead of materialising a
+  // Buffer/error with it still pending (debug asserts, release wedges).
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
           const { Worker } = require("node:worker_threads");
           const CONNS = 8;
 
@@ -3405,15 +3403,13 @@ it(
           for (let i = 0; i < 8; i++) await once();
           console.log("PASS");
         `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({ stdout: "PASS", signalCode: null });
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({ stdout: "PASS", signalCode: null });
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+}, 30_000);

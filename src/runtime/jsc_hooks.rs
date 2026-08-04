@@ -1313,6 +1313,11 @@ fn body_mixin_get_blob(
 ///
 /// # Safety
 /// `global` is the live VM global.
+fn take_snapshot(vm: *mut VirtualMachine) -> ! {
+    // SAFETY: main-thread VM handed over by `EventLoop::tick` at top level.
+    crate::cli::run_command::take_snapshot_and_exit(unsafe { &mut *vm })
+}
+
 unsafe fn process_exit(global: *mut JSGlobalObject, code: u8) {
     // SAFETY: per fn contract — `global` is the live VM global. The deref is
     // performed once here in the hook shim so the user-facing `process::exit`
@@ -1481,6 +1486,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     has_blob_url,
     body_mixin_get_blob,
     process_exit,
+    take_snapshot,
     console_on_before_print,
     console_print_runtime_object,
     load_standalone_sourcemap,

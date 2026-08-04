@@ -1651,8 +1651,38 @@ impl Run {
     }
 }
 
-/// Experiment (heap image): a process restored from an image jumps here instead of loading an entry point.
-/// The Rust `VirtualMachine`/event loop objects come from the image (heap); only thread-locals need re-seating.
+// Experiment (heap image): a process restored from an image jumps here instead of loading an entry point.
+// The Rust `VirtualMachine`/event loop objects come from the image (heap); only thread-locals need re-seating.
+unsafe extern "C" {
+    fn Bun__imageDumpNow(vm: *mut bun_jsc::VM, path: *const ::core::ffi::c_char);
+}
+
+/// The app asked for a snapshot and every JS frame has unwound (termination). Quiesce the runtime and write the image from the top of the run loop.
+pub fn take_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::VirtualMachine) -> ! {
+    let Some(path) = bun_core::image::take_snapshot_request() else {
+        unreachable!()
+    };
+    vm.jsc_vm().clear_has_termination_request();
+    let cpath = std::ffi::CString::new(path).unwrap();
+    // SAFETY: main thread, VM live, no JS on the stack.
+    unsafe { Bun__imageDumpNow(vm.jsc_vm() as *const _ as *mut _, cpath.as_ptr()) };
+    bun_core::Global::exit(0);
+}
+
+/// `Bun.unsafe.snapshot(path)` / cmd-file trigger: leave JS via an uncatchable termination and snapshot from the run loop.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__requestSnapshot(vm: &bun_jsc::VM, path: *const ::core::ffi::c_char) {
+    // SAFETY: NUL-terminated C string from the caller.
+    let path = unsafe { ::core::ffi::CStr::from_ptr(path) }.to_string_lossy();
+    bun_core::image::request_snapshot(&path);
+    vm.notify_need_termination(); // unwinds any running JS; the outermost `EventLoop::tick` then takes the snapshot
+    if let Some(main) =
+        unsafe { bun_jsc::virtual_machine::VirtualMachine::main_thread_vm_ptr().as_mut() }
+    {
+        main.wakeup();
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__imageSetBuilding(on: bool) {
     bun_core::image::set_building(on);

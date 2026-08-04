@@ -1789,6 +1789,8 @@ pub struct RuntimeHooks {
     /// (forward-dep cycle), so [`uncaught_exception`] reaches it through this
     /// slot instead of the linker.
     pub process_exit: unsafe fn(global: *mut JSGlobalObject, code: u8),
+    /// A snapshot was requested and the resulting termination reached the top of the event loop: quiesce and write the image (noreturn).
+    pub take_snapshot: fn(vm: *mut VirtualMachine) -> !,
     /// `onBeforePrint()` for the `bun:test` runner, which lives in `bun_runtime`;
     /// `console.log` calls this so the test reporter can flush its line state
     /// before user output interleaves with it. No-op when `bun test` isn't

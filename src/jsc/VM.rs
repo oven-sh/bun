@@ -119,11 +119,11 @@ impl VM {
     // These may be called concurrently from another thread.
 
     /// Fires NeedTermination Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
-    pub(crate) fn notify_need_termination(&self) {
+    pub fn notify_need_termination(&self) {
         JSC__VM__notifyNeedTermination(self)
     }
 
-    pub(crate) fn clear_has_termination_request(&self) {
+    pub fn clear_has_termination_request(&self) {
         crate::cpp::JSC__VM__clearHasTerminationRequest(self)
     }
 

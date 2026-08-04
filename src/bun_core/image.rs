@@ -54,3 +54,24 @@ impl ImageOnce {
         self.done_epoch.store(epoch() + 1, Ordering::Release);
     }
 }
+
+static SNAPSHOT_REQUESTED: AtomicU32 = AtomicU32::new(0);
+static SNAPSHOT_PATH: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+/// Ask the main run loop to leave JS entirely and take the image at top level (caller then unwinds via a termination exception).
+pub fn request_snapshot(path: &str) {
+    *SNAPSHOT_PATH.lock().unwrap_or_else(|e| e.into_inner()) = Some(path.to_owned());
+    SNAPSHOT_REQUESTED.store(1, Ordering::Release);
+}
+#[inline]
+pub fn snapshot_requested() -> bool {
+    SNAPSHOT_REQUESTED.load(Ordering::Acquire) != 0
+}
+pub fn take_snapshot_request() -> Option<String> {
+    if SNAPSHOT_REQUESTED.swap(0, Ordering::AcqRel) == 0 {
+        return None;
+    }
+    SNAPSHOT_PATH
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+}

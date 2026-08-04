@@ -625,6 +625,12 @@ impl EventLoop {
 
     pub fn tick(&mut self) {
         jsc::mark_binding();
+        if self.entered_event_loop_count == 0 && bun_core::image::snapshot_requested() {
+            // Requested while idle (or the termination already unwound to here): outermost tick, no JS below us.
+            (crate::virtual_machine::runtime_hooks()
+                .expect("hooks")
+                .take_snapshot)(self.vm());
+        }
         crate::top_scope!(scope, self.global_ref());
         self.entered_event_loop_count += 1;
         // The scope/counter cleanup is inlined at each return site below (a
@@ -650,6 +656,12 @@ impl EventLoop {
                 || scope.has_exception()
             {
                 self.entered_event_loop_count -= 1;
+                if bun_core::image::snapshot_requested() {
+                    // The termination was ours: every JS frame is gone; hand off to the runtime to write the image.
+                    (crate::virtual_machine::runtime_hooks()
+                        .expect("hooks")
+                        .take_snapshot)(ctx);
+                }
                 return;
             }
             self.tick_concurrent();

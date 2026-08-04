@@ -129,6 +129,9 @@ extern "C" void Bun__imageMaybeRestore()
     }
 }
 extern "C" void Bun__imageSetBuilding(bool);
+extern "C" void Bun__requestSnapshot(JSC::VM*, const char* path);
+static void imageDump(JSC::VM& vm, const char* path);
+extern "C" void Bun__imageDumpNow(JSC::VM* vm, const char* path) { imageDump(*vm, path); }
 extern "C" void Bun__memdebugInstall()
 {
     if (getenv("BUN_IMAGE_OUT")) Bun__imageSetBuilding(true);
@@ -1044,10 +1047,15 @@ static void imageRestoreAndRun(const char* path)
         JSC::JSLockHolder lock(*vm);
         { auto& t = vm->atomStringTable()->table(); auto copy = t; t.swap(copy); }
     }
-    if (!getenv("BUN_IMAGE_EVAL")) {
+    if (!getenv("BUN_IMAGE_EVAL") || getenv("BUN_IMAGE_EVAL_CONTINUE")) {
         {
             JSC::JSLockHolder lock(*vm);
             NakedPtr<JSC::Exception> exception;
+            if (const char* pre = getenv("BUN_IMAGE_EVAL")) { // injected startup code, then continue as normal
+                JSC::evaluate(globalObject, JSC::makeSource(WTF::String::fromUTF8(pre), JSC::SourceOrigin {}, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue(), exception);
+                if (exception) fprintf(stderr, "[image] eval threw: %s\n", exception->value().toWTFString(globalObject).utf8().data());
+                exception = nullptr;
+            }
             JSC::evaluate(globalObject, JSC::makeSource("globalThis.__bunImageRestored = true; if (process.env.BUN_IMAGE_TRACE_EXIT) { const oe = process.exit; process.exit = function(c) { require('fs').writeSync(2, '[image] process.exit(' + c + ') from:\\n' + new Error().stack + '\\n'); return oe.call(this, c); }; process.on('exit', c => require('fs').writeSync(2, '[image] exit event ' + c + '\\n')); } if (typeof __onImageRestored === 'function') __onImageRestored();"_s, JSC::SourceOrigin {}, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue(), exception);
             if (exception) fprintf(stderr, "[image] __onImageRestored threw: %s\n", exception->value().toWTFString(globalObject).utf8().data());
         }
@@ -1126,8 +1134,7 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
     }
     if (req == 9) { imageTrapReport(); return; }
     if (req == 8) {
-        imageDump(*vm, getenv("BUN_IMAGE_OUT") ? getenv("BUN_IMAGE_OUT") : "/tmp/bun.img");
-        if (getenv("BUN_IMAGE_EXIT_AFTER_DUMP")) _exit(0);
+        Bun__requestSnapshot(vm, getenv("BUN_IMAGE_OUT") ? getenv("BUN_IMAGE_OUT") : "/tmp/bun.img"); // unwinds JS via termination; the run loop takes it at top level and exits
         return;
     }
     if (req == 3) {

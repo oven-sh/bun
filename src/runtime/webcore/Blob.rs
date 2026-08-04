@@ -6108,7 +6108,7 @@ struct ClipboardBlobReadHandler {
 }
 
 impl ClipboardBlobReadHandler {
-    fn finish(self: Box<Self>, result: ReadBytesResult) {
+    fn finish(self, result: ReadBytesResult) {
         match result {
             ReadBytesResult::Ok(bytes) => {
                 // SAFETY: per this type's contract, `callback`/`ctx` are valid

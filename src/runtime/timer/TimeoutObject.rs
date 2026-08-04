@@ -122,11 +122,14 @@ impl TimeoutObject {
     }
 
     pub(crate) fn set_idle_start(
-        _this: &Self,
+        this: &Self,
         this_value: JSValue,
         global: &JSGlobalObject,
         value: JSValue,
     ) {
+        if let Some(ms) = value.get_number() {
+            this.internals.set_idle_start(ms);
+        }
         js::idle_start_set_cached(this_value, global, value);
     }
 }

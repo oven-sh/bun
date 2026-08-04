@@ -29,7 +29,6 @@ const {
   FunctionPrototypeBind,
   FunctionPrototypeCall,
   ObjectDefineProperties,
-  ObjectSetPrototypeOf,
   Promise,
   PromiseReject,
   StringPrototypeSlice,

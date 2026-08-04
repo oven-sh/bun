@@ -501,7 +501,7 @@ describe("Bun.build", () => {
   // orphaned the Box<DirEntry> behind the previous Entries value and cached
   // the Err for every later generation, so a third build after the directory
   // was restored still failed to resolve through it.
-  test.concurrent.skipIf(isWindows)("rebuilding after a cached directory is replaced with a file", async () => {
+  test.concurrent("rebuilding after a cached directory is replaced with a file", async () => {
     using dir = tempDir("rebuild-dir-replaced", {
       "package.json": `{}`,
       "driver.ts": `

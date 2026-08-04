@@ -80,6 +80,12 @@ private:
     OnClientErrorCallback onClientError = nullptr;
 
     uint64_t maxHeaderSize = 0; // 0 means no limit
+    /* Initial per-socket idleTimeout applied at accept (onOpen), before the
+     * first request arrives. Bun.serve seeds this from its `idleTimeout` option
+     * so a pre-request connection is governed by the same value a parsed
+     * request would re-arm. node:http passes 0, leaving the receive window
+     * entirely to its own headersTimeout/requestTimeout sweep. */
+    uint8_t idleTimeout = 10;
 
     // TODO: SNI
     void clearRoutes() {

@@ -154,6 +154,50 @@ describe("node:http server timeout enforcement", () => {
     }
   });
 
+  // A headersTimeout above the uWS default pre-request idle window must be
+  // honored end to end: the connection survives past the old ~12s cap and is
+  // reaped by the checkConnections sweep at the configured value with a 408,
+  // not by a bare FIN. The old behavior closed the socket at ~12s regardless
+  // of headersTimeout, so the 13s marker below is the fail-before witness.
+  test("headersTimeout above the old ~12s cap is honored", async () => {
+    const server = http.createServer({ connectionsCheckingInterval: 200 }, (req, res) => res.end("ok"));
+    server.headersTimeout = 15000;
+    server.requestTimeout = 0;
+    let clientErrorCode: string | undefined;
+    server.on("clientError", (err: any, socket) => {
+      clientErrorCode = err.code;
+      socket.destroy();
+    });
+    const port = await listen(server);
+    try {
+      const { promise: stillOpenAt13s, resolve: markStillOpen } = Promise.withResolvers<boolean>();
+      const { promise: closed, resolve: onClosed } = Promise.withResolvers<number>();
+      const socket = net.connect(port, "127.0.0.1");
+      const t0 = Date.now();
+      socket.setNoDelay(true);
+      socket.on("error", () => {});
+      socket.resume();
+      socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: a\r\n"));
+      const marker = setTimeout(() => markStillOpen(true), 13000);
+      socket.on("close", () => {
+        clearTimeout(marker);
+        markStillOpen(false);
+        onClosed(Date.now() - t0);
+      });
+      // Must survive past the old 10s-default reap window (~12s wall clock).
+      expect(await stillOpenAt13s).toBe(true);
+      // And then be reaped by the headersTimeout sweep with the Node error.
+      const elapsed = await closed;
+      expect({ clientErrorCode, reapedAfterHeadersTimeout: elapsed >= 15000 }).toEqual({
+        clientErrorCode: "ERR_HTTP_REQUEST_TIMEOUT",
+        reapedAfterHeadersTimeout: true,
+      });
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 30000);
+
   test("headersTimeout answers 408 when there is no 'clientError' listener", async () => {
     const server = http.createServer({ connectionsCheckingInterval: 50 }, (req, res) => res.end("ok"));
     server.headersTimeout = 200;

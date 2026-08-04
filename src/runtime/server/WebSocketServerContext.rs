@@ -36,11 +36,6 @@ pub struct Handler {
     /// through it.
     pub(crate) server: Option<super::AnyServer>,
 
-    /// Set alongside `app` in `set_routes`; lets a closing connection
-    /// re-evaluate the server's deinit gate (graceful stop holds the
-    /// server's ref until pending work drains).
-    pub server: Option<super::AnyServer>,
-
     // Always set manually.
     // LIFETIMES.tsv = STATIC (vm) / JSC_BORROW (global_object) — both outlive the handler.
     pub(crate) vm: bun_ptr::BackRef<VirtualMachine>,

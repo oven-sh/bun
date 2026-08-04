@@ -5,7 +5,7 @@ use crate::VM;
 use bun_core::{OwnedString, String as BunString};
 #[cfg(windows)]
 use bun_paths::OSPathBuffer;
-use bun_paths::PathBuffer;
+use bun_paths::{MAX_PATH_BYTES, PathBuffer};
 use bun_sys::{self, Errno, Fd, FdDirExt as _};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -177,15 +177,28 @@ fn build_output_path(
         generate_default_filename(&mut filename_buf, is_md_format)?
     };
 
+    // `dir` and `name` are user-controlled CLI bytes, and AutoAbsPath is
+    // CheckLength::ASSUME (over-long input panics in PooledBuf slice indexing
+    // rather than returning Err), so bound the combined length before touching
+    // the buffer. One byte is reserved for `slice_z`'s NUL.
+    let sep_for_dir = usize::from(!config.dir.is_empty());
+    let upper_bound = path
+        .len()
+        .saturating_add(sep_for_dir)
+        .saturating_add(config.dir.len())
+        .saturating_add(1)
+        .saturating_add(filename.len());
+    if upper_bound >= MAX_PATH_BYTES {
+        return Err(ProfilerError::FilenameTooLong);
+    }
+
     // Append directory if specified
     if !config.dir.is_empty() {
-        // AutoAbsPath uses CheckLength::ASSUME — Err arm is unreachable.
-        // See paths/Path.rs `options::Result` note.
-        path.join(&[config.dir]).expect("unreachable");
+        path.join(&[config.dir]).expect("bounded above");
     }
 
     // Append filename
-    path.append(filename).expect("unreachable");
+    path.append(filename).expect("bounded above");
 
     Ok(())
 }

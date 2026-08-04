@@ -1,7 +1,7 @@
 use crate::CrateError as Error;
 use bun_core::{Output, Timespec, TimespecMockMode};
 use bun_core::{OwnedString, String as BunString};
-use bun_paths::{AutoAbsPath, PathBuffer, resolve_path};
+use bun_paths::{AutoAbsPath, MAX_PATH_BYTES, PathBuffer, resolve_path};
 use bun_sys::{self as sys, E, Fd, FdDirExt};
 
 use crate::VM;
@@ -107,6 +107,21 @@ fn build_output_path(path: &mut AutoAbsPath, config: &HeapProfilerConfig) -> Res
     } else {
         generate_default_filename(&mut filename_buf, config.text_format)?
     };
+
+    // `dir` and `name` are user-controlled CLI bytes, and AutoAbsPath is
+    // CheckLength::ASSUME (over-long input panics in PooledBuf slice indexing
+    // rather than returning Err), so bound the combined length before touching
+    // the buffer. One byte is reserved for `slice_z`'s NUL.
+    let sep_for_dir = usize::from(!config.dir.is_empty());
+    let upper_bound = path
+        .len()
+        .saturating_add(sep_for_dir)
+        .saturating_add(config.dir.len())
+        .saturating_add(1)
+        .saturating_add(filename.len());
+    if upper_bound >= MAX_PATH_BYTES {
+        return Err(Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+    }
 
     // Append directory if specified
     if !config.dir.is_empty() {

@@ -155,8 +155,7 @@ impl Drop for UserOptions {
         if let Some(p) = self.bundler_options.plugin {
             // `p` is the FFI handle returned by `Plugin::create` in
             // `parse_plugin_array`; `PluginJscExt::destroy` is its paired
-            // (safe) destructor — it null-checks via `opaque_ref` and
-            // unprotect()s the JSCell / tombstones the C++ object.
+            // destructor (tombstones + gcUnprotects the cell + drops the ref).
             Plugin::destroy(p.as_ptr());
         }
     }
@@ -321,8 +320,7 @@ impl SplitBundlerOptions {
             Some(p) => p,
             None => {
                 let p = Plugin::create(global, bun_jsc::BunPluginTarget::Bun);
-                let p = NonNull::new(p)
-                    .expect("JSBundlerPlugin__create returns a non-null protected JSCell");
+                let p = NonNull::new(p).expect("JSBundlerPlugin__create returns non-null");
                 self.plugin = Some(p);
                 p
             }
@@ -360,7 +358,7 @@ impl SplitBundlerOptions {
             };
 
             // `Plugin` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
-            // deref. Handle held live in `self.plugin` (protected JSCell).
+            // deref. Handle held live in `self.plugin` (ref-counted C++ heap).
             let plugin_result = Plugin::opaque_mut(plugin.as_ptr()).add_plugin(
                 function,
                 empty_object,

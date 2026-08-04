@@ -1525,3 +1525,111 @@ test("Bun.build can be called thousands of times in one process without crashing
   expect(stdout.trim()).toBe("OK 400");
   expect(exitCode).toBe(0);
 }, 180_000);
+
+// The bundle thread calls JSBundlerPlugin__anyMatches / hasOnBeforeParsePlugins against
+// the plugin's filter vectors while a build is in flight. Those vectors used to live
+// inline in the JSBundlerPlugin GC cell, so worker.terminate() (which tears down the
+// worker's JSC heap) freed them out from under the bundle thread:
+//
+//   JSBundlerPlugin.cpp:96: runtime error: reference binding to null pointer of type
+//   'Bun::BundlerPlugin::FilterRegExp'
+//
+// The filter data is now a ThreadSafeRefCounted heap allocation that outlives the cell,
+// so the cross-thread read stays valid after the worker's VM is gone.
+//
+// This test cannot assert "exit 0": the same terminate() race also trips the
+// pre-existing, plugin-independent complete_on_bundle_thread use-after-free (posting the
+// build result to the dead worker's event loop), which reproduces on current main with
+// or without this change. So we run the race repeatedly and assert only that no attempt
+// faults inside JSBundlerPlugin.cpp. Malloc=1 routes JSC allocations through system
+// malloc so ASAN can see writes to the freed cell.
+test.skipIf(!isASAN)(
+  "terminating a Worker mid-Bun.build() does not read freed plugin filter data on the bundle thread",
+  async () => {
+    const MODULES = 300;
+    const files: Record<string, string> = {};
+    let entry = "";
+    for (let i = 0; i < MODULES; i++) {
+      files[`m${i}.js`] = `export const v${i} = ${i};\n`;
+      entry += `import { v${i} } from "./m${i}.js";\n`;
+    }
+    entry += `export default 0;\n`;
+    files["entry.js"] = entry;
+    files["w.cjs"] = `
+      const { parentPort, workerData: d } = require("node:worker_threads");
+      async function lane(k) {
+        for (;;) {
+          await Bun.build({
+            entrypoints: [d.dir + "/entry.js"],
+            plugins: [{ name: "p" + k, setup(b) { b.onLoad({ filter: /never-matches-anything/ }, () => undefined); } }],
+          }).catch(() => {});
+        }
+      }
+      parentPort.postMessage("up");
+      for (let k = 0; k < 2; k++) lane(k);
+    `;
+    files["parent.mjs"] = `
+      import { Worker } from "node:worker_threads";
+      const dir = process.argv[2];
+      const t0 = performance.now();
+      for (let r = 0; r < 40 && performance.now() - t0 < 8000; r++) {
+        const ws = [];
+        for (let i = 0; i < 2; i++) {
+          const w = new Worker(dir + "/w.cjs", { workerData: { dir } });
+          w.on("error", () => {});
+          ws.push(w);
+        }
+        await Promise.all(ws.map(w => new Promise(res => { w.once("message", res); setTimeout(res, 3000); })));
+        await Bun.sleep(5 + (r * 7) % 30);
+        await Promise.all(ws.map(w => w.terminate()));
+      }
+      console.log("ok");
+    `;
+
+    using dir = tempDir("bun-build-worker-plugin-terminate", files);
+
+    // The subprocess is expected to crash (the unrelated complete_on_bundle_thread UAF
+    // still exists on main), and on a given crash it may land in either site. Run enough
+    // attempts that, without the fix, at least one lands in JSBundlerPlugin.cpp. Once
+    // #35158 / #35767 land this can become a plain expect(stdout).toContain("ok") +
+    // expect(exitCode).toBe(0).
+    const ATTEMPTS = 8;
+    const frames: string[] = [];
+    const outcomes: Array<{ exitCode: number | null; signalCode: string | null; stderrTail: string }> = [];
+    let sawSanitizerReport = false;
+    let sawCleanExit = false;
+    for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "parent.mjs"), String(dir)],
+        env: { ...bunEnv, Malloc: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+      await proc.exited;
+      outcomes.push({
+        exitCode: proc.exitCode,
+        signalCode: proc.signalCode,
+        stderrTail: stderr.split("\n").slice(-20).join("\n"),
+      });
+
+      if (/AddressSanitizer|runtime error:|SUMMARY: /.test(stderr)) sawSanitizerReport = true;
+      if (stdout.includes("ok") && stderr.trim() === "" && proc.exitCode === 0 && proc.signalCode === null) {
+        sawCleanExit = true;
+      }
+
+      const pluginFrames = stderr.split("\n").filter(l => /JSBundlerPlugin\.cpp|BundlerPlugin::|FilterRegExp/.test(l));
+      if (pluginFrames.length > 0) {
+        frames.push(`attempt ${attempt}:\n${pluginFrames.join("\n")}`);
+        break;
+      }
+      if (sawCleanExit) break;
+    }
+
+    // Prove the race actually produced symbolicated sanitizer output (or ran clean
+    // end-to-end) so the absence check below is meaningful.
+    expect({ meaningful: sawSanitizerReport || sawCleanExit, outcomes }).toMatchObject({ meaningful: true });
+    expect(frames).toEqual([]);
+  },
+  180_000,
+);

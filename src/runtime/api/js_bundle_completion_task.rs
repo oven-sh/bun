@@ -185,11 +185,11 @@ impl JSBundleCompletionTask {
     ///
     /// Centralises the `Option<NonNull> → Option<&mut T>` deref so callers
     /// (`to_js_error` / `on_complete_anytask`) stay safe. The plugin is a C++
-    /// `JSBundlerPlugin` opaque created by [`PluginJscExt::create`] and
-    /// `protect()`-ed for the task's lifetime; it is freed only via
-    /// `Plugin::destroy` in `deinit` *after* `take()` clears `self.plugins`.
-    /// While the field is `Some` the pointee is therefore live, pinned, and
-    /// disjoint from `*self` (separate C++-heap allocation).
+    /// `BundlerPlugin` heap allocation created by [`PluginJscExt::create`]
+    /// (which also `gcProtect`s the owning `JSBundlerPlugin` GC cell and takes
+    /// a +1 ref for this task); it is released only via `Plugin::destroy` in
+    /// `deinit` *after* `take()` clears `self.plugins`. While the field is
+    /// `Some` the pointee is therefore live, pinned, and disjoint from `*self`.
     #[inline]
     fn plugins_mut(&mut self) -> Option<&mut Plugin> {
         // SAFETY: see fn doc — C++-heap opaque, live while `self.plugins` is
@@ -543,12 +543,16 @@ impl JSBundleCompletionTask {
         // SAFETY: `vm` is the live per-thread VM (`global_this.bun_vm_ptr()`).
         this.poll_ref
             .unref(unsafe { jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm) });
+        if this.html_build_task.is_some() {
+            // The HTML-bundle path borrows `plugins` from `ServePluginsState::Loaded`;
+            // clear it before `deinit` (cancelled or not) so only the owner destroys it.
+            this.plugins = None;
+        }
         if this.cancelled {
             return Ok(());
         }
 
         if let Some(html_build_task) = this.html_build_task {
-            this.plugins = None;
             // SAFETY: `html_build_task` is a backref set by `HTMLBundle::Route` which
             // bumped its own refcount before scheduling and stays alive until this returns.
             // R-2: deref as shared — `on_complete` takes `&self`.

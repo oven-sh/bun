@@ -1622,7 +1622,7 @@ pub mod js_bundler {
         bv2_mut(this.bv2).on_load_async(this);
     }
 
-    /// Opaque FFI handle for the C++ `JSBundlerPlugin`. The opaque type and
+    /// Opaque FFI handle for the C++ `Bun::BundlerPlugin`. The opaque type and
     /// `has_any_matches` (the one method `bun_bundler` needs) live in the
     /// lower-tier crate; JSC-aware methods are added here via `PluginJscExt`.
     pub use bun_bundler::bundle_v2::api::JSBundler::Plugin;
@@ -1637,7 +1637,7 @@ pub mod js_bundler {
             global: &JSGlobalObject,
             target: jsc::BunPluginTarget,
         ) -> *mut Plugin;
-        safe fn JSBundlerPlugin__tombstone(plugin: &Plugin);
+        fn JSBundlerPlugin__destroy(plugin: *mut Plugin);
         safe fn JSBundlerPlugin__runOnEndCallbacks(
             plugin: &mut Plugin,
             build_promise: JSValue,
@@ -1665,9 +1665,9 @@ pub mod js_bundler {
         ) -> JSValue;
     }
 
-    /// JSC-aware methods on the C++ `JSBundlerPlugin` opaque. The opaque type
-    /// itself is owned by `bun_bundler` (lower tier, no JSC dep), so these are
-    /// added as an extension trait rather than an inherent `impl`.
+    /// JSC-aware methods on the C++ `Bun::BundlerPlugin` opaque. The opaque
+    /// type itself is owned by `bun_bundler` (lower tier, no JSC dep), so these
+    /// are added as an extension trait rather than an inherent `impl`.
     pub trait PluginJscExt {
         fn create(global: &JSGlobalObject, target: jsc::BunPluginTarget) -> *mut Plugin;
         fn run_on_end_callbacks(
@@ -1677,8 +1677,8 @@ pub mod js_bundler {
             build_result: JSValue,
             rejection: JsResult<JSValue>,
         ) -> JsResult<JSValue>;
-        /// `this` must be a live handle previously returned by `Plugin::create`;
-        /// non-null is checked via `Plugin::opaque_ref` (panics on null).
+        /// `this` must be the non-null +1 handle returned by `Plugin::create`
+        /// (debug-asserted); the callee releases it and may free the allocation.
         fn destroy(this: *mut Plugin);
         fn global_object(&self) -> &JSGlobalObject;
         fn append_defer_promise(&mut self) -> JSValue;
@@ -1703,9 +1703,7 @@ pub mod js_bundler {
     impl PluginJscExt for Plugin {
         fn create(global: &JSGlobalObject, target: jsc::BunPluginTarget) -> *mut Plugin {
             jsc::mark_binding();
-            let plugin = JSBundlerPlugin__create(global, target);
-            JSValue::from_cell(plugin).protect();
-            plugin
+            JSBundlerPlugin__create(global, target)
         }
 
         fn run_on_end_callbacks(
@@ -1741,8 +1739,10 @@ pub mod js_bundler {
 
         fn destroy(this: *mut Plugin) {
             jsc::mark_binding();
-            JSBundlerPlugin__tombstone(Plugin::opaque_ref(this));
-            JSValue::from_cell(this).unprotect();
+            debug_assert!(!this.is_null());
+            // SAFETY: `this` is the +1 handle returned by `JSBundlerPlugin__create`;
+            // the callee releases it and may free the allocation.
+            unsafe { JSBundlerPlugin__destroy(this) };
         }
 
         fn global_object(&self) -> &JSGlobalObject {

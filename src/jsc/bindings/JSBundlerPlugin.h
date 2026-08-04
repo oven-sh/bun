@@ -7,6 +7,7 @@
 #include <JavaScriptCore/RegularExpression.h>
 #include "napi_external.h"
 #include <JavaScriptCore/Yarr.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include "WriteBarrierList.h"
 
 typedef void (*JSBundlerPluginAddErrorCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
@@ -18,7 +19,11 @@ namespace Bun {
 
 using namespace JSC;
 
-class BundlerPlugin final {
+class JSBundlerPlugin;
+
+// Ref-counted separately from the JSBundlerPlugin GC cell so the bundle thread can
+// read filter lists after a Worker's VM is torn down. Cell holds one ref, Rust another.
+class BundlerPlugin final : public ThreadSafeRefCounted<BundlerPlugin> {
 public:
     /// In native plugins, the regular expression could be called concurrently on multiple threads.
     /// Therefore, we need a mutex to synchronize access.
@@ -41,7 +46,7 @@ public:
         {
         }
 
-        bool match(JSC::VM& vm, const String& path);
+        bool match(const String& path);
     };
 
     class NamespaceList {
@@ -74,7 +79,9 @@ public:
 
     struct NativePluginCallback {
         JSBundlerPluginNativeOnBeforeParseCallback callback;
-        Bun::NapiExternal* external;
+        // NapiExternal::value() captured at append time so the parse thread never
+        // reads the GC cell; onBeforeParseExternals keeps the cell alive for GC.
+        void* externalValue;
         /// This refers to the string exported in the native plugin under
         /// the symbol BUN_PLUGIN_NAME
         ///
@@ -95,8 +102,8 @@ public:
         PerNamespaceCallbackList fileCallbacks = {};
         Vector<PerNamespaceCallbackList> namespaceCallbacks = {};
 
-        int call(JSC::VM& vm, BundlerPlugin* plugin, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, OnBeforeParseArguments* onBeforeParseArgs, OnBeforeParseResult* onBeforeParseResult);
-        void append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, JSBundlerPluginNativeOnBeforeParseCallback callback, const char* name, NapiExternal* external);
+        int call(BundlerPlugin* plugin, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, OnBeforeParseArguments* onBeforeParseArgs, OnBeforeParseResult* onBeforeParseResult);
+        void append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, JSBundlerPluginNativeOnBeforeParseCallback callback, const char* name, void* externalValue);
 
         Vector<FilterRegExp>* group(const String& namespaceStr, unsigned& index)
         {
@@ -118,9 +125,33 @@ public:
     };
 
 public:
-    bool anyMatchesCrossThread(JSC::VM&, BunString* namespaceStr, BunString* path, bool isOnLoad);
+    static Ref<BundlerPlugin> create(void* config, BunPluginTarget target, JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
+    {
+        return adoptRef(*new BundlerPlugin(config, target, addError, onLoadAsync, onResolveAsync));
+    }
+
+    bool anyMatchesCrossThread(BunString* namespaceStr, BunString* path, bool isOnLoad);
     void tombstone() { tombstoned = true; }
 
+    JSBundlerPlugin* cell() const { return m_cell; }
+    void setCell(JSBundlerPlugin* cell) { m_cell = cell; }
+
+    NamespaceList onLoad = {};
+    NamespaceList onResolve = {};
+    NativePluginList onBeforeParse = {};
+    BunPluginTarget target { BunPluginTargetBrowser };
+
+    WriteBarrierList<JSC::JSPromise> deferredPromises = {};
+    // Roots each registered NapiExternal against normal GC while the build runs.
+    WriteBarrierList<NapiExternal> onBeforeParseExternals = {};
+
+    JSBundlerPluginAddErrorCallback addError;
+    JSBundlerPluginOnLoadAsyncCallback onLoadAsync;
+    JSBundlerPluginOnResolveAsyncCallback onResolveAsync;
+    void* config { nullptr };
+    bool tombstoned { false };
+
+private:
     BundlerPlugin(void* config, BunPluginTarget target, JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
         : addError(addError)
         , onLoadAsync(onLoadAsync)
@@ -130,21 +161,8 @@ public:
         this->config = config;
     }
 
-    NamespaceList onLoad = {};
-    NamespaceList onResolve = {};
-    NativePluginList onBeforeParse = {};
-    BunPluginTarget target { BunPluginTargetBrowser };
-
-    WriteBarrierList<JSC::JSPromise> deferredPromises = {};
-    // The raw `NapiExternal*` stored in `NativePluginCallback` is dereferenced
-    // off the JS thread; this list keeps those cells alive for GC.
-    WriteBarrierList<NapiExternal> onBeforeParseExternals = {};
-
-    JSBundlerPluginAddErrorCallback addError;
-    JSBundlerPluginOnLoadAsyncCallback onLoadAsync;
-    JSBundlerPluginOnResolveAsyncCallback onResolveAsync;
-    void* config { nullptr };
-    bool tombstoned { false };
+    // Back-pointer into the owning VM's GC heap. Only dereferenced on the JS thread.
+    JSBundlerPlugin* m_cell { nullptr };
 };
 
 } // namespace Zig

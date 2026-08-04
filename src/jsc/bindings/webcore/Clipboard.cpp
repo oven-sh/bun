@@ -92,9 +92,10 @@ void Clipboard::writeText(const String& data, Ref<DeferredPromise>&& promise)
         return;
     }
 
-    // Upstream routes writeText through write(), so it inherits supersession.
-    // This shortcut must too, or an earlier still-collecting write() lands
-    // after this one and overwrites it.
+    // Upstream's writeText() writes the pasteboard directly and an in-flight
+    // ItemWriter then fails its changeCount check in didSetAllData(). There is
+    // no changeCount here, so supersede explicitly or the earlier
+    // still-collecting write() lands after this one and overwrites it.
     if (RefPtr previousItemWriter = std::exchange(m_activeItemWriter, nullptr))
         previousItemWriter->invalidate();
 

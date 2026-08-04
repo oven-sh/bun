@@ -242,6 +242,38 @@ describe("bundler", () => {
     },
   });
 
+  // A literal `--external` value starting with `!` (valid filesystem path
+  // character on POSIX and Windows) must stay a positive external — it must
+  // NOT be misread as an internal exclusion (regression for the previous
+  // `!`-prefixed shared encoding between external and internal entries).
+  itBundled("internal/LiteralBangExternalIsNotInternal", {
+    backend: "cli",
+    entryPoints: ["/entry.js"],
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "!foo";
+        console.log(a);
+      `,
+      "/node_modules/!foo/index.js": /* js */ `
+        export const a = "Hello Bang";
+      `,
+      "/node_modules/!foo/package.json": /* json */ `
+        {
+          "name": "!foo",
+          "version": "1.0.0",
+          "main": "index.js"
+        }
+      `,
+    },
+    packages: "external",
+    external: ["!foo"],
+    onAfterBundle(api) {
+      // "!foo" is externalized (packages: external), not bundled.
+      api.expectFile("/out.js").not.toContain("Hello Bang");
+      api.expectFile("/out.js").toContain(`from "!foo"`);
+    },
+  });
+
   // `internal` is read from the `[bundle]` table in bunfig.toml (CLI
   // regression: it must NOT be read from the config root).
   itBundled("internal/BunfigBundleTable", {

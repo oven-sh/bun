@@ -228,10 +228,8 @@ public:
                 }
 
                 if (hasOtherConnectedFrontends) {
-                    // JSGlobalObjectInspectorController::disconnectFrontend calls
-                    // m_agents.willDestroyFrontendAndBackend() before its last-frontend
-                    // check, which would disable every agent for the surviving
-                    // connections; remove only this channel from the router instead.
+                    // The controller's disconnectFrontend disables every agent before
+                    // its last-frontend check; remove only this channel while others remain.
                     auto* globalObject = context.jsGlobalObject();
                     JSC::JSLockHolder locker(globalObject->vm());
                     auto& router = const_cast<Inspector::FrontendRouter&>(globalObject->inspectorController().frontendRouter());

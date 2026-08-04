@@ -459,8 +459,10 @@ describe.concurrent("--isolate experimental global reuse", () => {
     "c.test.ts": `
       import { test, expect } from "bun:test";
       import { testIsolationResetStats } from "bun:internal-for-testing";
+      import pkg from "pkg";
       test("c", () => {
         console.log("RESET_STATS=" + JSON.stringify(testIsolationResetStats()));
+        console.log("PKG_SLOT_C=" + JSON.stringify(pkg.slot));
         expect(true).toBe(true);
       });
     `,
@@ -477,7 +479,9 @@ describe.concurrent("--isolate experimental global reuse", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const m = stdout.match(/RESET_STATS=(\{.*?\})/);
     const stats = m ? (JSON.parse(m[1]) as { reuse: number; swap: number }) : null;
-    return { stdout, stderr, exitCode, stats };
+    const slot = stdout.match(/PKG_SLOT_C=(.*)/)?.[1];
+    const pkgSlotC = slot ? JSON.parse(slot) : undefined;
+    return { stdout, stderr, exitCode, stats, pkgSlotC };
   }
 
   test("is off by default: every file gets a full swap", async () => {
@@ -496,9 +500,12 @@ describe.concurrent("--isolate experimental global reuse", () => {
       // the leaked own properties (string- and symbol-keyed) were scrubbed.
       reuseFixtures("", `expect(pkg.slot).toBe("set-by-a");`),
     );
-    const { stderr, stats, exitCode } = await runIsolate(String(dir), REUSE_ENV);
+    const { stderr, stats, pkgSlotC, exitCode } = await runIsolate(String(dir), REUSE_ENV);
     expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
     expect(stats).toEqual({ reuse: 2, swap: 0 });
+    // Still there after the second reuse hop (b→c), so the re-capture didn't
+    // fold the surviving record into preloadModuleKeys and evict it.
+    expect(pkgSlotC).toBe("set-by-a");
     expect(exitCode).toBe(0);
   });
 

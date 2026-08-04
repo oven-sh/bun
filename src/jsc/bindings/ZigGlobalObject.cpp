@@ -732,6 +732,7 @@ extern "C" void Zig__GlobalObject__captureTestIsolationBaseline(Zig::GlobalObjec
     if (!clientData->testIsolationBaseline)
         clientData->testIsolationBaseline.reset(new Bun::TestIsolationBaseline);
     auto& baseline = *clientData->testIsolationBaseline;
+    const bool isRecapture = baseline.capturedGlobal == globalObject;
     baseline.ownProperties.clear();
     baseline.capturedGlobal = globalObject;
     baseline.lexicalSymbolTableSize = globalObject->globalLexicalEnvironment()->symbolTable()->size();
@@ -756,6 +757,13 @@ extern "C" void Zig__GlobalObject__captureTestIsolationBaseline(Zig::GlobalObjec
                 entry.attributes() });
         return true;
     });
+
+    // On a re-capture (same global reused) the module maps also hold
+    // node_modules the previous file loaded on top; re-snapshotting would tag
+    // them as preload keys and evict them next reset. The preload graph is
+    // stable across reuses, so the first capture's snapshot stays correct.
+    if (isRecapture)
+        return;
 
     baseline.preloadModuleKeys.clear();
     for (auto& [key, entry] : globalObject->moduleLoader()->moduleMap()) {
@@ -909,6 +917,8 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
         auto* process = globalObject->processObject();
         process->wrapped().removeAllListeners();
         process->clearCachedCwd();
+        process->setUncaughtExceptionCaptureCallback(JSC::jsNull());
+        process->m_reportOnUncaughtException = false;
     }
 
     baseline->reuseCount++;

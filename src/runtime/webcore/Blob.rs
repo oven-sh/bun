@@ -1498,7 +1498,7 @@ impl BlobExt for Blob {
                                 }
                                 return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                                     global_this,
-                                    err.with_path(path).to_js(global_this),
+                                    sys_error_with_path_like(&err, pathlike).to_js(global_this),
                                 ));
                             }
                         }

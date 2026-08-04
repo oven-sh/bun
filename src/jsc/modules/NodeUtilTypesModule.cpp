@@ -898,25 +898,23 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsError,
         // node util.isError relies on toString
         // https://github.com/nodejs/node/blob/cf8c6994e0f764af02da4fa70bc5962142181bf3/doc/api/util.md#L2923
         // util.isError is deprecated and removed in node 23
-        // The VMInquiry slot must be destroyed before getPrototype below, which can enter
-        // the VM (a Proxy's getPrototypeOf trap); a live VMInquiry slot disallows VM entry.
-        {
-            PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-            bool has = object->getPropertySlot(globalObject, vm.propertyNames->toStringTagSymbol, slot);
-            scope.assertNoException();
-            if (has) {
-                if (slot.isValue()) {
-                    JSValue value = slot.getValue(globalObject, vm.propertyNames->toStringTagSymbol);
-                    if (value.isString()) {
-                        String tag = asString(value)->value(globalObject);
-                        CLEAR_IF_EXCEPTION(scope);
-                        if (tag == "Error"_s)
-                            return JSValue::encode(jsBoolean(true));
-                    }
+        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool has = object->getPropertySlot(globalObject, vm.propertyNames->toStringTagSymbol, slot);
+        scope.assertNoException();
+        slot.disallowVMEntry.reset();
+        if (has) {
+            if (slot.isValue()) {
+                JSValue value = slot.getValue(globalObject, vm.propertyNames->toStringTagSymbol);
+                if (value.isString()) {
+                    String tag = asString(value)->value(globalObject);
+                    CLEAR_IF_EXCEPTION(scope);
+                    if (tag == "Error"_s)
+                        return JSValue::encode(jsBoolean(true));
                 }
             }
         }
 
+        // May call a Proxy's getPrototypeOf trap.
         JSValue proto = object->getPrototype(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         if (proto.isCell() && (proto.inherits<JSC::ErrorInstance>() || proto.asCell()->type() == ErrorInstanceType || proto.inherits<JSC::ErrorPrototype>()))

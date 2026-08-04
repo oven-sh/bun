@@ -2646,7 +2646,7 @@ function accountQueuedHeaderBytes(res, queued) {
 function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
   callWriteHeadIfObservable(res, res[headerStateSymbol]);
   if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
-    updateHasBody(res, res.statusCode);
+    updateHasBody(res, coerceImplicitStatusCode(res));
   }
   accountQueuedHeaderBytes(res, queued);
   if (chunk && !res._hasBody) {
@@ -2675,7 +2675,7 @@ function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
 function bufferPipelinedEnd(res, queued, chunk, encoding, callback) {
   callWriteHeadIfObservable(res, res[headerStateSymbol]);
   if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
-    updateHasBody(res, res.statusCode);
+    updateHasBody(res, coerceImplicitStatusCode(res));
   }
   accountQueuedHeaderBytes(res, queued);
   if (chunk && !res._hasBody) {
@@ -3074,6 +3074,9 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     return this;
   }
 
+  const headerState = this[headerStateSymbol];
+  callWriteHeadIfObservable(this, headerState);
+
   if (this[headerStateSymbol] === NodeHTTPHeaderState.none) {
     // Implicit header: Node's write_() runs _implicitHeader() (which derives
     // _hasBody from the status code) unconditionally before its !_hasBody
@@ -3081,7 +3084,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // the header state without deriving _hasBody and a later body write to
     // a 204/304 would reach the wire chunk-framed with no terminator.
     // updateHasBody only ever clears _hasBody, so this is idempotent.
-    updateHasBody(this, this.statusCode);
+    updateHasBody(this, coerceImplicitStatusCode(this));
   }
   if (chunk && !this._hasBody) {
     if (this[kRejectNonStandardBodyWrites]) {
@@ -3107,9 +3110,6 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   ) {
     this.socket?.[kHandle]?.setResponseTrailers(trailer);
   }
-
-  const headerState = this[headerStateSymbol];
-  callWriteHeadIfObservable(this, headerState);
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
@@ -3269,7 +3269,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     // the header state without deriving _hasBody and a later body write to
     // a 204/304 would reach the wire chunk-framed with no terminator.
     // updateHasBody only ever clears _hasBody, so this is idempotent.
-    updateHasBody(this, this.statusCode);
+    updateHasBody(this, coerceImplicitStatusCode(this));
   }
   if (chunk && !this._hasBody) {
     if (this[kRejectNonStandardBodyWrites]) {
@@ -3613,6 +3613,16 @@ ServerResponse.prototype.flushHeaders = function () {
     this._send("");
   }
 };
+
+function coerceImplicitStatusCode(res) {
+  const originalStatusCode = res.statusCode;
+  const statusCode = originalStatusCode | 0;
+  if (statusCode < 100 || statusCode > 999) {
+    throw $ERR_HTTP_INVALID_STATUS_CODE(format("%s", originalStatusCode));
+  }
+  res.statusCode = statusCode;
+  return statusCode;
+}
 
 function updateHasBody(response, statusCode) {
   // RFC 2616, 10.2.5:

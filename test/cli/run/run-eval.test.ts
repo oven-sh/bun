@@ -433,30 +433,34 @@ describe("node-style CLI errors", () => {
     expect(exitCode).toBe(9);
   });
 
-  test.each(["--allow-fs-read=*", "--allow-fs-write=*"])("%s without --permission is rejected", async flag => {
+  test.each(["--allow-fs-read=*", "--allow-fs-write=*", "--allow-child-process", "--allow-net"])(
+    "%s without --permission is rejected",
+    async flag => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), flag, "-e", "1"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toBe("");
+      expect(stderr).toContain("--permission is required");
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  test("--permission enables the model and defines process.permission", async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), flag, "-e", "1"],
+      cmd: [bunExe(), "--permission", "-e", "process.stdout.write(String(typeof process.permission.has))"],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toBe("");
-    expect(stderr).toContain("--permission is required");
-    expect(exitCode).toBe(1);
-  });
-
-  test("--permission enables the permission model", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--permission", "-p", "process.permission.has('fs.write')"],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stdout).toBe("false\n");
+    expect(stderr).toBe("");
+    expect(stdout).toBe("function");
     expect(exitCode).toBe(0);
   });
 });

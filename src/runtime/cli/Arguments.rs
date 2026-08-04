@@ -1333,21 +1333,34 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 net,
                 addon,
             });
-        } else if !args.options(b"--allow-fs-read").is_empty()
-            || !args.options(b"--allow-fs-write").is_empty()
-            || args.flag(b"--allow-child-process")
-            || args.flag(b"--allow-worker")
-            || args.flag(b"--allow-inspector")
-            || args.flag(b"--allow-wasi")
-            || args.flag(b"--allow-net")
-            || args.flag(b"--allow-addons")
-        {
-            // initializePermission (node:internal/process/pre_execution):
-            // every --allow-* flag requires --permission.
-            // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/pre_execution.js#L720-L724
-            bun_core::pretty_errorln!("TypeError [ERR_MISSING_OPTION]: --permission is required");
-            Output::flush();
-            Global::exit(1);
+        } else {
+            // Node's node.cc ProcessGlobalArgs: ERR_MISSING_OPTION when any
+            // --allow-* is passed without --permission.
+            for allow_flag in [&b"--allow-fs-read"[..], b"--allow-fs-write"] {
+                if !args.options(allow_flag).is_empty() {
+                    Output::err_generic(
+                        "--permission is required to use {}",
+                        format_args!("{}", BStr::new(allow_flag)),
+                    );
+                    Global::exit(1);
+                }
+            }
+            for allow_flag in [
+                &b"--allow-child-process"[..],
+                b"--allow-worker",
+                b"--allow-inspector",
+                b"--allow-wasi",
+                b"--allow-net",
+                b"--allow-addons",
+            ] {
+                if args.flag(allow_flag) {
+                    Output::err_generic(
+                        "--permission is required to use {}",
+                        format_args!("{}", BStr::new(allow_flag)),
+                    );
+                    Global::exit(1);
+                }
+            }
         }
 
         if let Some(unhandled_rejections) = args.option(b"--unhandled-rejections") {

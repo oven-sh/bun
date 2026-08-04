@@ -1112,15 +1112,7 @@ pub mod fs {
 
         /// Cache (or threadlocal-
         /// stash) an `EntriesOption::Err` for `dir` and hand back its address.
-        ///
-        /// `refreshing_in_place` is set when the slot already holds a live
-        /// `Entries(&'static mut DirEntry)` whose stale-generation re-read
-        /// just failed. Overwriting that slot with `Err` (or re-pointing the
-        /// index at `NOT_FOUND`) would orphan the leaked `Box<DirEntry>`
-        /// behind the reference, and closing its cached `.fd` is unsafe
-        /// (copies live in `Watcher.watchlist`, `ParseTask.contents_or_fd`,
-        /// and `DirectoryWatchStore`). Leave the slot alone and hand back a
-        /// threadlocal `Err`; the next lookup re-tries the open.
+        /// `refreshing_in_place` skips the cache write so the slot's live `DirEntry` stays reachable.
         fn read_directory_error(
             &mut self,
             dir: &[u8],

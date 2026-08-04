@@ -363,7 +363,10 @@ it("deserialize does not pre-allocate array storage from an untrusted length fie
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  const [forged, roundTrip] = stdout.trim().split("\n").map(line => JSON.parse(line));
+  const [forged, roundTrip] = stdout
+    .trim()
+    .split("\n")
+    .map(line => JSON.parse(line));
   expect({ ...forged, rssDeltaMB: undefined }).toEqual({
     rssDeltaMB: undefined,
     length: 100_000_000,

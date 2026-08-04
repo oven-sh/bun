@@ -813,6 +813,15 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
         || globalObject->m_errorConstructorPrepareStackTraceValue.get())
         return swap();
 
+    // Restore spies before the own-property compare so a spyOn(globalThis, ...)
+    // is reverted (baseline then matches) and the scrub can't be undone by
+    // clearSpy putDirect'ing a deleted key back.
+    JSMock__resetSpies(globalObject);
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return swap();
+    }
+
     // A changed baseline slot value/attributes = user overwrote a built-in;
     // an extra own property = leak to scrub.
     WTF::Vector<JSC::Identifier, 16> toDelete;
@@ -893,17 +902,14 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
         }
     }
 
-    JSMock__resetSpies(globalObject);
-    if (scope.exception()) [[unlikely]] {
-        scope.clearException();
-        return swap();
-    }
     globalObject->mockModule.activeMocks.clear();
     globalObject->globalEventScope->removeAllEventListeners();
-    // The Rust side already restored the OS cwd; drop the JS-side cache so the
-    // next `process.cwd()` re-reads it.
-    if (globalObject->hasProcessObject())
-        globalObject->processObject()->clearCachedCwd();
+    globalObject->overridenDateNow = JSC::PNaN;
+    if (globalObject->hasProcessObject()) {
+        auto* process = globalObject->processObject();
+        process->wrapped().removeAllListeners();
+        process->clearCachedCwd();
+    }
 
     baseline->reuseCount++;
     return true;

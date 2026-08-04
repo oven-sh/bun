@@ -4701,10 +4701,12 @@ impl VirtualMachine {
         let old_global_ref = JSGlobalObject::opaque_ref(old_global);
 
         // Scrub and reuse the global if the file left it in its post-preload
-        // shape; node_modules CodeBlocks and JIT'd code then survive.
+        // shape; node_modules CodeBlocks and JIT'd code then survive. Preload
+        // re-evaluates on the reused global, so re-capture the baseline after.
         if self.test_isolation_state.global_reuse
             && JSGlobalObject::try_reset_for_test_isolation(old_global_ref)
         {
+            self.test_isolation_state.baseline_captured = false;
             return;
         }
 

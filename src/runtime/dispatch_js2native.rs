@@ -93,6 +93,7 @@ pub(crate) fn bun_get_loop_elu(global: &JSGlobalObject, _frame: &CallFrame) -> J
     // Idle BEFORE elapsed, matching node's order (it passes loopIdleTime() in
     // and reads process.hrtime() after). Reversed, idle is dated after now and
     // active = now - idle comes out short.
+    // SAFETY: `loop_ptr` is the live usockets loop (non-null checked above).
     let idle_ms = unsafe { bun_uws::us_loop_idle_ns(loop_ptr) } as f64 / 1_000_000.0;
     let elapsed_ms = vm.loop_start.elapsed().as_secs_f64() * 1000.0;
     let arr = JSValue::create_empty_array(global, 2)?;

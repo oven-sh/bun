@@ -823,6 +823,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
           });
         }
+        http_res.shouldKeepAlive = isAncientHTTP
+          ? (dispatchBits & DISPATCH_CONN_KEEPALIVE) !== 0
+          : (dispatchBits & DISPATCH_CONN_CLOSE) === 0;
         http_res._keepAliveTimeout = server.keepAliveTimeout;
         // Only stamp the symbol when the server actually set `uniqueHeaders`:
         // unconditionally adding it (even as undefined) forced a hidden-class
@@ -2713,6 +2716,7 @@ const DISPATCH_HAS_EXPECT = 1 << 4;
 const DISPATCH_EXPECT_CONTINUE = 1 << 5;
 const DISPATCH_HAS_CONTENT_LENGTH = 1 << 6;
 const DISPATCH_HAS_TRANSFER_ENCODING = 1 << 7;
+const DISPATCH_CONN_KEEPALIVE = 1 << 8;
 
 // Whether the response should advertise a persistent connection.
 // `connection` is the request's Connection header value (or undefined).

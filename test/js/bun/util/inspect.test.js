@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -13,8 +13,8 @@ it("prototype", () => {
     ReadableStream.prototype,
     WritableStream.prototype,
     TransformStream.prototype,
-    MessageEvent.prototype,
-    CloseEvent.prototype,
+    // Event prototypes have a brand-checked [nodejs.util.inspect.custom]
+    // (like Node's own Event), so inspecting the bare prototype throws.
     WebSocket.prototype,
   ];
 
@@ -171,11 +171,15 @@ Request (0 KB) {
   );
 });
 
+// Event now has a Node-compatible [nodejs.util.inspect.custom] that prints
+// `<ctor> { type, defaultPrevented, cancelable, timeStamp }`.
 it("MessageEvent", () => {
   expect(Bun.inspect(new MessageEvent("message", { data: 123 }))).toBe(
     `MessageEvent {
-  type: "message",
-  data: 123,
+  type: 'message',
+  defaultPrevented: false,
+  cancelable: false,
+  timeStamp: 0
 }`,
   );
 });
@@ -183,8 +187,10 @@ it("MessageEvent", () => {
 it("MessageEvent with no data set", () => {
   expect(Bun.inspect(new MessageEvent("message"))).toBe(
     `MessageEvent {
-  type: "message",
-  data: null,
+  type: 'message',
+  defaultPrevented: false,
+  cancelable: false,
+  timeStamp: 0
 }`,
   );
 });
@@ -199,8 +205,10 @@ it("MessageEvent with deleted data", () => {
   delete event.data;
   expect(Bun.inspect(event)).toBe(
     `MessageEvent {
-  type: "message",
-  data: null,
+  type: 'message',
+  defaultPrevented: false,
+  cancelable: false,
+  timeStamp: 0
 }`,
   );
 });
@@ -694,31 +702,10 @@ it("CloseEvent", () => {
   });
   expect(Bun.inspect(closeEvent)).toMatchInlineSnapshot(`
     "CloseEvent {
-      isTrusted: false,
-      wasClean: false,
-      code: 1000,
-      reason: "Normal",
-      type: "close",
-      target: null,
-      currentTarget: null,
-      eventPhase: 0,
-      cancelBubble: false,
-      bubbles: false,
-      cancelable: false,
+      type: 'close',
       defaultPrevented: false,
-      composed: false,
-      timeStamp: 0,
-      srcElement: null,
-      returnValue: true,
-      composedPath: [Function: composedPath],
-      stopPropagation: [Function: stopPropagation],
-      stopImmediatePropagation: [Function: stopImmediatePropagation],
-      preventDefault: [Function: preventDefault],
-      initEvent: [Function: initEvent],
-      NONE: 0,
-      CAPTURING_PHASE: 1,
-      AT_TARGET: 2,
-      BUBBLING_PHASE: 3,
+      cancelable: false,
+      timeStamp: 0
     }"
   `);
 });
@@ -731,20 +718,12 @@ it("ErrorEvent", () => {
     colno: 10,
     error: new Error("Test error"),
   });
-  expect(normalizeBunSnapshot(Bun.inspect(errorEvent)).replace(/\d+ \| /gim, "NNN |")).toMatchInlineSnapshot(`
+  expect(Bun.inspect(errorEvent)).toMatchInlineSnapshot(`
     "ErrorEvent {
-      type: "error",
-      message: "Something went wrong",
-      error: NNN |  const errorEvent = new ErrorEvent("error", {
-    NNN |    message: "Something went wrong",
-    NNN |    filename: "script.js",
-    NNN |    lineno: 42,
-    NNN |    colno: 10,
-    NNN |    error: new Error("Test error"),
-                         ^
-    error: Test error
-        at <anonymous> (file:NN:NN)
-    ,
+      type: 'error',
+      defaultPrevented: false,
+      cancelable: false,
+      timeStamp: 0
     }"
   `);
 });
@@ -759,8 +738,10 @@ it("MessageEvent", () => {
   });
   expect(Bun.inspect(messageEvent)).toMatchInlineSnapshot(`
     "MessageEvent {
-      type: "message",
-      data: "Hello, world!",
+      type: 'message',
+      defaultPrevented: false,
+      cancelable: false,
+      timeStamp: 0
     }"
   `);
 });
@@ -773,33 +754,10 @@ it("CustomEvent", () => {
   });
   expect(Bun.inspect(customEvent)).toMatchInlineSnapshot(`
     "CustomEvent {
-      isTrusted: false,
-      detail: {
-        value: 42,
-        name: "test",
-      },
-      initCustomEvent: [Function: initCustomEvent],
-      type: "custom",
-      target: null,
-      currentTarget: null,
-      eventPhase: 0,
-      cancelBubble: false,
-      bubbles: true,
-      cancelable: true,
+      type: 'custom',
       defaultPrevented: false,
-      composed: false,
-      timeStamp: 0,
-      srcElement: null,
-      returnValue: true,
-      composedPath: [Function: composedPath],
-      stopPropagation: [Function: stopPropagation],
-      stopImmediatePropagation: [Function: stopImmediatePropagation],
-      preventDefault: [Function: preventDefault],
-      initEvent: [Function: initEvent],
-      NONE: 0,
-      CAPTURING_PHASE: 1,
-      AT_TARGET: 2,
-      BUBBLING_PHASE: 3,
+      cancelable: true,
+      timeStamp: 0
     }"
   `);
 });

@@ -80,27 +80,25 @@ function argumentsObject(...values: unknown[]) {
 
 const cases: Case[] = [
   // Loose mode compares primitives with ==, strict mode with Object.is.
-  { name: "0 and -0", a: () => 0, b: () => -0, strict: false, loose: true, looseBug: "reports not equal" },
+  { name: "0 and -0", a: () => 0, b: () => -0, strict: false, loose: true },
   { name: "NaN and NaN", a: () => NaN, b: () => NaN, strict: true, loose: true },
-  { name: "[0] and [-0]", a: () => [0], b: () => [-0], strict: false, loose: true, looseBug: "reports not equal" },
-  { name: "'1' and 1", a: () => "1", b: () => 1, strict: false, loose: true, looseBug: "reports not equal" },
-  { name: "['1'] and [1]", a: () => ["1"], b: () => [1], strict: false, loose: true, looseBug: "reports not equal" },
+  { name: "[0] and [-0]", a: () => [0], b: () => [-0], strict: false, loose: true },
+  { name: "'1' and 1", a: () => "1", b: () => 1, strict: false, loose: true },
+  { name: "['1'] and [1]", a: () => ["1"], b: () => [1], strict: false, loose: true },
   {
     name: "'+00000000' and false",
     a: () => "+00000000",
     b: () => false,
     strict: false,
     loose: true,
-    looseBug: "reports not equal",
   },
-  { name: "'' and false", a: () => "", b: () => false, strict: false, loose: true, looseBug: "reports not equal" },
+  { name: "'' and false", a: () => "", b: () => false, strict: false, loose: true },
   {
     name: "null and undefined",
     a: () => null,
     b: () => undefined,
     strict: false,
     loose: true,
-    looseBug: "reports not equal",
   },
   {
     name: "{ a: -0 } and { a: 0 }",
@@ -108,9 +106,8 @@ const cases: Case[] = [
     b: () => ({ a: 0 }),
     strict: false,
     loose: true,
-    looseBug: "reports not equal",
   },
-  { name: "1n and 1", a: () => 1n, b: () => 1, strict: false, loose: true, looseBug: "reports not equal" },
+  { name: "1n and 1", a: () => 1n, b: () => 1, strict: false, loose: true },
   { name: "new String('a') and 'a'", a: () => new String("a"), b: () => "a", strict: false, loose: false },
   { name: "two boxed equal strings", a: () => new String("a"), b: () => new String("a"), strict: true, loose: true },
   { name: "two boxed equal numbers", a: () => new Number(1), b: () => new Number(1), strict: true, loose: true },
@@ -138,7 +135,6 @@ const cases: Case[] = [
     b: () => new String("test"),
     strict: false,
     loose: false,
-    looseBug: "reports equal",
   },
   {
     name: "a boxed string with an out-of-range indexed own property",
@@ -150,7 +146,6 @@ const cases: Case[] = [
     b: () => new String("ab"),
     strict: false,
     loose: false,
-    looseBug: "reports equal",
   },
 
   // Undefined-valued and missing properties. Both modes compare own key counts.
@@ -160,7 +155,6 @@ const cases: Case[] = [
     b: () => ({ a: undefined }),
     strict: false,
     loose: false,
-    looseBug: "reports equal",
   },
   {
     name: "{ a: undefined } and { b: undefined }",
@@ -168,7 +162,6 @@ const cases: Case[] = [
     b: () => ({ b: undefined }),
     strict: false,
     loose: false,
-    looseBug: "reports equal",
   },
   {
     name: "{ a: { b: undefined } } and { a: {} }",
@@ -176,7 +169,6 @@ const cases: Case[] = [
     b: () => ({ a: {} }),
     strict: false,
     loose: false,
-    looseBug: "reports equal",
   },
   {
     name: "[1] and [1, undefined]",
@@ -184,7 +176,6 @@ const cases: Case[] = [
     b: () => [1, undefined],
     strict: false,
     loose: false,
-    looseBug: "reports equal",
   },
   {
     name: "a hole and an explicit undefined",
@@ -192,7 +183,6 @@ const cases: Case[] = [
     b: () => [undefined, 1],
     strict: false,
     loose: false,
-    looseBug: "reports equal",
   },
 
   // Prototypes.
@@ -269,7 +259,6 @@ const cases: Case[] = [
     b: () => ({}),
     strict: false,
     loose: true,
-    looseBug: "reports not equal",
   },
   {
     name: "two objects sharing a symbol key",
@@ -298,7 +287,6 @@ const cases: Case[] = [
     b: () => ({ [Symbol("s")]: 1 }),
     strict: false,
     loose: true,
-    looseBug: "reports not equal",
   },
 
   // Only own enumerable properties participate.
@@ -338,7 +326,6 @@ const cases: Case[] = [
     b: () => new Date(0),
     strict: false,
     loose: false,
-    looseBug: "reports equal",
   },
 
   // RegExp.
@@ -350,7 +337,6 @@ const cases: Case[] = [
     b: () => /a/g,
     strict: false,
     loose: false,
-    looseBug: "reports equal",
   },
 
   // Error.
@@ -435,7 +421,6 @@ const cases: Case[] = [
     b: () => new Map(),
     strict: false,
     loose: false,
-    looseBug: "reports equal",
   },
   {
     name: "sets holding deep-equal objects",
@@ -455,7 +440,6 @@ const cases: Case[] = [
     b: () => new WeakMap(),
     strict: false,
     loose: false,
-    looseBug: "reports equal",
   },
   {
     name: "two empty WeakSets",
@@ -463,7 +447,6 @@ const cases: Case[] = [
     b: () => new WeakSet(),
     strict: false,
     loose: false,
-    looseBug: "reports equal",
   },
   {
     name: "a WeakMap and a WeakSet",
@@ -471,7 +454,6 @@ const cases: Case[] = [
     b: () => new WeakSet(),
     strict: false,
     loose: false,
-    looseBug: "reports equal",
   },
 
   // Typed arrays and buffers.
@@ -537,7 +519,6 @@ const cases: Case[] = [
     b: () => new Uint8Array([1]),
     strict: false,
     loose: false,
-    looseBug: "reports equal",
   },
   {
     name: "an empty typed array with an extra own property",
@@ -545,7 +526,6 @@ const cases: Case[] = [
     b: () => new Uint8Array(0),
     strict: false,
     loose: false,
-    looseBug: "reports equal",
   },
   {
     name: "two views over the same ArrayBuffer, one with an extra own property",
@@ -553,7 +533,6 @@ const cases: Case[] = [
     b: () => new Uint8Array(sharedArrayBuffer),
     strict: false,
     loose: false,
-    looseBug: "reports equal",
   },
   {
     // Strict mode compares the bytes; the property walk would see both as NaN and accept them.
@@ -572,7 +551,6 @@ const cases: Case[] = [
     b: () => [1],
     strict: false,
     loose: false,
-    looseBug: "reports equal",
   },
   { name: "arrays of different length", a: () => [1, 2], b: () => [1], strict: false, loose: false },
   { name: "'a' and ['a']", a: () => "a", b: () => ["a"], strict: false, loose: false },

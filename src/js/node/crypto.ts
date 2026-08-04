@@ -347,7 +347,7 @@ crypto_exports.getHashes = getHashes;
 // domain-aware guard when a domain is active. Without one, this is a plain
 // delegation.
 function wrapDomainCallbackLast(fn, name) {
-  function wrapper(a, b, c, d) {
+  function wrapper(_a, _b, _c, _d) {
     if (process.domain != null) {
       const n = arguments.length;
       if (n > 0 && typeof arguments[n - 1] === "function") {

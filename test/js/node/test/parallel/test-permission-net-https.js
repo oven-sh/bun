@@ -1,6 +1,7 @@
 'use strict';
 
 const common = require('../common');
+if (process.versions.bun) common.skip('Bun does not implement the Node.js permission model (--permission)');
 if (!common.hasCrypto) { common.skip('missing crypto'); };
 const { isMainThread } = require('worker_threads');
 

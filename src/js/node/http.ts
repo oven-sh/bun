@@ -9,9 +9,17 @@ const { Server, ServerResponse } = require("node:_http_server");
 
 const { METHODS, STATUS_CODES, setMaxHTTPHeaderSize, getMaxHTTPHeaderSize } = require("internal/http");
 
-// Like Node.js's lib/_http_client.js creating its debuglog('http'): emits the
-// sensitive-data process warning when NODE_DEBUG enables the http section.
-require("node:util").debuglog("http");
+// Like Node.js's lib/_http_client.js: emit the sensitive-data process warning
+// when NODE_DEBUG enables the http section. Node fires it from the first
+// debug() call inside its client; Bun's http has no debug() call sites, so
+// fire it here when the section is enabled.
+if (require("node:util").debuglog("http").enabled) {
+  process.emitWarning(
+    "Setting the NODE_DEBUG environment variable to 'http' can expose " +
+      "sensitive data (such as passwords, tokens and authentication headers) " +
+      "in the resulting log.",
+  );
+}
 
 const { WebSocket, CloseEvent, MessageEvent } = globalThis;
 

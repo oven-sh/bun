@@ -571,6 +571,8 @@ describe("util.debuglog", () => {
       expect(exitCode).toBe(0);
     }
   }, 20_000);
+});
+
 // https://nodejs.org/docs/latest-v26.x/api/util.html#utildebuglogsection-callback
 describe("util.debuglog", () => {
   const script = `

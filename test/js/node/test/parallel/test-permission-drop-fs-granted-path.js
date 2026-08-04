@@ -1,6 +1,7 @@
 'use strict';
 
-require('../common');
+const common = require('../common');
+if (process.versions.bun) common.skip('Bun does not implement the Node.js permission model (--permission)');
 
 const { spawnSync } = require('child_process');
 const assert = require('assert');

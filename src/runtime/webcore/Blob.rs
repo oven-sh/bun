@@ -4763,15 +4763,17 @@ pub(crate) fn write_file_with_source_destination(
                 } else {
                     is_source && size <= cached
                 };
-                if size == MAX_SIZE || (blob.offset.get() == 0 && (size == cached || from_stat))
-                {
+                if size == MAX_SIZE || (blob.offset.get() == 0 && (size == cached || from_stat)) {
                     MAX_SIZE
                 } else {
                     size
                 }
             };
-            let max_len = slice_len(source_blob, &source_store, true)
-                .min(slice_len(destination_blob, &destination_store, false));
+            let max_len = slice_len(source_blob, &source_store, true).min(slice_len(
+                destination_blob,
+                &destination_store,
+                false,
+            ));
             let mut file_copier = copy_file::CopyFile::create(
                 destination_store,
                 source_store,

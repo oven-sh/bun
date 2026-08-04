@@ -195,7 +195,8 @@ describe("HMAC", () => {
     const source = /* js */ `
       import { createHmac } from "node:crypto";
       const N = 1 << 20;
-      const attempts = [];
+      const hmac = k => createHmac("sha256", k).update("payload").digest("hex");
+      const out = { second: [], first: [] };
       for (let i = 0; i < 5; i++) {
         const key = new Uint8Array(N).fill(0x41);
         const orig = key.slice();
@@ -210,10 +211,27 @@ describe("HMAC", () => {
           return "sha256";
         };
         const got = new Bun.CryptoHasher(alg, key).update("payload").digest("hex");
-        const want = createHmac("sha256", orig).update("payload").digest("hex");
-        attempts.push({ calls, ok: got === want });
+        out.second.push({ calls, ok: got === hmac(orig) });
       }
-      console.log(JSON.stringify(attempts));
+      // Detaching during the single toString() must yield HMAC(empty key):
+      // the algorithm is coerced before the key is captured, so the key
+      // capture sees the already-detached buffer as zero-length.
+      for (let i = 0; i < 3; i++) {
+        const key = new Uint8Array(N).fill(0x41);
+        const spray = [];
+        let calls = 0;
+        const alg = new String("sha256");
+        alg.toString = () => {
+          if (++calls === 1) {
+            key.buffer.transfer(0);
+            for (let j = 0; j < 8; j++) spray.push(new Uint8Array(N).fill(0x5a));
+          }
+          return "sha256";
+        };
+        const got = new Bun.CryptoHasher(alg, key).update("payload").digest("hex");
+        out.first.push({ calls, detached: key.byteLength === 0, ok: got === hmac(new Uint8Array(0)) });
+      }
+      console.log(JSON.stringify(out));
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", source],
@@ -223,14 +241,20 @@ describe("HMAC", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const attempts = JSON.parse(stdout.trim());
-    expect(attempts).toEqual([
-      { calls: 1, ok: true },
-      { calls: 1, ok: true },
-      { calls: 1, ok: true },
-      { calls: 1, ok: true },
-      { calls: 1, ok: true },
-    ]);
+    expect(JSON.parse(stdout.trim())).toEqual({
+      second: [
+        { calls: 1, ok: true },
+        { calls: 1, ok: true },
+        { calls: 1, ok: true },
+        { calls: 1, ok: true },
+        { calls: 1, ok: true },
+      ],
+      first: [
+        { calls: 1, detached: true, ok: true },
+        { calls: 1, detached: true, ok: true },
+        { calls: 1, detached: true, ok: true },
+      ],
+    });
     expect(exitCode).toBe(0);
 
     // The non-hostile case: a primitive-string algorithm + buffer key must

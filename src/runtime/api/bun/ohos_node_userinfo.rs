@@ -148,8 +148,19 @@ fn is_node_like(base: &[u8]) -> bool {
 // Escape hatch
 // ─────────────────────────────────────────────────────────────────────────
 
-fn is_disabled() -> bool {
-    if std::env::var_os("BUN_OHOS_NO_NODE_USERINFO").is_some() {
+/// Checked against **both** this bun process's own environment (a
+/// `BUN_OHOS_NO_NODE_USERINFO=1 bun script.js` global kill switch, set
+/// before bun ever ran) and `env_array`, the environment about to become
+/// the *child's* (a caller doing `Bun.spawn(cmd, { env: {
+/// BUN_OHOS_NO_NODE_USERINFO: "1" } })` for one specific spawn, which
+/// `override_env` may mean never touched bun's own process env at all).
+/// Checking only the former misses the latter; checking only the latter
+/// misses a plain shell-set global toggle on a call that passed an explicit
+/// non-inheriting `env:` for an unrelated reason. Either one disables it.
+fn is_disabled(env_array: &[*const c_char]) -> bool {
+    if find_env_value(env_array, b"BUN_OHOS_NO_NODE_USERINFO").is_some()
+        || std::env::var_os("BUN_OHOS_NO_NODE_USERINFO").is_some()
+    {
         return true;
     }
     // Honor the embedded shim's own toggle (ohos_compat_shim.c's
@@ -157,8 +168,10 @@ fn is_disabled() -> bool {
     // getpwuid_r interposer also turns this off -- otherwise "the shim is
     // disabled" and "node still gets a working username" would contradict
     // each other for anyone deliberately probing the raw ENOENT.
-    if let Some(v) = std::env::var_os("OHOS_COMPAT_SHIM_DISABLE") {
-        if v.to_string_lossy().split(',').any(|s| s == "getpwuid_r") {
+    let shim_disable = find_env_value(env_array, b"OHOS_COMPAT_SHIM_DISABLE")
+        .or_else(|| std::env::var_os("OHOS_COMPAT_SHIM_DISABLE").map(|v| v.into_encoded_bytes()));
+    if let Some(v) = shim_disable {
+        if v.split(|&b| b == b',').any(|s| s == b"getpwuid_r") {
             return true;
         }
     }
@@ -438,7 +451,7 @@ pub fn compute(argv0: &[u8], env_array: &[*const c_char]) -> Option<Injection> {
     if !is_node_like(basename(argv0)) {
         return None;
     }
-    if is_disabled() {
+    if is_disabled(env_array) {
         return None;
     }
     let preload = preload_path()?;
@@ -567,6 +580,41 @@ mod tests {
         assert!(!is_node_like(b"sh"));
         assert!(!is_node_like(b""));
         assert!(!is_node_like(b"node_modules"));
+    }
+
+    /// Regression test for the bug `bun test` caught: the escape hatch must
+    /// be checked against `env_array` (the *child's* target env, which is
+    /// where a caller doing `Bun.spawn(cmd, { env: { BUN_OHOS_NO_NODE_USERINFO:
+    /// "1" } } })` puts it) and not only `std::env::var_os` (this process's
+    /// own ambient env, which such a call never touches). Doesn't set real
+    /// process env vars, since parallel `cargo test` runs would race on
+    /// those -- only exercises the env_array half of `is_disabled`.
+    #[test]
+    fn is_disabled_reads_env_array_not_only_process_env() {
+        use std::ffi::CString;
+        let entries: Vec<CString> = vec![
+            CString::new("PATH=/usr/bin").unwrap(),
+            CString::new("BUN_OHOS_NO_NODE_USERINFO=1").unwrap(),
+        ];
+        let ptrs: Vec<*const c_char> = entries.iter().map(|e| e.as_ptr()).collect();
+        assert!(is_disabled(&ptrs));
+
+        let entries_without: Vec<CString> = vec![CString::new("PATH=/usr/bin").unwrap()];
+        let ptrs_without: Vec<*const c_char> = entries_without.iter().map(|e| e.as_ptr()).collect();
+        assert!(!is_disabled(&ptrs_without));
+    }
+
+    #[test]
+    fn is_disabled_reads_shim_disable_getpwuid_r_from_env_array() {
+        use std::ffi::CString;
+        let entries: Vec<CString> = vec![CString::new("OHOS_COMPAT_SHIM_DISABLE=close_range,getpwuid_r").unwrap()];
+        let ptrs: Vec<*const c_char> = entries.iter().map(|e| e.as_ptr()).collect();
+        assert!(is_disabled(&ptrs));
+
+        // Disabling an unrelated symbol must not disable this.
+        let entries_other: Vec<CString> = vec![CString::new("OHOS_COMPAT_SHIM_DISABLE=close_range").unwrap()];
+        let ptrs_other: Vec<*const c_char> = entries_other.iter().map(|e| e.as_ptr()).collect();
+        assert!(!is_disabled(&ptrs_other));
     }
 
     #[test]

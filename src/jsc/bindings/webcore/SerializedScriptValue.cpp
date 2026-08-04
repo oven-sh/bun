@@ -3970,11 +3970,8 @@ DeserializationResult CloneDeserializer::deserialize()
             if (!read(length)) {
                 goto error;
             }
-            // Each indexed entry is at least a 4-byte index plus a 1-byte value tag, so the
-            // payload cannot hold more than remaining/5 entries. Clamping the initial
-            // allocation to that bound prevents a forged length field from allocating up to
-            // ~1 GB of contiguous storage from a tiny payload; setLength() then restores the
-            // declared .length and lets JSC pick sparse storage for the hole-filled tail.
+            // Each indexed entry is at least a uint32 index plus a 1-byte value tag, so the
+            // remaining input bounds how many entries can exist; setLength() restores .length.
             uint32_t initialCapacity = static_cast<uint32_t>(std::min<uint64_t>(length, static_cast<uint64_t>(m_end - m_ptr) / (sizeof(uint32_t) + 1)));
             JSArray* outArray = constructEmptyArray(m_globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), initialCapacity);
             if (scope.exception()) [[unlikely]]

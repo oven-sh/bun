@@ -68,6 +68,7 @@
 #include "BunPlugin.h"
 #include "BunProcess.h"
 #include "BunSecureContextCache.h"
+#include "NodeV8.h"
 #include "ProcessIdentifier.h"
 #include "BunWorkerGlobalScope.h"
 #include "CallSite.h"

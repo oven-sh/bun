@@ -516,11 +516,7 @@ impl ResolveMessage {
         matches!(
             resolve.import_kind,
             ImportKind::Require | ImportKind::Stmt | ImportKind::Dynamic
-        ) && self
-            .msg
-            .data
-            .text
-            .starts_with(b"No such built-in module:")
+        ) && self.msg.data.text.starts_with(b"No such built-in module:")
     }
 
     /// `err.name` — Node throws module-resolution failures as plain `Error`.

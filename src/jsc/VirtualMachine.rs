@@ -6393,45 +6393,44 @@ impl VirtualMachine {
             // Node prints the error's own name verbatim (`Error: boom`); Bun's
             // classic rendering lowercases plain `Error` to `error:` and
             // promotes a `CODE: `-prefixed message's code to the name slot.
-            let (display_name, display_message) = if name.eql_comptime(b"Error")
-                && !node_uncaught_style
-            {
-                'brk: {
-                    if let Some(code) = optional_code {
-                        if bun_core::is_all_ascii(code) {
-                            let has_prefix = if message.is_utf16() {
-                                let msg_chars = message.utf16();
-                                msg_chars.len() > code.len() + 2 + 1
-                                    && code
-                                        .iter()
-                                        .zip(msg_chars.iter())
-                                        .all(|(&a, &b)| u16::from(a) == b)
-                                    && msg_chars[code.len()] == u16::from(b':')
-                                    && msg_chars[code.len() + 1] == u16::from(b' ')
-                            } else {
-                                let msg_chars = message.latin1();
-                                msg_chars.len() > code.len() + 2 + 1
-                                    && bun_core::strings::eql_long(
-                                        &msg_chars[..code.len()],
-                                        code,
-                                        false,
-                                    )
-                                    && msg_chars[code.len()] == b':'
-                                    && msg_chars[code.len() + 1] == b' '
-                            };
-                            if has_prefix {
-                                break 'brk (
-                                    bun_core::String::init(code),
-                                    message.substring(code.len() + 2),
-                                );
+            let (display_name, display_message) =
+                if name.eql_comptime(b"Error") && !node_uncaught_style {
+                    'brk: {
+                        if let Some(code) = optional_code {
+                            if bun_core::is_all_ascii(code) {
+                                let has_prefix = if message.is_utf16() {
+                                    let msg_chars = message.utf16();
+                                    msg_chars.len() > code.len() + 2 + 1
+                                        && code
+                                            .iter()
+                                            .zip(msg_chars.iter())
+                                            .all(|(&a, &b)| u16::from(a) == b)
+                                        && msg_chars[code.len()] == u16::from(b':')
+                                        && msg_chars[code.len() + 1] == u16::from(b' ')
+                                } else {
+                                    let msg_chars = message.latin1();
+                                    msg_chars.len() > code.len() + 2 + 1
+                                        && bun_core::strings::eql_long(
+                                            &msg_chars[..code.len()],
+                                            code,
+                                            false,
+                                        )
+                                        && msg_chars[code.len()] == b':'
+                                        && msg_chars[code.len() + 1] == b' '
+                                };
+                                if has_prefix {
+                                    break 'brk (
+                                        bun_core::String::init(code),
+                                        message.substring(code.len() + 2),
+                                    );
+                                }
                             }
                         }
+                        (bun_core::String::empty(), message)
                     }
-                    (bun_core::String::empty(), message)
-                }
-            } else {
-                (name, message)
-            };
+                } else {
+                    (name, message)
+                };
             pretty_write!(
                 "{}<b>{}<r>\n",
                 error_display_level.formatter(display_name, allow_ansi_color, Colon::IncludeColon),

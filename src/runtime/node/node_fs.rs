@@ -4150,7 +4150,11 @@ pub mod args {
                 0.0
             };
             let buffer = Buffer::from_js(ctx, buffer_value).ok_or_else(|| {
-                ctx.throw_invalid_argument_type_value2(b"buffer", BUFFER_EXPECTED_TYPES, buffer_value)
+                ctx.throw_invalid_argument_type_value2(
+                    b"buffer",
+                    BUFFER_EXPECTED_TYPES,
+                    buffer_value,
+                )
             })?;
 
             //   if (length === 0) {

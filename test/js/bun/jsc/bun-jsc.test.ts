@@ -320,6 +320,66 @@ it("deserialize rejects a typed array whose backing store is not an array buffer
   expect(exitCode).toBe(0);
 });
 
+it("deserialize does not pre-allocate array storage from an untrusted length field", async () => {
+  // Serialize [7], then overwrite the ArrayTag's uint32 length with 1e8. The
+  // payload still only holds one element, so the deserializer must not allocate
+  // 1e8 contiguous slots (~800 MB) up front just because the header says so.
+  const script = `
+    import { serialize, deserialize } from "bun:jsc";
+    const length = 100_000_000;
+    const base = Buffer.from(serialize([7]));
+    const tag = base.indexOf(Buffer.from([1 /* ArrayTag */, 1, 0, 0, 0 /* length 1 LE */]));
+    if (tag < 0) throw new Error("ArrayTag not found in " + base.toString("hex"));
+    const payload = Buffer.from(base);
+    payload.writeUInt32LE(length, tag + 1);
+    const rssBefore = process.memoryUsage().rss;
+    const out = deserialize(payload);
+    const rssDeltaMB = (process.memoryUsage().rss - rssBefore) / (1024 * 1024);
+    console.log(JSON.stringify({
+      rssDeltaMB: Math.round(rssDeltaMB),
+      length: out.length,
+      keys: Object.keys(out).length,
+      zero: out[0],
+      isArray: Array.isArray(out),
+    }));
+    // Legitimate arrays still round-trip. The sparse case is short enough that
+    // the declared length exceeds (remaining bytes)/5, so it exercises the
+    // clamp + setLength path; the dense case exercises the unchanged fast path.
+    const sparse = new Array(10);
+    sparse[3] = "x";
+    const dense = [1, 2, 3, 4, 5];
+    const rtSparse = deserialize(serialize(sparse));
+    const rtDense = deserialize(serialize(dense));
+    console.log(JSON.stringify({
+      sparse: { length: rtSparse.length, keys: Object.keys(rtSparse), three: rtSparse[3], hole: 0 in rtSparse },
+      dense: { length: rtDense.length, values: rtDense },
+    }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const [forged, roundTrip] = stdout.trim().split("\n").map(line => JSON.parse(line));
+  expect({ ...forged, rssDeltaMB: undefined }).toEqual({
+    rssDeltaMB: undefined,
+    length: 100_000_000,
+    keys: 1,
+    zero: 7,
+    isArray: true,
+  });
+  // Without the clamp this allocates ~800 MB of contiguous storage.
+  expect(forged.rssDeltaMB).toBeLessThan(100);
+  expect(roundTrip).toEqual({
+    sparse: { length: 10, keys: ["3"], three: "x", hole: false },
+    dense: { length: 5, values: [1, 2, 3, 4, 5] },
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("deserialize rejects a RegExp record whose pattern does not parse", async () => {
   // A serialized RegExp whose pattern bytes are rewritten to an unparseable
   // expression must be rejected at deserialize time instead of producing a

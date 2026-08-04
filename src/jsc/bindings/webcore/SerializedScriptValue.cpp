@@ -3970,9 +3970,20 @@ DeserializationResult CloneDeserializer::deserialize()
             if (!read(length)) {
                 goto error;
             }
-            JSArray* outArray = constructEmptyArray(m_globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), length);
+            // Each indexed entry is at least a 4-byte index plus a 1-byte value tag, so the
+            // payload cannot hold more than remaining/5 entries. Clamping the initial
+            // allocation to that bound prevents a forged length field from allocating up to
+            // ~1 GB of contiguous storage from a tiny payload; setLength() then restores the
+            // declared .length and lets JSC pick sparse storage for the hole-filled tail.
+            uint32_t initialCapacity = static_cast<uint32_t>(std::min<uint64_t>(length, static_cast<uint64_t>(m_end - m_ptr) / (sizeof(uint32_t) + 1)));
+            JSArray* outArray = constructEmptyArray(m_globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), initialCapacity);
             if (scope.exception()) [[unlikely]]
                 goto error;
+            if (initialCapacity != length) {
+                outArray->setLength(m_lexicalGlobalObject, length);
+                if (scope.exception()) [[unlikely]]
+                    goto error;
+            }
             addToObjectPool(outArray);
             outputObjectStack.append(outArray);
         }

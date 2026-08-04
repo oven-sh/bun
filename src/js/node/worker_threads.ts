@@ -332,15 +332,18 @@ const BUN_WORKER_CWD_COUNTER_KEY = "@@bunWorkerThreadsCwdCounter";
 // Shared cwd-invalidation counter: main thread bumps it on chdir(), workers
 // re-read the real cwd when it changes (AtomicsLoad is source-observable).
 // https://github.com/nodejs/node/blob/main/lib/internal/worker.js
+// The SharedArrayBuffer is allocated lazily on the first `new Worker()` so that
+// merely `require('worker_threads')` leaves process.memoryUsage().arrayBuffers
+// at 0 (test-memory-usage.js gates its strict-delta assertion on that).
 const AtomicsAdd = Atomics.add;
 const AtomicsLoad = Atomics.load;
 let cwdCounter: Uint32Array | undefined;
 if (isMainThread) {
-  const counter = (cwdCounter = new Uint32Array(new SharedArrayBuffer(4)));
   const originalChdir = process.chdir;
   process.chdir = function (path: string) {
     originalChdir(path);
-    AtomicsAdd(counter, 0, 1);
+    const counter = cwdCounter;
+    if (counter) AtomicsAdd(counter, 0, 1);
   };
 }
 function installWorkerCwd(counter: Uint32Array) {
@@ -1064,6 +1067,7 @@ class Worker extends EventEmitter {
       portToMain = channel.portToMain;
       const portToWorker = channel.portToWorker;
       const workerDataWrapper: any = { [BUN_WORKER_MESSAGING_KEY]: portToWorker, data: options.workerData };
+      if (isMainThread) cwdCounter ??= new Uint32Array(new SharedArrayBuffer(4));
       if (cwdCounter) workerDataWrapper[BUN_WORKER_CWD_COUNTER_KEY] = cwdCounter;
       // stdout/stderr always create channels (stdin only when requested), so the
       // worker always receives a stdio control object.

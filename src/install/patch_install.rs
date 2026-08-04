@@ -43,7 +43,7 @@ pub struct PatchTask {
     /// Constructed via `BackRef::new_mut` so the underlying pointer carries
     /// write provenance for `PackageManager::wake_raw(*mut Self)`, which
     /// writes the event-loop wake flag.
-    pub(crate) manager: bun_ptr::BackRef<PackageManager>,
+    pub(crate) manager: bun_ptr::BackRef<PackageManager, bun_ptr::Mut>,
     /// Borrowed view of the manager's temp directory fd (see comment at top of file).
     pub(crate) tempdir: Fd,
     pub(crate) project_dir: &'static [u8],

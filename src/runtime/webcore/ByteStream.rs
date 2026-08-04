@@ -167,17 +167,7 @@ impl ByteStream {
             return;
         }
         self.sink_paused.set(false);
-        self.flush_to_sink();
-    }
 
-    /// Write any buffered bytes to `self.sink`, then [`signal_drained`]. The
-    /// native-sink wiring paths call this (instead of [`drain`] + a manual
-    /// `sink.write`) so the buffered bytes reach the sink before the producer
-    /// is woken; a producer whose `on_ready` feeds synchronously (RewriterPipe)
-    /// would otherwise emit newer bytes to the already-installed sink ahead of
-    /// the ones the caller is still holding. Clears `self.sink` when the write
-    /// or the last-chunk flag ends the stream.
-    pub(crate) fn flush_to_sink(&self) {
         let sink = *self.sink.get();
         if sink.is_none() {
             return;
@@ -682,21 +672,22 @@ impl ByteStream {
         // deallocate the storage backing `&mut self` (dangling UAF).
     }
 
-    /// JS-reader drain (native-source adapter's `handle.drain()` and the
-    /// `has_received_last_chunk` blob hand-off). Callers that have already
-    /// installed `self.sink` must use [`flush_to_sink`] instead so the bytes
-    /// are written before the producer is woken.
     pub(crate) fn drain(&self) -> Vec<u8> {
         if self.buffer.get().is_empty() {
             return Vec::<u8>::default();
         }
+        // Empty first so a producer.on_ready that checks `buffer.len()` sees it
+        // drained. RewriterPipe is the one producer whose on_ready feeds
+        // synchronously; when a sink is installed the native-sink wiring caller
+        // writes `drained` to it afterward, so waking the rewriter here would
+        // let it reach the sink first. Async producers only schedule work.
         let drained = Vec::<u8>::move_from_list(self.buffer.replace(Vec::new()));
-        // `materializeNativeSource` can reach here with a sink already wired
-        // (getReader() on a natively-locked stream materialises before the
-        // lock check throws); signalling then would let a synchronous producer
-        // emit newer bytes to that sink ahead of `drained`, so only signal on
-        // the intended JS-reader path.
-        if self.sink.get().is_none() {
+        let sync_behind_sink = self.sink.get().is_some()
+            && matches!(
+                self.parent_const().producer.get(),
+                streams::SourceHandle::HTMLRewriter(_)
+            );
+        if !sync_behind_sink {
             self.signal_drained();
         }
         drained

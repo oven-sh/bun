@@ -320,7 +320,7 @@ impl ReadableStream {
         owner_cell: JSValue,
         set_source: impl FnOnce(streams::SourceHandle),
     ) -> NativeWireResult {
-        use streams::{SourceHandle, Start, StreamError, StreamResult};
+        use streams::{SourceHandle, Start, StreamError, StreamResult, Writable};
         use webcore::SinkHandle;
 
         if let Some(byte_stream) = self.ptr.bytes() {
@@ -337,8 +337,25 @@ impl ReadableStream {
                     return NativeWireResult::EndedInline(Some(err));
                 }
 
-                byte_stream.flush_to_sink();
-                if byte_stream.sink.get().is_none() {
+                let buffered = byte_stream.drain();
+                let has_last = byte_stream.has_received_last_chunk.get();
+                if !buffered.is_empty() {
+                    let chunk = if has_last {
+                        StreamResult::OwnedAndDone(buffered)
+                    } else {
+                        StreamResult::Owned(buffered)
+                    };
+                    match sink.write(&chunk) {
+                        Writable::Backpressure(_) => byte_stream.sink_paused.set(true),
+                        Writable::Done | Writable::Err(_) => {
+                            byte_stream.sink.set(SinkHandle::None);
+                            return NativeWireResult::EndedInline(None);
+                        }
+                        _ => {}
+                    }
+                }
+                if has_last {
+                    byte_stream.sink.set(SinkHandle::None);
                     return NativeWireResult::EndedInline(None);
                 }
                 return NativeWireResult::Wired;

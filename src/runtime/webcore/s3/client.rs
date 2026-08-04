@@ -1037,8 +1037,33 @@ pub(crate) fn upload_stream(
                 return Ok(end_promise_value);
             }
 
-            byte_stream.flush_to_sink();
-            if byte_stream.sink.get().is_none() {
+            let buffered = byte_stream.drain();
+            let has_last = byte_stream.has_received_last_chunk.get();
+            if !buffered.is_empty() {
+                let chunk = if has_last {
+                    crate::webcore::streams::StreamResult::OwnedAndDone(buffered)
+                } else {
+                    crate::webcore::streams::StreamResult::Owned(buffered)
+                };
+                match sink.write(&chunk) {
+                    crate::webcore::streams::Writable::Backpressure(_) => {
+                        byte_stream.sink_paused.set(true);
+                    }
+                    crate::webcore::streams::Writable::Done
+                    | crate::webcore::streams::Writable::Err(_) => {
+                        byte_stream.sink.set(crate::webcore::SinkHandle::None);
+                        sink.source.clear();
+                        if !sink.ended {
+                            let _ = sink.end(None);
+                        }
+                        ctx.handle_resolve_stream();
+                        return Ok(end_promise_value);
+                    }
+                    _ => {}
+                }
+            }
+            if has_last {
+                byte_stream.sink.set(crate::webcore::SinkHandle::None);
                 sink.source.clear();
                 if !sink.ended {
                     let _ = sink.end(None);

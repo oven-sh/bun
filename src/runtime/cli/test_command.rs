@@ -2594,44 +2594,46 @@ impl TestCommand {
         // --changed-first: compute the affected set now (on the full
         // discovered list) so it can be applied after --shard/--randomize
         // have reordered or sliced it.
-        let changed_first_affected: Option<ChangedFilesFilter::AffectedSet> =
-            match &ctx.test_options.changed_first {
-                Some(since) if !test_files.is_empty() => {
-                    let result =
-                        match ChangedFilesFilter::detect_affected(&ctx, vm, test_files, since) {
-                            Ok(r) => r,
-                            Err(err) => {
-                                Output::err(
-                                    err,
-                                    "--changed-first: unable to determine affected tests",
-                                    (),
-                                );
-                                Global::exit(1);
-                            }
-                        };
-                    if result.changed_count == 0 {
-                        pretty_error!("<r><d>--changed-first:<r> no changed files\n");
-                    } else if result.paths.count() == 0 {
-                        pretty_error!(
-                            "<r><d>--changed-first:<r> {} changed file{}, no test files affected\n",
-                            result.changed_count,
-                            if result.changed_count == 1 { "" } else { "s" }
+        let changed_first_affected: Option<ChangedFilesFilter::AffectedSet> = match &ctx
+            .test_options
+            .changed_first
+        {
+            Some(since) if !test_files.is_empty() => {
+                let result = match ChangedFilesFilter::detect_affected(&ctx, vm, test_files, since)
+                {
+                    Ok(r) => r,
+                    Err(err) => {
+                        Output::err(
+                            err,
+                            "--changed-first: unable to determine affected tests",
+                            (),
                         );
-                    } else {
-                        pretty_error!(
-                            "<r><d>--changed-first:<r> {} changed file{}, {}/{} test file{} affected\n",
-                            result.changed_count,
-                            if result.changed_count == 1 { "" } else { "s" },
-                            result.paths.count(),
-                            test_files.len(),
-                            if test_files.len() == 1 { "" } else { "s" }
-                        );
+                        Global::exit(1);
                     }
-                    Output::flush();
-                    Some(result)
+                };
+                if result.changed_count == 0 {
+                    pretty_error!("<r><d>--changed-first:<r> no changed files\n");
+                } else if result.paths.count() == 0 {
+                    pretty_error!(
+                        "<r><d>--changed-first:<r> {} changed file{}, no test files affected\n",
+                        result.changed_count,
+                        if result.changed_count == 1 { "" } else { "s" }
+                    );
+                } else {
+                    pretty_error!(
+                        "<r><d>--changed-first:<r> {} changed file{}, {}/{} test file{} affected\n",
+                        result.changed_count,
+                        if result.changed_count == 1 { "" } else { "s" },
+                        result.paths.count(),
+                        test_files.len(),
+                        if test_files.len() == 1 { "" } else { "s" }
+                    );
                 }
-                _ => None,
-            };
+                Output::flush();
+                Some(result)
+            }
+            _ => None,
+        };
 
         // --shard=M/N: sort the test files for determinism, then keep only
         // every Nth file starting at M-1. This round-robin distribution

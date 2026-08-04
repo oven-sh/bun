@@ -1012,6 +1012,57 @@ describe("codeGeneration options", () => {
   });
 });
 
+describe("context options with throwing getters", () => {
+  // Without the fix, reading these options with a pending exception aborted
+  // the process, so run the matrix in a subprocess.
+  test.concurrent("the getter's exception propagates to the caller", async () => {
+    // Each entry point tests the context-option keys it actually reads
+    // (the Script path takes contextCodeGeneration, not codeGeneration).
+    const matrix = {
+      createContext: ["name", "origin", "codeGeneration", "importModuleDynamically"],
+      runInNewContext: ["name", "origin", "codeGeneration", "importModuleDynamically"],
+      scriptRunInNewContext: ["name", "origin", "contextCodeGeneration", "importModuleDynamically"],
+    };
+    const code = `
+      const vm = require("node:vm");
+      const matrix = ${JSON.stringify(matrix)};
+      const entryPoints = {
+        createContext: opts => vm.createContext({}, opts),
+        runInNewContext: opts => vm.runInNewContext("1", {}, opts),
+        scriptRunInNewContext: opts => new vm.Script("1").runInNewContext({}, opts),
+      };
+      for (const [entry, keys] of Object.entries(matrix)) {
+        for (const key of keys) {
+          const opts = {};
+          Object.defineProperty(opts, key, {
+            get() { throw new Error("getter:" + key); },
+            enumerable: true,
+          });
+          try {
+            entryPoints[entry](opts);
+            console.log(entry, key, "did not throw");
+          } catch (e) {
+            console.log(entry, key, e.message);
+          }
+        }
+      }
+      console.log("survived");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expected =
+      Object.entries(matrix)
+        .flatMap(([entry, keys]) => keys.map(key => `${entry} ${key} getter:${key}`))
+        .join("\n") + "\nsurvived\n";
+    expect(stdout).toBe(expected);
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("DONT_CONTEXTIFY", () => {
   test("globalThis prototype chain stays inside the sandbox realm", () => {
     const ctx = createContext(constants.DONT_CONTEXTIFY);

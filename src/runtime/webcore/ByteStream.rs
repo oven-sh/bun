@@ -227,10 +227,8 @@ impl ByteStream {
         self.parent_const().producer.get().ready(None, None);
     }
 
-    /// Take the buffered bytes without signalling the producer. Used by the
-    /// native-sink wiring paths so the older bytes can be written to the sink
-    /// before [`Self::signal_drained`] wakes a producer that may emit more
-    /// synchronously.
+    /// Take the buffered bytes without signalling the producer; the caller
+    /// writes them to the sink before [`Self::signal_drained`].
     pub(crate) fn take_buffer(&self) -> Vec<u8> {
         self.offset.set(0);
         Vec::<u8>::move_from_list(self.buffer.replace(Vec::new()))
@@ -755,9 +753,8 @@ impl ByteStream {
         self.buffer_action
             .set(Some(BufferAction::new(action, global_this)));
         let promise = self.buffer_action.get().as_ref().unwrap().value();
-        // Signal after the action is installed so a producer that gates on
-        // `output_backpressured()` observes it and keeps emitting; a
-        // synchronous producer may fulfil the action inline.
+        // Signal after the action is installed so a backpressure-gated
+        // producer observes it; a synchronous producer may fulfil it inline.
         self.signal_drained();
         Ok(promise)
     }

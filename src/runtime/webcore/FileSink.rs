@@ -1557,9 +1557,8 @@ impl FileSink {
             |src| self.source.set(src),
         ) {
             readable_stream::NativeWireResult::Wired => {
-                // `wire_native_sink` may signal a synchronous producer that
-                // drives `end_from_stream` inline (which clears `source`); no
-                // keepalive is owed once the writer is already closed.
+                // A synchronous producer may have driven `end_from_stream`
+                // (clears `source`) inline; no keepalive then.
                 if !matches!(self.source.get(), streams::SourceHandle::None) {
                     self.writer
                         .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));

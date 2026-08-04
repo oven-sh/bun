@@ -3308,10 +3308,7 @@ where
                                     this.as_ctx_ptr(),
                                 );
                             }
-                            // Older bytes are queued above; wake the producer
-                            // now so a backpressured synchronous producer
-                            // observes an empty buffer and resumes via
-                            // `on_data` (the normal post-install path).
+                            // Wake the producer after the older bytes are queued.
                             byte_stream.signal_drained();
                             return;
                         }

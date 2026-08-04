@@ -358,9 +358,8 @@ impl ReadableStream {
                     byte_stream.sink.set(SinkHandle::None);
                     return NativeWireResult::EndedInline(None);
                 }
-                // Older bytes are in the sink; wake the producer. A synchronous
-                // producer may drive `on_data` (and `sink.end`) inline here,
-                // which is the normal `Wired` post-install path.
+                // Wake the producer after the older bytes are in the sink;
+                // any synchronous output routes through `on_data`.
                 if !byte_stream.sink_paused.get() {
                     byte_stream.signal_drained();
                 }

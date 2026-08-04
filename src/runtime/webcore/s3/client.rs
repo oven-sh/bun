@@ -1070,10 +1070,7 @@ pub(crate) fn upload_stream(
                 }
                 ctx.handle_resolve_stream();
             } else if !byte_stream.sink_paused.get() {
-                // Older bytes are in the sink; wake the producer. A synchronous
-                // producer may drive `on_data` (and `end_from_stream`) inline
-                // here, which is the normal post-install path — the stream-pump
-                // +1 (rc=2) is then released by `NetworkSink::end_from_stream`.
+                // Wake the producer after the older bytes are in the sink.
                 byte_stream.signal_drained();
             }
             // `!had_last`: the stream-pump +1 (rc=2) is released by

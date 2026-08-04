@@ -889,10 +889,7 @@ impl RewriterPipe {
             if out.sink_paused.get() {
                 return true;
             }
-            // A body-mixin collector (`.arrayBuffer()`/`.text()` on the
-            // ByteStream directly) grows `buffer` until Done and signals on
-            // every `on_data`; treating that growth as backpressure would
-            // deadlock.
+            // A body-mixin collector grows `buffer` deliberately until Done.
             if out.buffer_action.get().is_some() {
                 return false;
             }

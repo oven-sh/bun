@@ -83,8 +83,11 @@ private:
     }
 
     static Loop *create(void *hint) {
-        Loop *loop = ((Loop *) us_create_loop(hint, wakeupCb, preCb, postCb, sizeof(LoopData)))->init();
-        return loop;
+        Loop *loop = (Loop *) us_create_loop(hint, wakeupCb, preCb, postCb, sizeof(LoopData));
+        /* NULL when epoll_create1/eventfd/kqueue fails (EMFILE/ENFILE). The
+         * per-thread lazy getter caches NULL so a Worker bootstrap can observe
+         * the failure and report ERR_WORKER_INIT_FAILED. */
+        return loop ? loop->init() : nullptr;
     }
 
     /* What to do with loops created with existingNativeLoop? */
@@ -119,7 +122,9 @@ public:
                 /* We cannot register automatic free here, must be manually done */
             } else {
                 getLazyLoop().loop = create(nullptr);
-                getLazyLoop().cleanMe = true;
+                /* cleanMe only when there is something to clean — create()
+                 * returns NULL on epoll_create1/eventfd EMFILE/ENFILE. */
+                getLazyLoop().cleanMe = getLazyLoop().loop != nullptr;
             }
         }
 

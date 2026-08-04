@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, isPosix, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -2162,4 +2162,50 @@ test("the SHARE_ENV founding thread's process.env stays live after the swap", as
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout.trim()).toBe("yes,unset");
   expect(exitCode).toBe(0);
+});
+
+// node parallel/test-worker-init-failure.js: a Worker whose per-thread event
+// loop can't be created (epoll_create1/eventfd EMFILE) must surface an
+// 'error' event with ERR_WORKER_INIT_FAILED, not abort the whole process.
+// Previously us_create_loop BUN_PANIC'd → SIGABRT. We exhaust fds inside the
+// child (after its own loop + modules are loaded) rather than via a bare
+// `ulimit -n`, so the debug build's on-disk module loader isn't starved too.
+test.skipIf(!isPosix)("Worker init failure on fd exhaustion emits 'error', does not abort", async () => {
+  const script = `
+    const fs = require("fs");
+    const { Worker } = require("worker_threads");
+    // Warm up one worker first so every module the parent lazily imports for
+    // Worker plumbing (stdio, ports) is already in the registry — the debug
+    // build reads those from disk on first use and would EMFILE there instead.
+    await new Promise(r => new Worker("0", { eval: true }).on("exit", r));
+    // Eat every remaining fd so the next Worker's epoll_create1/eventfd gets
+    // EMFILE. Capped by the shell's ulimit so this is <512 iterations.
+    const fds = [];
+    try { while (true) fds.push(fs.openSync("/dev/null", "r")); } catch {}
+    const w = new Worker("0", { eval: true });
+    let gotError;
+    w.on("error", e => { gotError = e; });
+    w.on("exit", () => {
+      for (const fd of fds) { try { fs.closeSync(fd); } catch {} }
+      console.log(JSON.stringify({ code: gotError && gotError.code, message: gotError && gotError.message }));
+    });
+  `;
+  // Cap RLIMIT_NOFILE so "eat every fd" is bounded; 512 comfortably covers the
+  // debug build's on-disk module loads plus the warm-up worker.
+  await using proc = Bun.spawn({
+    cmd: ["/bin/sh", "-c", `ulimit -n 512 && exec "${bunExe()}" -e '${script.replace(/'/g, `'\\''`)}'`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Under the old behaviour the worker thread BUN_PANIC'd in us_create_loop
+  // and took the whole process down with SIGABRT before anything printed.
+  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+    signalCode: null,
+    exitCode: 0,
+  });
+  const out = JSON.parse(stdout.trim());
+  expect(out.code).toBe("ERR_WORKER_INIT_FAILED");
+  expect(out.message).toContain("event loop");
 });

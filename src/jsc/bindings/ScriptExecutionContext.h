@@ -113,6 +113,12 @@ public:
     void postTask(Function<void(ScriptExecutionContext&)>&& lambda);
     // Executes the task on context's thread asynchronously.
     void postTask(EventLoopTask* task);
+    // Same-thread only. Runs on the NEXT EventLoop::tick() (after the current
+    // tick returns and auto_tick's I/O poll + timer drain have run) — node's
+    // env->SetImmediate() equivalent. Use for a drain handler's yield-and-
+    // reschedule; postTask()/postTaskTo() land in the queue tick() drains to
+    // exhaustion, so a self-reposting task starves timers.
+    void postTaskOnNextIteration(Function<void(ScriptExecutionContext&)>&& lambda);
 
     template<typename... Arguments>
     void postCrossThreadTask(Arguments&&... arguments)

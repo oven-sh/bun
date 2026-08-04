@@ -218,6 +218,17 @@ impl PosixLoop {
         c::uws_get_loop()
     }
 
+    /// Lazily create this thread's loop, returning `None` when
+    /// `epoll_create1`/`eventfd`/`kqueue` fails (EMFILE/ENFILE). On success
+    /// the result is cached in the C++ thread-local, so subsequent
+    /// [`Loop::get`] calls return the same non-null pointer. Used only by the
+    /// Worker bootstrap (before any other code on the thread touches the
+    /// loop) so fd exhaustion becomes an `'error'` event instead of a
+    /// process-wide abort.
+    pub fn try_get() -> Option<core::ptr::NonNull<Loop>> {
+        core::ptr::NonNull::new(c::uws_get_loop())
+    }
+
     /// Packetize HTTP/3 stream writes that happened since the last
     /// process_conns. Early-returns when nothing wrote, so safe to call
     /// from drainMicrotasks without per-iteration cost.
@@ -407,6 +418,13 @@ impl WindowsLoop {
     pub fn get() -> *mut WindowsLoop {
         // SAFETY: uv::Loop::get() returns the libuv default loop; uws wraps it
         unsafe { c::uws_get_loop_with_native(uv::Loop::get() as *mut c_void) }
+    }
+
+    /// See [`PosixLoop::try_get`]. On Windows the backing `uv_loop_new()` does
+    /// not fail on fd exhaustion, so this is effectively infallible — kept so
+    /// the Worker bootstrap needs no `cfg`.
+    pub fn try_get() -> Option<core::ptr::NonNull<WindowsLoop>> {
+        core::ptr::NonNull::new(Self::get())
     }
 
     pub fn iteration_number(&self) -> u64 {

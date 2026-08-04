@@ -1093,10 +1093,9 @@ type H2FrameParserHiveAllocator = HiveArrayFallback<H2FrameParser, 256>;
 const H2_CORK_BUFFER_SIZE: usize = 16384;
 
 thread_local! {
-    // Boxed so only a pointer lives in static TLS — these two buffers are 32 KB
-    // combined and would otherwise dominate PT_TLS MemSiz on every thread
-    // (see test/js/bun/binary/tls-segment-size). Lazily allocated on first
-    // HTTP/2 access; threads that never touch h2 pay nothing.
+    // Boxed so only a pointer lives in static TLS — a 16 KB buffer would otherwise
+    // dominate PT_TLS MemSiz on every thread (see test/js/bun/binary/tls-segment-size).
+    // Lazily allocated on first HTTP/2 access; threads that never touch h2 pay nothing.
     static CORK_BUFFER: RefCell<Box<[u8; H2_CORK_BUFFER_SIZE]>> =
         RefCell::new(Box::new([0u8; H2_CORK_BUFFER_SIZE]));
     static CORK_OFFSET: Cell<u16> = const { Cell::new(0) };
@@ -6143,12 +6142,26 @@ impl bun_io::Write for DirectWriterStruct {
 impl DirectWriterStruct {
     /// The payload of a PADDED DATA frame (RFC 9113 6.1); the caller wrote the frame header.
     fn write_padded(&mut self, data: &[u8], padding: u8) -> bun_io::Result<()> {
-        // Owned per call: `write()` can re-enter this path through a JS transport mid-frame.
-        let mut payload = Vec::with_capacity(1 + data.len() + padding as usize);
-        payload.push(padding);
-        payload.extend_from_slice(data);
-        payload.resize(payload.len() + padding as usize, 0);
-        self.write_all(&payload)
+        let payload_size = 1 + data.len() + padding as usize;
+        // The VM's shared scratch, taken by value: `write()` can re-enter this path
+        // through a JS transport mid-frame, and the nested call must not alias (or trip
+        // a borrow of) the buffer this one is still writing from.
+        let global = self.writer.global();
+        let mut buffer = global
+            .bun_vm()
+            .as_mut()
+            .rare_data()
+            .take_h2_padded_frame_buffer();
+        buffer[0] = padding;
+        buffer[1..=data.len()].copy_from_slice(data);
+        buffer[1 + data.len()..payload_size].fill(0);
+        let result = self.write_all(&buffer[..payload_size]);
+        global
+            .bun_vm()
+            .as_mut()
+            .rare_data()
+            .put_back_h2_padded_frame_buffer(buffer);
+        result
     }
 }
 

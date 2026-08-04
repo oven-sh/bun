@@ -1116,6 +1116,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 function applyServerCustomOptions(server: Server) {
   const handle = server[serverSymbol];
   if (!handle) return;
+  const maxHeadersCount = server.maxHeadersCount;
   setServerCustomOptions(
     handle,
     server.requireHostHeader,
@@ -1125,6 +1126,7 @@ function applyServerCustomOptions(server: Server) {
     onServerClientError.bind(server),
     onServerConnection.bind(server),
     !!server.httpAllowHalfOpen,
+    typeof maxHeadersCount === "number" && maxHeadersCount > 0 ? maxHeadersCount : 0,
   );
 }
 

@@ -4090,6 +4090,49 @@ extern "C" fn server_set_max_http_header_size_shim(
     )
 }
 
+pub(super) fn server_set_max_headers_count_(
+    global: &JSGlobalObject,
+    server: JSValue,
+    max_headers_count: u32,
+) -> JsResult<JSValue> {
+    if !server.is_object() {
+        return Err(global.throw(format_args!(
+            "Failed to set maxHeadersCount: The 'this' value is not a Server."
+        )));
+    }
+
+    if let Some(this) = server.as_::<HTTPServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
+        unsafe { &mut *this }.set_max_headers_count(max_headers_count);
+    } else if let Some(this) = server.as_::<HTTPSServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
+        unsafe { &mut *this }.set_max_headers_count(max_headers_count);
+    } else if let Some(this) = server.as_::<DebugHTTPServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
+        unsafe { &mut *this }.set_max_headers_count(max_headers_count);
+    } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
+        unsafe { &mut *this }.set_max_headers_count(max_headers_count);
+    } else {
+        return Err(global.throw(format_args!(
+            "Failed to set maxHeadersCount: The 'this' value is not a Server."
+        )));
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
+#[unsafe(export_name = "Server__setMaxHeadersCount")]
+extern "C" fn server_set_max_headers_count_shim(
+    global: &JSGlobalObject,
+    server: JSValue,
+    max_headers_count: u32,
+) -> JSValue {
+    host_fn::to_js_host_fn_result(
+        global,
+        server_set_max_headers_count_(global, server, max_headers_count),
+    )
+}
+
 // ─── Externs ─────────────────────────────────────────────────────────────────
 // C++-implemented (bindings/BunServer.cpp). Declared here (not `bun_jsc`)
 // because the signatures name `bun_runtime` types (`NodeHTTPResponse`,

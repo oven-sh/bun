@@ -190,11 +190,19 @@ struct HttpResponseData;
 
         friend struct HttpParser;
 
-    private:
+    public:
         struct Header
         {
             std::string_view key, value;
-        } headers[UWS_HTTP_MAX_HEADERS_COUNT];
+        };
+
+    private:
+        /* The parser points `headers` at `inlineHeaders` by default; a server
+         * configured with a larger maxHeadersCount repoints it at the
+         * per-connection overflow vector in HttpParser before parsing. */
+        Header inlineHeaders[UWS_HTTP_MAX_HEADERS_COUNT];
+        Header *headers = inlineHeaders;
+        unsigned int headerCapacity = UWS_HTTP_MAX_HEADERS_COUNT;
         bool ancientHttp;
         bool didYield;
         unsigned int querySeparator;
@@ -604,6 +612,11 @@ struct HttpResponseData;
 
     private:
         std::string fallback;
+        /* Backing storage for HttpRequest::headers when the server's
+         * maxHeadersCount exceeds the inline UWS_HTTP_MAX_HEADERS_COUNT slots.
+         * Empty unless that option is raised; reused across requests on this
+         * connection. */
+        std::vector<HttpRequest::Header> headerOverflow;
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
         uint64_t remainingStreamingBytes = 0;
         /* node:http compat: a completed request on this connection forbade keep-alive
@@ -925,7 +938,7 @@ struct HttpResponseData;
         }
 
         /* End is only used for the proxy parser. The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. */
-        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, bool &isAncientHTTP, bool &isConnectRequest, bool useStrictMethodValidation, bool useInsecureHTTPParser, uint64_t maxHeaderSize) {
+        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, unsigned int headerCapacity, void *reserved, bool &isAncientHTTP, bool &isConnectRequest, bool useStrictMethodValidation, bool useInsecureHTTPParser, uint64_t maxHeaderSize) {
             char *preliminaryKey, *preliminaryValue, *start = postPaddedBuffer;
             #ifdef UWS_WITH_PROXY
                 /* ProxyParser is passed as reserved parameter */
@@ -1002,7 +1015,7 @@ struct HttpResponseData;
 
             headers++;
 
-            for (unsigned int i = 1; i < UWS_HTTP_MAX_HEADERS_COUNT - 1; i++) {
+            for (unsigned int i = 1; i < headerCapacity - 1; i++) {
                 /* Lower case and consume the field name */
                 preliminaryKey = postPaddedBuffer;
                 postPaddedBuffer = consumeFieldName(postPaddedBuffer);
@@ -1150,7 +1163,7 @@ struct HttpResponseData;
                     }
                 }
             }
-            auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp, isConnectRequest, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize);
+            auto result = getHeaders(data, data + length, req->headers, req->headerCapacity, reserved, req->ancientHttp, isConnectRequest, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize);
             if(result.isError()) {
                 return result;
             }
@@ -1390,13 +1403,30 @@ struct HttpResponseData;
 
 public:
     template <bool IsNodeHttp>
-    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
+    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, uint32_t maxHeadersCount, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
         /* The fallback buffer may not exceed the configured per-request header
          * limit (per-server maxHeaderSize can raise it above the default). */
         const size_t maxFallbackSize = maxHeaderSize ? (size_t) maxHeaderSize : MAX_FALLBACK_SIZE;
         /* This resets BloomFilter by construction, but later we also reset it again.
         * Optimize this to skip resetting twice (req could be made global) */
         HttpRequest req;
+        /* Two slots are reserved (request line + null-key terminator), so the
+         * inline array holds UWS_HTTP_MAX_HEADERS_COUNT - 2 field lines.
+         * The minimum field line is 4 bytes ("a:\r\n"), so maxFallbackSize/4
+         * is the highest count a request can reach before the byte-size check
+         * 431s it; clamping there keeps +2 from overflowing and bounds the
+         * per-connection overflow vector to what the byte cap already admits. */
+        if (maxHeadersCount > UWS_HTTP_MAX_HEADERS_COUNT - 2) [[unlikely]] {
+            size_t capByBytes = (maxFallbackSize / 4) + 2;
+            size_t want = std::min<size_t>((size_t) maxHeadersCount + 2, capByBytes);
+            if (want > UWS_HTTP_MAX_HEADERS_COUNT) {
+                if (headerOverflow.size() < want) {
+                    headerOverflow.resize(want);
+                }
+                req.headers = headerOverflow.data();
+                req.headerCapacity = (unsigned int) want;
+            }
+        }
         if (remainingStreamingBytes) {
             if (isConnectRequest) {
                 dataHandler(user, std::string_view(data, length), false);

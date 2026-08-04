@@ -1544,6 +1544,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
+    pub fn set_max_headers_count(&mut self, max_headers_count: u32) {
+        if let Some(app) = self.app {
+            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+            bun_opaque::opaque_deref_mut(app).set_max_headers_count(max_headers_count);
+        }
+    }
+
     pub fn ref_(&mut self) {
         if self.poll_ref.is_active() {
             return;

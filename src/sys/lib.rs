@@ -5718,8 +5718,6 @@ pub mod darwin {
         pub fn as_ptr(&self) -> *const OSLog {
             core::ptr::from_ref(self)
         }
-        /// Full signpost API lives in `bun_platform::darwin`; this stub lets
-        /// `bun_perf` compile its Darwin arm without pulling that crate up-tier.
         pub fn signpost(&self, name: i32) -> os_log::Signpost<'_> {
             os_log::Signpost { log: self, name }
         }
@@ -7164,7 +7162,7 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
     let opts: u32 = if follow {
         blocking_flag
     } else {
-        w::FILE_OPEN_REPARSE_POINT
+        blocking_flag | w::FILE_OPEN_REPARSE_POINT
     };
 
     let mut attributes: u32 = w::FILE_ATTRIBUTE_NORMAL;

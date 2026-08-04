@@ -147,8 +147,8 @@ class ActiveChannel {
         onMessage(data, this.name);
       } catch (err) {
         process.nextTick(() => {
-        throw err;
-      });
+          throw err;
+        });
       }
     }
   }

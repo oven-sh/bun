@@ -3103,8 +3103,9 @@ describe.concurrent(
           onWrite(chunk);
           pending = Buffer.concat([pending, chunk]);
           if (!prefaceSeen && pending.length >= PREFACE.length) {
+            if (!pending.subarray(0, PREFACE.length).equals(PREFACE)) die("wireDuplex")("first bytes are not the HTTP/2 client preface");
             prefaceSeen = true;
-            if (pending.subarray(0, PREFACE.length).equals(PREFACE)) pending = pending.subarray(PREFACE.length);
+            pending = pending.subarray(PREFACE.length);
           }
           while (prefaceSeen && pending.length >= 9) {
             const len = pending.readUIntBE(0, 3);

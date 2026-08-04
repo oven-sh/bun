@@ -692,8 +692,6 @@ impl ShellSubprocess {
         let stdio1 = core::mem::replace(&mut stdio_guard[1], Stdio::Ignore);
         let stdio2 = core::mem::replace(&mut stdio_guard[2], Stdio::Ignore);
 
-        // `ReadableStream` is `Copy`; the handle is wired into the stdin
-        // `FileSink` after the subprocess is fully constructed.
         let stdin_stream: Option<webcore::ReadableStream> = match &stdio0 {
             Stdio::ReadableStream(s) => Some(*s),
             _ => None,
@@ -723,8 +721,6 @@ impl ShellSubprocess {
                 panic!("unexpected error while creating stdin");
             }
             Err(WritableInitError::Sys(e)) => {
-                // Child is spawned but not yet moved into a Subprocess; the
-                // pidfd is still in `spawn_result`, which is about to drop.
                 #[cfg(not(windows))]
                 {
                     let _ = spawn_stdout.map(bun_sys::Fd::close);
@@ -793,9 +789,8 @@ impl ShellSubprocess {
         // `Writable::on_close` (drops the `Arc<FileSink>`) runs when the sink
         // finishes. `stdin` lives inside the Box-allocated `Subprocess` at a
         // stable address, so the self-referential raw pointer is sound for the
-        // life of the subprocess. Only reachable on Windows for `Stdio::Pipe`
-        // (POSIX `Writable::init` never returns `Pipe` except for ReadableStream,
-        // which sets `source` to the upstream ByteStream/FileReader below).
+        // life of the subprocess. Skipped for ReadableStream stdin, which sets
+        // `source` to the upstream ByteStream/FileReader below.
         if stdin_stream.is_none() {
             // Derive `stdin_ptr` from the raw heap pointer (`subprocess`), not
             // the local `subproc: &mut` reborrow — the pointer is stored
@@ -821,10 +816,8 @@ impl ShellSubprocess {
             }
         }
 
-        // ReadableStream stdin: wire the stream into the FileSink via the
-        // SinkHandle abstraction. `assign_to_stream` tries `wire_native_sink`
-        // first (ByteStream/FileReader → `SinkHandle::FileSink`, no JS) and
-        // falls back to the JS pump for other streams.
+        // ReadableStream stdin: `assign_to_stream` tries `wire_native_sink`
+        // (`SinkHandle::FileSink`) first, then falls back to the JS pump.
         if let Some(mut stream) = stdin_stream {
             let assign_err: Option<Box<[u8]>> = 'assign: {
                 let Some(global) = cmd_parent.interp.get().global_this_ref() else {
@@ -922,14 +915,9 @@ impl ShellSubprocess {
     pub(crate) fn on_process_exit(&mut self, _: &Process, status: &Status, _: &Rusage) {
         log!("onProcessExit({:x})", std::ptr::from_mut(self) as usize);
 
-        // ReadableStream stdin: notify the FileSink (cancels the stream and
-        // closes the writer; `on_close` → `source.close()` detaches the native
-        // source's `SinkHandle`) and mark buffered stdin closed so
-        // `Cmd::has_finished()` can complete. Shell stdin is only ever
-        // `Stdio::{Fd,Ignore,Blob,ReadableStream}` (`InKind::to_subproc_stdio`
-        // + `init_subproc_redirections`), so `Writable::Pipe` here is the
-        // ReadableStream case and `source` is the upstream ByteStream /
-        // FileReader or `None`; the close cannot reassign `self.stdin`.
+        // ReadableStream stdin: close the FileSink and mark stdin closed.
+        // Shell stdin is never `Stdio::Pipe`, so `Writable::Pipe` here is the
+        // ReadableStream case and `source` is the upstream source or `None`.
         if let Writable::Pipe(pipe) = &self.stdin {
             debug_assert!(!matches!(
                 *pipe.source.get(),

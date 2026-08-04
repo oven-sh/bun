@@ -6094,8 +6094,13 @@ pub extern "C" fn Blob__implNeedsToReadFile(blob: &Blob) -> bool {
 
 /// Invoked on the JS thread exactly once; `err`/`err_len` are null/0 on success
 /// and carry a UTF-8 message on failure. The byte span does not outlive the call.
-type BlobReadBytesCallback =
-    unsafe extern "C" fn(ctx: *mut c_void, ptr: *const u8, len: usize, err: *const u8, err_len: usize);
+type BlobReadBytesCallback = unsafe extern "C" fn(
+    ctx: *mut c_void,
+    ptr: *const u8,
+    len: usize,
+    err: *const u8,
+    err_len: usize,
+);
 
 struct ClipboardBlobReadHandler {
     ctx: *mut c_void,

@@ -22,6 +22,9 @@ const VENDORED = new Set([
   'internal/fs/sync_write_stream',
   'internal/net',
   'internal/event_target',
+  'internal/http2/util',
+  'internal/js_stream_socket',
+  'internal/webstreams/adapters',
 ]);
 
 // ---------------- primordials emulator ----------------
@@ -351,6 +354,14 @@ const errDefs = {
   ERR_NO_TEMPORAL: [Error, () => 'Temporal unavailable'],
   ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED: [Error, () => 'Custom engines not supported by this OpenSSL'],
   ERR_CRYPTO_ENGINE_UNKNOWN: [Error, (e) => `Engine "${e}" was not found`],
+  // http2 codes thrown by the vendored internal/http2/util.js (messages from
+  // node's lib/internal/errors.js).
+  ERR_HTTP2_HEADER_SINGLE_VALUE: [TypeError, (name) => `Header field "${name}" must only have a single value`],
+  ERR_HTTP2_INVALID_CONNECTION_HEADERS: [TypeError, (name) => `HTTP/1 Connection specific headers are forbidden: "${name}"`],
+  ERR_HTTP2_INVALID_PSEUDOHEADER: [TypeError, (name) => `"${name}" is an invalid pseudoheader or is used incorrectly`],
+  ERR_INVALID_HTTP_TOKEN: [TypeError, (name, field) => `${name} must be a valid HTTP token ["${field}"]`],
+  ERR_INVALID_STATE: [Error, (message) => `Invalid state: ${message}`],
+  ERR_STREAM_WRAP: [Error, () => 'Stream has StringDecoder set or is in objectMode'],
 };
 
 const systemErrDefs = {

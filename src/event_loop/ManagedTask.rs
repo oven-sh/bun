@@ -33,13 +33,6 @@ impl ManagedTask {
         callback(ctx.unwrap().as_ptr())
     }
 
-    pub fn cancel(&mut self) {
-        fn noop(_: *mut c_void) -> JsResult<()> {
-            Ok(())
-        }
-        self.callback = noop;
-    }
-
     // A per-(Type, Callback) trampoline is folded away by storing
     // the type-erased fn pointer directly — `fn(*mut T)` and `fn(*mut c_void)` share ABI.
     pub fn new<T>(ctx: *mut T, callback: fn(*mut T) -> JsResult<()>) -> Task {

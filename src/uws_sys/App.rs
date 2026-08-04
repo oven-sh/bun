@@ -342,6 +342,7 @@ impl<const SSL: bool> App<SSL> {
         &mut self,
         hostname_pattern: &core::ffi::CStr,
         opts: &BunSocketContextOptions,
+        apply_client_cert_policy: bool,
     ) -> Result<(), AddServerNameError> {
         // SAFETY: self is a valid app; hostname_pattern is NUL-terminated.
         let rc = unsafe {
@@ -350,6 +351,7 @@ impl<const SSL: bool> App<SSL> {
                 std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 hostname_pattern.as_ptr(),
                 *opts,
+                i32::from(apply_client_cert_policy),
             )
         };
         if rc != 0 {
@@ -611,6 +613,7 @@ pub mod c {
             app: *mut uws_app_t,
             hostname_pattern: *const c_char,
             options: BunSocketContextOptions,
+            apply_client_cert_policy: c_int,
         ) -> i32;
         pub(crate) safe fn uws_filter(
             ssl: i32,

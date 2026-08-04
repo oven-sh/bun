@@ -344,11 +344,8 @@ pub struct VirtualMachine {
 #[derive(Default)]
 pub struct TestIsolationState {
     pub saved_cwd: Option<Box<[u8]>>,
-    /// Set once the current global's post-preload own-property baseline has
-    /// been captured (see `Zig__GlobalObject__captureTestIsolationBaseline`);
-    /// cleared on every full swap so the next file re-captures.
+    /// Cleared on every full swap so the next file re-captures its baseline.
     pub baseline_captured: bool,
-    /// Opt-out of the reuse fast path.
     pub force_full_swap: bool,
 }
 
@@ -4703,11 +4700,8 @@ impl VirtualMachine {
         let old_global = self.global;
         let old_global_ref = JSGlobalObject::opaque_ref(old_global);
 
-        // The file left the global in its post-preload shape (no built-in
-        // overwritten, no prototype watchpoint fired, no top-level lexical
-        // bindings added): scrub leaked properties, clear the module
-        // registries, and reuse it. Linked CodeBlocks and JIT'd code survive,
-        // so subsequent files skip module-body re-tiering.
+        // Scrub and reuse the global if the file left it in its post-preload
+        // shape; node_modules CodeBlocks and JIT'd code then survive.
         if !self.test_isolation_state.force_full_swap
             && JSGlobalObject::try_reset_for_test_isolation(old_global_ref)
         {

@@ -694,10 +694,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
 
 namespace Bun {
 
-// Snapshot of a freshly-created global (after --preload) used by
-// Zig__GlobalObject__tryResetForTestIsolation to decide whether a file left
-// the global clean enough to reuse (preserving JIT'd code and linked
-// CodeBlocks) instead of paying for a full swap.
+// Snapshot of a fresh global (post --preload) for tryResetForTestIsolation.
 struct TestIsolationBaseline {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(TestIsolationBaseline);
 
@@ -706,14 +703,9 @@ public:
         JSC::EncodedJSValue value;
         uint8_t attributes;
     };
-    // globalThis own properties at capture time. Keys are UniquedStringImpl*
-    // (the global is a dictionary; its PropertyTable keys are already uniqued
-    // and live as long as the global).
     WTF::UncheckedKeyHashMap<WTF::RefPtr<WTF::UniquedStringImpl>, Entry> ownProperties;
     unsigned lexicalSymbolTableSize { 0 };
     unsigned varSymbolTableSize { 0 };
-    // The global this baseline was captured against; a baseline survives until
-    // the next full swap, at which point it's re-captured on the new global.
     Zig::GlobalObject* capturedGlobal { nullptr };
     unsigned reuseCount { 0 };
     unsigned swapCount { 0 };
@@ -736,11 +728,9 @@ extern "C" void Zig__GlobalObject__captureTestIsolationBaseline(Zig::GlobalObjec
     baseline.capturedGlobal = globalObject;
     baseline.lexicalSymbolTableSize = globalObject->globalLexicalEnvironment()->symbolTable()->size();
 
-    // Static hash-table entries (setTimeout, fetch, Reflect, process, …) reify
-    // into own-property storage on first access. Reify them all now so the
-    // baseline records their canonical values; a test that later overwrites one
-    // is then caught by the value compare, and the scrub never mistakes a lazy
-    // reification for a user leak.
+    // Reify static hash-table entries (setTimeout, fetch, process, …) into
+    // own-property storage so the baseline holds their canonical values and the
+    // scrub never mistakes a lazy reification for a user leak.
     if (!globalObject->staticPropertiesReified())
         globalObject->reifyAllStaticProperties(globalObject);
 
@@ -769,9 +759,7 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
 
     auto swap = [&] { baseline->swapCount++; return false; };
 
-    // Prototype-chain watchpoints are one-shot: once fired they cannot be
-    // re-armed, so a file that invalidates one forces a full swap for the
-    // remainder of the run (the fresh global's watchpoints start valid again).
+    // These watchpoints are one-shot; a fresh global re-arms them.
     if (globalObject->isHavingABadTime()
         || !globalObject->objectPrototypeChainIsSane()
         || !globalObject->arrayPrototypeChainIsSane()
@@ -794,9 +782,8 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
         || globalObject->m_errorConstructorPrepareStackTraceValue.get())
         return swap();
 
-    // Compare own properties. Anything in the baseline whose value or
-    // attributes changed means user code overwrote a built-in (e.g.
-    // `globalThis.fetch = mock`); anything extra is a leak to scrub.
+    // A changed baseline slot value/attributes = user overwrote a built-in;
+    // an extra own property = leak to scrub.
     WTF::Vector<JSC::Identifier, 16> toDelete;
     unsigned seen = 0;
     bool dirty = false;
@@ -822,12 +809,8 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
         JSC::JSCell::deleteProperty(globalObject, globalObject, id, slot);
     }
 
-    // Drop project/test modules so "module state is not shared between files"
-    // holds; keep node_modules and builtin records so their linked CodeBlocks
-    // (and JIT'd code) survive, which is where the per-file cost under
-    // --isolate actually goes. Project code is an absolute path outside
-    // node_modules; bun's loader keys builtins by specifier ("node:fs",
-    // "bun:test"), which this leaves alone.
+    // Drop project modules (absolute path outside node_modules) so their state
+    // resets; keep node_modules/builtin records so their CodeBlocks survive.
     auto isProjectPath = [](WTF::StringView key) {
         if (key.isEmpty())
             return false;

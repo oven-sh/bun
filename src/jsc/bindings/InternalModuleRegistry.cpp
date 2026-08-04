@@ -20,12 +20,9 @@ extern "C" bool Bun__VM__useIsolationSourceProviderCache(void* bunVM);
 
 namespace Bun {
 
-// createBuiltinExecutable bypasses CodeCache and allocates a fresh
-// UnlinkedFunctionExecutable every call, which under bun test --isolate forces
-// every fresh global to re-parse + re-bytecodegen each internal module body.
-// This per-VM cache keeps the executable (and its SourceCode) alive so a new
-// global only re-link()s and re-evaluates. Strong handles because a Weak would
-// clear the moment the outgoing global's JSFunction is collected.
+// createBuiltinExecutable bypasses CodeCache, so without this per-VM cache
+// every --isolate global re-parses + re-bytecodegens each internal module body.
+// Strong: a Weak would clear once the outgoing global's JSFunction is collected.
 struct InternalModuleExecutableCache {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(InternalModuleExecutableCache);
 

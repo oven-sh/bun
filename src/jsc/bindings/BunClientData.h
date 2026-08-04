@@ -143,20 +143,13 @@ public:
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
 
-    // bun test --isolate: snapshot of the global's own-property set + key
-    // watchpoints captured after a fresh global runs preload, used to decide
-    // whether the global can be reused for the next file (scrubbing leaked
-    // properties) instead of creating a new one. Lazy — null until first
-    // capture. See Zig__GlobalObject__captureTestIsolationBaseline.
+    // See Zig__GlobalObject__captureTestIsolationBaseline (ZigGlobalObject.cpp).
     struct TestIsolationBaselineDeleter {
         void operator()(Bun::TestIsolationBaseline*) const;
     };
     std::unique_ptr<Bun::TestIsolationBaseline, TestIsolationBaselineDeleter> testIsolationBaseline;
 
-    // bun test --isolate: per-VM UnlinkedFunctionExecutable + SourceCode for
-    // internal JS modules (src/js/*), indexed by InternalModuleRegistry::Field.
-    // createBuiltinExecutable bypasses CodeCache, so without this each fresh
-    // global re-parses and re-bytecodegens every builtin module body. Lazy.
+    // See InternalModuleExecutableCache (InternalModuleRegistry.cpp).
     struct InternalModuleExecutableCacheDeleter {
         void operator()(Bun::InternalModuleExecutableCache*) const;
     };

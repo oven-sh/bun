@@ -2905,17 +2905,14 @@ const kPerCodePointWidthOptions = { __proto__: null, perCodePoint: true, countAn
 function getStringWidth(str, removeControlChars = true) {
   if (removeControlChars) str = stripVTControlCharacters(str);
   str = StringPrototypeNormalize(str, "NFC");
-  // node measures every code point individually (icu.getStringWidth with
-  // expandEmojiSequence defaulting on), not grapheme clusters. ANSI was
-  // already stripped above; node's binding has no ANSI awareness, so any
-  // residual escape bytes count as their own code points (Cc = 0).
+  // node measures per code point, not grapheme clusters; ANSI was already stripped above.
+  // https://github.com/nodejs/node/blob/main/src/node_i18n.cc (GetColumnWidth)
   return internalGetStringWidth(str, kPerCodePointWidthOptions);
 }
 
-// node's ansi matcher (lib/internal/util/inspect.js, from chalk/ansi-regex):
-// only complete, validly-terminated sequences are stripped — Bun.stripANSI
-// also eats bare/invalid ESC/CSI prefixes, which node keeps.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/inspect.js
+// node's ansi matcher (from chalk/ansi-regex): only complete sequences are stripped —
+// Bun.stripANSI also eats bare/invalid ESC/CSI prefixes, which node keeps.
+// https://github.com/nodejs/node/blob/main/lib/internal/util/inspect.js
 const ansi = new RegExp(
   "[\\u001B\\u009B][[\\]()#;?]*" +
     "(?:(?:(?:(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]+)*" +

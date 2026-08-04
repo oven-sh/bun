@@ -311,10 +311,9 @@ extern "C" void on_before_reload_process_posix()
     bun_close_range(3, ~0U, CLOSE_RANGE_CLOEXEC);
 #endif
 
-    // Preserve the IPC channel to the parent across the execve. NODE_CHANNEL_FD
-    // survives in environ, and the reloaded image re-attaches to that fd; with
-    // it CLOEXEC'd the reloaded process opens IPC on a closed fd and the
-    // parent stops receiving 'message' events after the first reload.
+    // Preserve the IPC channel to the parent across the execve: NODE_CHANNEL_FD survives in
+    // environ and the reloaded image re-attaches to it; CLOEXEC'd, the parent stops receiving
+    // 'message' events after the first reload.
     if (const char* s = getenv("NODE_CHANNEL_FD")) {
         char* end = nullptr;
         long fd = strtol(s, &end, 10);
@@ -322,18 +321,9 @@ extern "C" void on_before_reload_process_posix()
             unset_cloexec(static_cast<int>(fd));
     }
 
-    // Reset caught signal dispositions to default before unblocking the mask.
-    // With bun's handlers still installed, a SIGTERM arriving between here and
-    // execve is consumed (queued for JS dispatch) and then lost when execve
-    // replaces the image, wedging a --watch child a parent just tried to
-    // kill. execve itself resets caught dispositions, so this only shrinks
-    // the window to zero. Inherited SIG_IGN (nohup's SIGHUP, job-control
-    // SIGTTIN/SIGTTOU) is left alone so it survives execve like before.
-    // SIGSEGV/SIGBUS (JSC's wasm trap + crash handler), real-time signals,
-    // and JSC's sigThreadSuspendResume (SIGPWR on Linux, pthread_kill'd by
-    // the SamplingProfiler and concurrent GC) are left for execve to reset
-    // atomically; resetting them here while those threads are still
-    // running turns a sampler tick or stop-the-world into a fatal signal.
+    // Reset caught dispositions so a SIGTERM arriving between here and execve isn't queued-then-
+    // lost. Inherited SIG_IGN is left alone. SIGSEGV/SIGBUS/RT/sigThreadSuspendResume are left
+    // for execve to reset atomically — resetting them here races JSC's sampler/GC threads fatally.
     struct sigaction sa {};
     sa.sa_handler = SIG_DFL;
     sigemptyset(&sa.sa_mask);

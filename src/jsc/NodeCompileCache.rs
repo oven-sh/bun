@@ -72,15 +72,9 @@ struct AlignedBlob {
 // SAFETY: the buffer is plain bytes; ownership is unique to the entry map.
 unsafe impl Send for AlignedBlob {}
 
-/// Blobs displaced by an entry refresh. JSC providers hold raw spans into
-/// accepted blobs (lazy inner-function decode can read them long after the
-/// initial compile), so displaced blobs are retired here, never freed —
-/// freeing one is a use-after-free the borrow checker cannot see across the
-/// FFI boundary. Deliberate leak-for-safety: growth is one blob per refresh
-/// of an already-cached module, which only recurs under `--hot`-style
-/// same-process reloads; a long-lived hot session accretes retired bytecode
-/// proportional to reload count. Bounding this needs a JSC-side provider
-/// release hook first (maintainer call), not a cap here.
+/// Blobs displaced by an entry refresh. JSC providers hold raw spans into accepted blobs past the
+/// initial compile, so displaced blobs are retired (leaked), never freed — freeing is a UAF across
+/// the FFI boundary. Bounding this needs a JSC-side provider release hook first, not a cap here.
 static RETIRED_BLOBS: Mutex<Vec<AlignedBlob>> = Mutex::new(Vec::new());
 
 const BLOB_ALIGN: usize = 128;
@@ -876,15 +870,9 @@ fn generate_bytecode(format: Format, code: &[u8], url: &[u8]) -> Option<Box<[u8]
     resp_rx.recv().ok().flatten()
 }
 
-/// One unit of persist work, snapshotted out of `STATE` so bytecode
-/// generation can run with the lock dropped. `code` is moved (not cloned)
-/// out of the entry; a concurrent `fetch` of the same key sees `code: None`
-/// and skips scheduling, which also makes overlapping persist passes
-/// naturally exclusive per entry. Keys hash `(is_cjs, filename)`, NOT the
-/// content — a file edited and re-fetched mid-pass can repopulate the same
-/// entry with different code, so Phase 3 compares `code_hash` before
-/// touching the entry (a stale on-disk write also self-corrects via the
-/// header check on the next load).
+/// One unit of persist work, snapshotted out of `STATE` so bytecode generation runs with the lock
+/// dropped. `code` is moved out (concurrent `fetch` sees `code: None` and skips). Keys hash
+/// `(is_cjs, filename)` — not content — so Phase 3 re-checks `code_hash` before touching the entry.
 struct PersistJob {
     key: u32,
     format: Format,
@@ -1050,11 +1038,8 @@ fn write_persist_job_locked(
     Ok(())
 }
 
-/// Full persist pass. `STATE` is held only for the snapshot and the
-/// file-write/bookkeeping phases; the expensive bytecode generation (a
-/// blocking round-trip to the BunCompileCache worker per entry) runs with
-/// the lock dropped so concurrent module loads — Workers included — are not
-/// stalled behind it.
+/// Full persist pass. `STATE` is held only for snapshot and file-write phases; bytecode
+/// generation runs with the lock dropped so concurrent module loads are not stalled.
 fn persist_pass() {
     // Phase 1: snapshot under the lock.
     let jobs = {
@@ -1147,11 +1132,9 @@ pub fn persist_at_exit() {
     persist_now();
 }
 
-/// Non-latching sibling of [`persist_at_exit`] for paths where the process
-/// may survive — a self-directed signal whose disposition turns out
-/// non-fatal (handled on another thread, or default-ignored like SIGWINCH).
-/// Persists what's cached now but leaves the exit latch unset, so a later
-/// real exit still persists modules loaded after this point.
+/// Non-latching sibling of [`persist_at_exit`] for paths where the process may survive (e.g. a
+/// self-directed signal that proves non-fatal). Leaves the exit latch unset so a later real exit
+/// still persists modules loaded after this point.
 pub fn persist_now() {
     if !is_enabled() {
         return;

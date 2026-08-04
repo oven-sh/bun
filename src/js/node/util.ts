@@ -40,11 +40,9 @@ function isFunction(value) {
   return typeof value === "function";
 }
 
-// Node semantics (includes the [[Prototype]] identity check that
-// Bun.deepEquals(a, b, true) intentionally omits) plus the skipPrototype
-// third argument, which IS public API in node v26.3.0: fn.length === 3 and
-// isDeepStrictEqual(a, b, true) skips prototype identity (asserted by
-// upstream test-util-isDeepStrictEqual.js).
+// Node semantics (includes the [[Prototype]] identity check Bun.deepEquals omits) plus the
+// skipPrototype third argument, which is public API in node v26.3.0 (fn.length === 3).
+// https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
 const { isDeepStrictEqual } = require("internal/util/comparisons");
 
 const parseArgs = $newRustFunction("parse_args.rs", "parseArgs", 1);
@@ -478,14 +476,8 @@ function styleText(format, text, options) {
   return `${openCodes}${processedText}${closeCodes}`;
 }
 
-// Port of node's `internal/util/diff` (v26.3.0), the implementation behind
-// `util.diff()`.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/diff.js
-//
-// The native comparator reports `{ kind, value }` with kind Insert=0, Delete=1,
-// Equal=2; node's public shape is `[operation, value]` with INSERT=1,
-// DELETE=-1, NOP=0.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/assert/myers_diff.js#L18-L22
+// Port of https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/diff.js.
+// Native `{ kind }` is Insert=0/Delete=1/Equal=2; node's `[op]` is INSERT=1/DELETE=-1/NOP=0.
 const kOperationForDiffKind = [1, -1, 0];
 let myersDiff;
 

@@ -35,10 +35,8 @@ static void printSyntaxError(const WTF::String& filename, const JSC::ParserError
     fprintf(stderr, "%s:%d\n\nSyntaxError: %s\n", filenameUtf8.data(), error.line(), messageUtf8.data());
 }
 
-// Called from the CLI (`Run::start`) after the VM booted and `--require`
-// preloads ran. `moduleType` is 0 = detect, 1 = CommonJS, 2 = ES module
-// (from `--input-type` or the file extension). Returns 0 when the source
-// parses, 1 when it does not (after printing the error to stderr).
+// Called from `Run::start` after the VM booted and `--require` preloads ran.
+// `moduleType`: 0=detect, 1=CJS, 2=ESM. Returns 0 on parse, 1 on error (printed).
 extern "C" int32_t Bun__checkSyntaxForCLI(Zig::GlobalObject* globalObject, const unsigned char* sourcePtr, size_t sourceLen, const unsigned char* namePtr, size_t nameLen, int32_t moduleType)
 {
     auto& vm = JSC::getVM(globalObject);

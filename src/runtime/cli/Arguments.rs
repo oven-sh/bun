@@ -1272,7 +1272,11 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             }
 
             ctx.runtime_options.check_syntax = args.flag(b"--check");
-            if ctx.runtime_options.check_syntax && ctx.runtime_options.eval.provided {
+            // Node's `has_eval_string`: `-e` (even empty) or `-p <non-empty>`;
+            // bare `-p` alone is accepted with `-c`.
+            if ctx.runtime_options.check_syntax
+                && (!ctx.runtime_options.eval.script.is_empty() || eval_arg.is_some())
+            {
                 // Node prints this (and exits 9) for `node -c -e foo`.
                 let exec_path: &[u8] = bun_core::self_exe_path()
                     .map(|p| p.as_bytes())

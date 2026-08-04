@@ -3045,6 +3045,7 @@ impl RunCommand {
         ctx.runtime_options.eval.provided = false;
         ctx.runtime_options.eval.interactive_script = Some(Box::default());
         ctx.runtime_options.eval.script = Box::from(&b"\n"[..]);
+        ctx.debug.hot_reload = cli::command::HotReload::None;
         Self::exec_eval(ctx)
     }
 

@@ -222,6 +222,111 @@ test.concurrent("RedisClient survives GC after a command throws during argument 
   expect(exitCode).toBe(0);
 });
 
+// A later argument's toString() can detach an earlier ArrayBuffer argument
+// (transfer() frees its store synchronously), so the earlier captured slice
+// pointed at freed heap by the time the command was serialized onto the wire.
+test("set/send serialize ArrayBuffer arguments before a later toString() can free them", async () => {
+  const src = `
+    const net = require("node:net");
+
+    const TAIL = Buffer.from("$1\\r\\nv\\r\\n");
+    let wire = Buffer.alloc(0);
+    let want = 0;
+    let resolveFrame;
+    let saidHello = false;
+    function tails() {
+      let n = 0, i = -1;
+      while ((i = wire.indexOf(TAIL, i + 1)) !== -1) n++;
+      return n;
+    }
+    const server = net.createServer(socket => {
+      socket.on("data", data => {
+        if (!saidHello) {
+          if (data.includes("HELLO")) { saidHello = true; socket.write("+OK\\r\\n"); }
+          return;
+        }
+        wire = Buffer.concat([wire, data]);
+        if (resolveFrame && tails() >= want) {
+          socket.write("+OK\\r\\n");
+          const r = resolveFrame; resolveFrame = null; r();
+        }
+      });
+      socket.on("error", () => {});
+    });
+    await new Promise((resolve, reject) => {
+      server.listen(0, "127.0.0.1", resolve);
+      server.on("error", reject);
+    });
+
+    const client = new Bun.RedisClient("redis://127.0.0.1:" + server.address().port, {
+      autoReconnect: false,
+      connectionTimeout: 5000,
+    });
+    await client.connect();
+
+    const keep = [];
+    function evilValue(key) {
+      return Object.assign(new String("v"), {
+        toString() {
+          key.buffer.transfer(0);
+          for (let i = 0; i < 24; i++) {
+            const x = new Uint8Array(4096);
+            x.fill(0x5a);
+            Buffer.from(x.buffer).write("RECYCLEDKEY");
+            keep.push(x);
+          }
+          Bun.gc(true);
+          return "v";
+        },
+      });
+    }
+
+    {
+      const key = Buffer.from(new ArrayBuffer(4096));
+      key.write("ORIGINALKEY");
+      want = 1;
+      const done = new Promise(r => (resolveFrame = r));
+      client.set(key, evilValue(key)).catch(() => {});
+      await done;
+    }
+
+    {
+      const key = Buffer.from(new ArrayBuffer(4096));
+      key.write("ORIGINAL2KEY");
+      want = 2;
+      const done = new Promise(r => (resolveFrame = r));
+      client.send("LPUSH", [key, evilValue(key)]).catch(() => {});
+      await done;
+    }
+
+    client.close();
+    server.close();
+
+    const text = wire.toString("latin1");
+    if (text.includes("RECYCLEDKEY")) {
+      throw new Error("freed/recycled heap reached the wire: " + JSON.stringify(text.slice(0, 80)));
+    }
+    if (!text.includes("ORIGINALKEY") || !text.includes("ORIGINAL2KEY")) {
+      throw new Error("original key bytes missing from the wire: " + JSON.stringify(text.slice(0, 80)));
+    }
+    console.log("OK");
+    process.exit(0);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("OK");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
 // Fuzzer found heap corruption (zapped cell during GC marking) when a custom
 // setter on a generated class was invoked with a receiver that is not an
 // instance of that class (e.g. through a Proxy wrapping the instance, or an

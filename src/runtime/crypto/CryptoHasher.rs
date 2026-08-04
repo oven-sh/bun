@@ -504,9 +504,6 @@ impl CryptoHasher {
 
         let init = 'brk: {
             if let Some(key) = &hmac_key {
-                // Reuse the `algorithm` ZigString coerced above; coercing
-                // `algorithm_name` again would call user `toString()` a second
-                // time after `key`'s backing slice has been captured.
                 let chosen_algorithm: evp::Algorithm = {
                     let slice = algorithm.to_slice();
                     match evp::lookup_ignore_case(slice.slice()) {

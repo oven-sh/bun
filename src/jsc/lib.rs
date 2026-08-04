@@ -525,6 +525,11 @@ pub mod work_task;
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
 pub fn initialize(eval_mode: bool) {
+    initialize_with(eval_mode, false);
+}
+
+/// `short_lived_globals`: `bun test --isolate`/`--parallel`, where each file gets a fresh global and per-global JIT code is discarded with it.
+pub fn initialize_with(eval_mode: bool, short_lived_globals: bool) {
     // The counter lives in `bun_core` so this crate doesn't depend on
     // `bun_analytics`.
     bun_core::analytics::Features::jsc_inc();
@@ -543,6 +548,7 @@ pub fn initialize(eval_mode: bool) {
             on_jsc_invalid_env_var,
             eval_mode,
             one_shot,
+            short_lived_globals,
         )
     };
 }
@@ -1922,6 +1928,7 @@ unsafe extern "C" {
         cb: extern "C" fn(name: *const u8, len: usize),
         eval_mode: bool,
         one_shot_startup: bool,
+        short_lived_globals: bool,
     );
 }
 

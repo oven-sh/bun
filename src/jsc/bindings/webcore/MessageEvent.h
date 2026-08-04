@@ -87,7 +87,6 @@ public:
     size_t memoryCost() const;
 
 private:
-    MessageEvent();
     MessageEvent(const AtomString& type, Init&&, IsTrusted);
     MessageEvent(const AtomString& type, DataType&&, const String& origin, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
 

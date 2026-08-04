@@ -42,11 +42,6 @@ using namespace JSC;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MessageEvent);
 
-MessageEvent::MessageEvent()
-    : Event(MessageEventInterfaceType)
-{
-}
-
 inline MessageEvent::MessageEvent(const AtomString& type, Init&& initializer, IsTrusted isTrusted)
     : Event(MessageEventInterfaceType, type, initializer, isTrusted)
     , m_data(JSValueTag {})

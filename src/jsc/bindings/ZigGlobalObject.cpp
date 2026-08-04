@@ -804,7 +804,12 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
     if (!baseline || baseline->capturedGlobal != globalObject)
         return false;
 
-    auto swap = [&] { baseline->swapCount++; return false; };
+    auto swap = [&] {
+        baseline->ownProperties.clear();
+        baseline->prepareStackTraceValue.clear();
+        baseline->swapCount++;
+        return false;
+    };
 
     // These watchpoints are one-shot; a fresh global re-arms them.
     if (globalObject->isHavingABadTime()
@@ -921,6 +926,7 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
     globalObject->mockModule.activeMocks.clear();
     globalObject->globalEventScope->removeAllEventListeners();
     globalObject->overridenDateNow = JSC::PNaN;
+    delete std::exchange(globalObject->onLoadPlugins.virtualModules, nullptr);
     globalObject->onLoadPlugins = {};
     globalObject->onResolvePlugins = {};
     if (globalObject->hasProcessObject()) {

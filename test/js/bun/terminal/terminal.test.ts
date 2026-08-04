@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 
 // Helper to enable echo on a terminal (echo is disabled by default to avoid duplication)
 function enableEcho(terminal: Bun.Terminal) {
@@ -291,6 +291,30 @@ describe("Bun.Terminal", () => {
       terminal.close();
 
       expect(() => terminal.setRawMode(true)).toThrow("Terminal is closed");
+    });
+
+    // The mode and the saved termios used to be one process-wide pair, so once
+    // any terminal was raw, setRawMode(true) on a second one returned success
+    // without ever touching that terminal's own PTY.
+    test.skipIf(isWindows)("each terminal keeps its own raw mode", async () => {
+      const ICANON = process.platform === "darwin" ? 0x100 : 0x2;
+      const ECHO = 0x8;
+      const isRaw = (terminal: Bun.Terminal) => (terminal.localFlags & (ICANON | ECHO)) === 0;
+
+      await using first = new Bun.Terminal({});
+      await using second = new Bun.Terminal({});
+
+      first.setRawMode(true);
+      second.setRawMode(true);
+      const bothRaw = { first: isRaw(first), second: isRaw(second) };
+
+      second.setRawMode(false);
+      const afterSecondRestored = { first: isRaw(first), second: isRaw(second) };
+
+      expect({ bothRaw, afterSecondRestored }).toEqual({
+        bothRaw: { first: true, second: true },
+        afterSecondRestored: { first: true, second: false },
+      });
     });
   });
 
@@ -628,10 +652,7 @@ describe("Bun.Terminal", () => {
     });
   });
 
-  // On Windows the StreamingWriter is async so drain fires after each write.
-  // On POSIX, drain only fires after backpressure clears, which requires a
-  // reader on the slave side; with no child attached the buffer never drains.
-  describe.todoIf(!isWindows)("drain callback", () => {
+  describe("drain callback", () => {
     test("drain callback is invoked when writer is ready", async () => {
       const { promise, resolve } = Promise.withResolvers<void>();
       let drainCalled = false;
@@ -648,6 +669,34 @@ describe("Bun.Terminal", () => {
       terminal.close();
 
       expect(drainCalled).toBe(true);
+    });
+
+    // Reaching the `had_buffered && !has_pending` branch needs a second write
+    // whose combined size both exceeds CHUNK_SIZE (so should_buffer is false)
+    // and fits in the kernel PTY input queue (so the sync flush completes).
+    // On Linux the queue is ~12K so 5005 bytes works; on macOS it is smaller
+    // than 5005 with no slave reader, and on Apple Silicon CHUNK_SIZE is 16K,
+    // so neither constraint is satisfiable there. The branch under test has no
+    // target-specific code, so Linux is the regression guard.
+    test.skipIf(!isLinux)("drain fires when a second write flushes what the first buffered", async () => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      let drainCount = 0;
+
+      const terminal = new Bun.Terminal({
+        drain() {
+          drainCount++;
+          resolve();
+        },
+      });
+      terminal.setRawMode(true);
+
+      expect(terminal.write("hello")).toBe(5);
+      expect(terminal.write(Buffer.alloc(5000, 66))).toBe(5000);
+
+      await promise;
+      terminal.close();
+
+      expect(drainCount).toBeGreaterThan(0);
     });
   });
 
@@ -1226,6 +1275,116 @@ describe.concurrent("Bun.spawn with terminal option", () => {
     await gotData;
     const output = Buffer.concat(dataChunks).toString();
     expect(output).toContain("hello");
+  });
+
+  // An inline terminal must not keep the event loop alive after its subprocess
+  // exits: on POSIX on_process_exit drives the reader to EOF and unrefs both
+  // polls (drain_and_close_slave_fd); on Windows it unrefs only the writer
+  // (unref_after_inline_child_exit) and the reader stays ref'd until conhost
+  // self-exits and delivers EOF, so a script that never calls terminal.close()
+  // still exits. Regression for #33882 which deferred the reader's EOF to a
+  // later poll tick. POSIX-only assertions: on Windows EOF arrives
+  // asynchronously once conhost self-exits, so the exit callback may not have
+  // fired by the time child.exited resolves.
+  test.skipIf(isWindows)("process exits after subprocess with inline terminal (no terminal.close)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          let out = "";
+          let exitCount = 0;
+          const child = Bun.spawn([process.execPath, "-e", "console.log('hi from pty')"], {
+            env: process.env,
+            terminal: {
+              data: (_t, d) => { out += Buffer.from(d).toString(); },
+              exit: () => { exitCount++; },
+            },
+          });
+          await child.exited;
+          const exitedSync = exitCount === 1;
+          // One macrotask barrier so the reader's still-armed one-shot poll
+          // fires its second EIO; the exit callback must stay at one.
+          await Bun.sleep(0);
+          process.stdout.write(JSON.stringify({
+            gotOutput: out.includes("hi from pty"),
+            exitedSync,
+            exitCount,
+          }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // On main this times out: the reader/writer polls kept loop.active > 0 and
+    // nothing triggered the GC that would finalize the Terminal.
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ gotOutput: true, exitedSync: true, exitCount: 1 }),
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
+  // On Windows, Subprocess::on_process_exit used to fire ClosePseudoConsole
+  // immediately; that routes teardown through conhost's PtySignalInputThread,
+  // which on Server 2019 races the ConsoleIoThread still processing the
+  // child's last WriteConsole and can drop the final render. The inline
+  // pseudoconsole now releases its ConDrv \Reference handle at spawn time so
+  // conhost exits via its IoThread (sequentially after the last write) and the
+  // reader sees every byte before EOF.
+  test("inline terminal: fast-exiting child's output is delivered before exit callback", async () => {
+    let output = "";
+    let outputAtExit = "";
+    const eof = Promise.withResolvers<void>();
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "process.stdout.write('LAST-FRAME', () => process.exit(0))"],
+      env: bunEnv,
+      terminal: {
+        data(_t, chunk) {
+          output += Buffer.from(chunk).toString();
+        },
+        exit() {
+          outputAtExit = output;
+          eof.resolve();
+        },
+      },
+    });
+    try {
+      await proc.exited;
+      await eof.promise;
+      // The exit callback fires on reader EOF: on Windows that is conhost closing
+      // the output pipe from its IoThread; on POSIX it is drain_and_close_slave_fd.
+      expect(outputAtExit).toContain("LAST-FRAME");
+      // After EOF conhost has exited; resize() must keep its no-throw contract
+      // (ResizePseudoConsole would fail on the broken signal pipe).
+      expect(() => proc.terminal!.resize(100, 40)).not.toThrow();
+    } finally {
+      proc.terminal?.close();
+    }
+  });
+
+  // Cross-platform loop-exit check: after an inline terminal's child exits,
+  // nothing else in the inner script refs the event loop. POSIX drains to EOF
+  // synchronously; on Windows the reader stays ref'd only until conhost
+  // self-exits and delivers EOF. Either way the inner process must not hang.
+  test("process exits after inline-terminal child exits without terminal.close()", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `await Bun.spawn([process.execPath, "-e", "process.stdout.write('ok')"], {
+           env: process.env,
+           terminal: { data() {}, exit() {} },
+         }).exited;`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: expect.any(String), exitCode: 0 });
   });
 
   // https://github.com/oven-sh/bun/issues/33187

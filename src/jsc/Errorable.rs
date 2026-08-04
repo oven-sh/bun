@@ -15,20 +15,13 @@ pub union Result<T: Copy> {
 }
 
 impl<T: Copy> Errorable<T> {
-    pub fn unwrap(self) -> core::result::Result<T, bun_core::Error> {
+    pub(crate) fn unwrap(self) -> core::result::Result<T, ErrorCode> {
         if self.success {
             // SAFETY: success == true implies the `value` arm is active.
             unsafe { Ok(self.result.value) }
         } else {
             // SAFETY: success == false implies the `err` arm is active.
-            unsafe { Err(self.result.err.code.to_error()) }
-        }
-    }
-
-    pub fn value(val: T) -> Self {
-        Self {
-            result: Result { value: val },
-            success: true,
+            unsafe { Err(self.result.err.code) }
         }
     }
 
@@ -39,11 +32,11 @@ impl<T: Copy> Errorable<T> {
         }
     }
 
-    pub fn err(code: bun_core::Error, err_value: JSValue) -> Self {
+    pub fn err(code: ErrorCode, err_value: JSValue) -> Self {
         Self {
             result: Result {
                 err: ZigErrorType {
-                    code: ErrorCode::from(code),
+                    code,
                     value: err_value,
                 },
             },

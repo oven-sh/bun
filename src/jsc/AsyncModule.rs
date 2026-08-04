@@ -1,5 +1,4 @@
 use core::ffi::c_void;
-use core::sync::atomic::AtomicU32;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_bundler::transpiler::ParseResult;
@@ -15,8 +14,8 @@ use bun_sys::Fd;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    self as jsc, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue, JsError,
-    JsResult, ResolvedSource, StrongOptional, ZigStringJsc as _,
+    self as jsc, ErrorCode, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue,
+    JsError, JsResult, ResolvedSource, StrongOptional, ZigStringJsc as _,
 };
 
 bun_core::declare_scope!(AsyncModule, hidden);
@@ -39,45 +38,41 @@ pub struct InitOpts<'a> {
 
 pub struct AsyncModule {
     // This is all the state used by the printer to print the module
-    pub parse_result: ParseResult<'static>,
-    pub promise: StrongOptional, // Strong.Optional, default .empty
+    pub(crate) parse_result: ParseResult<'static>,
+    pub(crate) promise: StrongOptional, // Strong.Optional, default .empty
     /// Packed `referrer ++ specifier ++ path.text`. Owns the bytes; stored as offsets so
     /// the struct stays movable (no self-referential borrows); reconstruct
     /// slices via `referrer()` / `specifier()` / `path_text()`.
-    pub string_buf: Box<[u8]>,
+    pub(crate) string_buf: Box<[u8]>,
     referrer_len: u32,
     specifier_len: u32,
-    pub fd: Option<Fd>,
     // `?*PackageJSON` / `*JSGlobalObject` — both are VM-lifetime
     // backrefs (BACKREF/JSC_BORROW class in LIFETIMES.tsv). `package_json` is
     // stored as a raw ptr so `AsyncModule` is `'static`-embeddable in
     // `Queue`/`VirtualMachine` without a phantom lifetime; `global_this` uses
     // [`crate::GlobalRef`] which encapsulates the single audited deref.
-    pub package_json: Option<core::ptr::NonNull<PackageJSON>>,
-    pub loader: api::Loader,
-    pub hash: u32, // default = u32::MAX
+    pub(crate) package_json: Option<core::ptr::NonNull<PackageJSON>>,
+    pub(crate) loader: api::Loader,
+    pub(crate) hash: u32, // default = u32::MAX
     pub global_this: crate::GlobalRef,
-    pub arena: Box<ArenaAllocator>,
+    pub(crate) arena: Box<ArenaAllocator>,
     /// See [`InitOpts::ast_alloc_state`].
     pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
 
     // This is the specific state for making it async
-    pub poll_ref: KeepAlive,
-    pub any_task: bun_event_loop::AnyTask::AnyTask,
+    pub(crate) poll_ref: KeepAlive,
 }
 
-pub type Id = u32;
-
-pub(crate) struct PackageDownloadError<'a> {
+struct PackageDownloadError<'a> {
     pub name: &'a [u8],
     pub resolution: Resolution,
-    pub err: bun_core::Error,
+    pub err: &'static str,
     pub url: &'a [u8],
 }
 
-pub(crate) struct PackageResolveError<'a> {
+struct PackageResolveError<'a> {
     pub name: &'a [u8],
-    pub err: bun_core::Error,
+    pub err: &'static str,
     pub url: &'a [u8],
     pub version: bun_install::dependency::Version,
 }
@@ -87,8 +82,7 @@ pub type Map = Vec<AsyncModule>;
 #[derive(Default)]
 pub struct Queue {
     pub map: Map,
-    pub scheduled: u32,
-    pub concurrent_task_count: AtomicU32,
+    pub(crate) scheduled: u32,
 }
 
 impl Queue {
@@ -103,11 +97,11 @@ impl Queue {
     /// `&mut self` is kept as a receiver so existing callers
     /// (`self.vm().package_manager()`) don't change shape.
     #[inline]
-    pub fn vm(&mut self) -> &mut VirtualMachine {
+    pub(crate) fn vm(&mut self) -> &mut VirtualMachine {
         VirtualMachine::get().as_mut()
     }
 
-    pub fn on_resolve(_: &mut Queue) {
+    pub(crate) fn on_resolve(_: &mut Queue) {
         bun_core::scoped_log!(AsyncModule, "onResolve");
     }
 }
@@ -120,20 +114,24 @@ impl bun_event_loop::Taskable for Queue {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::PollPendingModulesTask;
 }
 
+impl bun_event_loop::Taskable for AsyncModule {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncModule;
+}
+
 impl AsyncModule {
     #[inline]
-    pub fn referrer(&self) -> &[u8] {
+    pub(crate) fn referrer(&self) -> &[u8] {
         &self.string_buf[..self.referrer_len as usize]
     }
 
     #[inline]
-    pub fn specifier(&self) -> &[u8] {
+    pub(crate) fn specifier(&self) -> &[u8] {
         let off = self.referrer_len as usize;
         &self.string_buf[off..off + self.specifier_len as usize]
     }
 
     #[inline]
-    pub fn path_text(&self) -> &[u8] {
+    pub(crate) fn path_text(&self) -> &[u8] {
         let off = self.referrer_len as usize + self.specifier_len as usize;
         &self.string_buf[off..]
     }
@@ -142,11 +140,11 @@ impl AsyncModule {
     /// result back into JSC via `Bun__onFulfillAsyncModule`. This is the entry
     /// point `RuntimeTranspilerStore::run_from_js_thread` calls when a
     /// concurrent transpile job finishes.
-    pub fn fulfill(
+    pub(crate) fn fulfill(
         global_this: &JSGlobalObject,
         promise: JSValue,
         resolved_source: &mut ResolvedSource,
-        err: Option<bun_core::Error>,
+        err: Option<crate::CrateError>,
         specifier_: BunString,
         referrer_: BunString,
         log: &mut bun_ast::Log,
@@ -189,9 +187,9 @@ impl AsyncModule {
                 None
             };
 
-            if e == bun_core::err!("JSError") {
+            if e == crate::CrateError::JSError {
                 errorable = ErrorableResolvedSource::err(
-                    bun_core::err!("JSError"),
+                    ErrorCode(ErrorCode::JS_ERROR_OBJECT),
                     global_this.take_error(JsError::Thrown),
                 );
             } else {
@@ -204,7 +202,10 @@ impl AsyncModule {
                 // takes `*mut` — avoids a `&T as *const T as *mut T` cast,
                 // which is UB-adjacent under Stacked Borrows even when the
                 // callee never writes through it.
-                errorable = ErrorableResolvedSource::err(e, JSValue::UNDEFINED);
+                errorable = ErrorableResolvedSource::err(
+                    ErrorCode(ErrorCode::JS_ERROR_OBJECT),
+                    JSValue::UNDEFINED,
+                );
                 crate::virtual_machine::process_fetch_log(
                     global_this,
                     specifier,
@@ -258,7 +259,7 @@ use bun_core::strings;
 use bun_install::package_manager::run_tasks;
 use bun_install::{self as install, LogLevel, PackageID};
 
-use crate::event_loop::{AnyTask, ConcurrentTaskItem, Task};
+use crate::event_loop::{ConcurrentTaskItem, Task};
 
 /// `RunTasksCallbacks` impl for the auto-install module queue. `onResolve` /
 /// `onPackageManifestError` / `onPackageDownloadError` forward to the `Queue`
@@ -278,8 +279,13 @@ impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbac
         Queue::on_resolve(ctx)
     }
 
-    fn on_package_manifest_error(ctx: &mut Queue, name: &[u8], err: bun_core::Error, url: &[u8]) {
-        ctx.on_package_manifest_error(name, err, url)
+    fn on_package_manifest_error(
+        ctx: &mut Queue,
+        name: &[u8],
+        err: bun_install::Error,
+        url: &[u8],
+    ) {
+        ctx.on_package_manifest_error(name, err.name(), url)
     }
 
     fn on_package_download_error_pkg(
@@ -287,10 +293,10 @@ impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbac
         package_id: PackageID,
         name: &[u8],
         resolution: &Resolution,
-        err: bun_core::Error,
+        err: bun_install::Error,
         url: &[u8],
     ) {
-        ctx.on_package_download_error(package_id, name, resolution, err, url)
+        ctx.on_package_download_error(package_id, name, resolution, err.name(), url)
     }
 }
 
@@ -314,7 +320,7 @@ impl Queue {
         ctx: *mut c_void,
         dependency: &Dependency,
         root_dependency_id: DependencyID,
-        err: bun_core::Error,
+        err: &'static str,
     ) {
         // SAFETY: ctx was registered as *Queue when installing this callback.
         let this: &mut Queue = unsafe { bun_ptr::callback_ctx::<Queue>(ctx) };
@@ -382,7 +388,7 @@ impl Queue {
         self.poll_modules();
     }
 
-    pub fn run_tasks(&mut self) {
+    pub(crate) fn run_tasks(&mut self) {
         // The `run_tasks` free fn takes both
         // `&mut PackageManager` and `&mut Queue`; the package manager is a
         // separate heap allocation (`NonNull<dyn AutoInstaller>` on the
@@ -406,7 +412,7 @@ impl Queue {
         }
     }
 
-    pub fn on_package_manifest_error(&mut self, name: &[u8], err: bun_core::Error, url: &[u8]) {
+    pub(crate) fn on_package_manifest_error(&mut self, name: &[u8], err: &'static str, url: &[u8]) {
         bun_core::scoped_log!(
             AsyncModule,
             "onPackageManifestError: {}",
@@ -445,12 +451,12 @@ impl Queue {
         });
     }
 
-    pub fn on_package_download_error(
+    pub(crate) fn on_package_download_error(
         &mut self,
         package_id: PackageID,
         name: &[u8],
         resolution: &Resolution,
-        err: bun_core::Error,
+        err: &'static str,
         url: &[u8],
     ) {
         bun_core::scoped_log!(
@@ -501,7 +507,7 @@ impl Queue {
         });
     }
 
-    pub fn poll_modules(&mut self) {
+    pub(crate) fn poll_modules(&mut self) {
         // S017: per-thread VM singleton (safe accessor) instead of
         // `container_of`-derived `*mut` reborrow. The package manager is a
         // separate heap allocation, disjoint from `self` (= `vm.modules`).
@@ -608,7 +614,7 @@ impl Queue {
 }
 
 impl AsyncModule {
-    pub fn init(
+    pub(crate) fn init(
         opts: InitOpts<'_>,
         global_object: &JSGlobalObject,
     ) -> Result<AsyncModule, bun_alloc::AllocError> {
@@ -648,7 +654,6 @@ impl AsyncModule {
             string_buf,
             referrer_len,
             specifier_len,
-            fd: opts.fd,
             package_json: opts.package_json.map(core::ptr::NonNull::from),
             loader: opts.loader.to_api(),
             hash: opts.hash,
@@ -658,42 +663,20 @@ impl AsyncModule {
             arena: opts.arena,
             ast_alloc_state: opts.ast_alloc_state,
             poll_ref: KeepAlive::default(),
-            any_task: AnyTask::AnyTask::default(),
         })
     }
 
-    pub fn done(self, jsc_vm: &mut VirtualMachine) {
-        // The caller
-        // (`Queue::poll_modules`) removes the element by value and passes it
-        // here, so `Box::new(self)` is a single ownership transfer with no
-        // `ptr::read` and no double-Drop.
-        let clone = bun_core::heap::into_raw(Box::new(self));
+    pub(crate) fn done(self, jsc_vm: &mut VirtualMachine) {
         jsc_vm.modules.scheduled += 1;
-        // SAFETY: clone is a valid heap::alloc allocation owned by the
-        // task queue until on_done reclaims it via heap::take; we hold
-        // the only reference here.
-        unsafe {
-            // Hand-written task shim (option (b) in event_loop/AnyTask.rs).
-            (*clone).any_task = AnyTask::AnyTask {
-                ctx: Some(core::ptr::NonNull::new_unchecked(clone).cast()),
-                callback: |p| {
-                    // SAFETY: `p` is the `clone` heap allocation registered as
-                    // `ctx` above; `on_done` reclaims it via `heap::take`.
-                    Self::on_done(p.cast());
-                    Ok(())
-                },
-            };
-            jsc_vm.enqueue_task(Task::init(&raw mut (*clone).any_task));
-        }
+        jsc_vm.enqueue_task(Task::from_boxed(Box::new(self)));
     }
 
-    /// # Safety
-    /// `this` must be the heap allocation produced by [`AsyncModule::done`]
-    /// (via `bun_core::heap::into_raw`); this fn reclaims and drops it.
-    pub unsafe fn on_done(this: *mut AsyncModule) {
+    #[allow(
+        clippy::boxed_local,
+        reason = "reclaim point for the box `done()` handed to the task queue"
+    )]
+    pub fn on_done(mut this: Box<AsyncModule>) {
         jsc::mark_binding();
-        // SAFETY: `this` was heap-allocated in `done`; reclaimed at end of this fn.
-        let this = unsafe { &mut *this };
         // Copy the `GlobalRef` out (it is `Copy`) so the borrow of `this` ends
         // before `&mut this` reborrows below; deref via the local for the rest
         // of the function. `GlobalRef::deref` encapsulates the JSC_BORROW
@@ -713,15 +696,20 @@ impl AsyncModule {
         ));
         let errorable: ErrorableResolvedSource = match this.resume_loading_module(&mut log) {
             Ok(rs) => ErrorableResolvedSource::ok(rs),
-            Err(err) if err == bun_core::err!("JSError") => ErrorableResolvedSource::err(
-                bun_core::err!("JSError"),
+            Err(
+                crate::CrateError::JSError | crate::CrateError::Bundler(bun_bundler::Error::Js(_)),
+            ) => ErrorableResolvedSource::err(
+                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
                 global_this.take_error(JsError::Thrown),
             ),
             Err(err) => {
                 // Pre-seed the
                 // err so the `&mut` borrow is definitely-initialized;
                 // `process_fetch_log` overwrites `result.err.value`.
-                let mut errorable = ErrorableResolvedSource::err(err, JSValue::UNDEFINED);
+                let mut errorable = ErrorableResolvedSource::err(
+                    ErrorCode(ErrorCode::JS_ERROR_OBJECT),
+                    JSValue::UNDEFINED,
+                );
                 crate::virtual_machine::process_fetch_log(
                     global_this,
                     BunString::init(ZigString::init(this.specifier())),
@@ -747,8 +735,6 @@ impl AsyncModule {
                 &mut ref_,
             )
         });
-        // SAFETY: reclaim the Box allocated in `done`; Drop runs deinit logic.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 
     // write! into Vec<u8>
@@ -759,7 +745,7 @@ impl AsyncModule {
         vm: &mut VirtualMachine,
         import_record_id: u32,
         result: &PackageResolveError<'_>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::CrateResult<()> {
         // Copy the `GlobalRef` out so the borrow of `self` ends before
         // `&mut self` reborrows below; `GlobalRef::deref` is the safe
         // JSC_BORROW accessor.
@@ -768,7 +754,7 @@ impl AsyncModule {
 
         let mut msg: Vec<u8> = Vec::new();
         let e = result.err;
-        if e == bun_core::err!("PackageManifestHTTP400") {
+        if e == "PackageManifestHTTP400" {
             write!(
                 &mut msg,
                 "HTTP 400 while resolving package '{}' at '{}'",
@@ -776,7 +762,7 @@ impl AsyncModule {
                 bstr::BStr::new(result.url)
             )
             .ok();
-        } else if e == bun_core::err!("PackageManifestHTTP401") {
+        } else if e == "PackageManifestHTTP401" {
             write!(
                 &mut msg,
                 "HTTP 401 while resolving package '{}' at '{}'",
@@ -784,7 +770,7 @@ impl AsyncModule {
                 bstr::BStr::new(result.url)
             )
             .ok();
-        } else if e == bun_core::err!("PackageManifestHTTP402") {
+        } else if e == "PackageManifestHTTP402" {
             write!(
                 &mut msg,
                 "HTTP 402 while resolving package '{}' at '{}'",
@@ -792,7 +778,7 @@ impl AsyncModule {
                 bstr::BStr::new(result.url)
             )
             .ok();
-        } else if e == bun_core::err!("PackageManifestHTTP403") {
+        } else if e == "PackageManifestHTTP403" {
             write!(
                 &mut msg,
                 "HTTP 403 while resolving package '{}' at '{}'",
@@ -800,14 +786,14 @@ impl AsyncModule {
                 bstr::BStr::new(result.url)
             )
             .ok();
-        } else if e == bun_core::err!("PackageManifestHTTP404") {
+        } else if e == "PackageManifestHTTP404" {
             write!(
                 &mut msg,
                 "Package '{}' was not found",
                 bstr::BStr::new(result.name)
             )
             .ok();
-        } else if e == bun_core::err!("PackageManifestHTTP4xx") {
+        } else if e == "PackageManifestHTTP4xx" {
             write!(
                 &mut msg,
                 "HTTP 4xx while resolving package '{}' at '{}'",
@@ -815,7 +801,7 @@ impl AsyncModule {
                 bstr::BStr::new(result.url)
             )
             .ok();
-        } else if e == bun_core::err!("PackageManifestHTTP5xx") {
+        } else if e == "PackageManifestHTTP5xx" {
             write!(
                 &mut msg,
                 "HTTP 5xx while resolving package '{}' at '{}'",
@@ -823,20 +809,18 @@ impl AsyncModule {
                 bstr::BStr::new(result.url)
             )
             .ok();
-        } else if e == bun_core::err!("DistTagNotFound") || e == bun_core::err!("NoMatchingVersion")
-        {
+        } else if matches!(e, "DistTagNotFound" | "NoMatchingVersion") {
             // `Version::try_npm()` performs the tag guard and yields the
             // `NpmInfo` (whose `.version` is the semver query group).
             let npm = result.version.try_npm();
-            let prefix: &[u8] = if e == bun_core::err!("NoMatchingVersion")
-                && npm.map(|n| n.version.is_exact()).unwrap_or(false)
-            {
-                b"Version not found"
-            } else if npm.map(|n| !n.version.is_exact()).unwrap_or(false) {
-                b"No matching version found"
-            } else {
-                b"No match found"
-            };
+            let prefix: &[u8] =
+                if e == "NoMatchingVersion" && npm.map(|n| n.version.is_exact()).unwrap_or(false) {
+                    b"Version not found"
+                } else if npm.map(|n| !n.version.is_exact()).unwrap_or(false) {
+                    b"No matching version found"
+                } else {
+                    b"No match found"
+                };
 
             write!(
                 &mut msg,
@@ -850,7 +834,7 @@ impl AsyncModule {
             write!(
                 &mut msg,
                 "{} resolving package '{}' at '{}'",
-                e.name(),
+                e,
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
             )
@@ -858,16 +842,12 @@ impl AsyncModule {
         }
         // msg dropped at scope exit (defer bun.default_allocator.free(msg)).
 
-        let name: &[u8] = if e == bun_core::err!("NoMatchingVersion") {
-            b"PackageVersionNotFound"
-        } else if e == bun_core::err!("DistTagNotFound") {
-            b"PackageTagNotFound"
-        } else if e == bun_core::err!("PackageManifestHTTP403") {
-            b"PackageForbidden"
-        } else if e == bun_core::err!("PackageManifestHTTP404") {
-            b"PackageNotFound"
-        } else {
-            b"PackageResolveError"
+        let name: &[u8] = match e {
+            "NoMatchingVersion" => b"PackageVersionNotFound",
+            "DistTagNotFound" => b"PackageTagNotFound",
+            "PackageManifestHTTP403" => b"PackageForbidden",
+            "PackageManifestHTTP404" => b"PackageNotFound",
+            _ => b"PackageResolveError",
         };
 
         let error_instance = ZigString::from_bytes(&msg)
@@ -968,7 +948,7 @@ impl AsyncModule {
         vm: &mut VirtualMachine,
         import_record_id: u32,
         result: &PackageDownloadError<'_>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::CrateResult<()> {
         // Copy the `GlobalRef` out so the borrow of `self` ends before
         // `&mut vm` / `&mut self` reborrows below; `GlobalRef::deref` is the
         // safe JSC_BORROW accessor.
@@ -992,7 +972,7 @@ impl AsyncModule {
 
         let mut msg: Vec<u8> = Vec::new();
         let e = result.err;
-        if e == bun_core::err!("TarballHTTP400") {
+        if e == "TarballHTTP400" {
             write!(
                 &mut msg,
                 "HTTP 400 downloading package '{}@{}'",
@@ -1000,7 +980,7 @@ impl AsyncModule {
                 resolution_fmt
             )
             .ok();
-        } else if e == bun_core::err!("TarballHTTP401") {
+        } else if e == "TarballHTTP401" {
             write!(
                 &mut msg,
                 "HTTP 401 downloading package '{}@{}'",
@@ -1008,7 +988,7 @@ impl AsyncModule {
                 resolution_fmt
             )
             .ok();
-        } else if e == bun_core::err!("TarballHTTP402") {
+        } else if e == "TarballHTTP402" {
             write!(
                 &mut msg,
                 "HTTP 402 downloading package '{}@{}'",
@@ -1016,7 +996,7 @@ impl AsyncModule {
                 resolution_fmt
             )
             .ok();
-        } else if e == bun_core::err!("TarballHTTP403") {
+        } else if e == "TarballHTTP403" {
             write!(
                 &mut msg,
                 "HTTP 403 downloading package '{}@{}'",
@@ -1024,7 +1004,7 @@ impl AsyncModule {
                 resolution_fmt
             )
             .ok();
-        } else if e == bun_core::err!("TarballHTTP404") {
+        } else if e == "TarballHTTP404" {
             write!(
                 &mut msg,
                 "HTTP 404 downloading package '{}@{}'",
@@ -1032,7 +1012,7 @@ impl AsyncModule {
                 resolution_fmt
             )
             .ok();
-        } else if e == bun_core::err!("TarballHTTP4xx") {
+        } else if e == "TarballHTTP4xx" {
             write!(
                 &mut msg,
                 "HTTP 4xx downloading package '{}@{}'",
@@ -1040,7 +1020,7 @@ impl AsyncModule {
                 resolution_fmt
             )
             .ok();
-        } else if e == bun_core::err!("TarballHTTP5xx") {
+        } else if e == "TarballHTTP5xx" {
             write!(
                 &mut msg,
                 "HTTP 5xx downloading package '{}@{}'",
@@ -1048,7 +1028,7 @@ impl AsyncModule {
                 resolution_fmt
             )
             .ok();
-        } else if e == bun_core::err!("TarballFailedToExtract") {
+        } else if e == "TarballFailedToExtract" {
             write!(
                 &mut msg,
                 "Failed to extract tarball for package '{}@{}'",
@@ -1060,7 +1040,7 @@ impl AsyncModule {
             write!(
                 &mut msg,
                 "{} downloading package '{}@{}'",
-                e.name(),
+                e,
                 bstr::BStr::new(result.name),
                 result.resolution.fmt(
                     vm.package_manager()
@@ -1075,14 +1055,11 @@ impl AsyncModule {
         }
         // msg dropped at scope exit.
 
-        let name: &[u8] = if e == bun_core::err!("TarballFailedToExtract") {
-            b"PackageExtractionError"
-        } else if e == bun_core::err!("TarballHTTP403") {
-            b"TarballForbiddenError"
-        } else if e == bun_core::err!("TarballHTTP404") {
-            b"TarballNotFoundError"
-        } else {
-            b"TarballDownloadError"
+        let name: &[u8] = match e {
+            "TarballFailedToExtract" => b"PackageExtractionError",
+            "TarballHTTP403" => b"TarballForbiddenError",
+            "TarballHTTP404" => b"TarballNotFoundError",
+            _ => b"TarballDownloadError",
         };
 
         let error_instance = ZigString::from_bytes(&msg)
@@ -1182,10 +1159,10 @@ impl AsyncModule {
         Ok(())
     }
 
-    pub fn resume_loading_module(
+    pub(crate) fn resume_loading_module(
         &mut self,
         log: &mut bun_ast::Log,
-    ) -> Result<ResolvedSource, bun_core::Error> {
+    ) -> crate::CrateResult<ResolvedSource> {
         bun_core::scoped_log!(
             AsyncModule,
             "resumeLoadingModule: {}",

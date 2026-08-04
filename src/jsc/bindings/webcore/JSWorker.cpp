@@ -30,7 +30,6 @@
 #endif
 #endif
 
-#include "ActiveDOMObject.h"
 #include "EventNames.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
@@ -174,7 +173,10 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         RETURN_IF_EXCEPTION(throwScope, {});
         if (nameValue) {
             if (nameValue.isString()) {
-                options.name = nameValue.toWTFString(lexicalGlobalObject);
+                // isolatedCopy: m_options.name outlives this call and is read from
+                // the worker thread; it must not share a (possibly atomized)
+                // parent-heap StringImpl.
+                options.name = nameValue.toWTFString(lexicalGlobalObject).isolatedCopy();
                 RETURN_IF_EXCEPTION(throwScope, {});
             }
         }

@@ -17,13 +17,16 @@
 #include "wtf/Assertions.h"
 #include "napi_macros.h"
 
+#include <wtf/HashSet.h>
 #include <wtf/ListHashSet.h>
+#include <wtf/Lock.h>
 
 #include <optional>
 #include <unordered_set>
 #include <variant>
 
 extern "C" void napi_internal_register_cleanup_zig(napi_env env);
+extern "C" void napi_internal_threadsafe_function_env_teardown(void* tsfn);
 extern "C" void napi_internal_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
 
@@ -123,7 +126,7 @@ private:
 
 using HookSet = std::unordered_set<EitherCleanupHook, EitherCleanupHook::Hash>;
 
-void defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, bool isInstance, JSC::ThrowScope& scope);
+napi_status defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ThrowScope& scope);
 }
 
 struct napi_async_cleanup_hook_handle__ {
@@ -211,6 +214,26 @@ public:
             drain();
         }
 
+        // Threadsafe functions hold a raw pointer to this env's event loop,
+        // which a worker's shutdown frees while addon threads keep running.
+        // Neutralize them all before that happens (Node: ThreadSafeFunction::Cleanup).
+        // Their finalizers are native callbacks like the ones below, so they
+        // start from a clean exception state too: a cleanup hook may have left one.
+        clearExceptionsBetweenFinalizers();
+        abortThreadSafeFunctions();
+
+        // A threadsafe function's finalizer can register a cleanup hook of its
+        // own, and the loop above has already run: drain again so it is not
+        // dropped on the floor.
+        while (!m_cleanupHooks.empty()) {
+            drain();
+        }
+        // erase() above leaves the bucket array allocated; release it here
+        // since ~NapiEnv may not run before process exit (late finalizers can
+        // hold the last Ref past GlobalObject teardown).
+        m_cleanupHooks = Napi::HookSet();
+        clearExceptionsBetweenFinalizers();
+
         // Defer GC during entire finalizer cleanup to prevent iterator invalidation.
         // This prevents any GC-triggered finalizer execution while m_finalizers is being iterated.
         JSC::DeferGCForAWhile deferGC(m_vm);
@@ -240,6 +263,40 @@ public:
         instanceDataFinalizer.call(this, instanceData, true);
         instanceDataFinalizer.clear();
         clearExceptionsBetweenFinalizers();
+    }
+
+    // Threadsafe-function registry. Entries are raw ThreadSafeFunction* owned
+    // by the Rust side, added and removed on the JS thread only: at creation,
+    // by the destroy path (an event-loop task), and by teardown below. The
+    // lock guards the torn-down flag so the "created after teardown" case is
+    // decided in one critical section.
+    bool registerThreadSafeFunction(void* tsfn)
+    {
+        WTF::Locker locker { m_threadSafeFunctionsLock };
+        if (m_threadSafeFunctionsTornDown) {
+            return false;
+        }
+        m_threadSafeFunctions.add(tsfn);
+        return true;
+    }
+
+    void unregisterThreadSafeFunction(void* tsfn)
+    {
+        WTF::Locker locker { m_threadSafeFunctionsLock };
+        m_threadSafeFunctions.remove(tsfn);
+    }
+
+    void abortThreadSafeFunctions()
+    {
+        WTF::HashSet<void*> tsfns;
+        {
+            WTF::Locker locker { m_threadSafeFunctionsLock };
+            m_threadSafeFunctionsTornDown = true;
+            tsfns = std::exchange(m_threadSafeFunctions, WTF::HashSet<void*> {});
+        }
+        for (void* tsfn : tsfns) {
+            napi_internal_threadsafe_function_env_teardown(tsfn);
+        }
     }
 
     void removeFinalizer(napi_finalize callback, void* hint, void* data)
@@ -460,6 +517,12 @@ public:
     void* instanceData = nullptr;
     Bun::NapiFinalizer instanceDataFinalizer;
     char* filename = nullptr;
+    // Running total reported via napi_adjust_external_memory. JSC's
+    // deprecatedReportExtraMemory has no decrement path, so we keep a signed
+    // accumulator and only forward positive growth to the JSC heap. Tracked
+    // per env (per loaded module), not per isolate as in V8; the documented
+    // +N/-N addon pattern only observes its own deltas.
+    int64_t m_externalMemory = 0;
 
     struct BoundFinalizer {
         napi_finalize callback = nullptr;
@@ -533,6 +596,10 @@ private:
     JSC::Strong<JSC::Unknown> m_pendingException;
     size_t m_cleanupHookCounter = 0;
 
+    WTF::Lock m_threadSafeFunctionsLock;
+    WTF::HashSet<void*> m_threadSafeFunctions WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock);
+    bool m_threadSafeFunctionsTornDown WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock) = false;
+
     // Drop any pending exception -- VM-scope or env-scope -- between
     // finalizers run from cleanup(). Used by cleanup() only. Defined
     // out-of-line in napi.cpp so its uses of JSC::TopExceptionScope
@@ -581,14 +648,7 @@ private:
 extern "C" void napi_internal_cleanup_env_cpp(napi_env);
 extern "C" void napi_internal_remove_finalizer(napi_env, napi_finalize callback, void* hint, void* data);
 
-namespace JSC {
-class JSGlobalObject;
-class JSSourceCode;
-}
-
 namespace Napi {
-
-JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSObject* object, JSC::JSGlobalObject* globalObject);
 
 class NapiRefWeakHandleOwner final : public JSC::WeakHandleOwner {
 public:
@@ -656,11 +716,6 @@ public:
     void clear();
     bool isClear() const;
 
-    bool isSet() const { return m_tag != WeakTypeTag::NotSet; }
-    bool isPrimitive() const { return m_tag == WeakTypeTag::Primitive; }
-    bool isCell() const { return m_tag == WeakTypeTag::Cell; }
-    bool isString() const { return m_tag == WeakTypeTag::String; }
-
     void setPrimitive(JSValue);
     void setCell(JSCell*, WeakHandleOwner&, void* context);
     void setString(JSString*, WeakHandleOwner&, void* context);
@@ -678,24 +733,6 @@ public:
         default:
             return {};
         }
-    }
-
-    JSCell* cell() const
-    {
-        ASSERT(isCell());
-        return m_value.cell.get();
-    }
-
-    JSValue primitive() const
-    {
-        ASSERT(isPrimitive());
-        return m_value.primitive;
-    }
-
-    JSString* string() const
-    {
-        ASSERT(isString());
-        return m_value.string.get();
     }
 
 private:
@@ -825,10 +862,6 @@ public:
 
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
-    static void destroy(JSCell* cell)
-    {
-        static_cast<NapiClass*>(cell)->NapiClass::~NapiClass();
-    }
 
     template<typename, SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
@@ -848,7 +881,8 @@ public:
         napi_callback constructor,
         void* data,
         size_t property_count,
-        const napi_property_descriptor* properties);
+        const napi_property_descriptor* properties,
+        napi_status* propertyStatus = nullptr);
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
@@ -869,7 +903,7 @@ private:
     {
     }
 
-    void finishCreation(VM&, const String& name, napi_callback constructor,
+    napi_status finishCreation(VM&, const String& name, napi_callback constructor,
         void* data,
         size_t property_count,
         const napi_property_descriptor* properties);
@@ -953,7 +987,10 @@ public:
         // TODO change to global? or find another way to avoid JSGlobalProxy
         JSC::JSObject* jscThis = globalObject->globalThis();
         if (!m_callFrame->thisValue().isUndefinedOrNull()) {
-            auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+            // TopExceptionScope: this runs before the addon's callback and its
+            // first NAPI_PREAMBLE; a ThrowScope would simulate a throw on
+            // destruction that the next preamble would see as unchecked.
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
             jscThis = m_callFrame->thisValue().toObject(globalObject);
             // https://tc39.es/ecma262/#sec-toobject
             // toObject only throws for undefined and null, which we checked for

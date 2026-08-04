@@ -3,8 +3,8 @@ use super::any_mysql_error::Error as AnyMySQLError;
 use super::new_reader::{NewReader, ReaderContext};
 
 pub struct EOFPacket {
-    pub header: u8,
-    pub warnings: u16,
+    pub(crate) header: u8,
+    pub(crate) warnings: u16,
     pub status_flags: StatusFlags,
 }
 
@@ -31,14 +31,5 @@ impl EOFPacket {
         self.warnings = reader.int::<u16>()?;
         self.status_flags = StatusFlags::from_int(reader.int::<u16>()?);
         Ok(())
-    }
-}
-
-impl EOFPacket {
-    pub fn decode<Context: ReaderContext>(
-        &mut self,
-        context: Context,
-    ) -> Result<(), AnyMySQLError> {
-        self.decode_internal(NewReader { wrapped: context })
     }
 }

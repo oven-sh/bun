@@ -33,6 +33,8 @@ pub struct InternalLoopData {
     pub head: *mut SocketGroup,
     pub quic_head: *mut c_void,
     pub quic_next_tick_us: i64,
+    /// `us_nq_driver_s *` — node:quic's loop driver list.
+    pub(crate) nq_head: *mut c_void,
     #[cfg(windows)]
     pub quic_timer: *mut Timer,
     pub iterator: *mut SocketGroup,
@@ -54,9 +56,9 @@ pub struct InternalLoopData {
     /// cannot name `bun_threading::ReleaseImpl` directly, so use a layout-only
     /// placeholder of the correct size/align per platform.
     pub mutex: LoopDataMutex,
-    pub parent_ptr: *mut c_void,
-    pub parent_tag: c_char,
-    pub iteration_nr: u64,
+    pub(crate) parent_ptr: *mut c_void,
+    pub(crate) parent_tag: c_char,
+    pub(crate) iteration_nr: u64,
     // SAFETY: erased `Option<&'static jsc::VM>` — tier-0 crate cannot name jsc types.
     // Higher tier (`bun_runtime`) casts this back when reading.
     pub jsc_vm: *const c_void,
@@ -64,22 +66,13 @@ pub struct InternalLoopData {
 }
 
 impl InternalLoopData {
-    const LIBUS_RECV_BUFFER_LENGTH: usize = 524288;
-
-    pub fn recv_slice(&mut self) -> &mut [u8] {
-        // SAFETY: `recv_buf` is malloc'd by C `us_internal_loop_data_init` with at least
-        // LIBUS_RECV_BUFFER_LENGTH bytes and lives as long as the loop.
-        unsafe { core::slice::from_raw_parts_mut(self.recv_buf, Self::LIBUS_RECV_BUFFER_LENGTH) }
-    }
-
-    pub fn should_enable_date_header_timer(&self) -> bool {
+    pub(crate) fn should_enable_date_header_timer(&self) -> bool {
         self.sweep_timer_count > 0
     }
 
     /// Tag values for `parent_tag`: 1 = `jsc::EventLoop`, 2 = `jsc::MiniEventLoop`.
-    /// Low tier stores tag+ptr only; the typed `EventLoopHandle` wrappers
-    /// (`set_parent_event_loop` / `get_parent`) live in the higher-tier crate
-    /// that can name `bun_jsc` — see `bun_runtime::dispatch` (move-in pass).
+    /// Low tier stores tag+ptr only; the typed `EventLoopHandle` wrapper
+    /// (`get_parent`) lives in the higher-tier crate that can name `bun_jsc`.
     #[inline]
     pub fn set_parent_raw(&mut self, tag: c_char, ptr: *mut c_void) {
         self.parent_tag = tag;

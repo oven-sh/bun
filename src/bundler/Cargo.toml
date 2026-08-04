@@ -22,10 +22,10 @@ enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
 thiserror.workspace = true
-bumpalo.workspace = true
 typed-arena.workspace = true
 bun_base64.workspace = true
 bun_alloc.workspace = true
+bun_errno.workspace = true
 bun_analytics.workspace = true
 bun_resolver.workspace = true
 # `bun_resolve_builtins` only depends on `bun_options_types` + `bun_string`
@@ -68,5 +68,3 @@ bun_hash.workspace = true
 
 [features]
 default = []
-debug_logs = []
-show_crash_trace = ["bun_crash_handler/show_crash_trace"]

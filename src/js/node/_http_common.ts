@@ -9,19 +9,27 @@ const { IncomingMessage, readStart, readStop } = incoming;
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
 
-let headerCharRegex;
+let strictHeaderCharRegex;
+let lenientHeaderCharRegex;
 
 /**
- * True if val contains an invalid field-vchar
+ * True if val contains an invalid header value character.
+ * By default uses strict validation per RFC 7230:
  *  field-value    = *( field-content / obs-fold )
  *  field-content  = field-vchar [ 1*( SP / HTAB ) field-vchar ]
  *  field-vchar    = VCHAR / obs-text
+ * When lenient=true, uses relaxed validation per the Fetch spec
+ * (https://fetch.spec.whatwg.org/#header-value): only NUL, CR, LF and
+ * characters above 0xff are rejected.
  */
-function checkInvalidHeaderChar(val: string) {
-  if (!headerCharRegex) {
-    headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
+function checkInvalidHeaderChar(val: string, lenient: boolean = false) {
+  if (lenient) {
+    // eslint-disable-next-line no-control-regex
+    lenientHeaderCharRegex ??= /[\x00\x0a\x0d]|[^\x00-\xff]/;
+    return RegExpPrototypeExec.$call(lenientHeaderCharRegex, val) !== null;
   }
-  return RegExpPrototypeExec.$call(headerCharRegex, val) !== null;
+  strictHeaderCharRegex ??= /[^\t\x20-\x7e\x80-\xff]/;
+  return RegExpPrototypeExec.$call(strictHeaderCharRegex, val) !== null;
 }
 
 const validateHeaderName = (name, label?) => {
@@ -244,6 +252,22 @@ function isLenient() {
   return insecureHTTPParser;
 }
 
+const kLenientNone = HTTPParser.kLenientNone | 0;
+const kLenientAll = HTTPParser.kLenientAll | 0;
+const kLenientHeaderValueRelaxed = HTTPParser.kLenientHeaderValueRelaxed | 0;
+
+function calculateLenientFlags(httpValidation, insecureHTTPParserOption) {
+  if (httpValidation === "strict") {
+    return kLenientNone;
+  } else if (httpValidation === "relaxed") {
+    return kLenientHeaderValueRelaxed;
+  } else if (httpValidation === "insecure") {
+    return kLenientAll;
+  }
+  const lenient = insecureHTTPParserOption === undefined ? isLenient() : insecureHTTPParserOption;
+  return lenient ? kLenientAll : kLenientNone;
+}
+
 export default {
   validateHeaderName,
   validateHeaderValue,
@@ -259,5 +283,6 @@ export default {
   kSkipPendingData,
   HTTPParser,
   isLenient,
+  calculateLenientFlags,
   prepareError,
 };

@@ -3,7 +3,11 @@
 // hard errors. Opaque-pointer round-trips (C++ stores `void*`, never derefs)
 // are individually `#[allow]`ed at the extern block with a justification.
 #![deny(improper_ctypes, improper_ctypes_definitions)]
+#![feature(thread_local)]
 #![feature(adt_const_params)]
+
+pub mod error;
+pub use error::{Error, Result};
 
 /// `crate::jsc` is now a thin re-export of the real `bun_jsc` crate. Draft
 /// modules that imported `crate::jsc::…` (instead of `bun_jsc::…`) continue to
@@ -35,8 +39,11 @@ pub mod shell;
 pub mod api;
 pub mod dispatch;
 pub mod hw_exports;
+pub mod ipc;
 pub mod ipc_host;
 pub mod jsc_hooks;
+#[path = "JSONLineBuffer.rs"]
+pub mod json_line_buffer;
 pub mod linear_fifo_testing;
 pub mod napi;
 #[path = "../bun.js.rs"]

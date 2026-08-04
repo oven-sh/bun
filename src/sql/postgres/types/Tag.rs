@@ -275,17 +275,3 @@ impl WireByteSwap for f32 {
         out.copy_from_slice(&self.to_ne_bytes());
     }
 }
-impl WireByteSwap for f64 {
-    #[inline]
-    fn wire_byte_swap(self) -> Self {
-        f64::from_bits(self.to_bits().swap_bytes())
-    }
-    #[inline]
-    fn from_unaligned_ne_bytes(b: &[u8]) -> Self {
-        Self::from_ne_bytes(b.try_into().expect("size_of::<f64>"))
-    }
-    #[inline]
-    fn write_unaligned_ne_bytes(self, out: &mut [u8]) {
-        out.copy_from_slice(&self.to_ne_bytes());
-    }
-}

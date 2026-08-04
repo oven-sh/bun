@@ -283,10 +283,8 @@ mod advanced {
         Version = 1,
         SerializedMessage = 2,
         SerializedInternalMessage = 3,
-        /// A `[message, buffers]` envelope: `buffers` aliases the Buffer views
-        /// inside `message` so the receiver can restore their prototype
-        /// (JSC's serializer has no host-object hook to tag them in-band).
-        /// Only emitted when the message actually contains Buffers, so plain
+        /// A `[message, buffers]` envelope so the receiver can restore Buffer prototypes (JSC's
+        /// serializer has no host-object hook). Only emitted when Buffers are present, so plain
         /// messages keep the version-1 wire format.
         SerializedMessageWithBuffers = 4,
     }

@@ -3943,6 +3943,103 @@ fn server_set_on_connection(
     Ok(JSValue::UNDEFINED)
 }
 
+/// `us_select_cert_cb` dispatches this from inside the TLS handshake for every
+/// ClientHello carrying a servername. The SNI data slot holds the owning
+/// server's JS wrapper cell (set by `server_set_on_server_name`); the callback
+/// is read from that cell's `m_onServerName` WriteBarrier slot. Same return
+/// contract as [`us_dispatch_server_name`].
+extern "C" fn us_dispatch_serve_server_name(
+    ls: *mut uws_sys::ListenSocket,
+    hostname: *const core::ffi::c_char,
+    abort_handshake: *mut core::ffi::c_int,
+    _socket: *mut c_void,
+) -> *mut c_void {
+    jsc::mark_binding!();
+    if ls.is_null() || hostname.is_null() {
+        return core::ptr::null_mut();
+    }
+    // S008: `ListenSocket` is an `opaque_ffi!` ZST - safe deref.
+    let data = bun_opaque::opaque_deref_mut(ls).server_name_data();
+    if data.is_null() {
+        return core::ptr::null_mut();
+    }
+    let server_js = JSValue::from_encoded(data as usize);
+    let (global, callback) = if let Some(s) = server_js.as_class_ref::<HTTPSServer>() {
+        if s.vm().is_shutting_down() {
+            return core::ptr::null_mut();
+        }
+        (
+            s.global_this(),
+            super::cached_values::https::on_server_name_get_cached(server_js),
+        )
+    } else if let Some(s) = server_js.as_class_ref::<DebugHTTPSServer>() {
+        if s.vm().is_shutting_down() {
+            return core::ptr::null_mut();
+        }
+        (
+            s.global_this(),
+            super::cached_values::debug_https::on_server_name_get_cached(server_js),
+        )
+    } else {
+        return core::ptr::null_mut();
+    };
+    let Some(callback) = callback.filter(|c| !c.is_empty_or_undefined_or_null()) else {
+        return core::ptr::null_mut();
+    };
+    // SAFETY: `hostname` is NUL-terminated per the C contract (same read as
+    // `us_dispatch_server_name` in Listener.rs for this callback).
+    let name = unsafe { core::ffi::CStr::from_ptr(hostname) };
+    let js_name = ZigString::init(name.to_bytes()).to_js(global);
+    // socket_handle = undefined: no resume handle for the uWS socket yet, so
+    // a deferred cb() falls through to the default context.
+    let result = match callback.call(global, JSValue::UNDEFINED, &[js_name, JSValue::UNDEFINED]) {
+        Ok(v) => v,
+        Err(err) => global.take_exception(err),
+    };
+    crate::socket::listener::decode_sni_result(result, abort_handshake)
+}
+
+fn server_set_on_server_name(
+    global: &JSGlobalObject,
+    server: JSValue,
+    callback: JSValue,
+) -> JsResult<JSValue> {
+    if !server.is_object() {
+        return Err(global.throw(format_args!(
+            "Failed to set onServerName: The 'this' value is not a Server."
+        )));
+    }
+
+    if !callback.is_function() {
+        return Err(global.throw(format_args!(
+            "Failed to set onServerName: The provided value is not a function."
+        )));
+    }
+
+    let wrapped = callback.with_async_context_if_needed(global);
+
+    macro_rules! handle {
+        ($T:ty) => {
+            if let Some(this) = server.as_class_ref::<$T>() {
+                <$T>::js_gc_on_server_name_set(server, global, wrapped);
+                if let Some(listener) = this.listener {
+                    // S008: app::ListenSocket<SSL> ≡ uws_sys::ListenSocket (ZST opaque).
+                    bun_opaque::opaque_deref_mut(listener.cast::<uws_sys::ListenSocket>())
+                        .on_server_name(
+                            us_dispatch_serve_server_name,
+                            server.encoded() as *mut c_void,
+                        );
+                }
+                return Ok(JSValue::UNDEFINED);
+            }
+        };
+    }
+    // Non-SSL listeners have no SSL_CTX for the select-certificate hook.
+    handle!(HTTPSServer);
+    handle!(DebugHTTPSServer);
+    Ok(JSValue::UNDEFINED)
+}
+
 fn server_set_app_flags(
     global: &JSGlobalObject,
     server: JSValue,
@@ -4076,6 +4173,15 @@ extern "C" fn server_set_on_connection_shim(
     callback: JSValue,
 ) -> JSValue {
     host_fn::to_js_host_fn_result(global, server_set_on_connection(global, server, callback))
+}
+
+#[unsafe(export_name = "Server__setOnServerName")]
+extern "C" fn server_set_on_server_name_shim(
+    global: &JSGlobalObject,
+    server: JSValue,
+    callback: JSValue,
+) -> JSValue {
+    host_fn::to_js_host_fn_result(global, server_set_on_server_name(global, server, callback))
 }
 
 #[unsafe(export_name = "Server__setMaxHTTPHeaderSize")]

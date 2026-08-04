@@ -3044,12 +3044,12 @@ use server_body::{Bun__ServerRouteList__callRoute, Bun__ServerRouteList__create}
 /// Per-type cached-accessor shims for the server `WriteBarrier` value slots.
 /// `codegen_cached_accessors!` emits `${snake}_{get,set}_cached` wrapping
 /// `${T}Prototype__${prop}{Get,Set}CachedValue` (generate-classes.ts).
-mod cached_values {
+pub(super) mod cached_values {
     macro_rules! per_type {
         ($ty:literal) => {
             bun_jsc::codegen_cached_accessors!(
                 $ty; routeList, onRequest, onError, onNodeHTTPRequest, onClientError, onConnection,
-                wsOnOpen, wsOnMessage, wsOnClose, wsOnDrain, wsOnError, wsOnPing, wsOnPong
+                onServerName, wsOnOpen, wsOnMessage, wsOnClose, wsOnDrain, wsOnError, wsOnPing, wsOnPong
             );
         };
     }
@@ -3102,6 +3102,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     );
     slot_setter!(js_gc_on_client_error_set, on_client_error_set_cached);
     slot_setter!(js_gc_on_connection_set, on_connection_set_cached);
+    slot_setter!(js_gc_on_server_name_set, on_server_name_set_cached);
     slot_setter!(js_gc_ws_on_open_set, ws_on_open_set_cached);
     slot_setter!(js_gc_ws_on_message_set, ws_on_message_set_cached);
     slot_setter!(js_gc_ws_on_close_set, ws_on_close_set_cached);

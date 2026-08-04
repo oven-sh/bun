@@ -26,6 +26,7 @@ const {
   tlsStringToProtocolVersion,
   secureProtocolToVersionRange,
   processPfxOptions,
+  unwrapSNIContext,
   validateSecureProtocol,
 } = require("internal/tls");
 const {
@@ -369,6 +370,11 @@ function Server(options, callback): void {
     }
 
     if (this[isTlsSymbol]) {
+      const sniCallback = options.SNICallback;
+      if (sniCallback) {
+        validateFunction(sniCallback, "options.SNICallback");
+        this._SNICallback = sniCallback;
+      }
       // Translate minVersion/maxVersion/secureProtocol into the integer
       // protocol range the native layer applies (secureProtocol wins, like
       // Node's SecureContext::Init); 0 keeps the native defaults.
@@ -1125,7 +1131,53 @@ function applyServerCustomOptions(server: Server) {
     onServerClientError.bind(server),
     onServerConnection.bind(server),
     !!server.httpAllowHalfOpen,
+    server[tlsSymbol] && typeof server._SNICallback === "function" ? onServerSNI.bind(server) : undefined,
   );
+}
+
+// node:https SNICallback dispatch: same return contract as the net.ts
+// ServerHandlers.serverName handler (native SecureContext / undefined / Error
+// / `true` to suspend). Without a socketHandle a deferred cb() falls through.
+function onServerSNI(this: Server, servername, socketHandle) {
+  const cb = this._SNICallback;
+  if (typeof cb !== "function" || !servername) return undefined;
+  let settled = false;
+  let selected;
+  let failed;
+  const done = (err, context) => {
+    if (settled) return;
+    settled = true;
+    if (err) {
+      failed = toSNIError(err);
+      return;
+    }
+    const inner = unwrapSNIContext(context);
+    if (inner instanceof Error) failed = inner;
+    else selected = inner;
+  };
+  try {
+    cb.$call(this, servername, done);
+  } catch (err) {
+    settled = true;
+    failed = toSNIError(err);
+  }
+  if (!settled) {
+    if (!socketHandle) return undefined;
+    return true;
+  }
+  if (failed !== undefined) {
+    process.nextTick(emitTlsClientError, this, failed);
+    return failed;
+  }
+  return selected;
+}
+
+function emitTlsClientError(server, err) {
+  server.emit("tlsClientError", err);
+}
+
+function toSNIError(err) {
+  return err instanceof Error ? err : Object.assign(new Error("SNI callback error"), { reason: err });
 }
 
 function httpAllowHalfOpenGet(this: Server) {

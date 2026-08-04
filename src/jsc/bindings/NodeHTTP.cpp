@@ -41,6 +41,7 @@ extern "C" void Server__setIdleTimeout(EncodedJSValue, EncodedJSValue, JSC::JSGl
 extern "C" EncodedJSValue Server__setAppFlags(JSC::JSGlobalObject*, EncodedJSValue, bool require_host_header, bool use_strict_method_validation, bool use_insecure_http_parser, bool http_allow_half_open);
 extern "C" EncodedJSValue Server__setOnClientError(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" EncodedJSValue Server__setOnConnection(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
+extern "C" EncodedJSValue Server__setOnServerName(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" EncodedJSValue Server__setMaxHTTPHeaderSize(JSC::JSGlobalObject*, EncodedJSValue, uint64_t);
 
 static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject* prototype, JSObject* objectValue, JSC::InternalFieldTuple* tuple, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
@@ -1258,7 +1259,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(callFrame->argumentCount() == 8);
+    ASSERT(callFrame->argumentCount() >= 8);
     // This is an internal binding.
     JSValue serverValue = callFrame->uncheckedArgument(0);
     JSValue requireHostHeader = callFrame->uncheckedArgument(1);
@@ -1268,6 +1269,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
     JSValue callback = callFrame->uncheckedArgument(5);
     JSValue onConnectionCallback = callFrame->argument(6);
     JSValue httpAllowHalfOpen = callFrame->argument(7);
+    JSValue onServerNameCallback = callFrame->argument(8);
 
     double maxHeaderSizeNumber = maxHeaderSize.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1283,6 +1285,11 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
 
     if (onConnectionCallback.isCallable()) {
         Server__setOnConnection(globalObject, JSValue::encode(serverValue), JSValue::encode(onConnectionCallback));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    if (onServerNameCallback.isCallable()) {
+        Server__setOnServerName(globalObject, JSValue::encode(serverValue), JSValue::encode(onServerNameCallback));
         RETURN_IF_EXCEPTION(scope, {});
     }
 

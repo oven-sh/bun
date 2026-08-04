@@ -201,7 +201,7 @@ public:
         if (!constructorFailed()) {
             httpContext->getSocketContextData()->missingServerNameHandler = std::move(handler);
             forEachListenSocket([&](us_listen_socket_t *ls) {
-                us_listen_socket_on_server_name(ls, &onMissingServerName);
+                us_listen_socket_on_server_name(ls, &onMissingServerName, nullptr);
             });
         }
         return std::move(*this);
@@ -697,7 +697,7 @@ private:
                 us_listen_socket_add_server_name(ls, p.hostname.c_str(), p.ctx, p.router);
             }
             if (httpContext->getSocketContextData()->missingServerNameHandler) {
-                us_listen_socket_on_server_name(ls, &onMissingServerName);
+                us_listen_socket_on_server_name(ls, &onMissingServerName, nullptr);
             }
         }
         return ls;

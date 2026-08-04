@@ -218,6 +218,12 @@ if (process.argv.length === 2 &&
         // does not exist, so don't re-spawn just to pass the flag through.
         continue;
       }
+      if ((flag === "--permission" || flag.startsWith("--allow-")) && process.versions.bun) {
+        // Bun rejects --permission outright ("the Node.js permission model is
+        // not implemented"); re-spawning would just fail. Skip so the suite
+        // reports the gap instead of a hard error.
+        skip("Bun does not implement the Node.js permission model (--permission)");
+      }
       if (flag === "test") {
         process.env.SKIP_FLAG_CHECK = "1";
         break;

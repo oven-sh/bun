@@ -1227,8 +1227,6 @@ pub mod fs {
                 },
             };
 
-            // Close a freshly-opened handle on every exit path until it is
-            // published into the returned DirEntry (the `store_fd` success path).
             let close_even_if_published = !store_fd || self.need_to_close_files();
             let handle_published = core::cell::Cell::new(false);
             let _close_guard = scopeguard::guard((), |()| {

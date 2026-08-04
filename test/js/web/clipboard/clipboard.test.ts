@@ -27,16 +27,32 @@ async function expectDOMException(promise: Promise<unknown>, name: string) {
 
 // Several tests below land real OS writes on a machine with a reachable
 // clipboard. Bracket the whole file so running it locally puts back whatever
-// the developer had (all supported representations, not just text). `null`
-// means no reachable clipboard, in which case nothing here reached the OS.
+// the developer had. `null` means no reachable clipboard, in which case
+// nothing here reached the OS.
 let savedClipboard: ClipboardItem[] | null = null;
 beforeAll(async () => {
   savedClipboard = await navigator.clipboard.read().catch(() => null);
 });
 afterAll(async () => {
   if (savedClipboard === null) return;
-  if (savedClipboard.length > 0) await navigator.clipboard.write(savedClipboard).catch(() => {});
-  else await navigator.clipboard.writeText("").catch(() => {});
+  if (savedClipboard.length === 0) {
+    await navigator.clipboard.writeText("").catch(() => {});
+    return;
+  }
+  // read() packs every present representation into one item, but the POSIX
+  // helper backends can only own one per write and reject a multi-rep item.
+  // Fall back to the text so a browser copy (text/plain + text/html) survives.
+  const restored = await navigator.clipboard.write(savedClipboard).then(
+    () => true,
+    () => false,
+  );
+  if (!restored && savedClipboard[0].types.includes("text/plain")) {
+    const text = await savedClipboard[0]
+      .getType("text/plain")
+      .then(b => b.text())
+      .catch(() => "");
+    await navigator.clipboard.writeText(text).catch(() => {});
+  }
 });
 
 describe("interface shape", () => {

@@ -721,6 +721,8 @@ impl ShellSubprocess {
                 panic!("unexpected error while creating stdin");
             }
             Err(WritableInitError::Sys(e)) => {
+                // SAFETY: `out_subproc` points at the caller's child slot.
+                unsafe { *out_subproc = core::ptr::null_mut() };
                 #[cfg(not(windows))]
                 {
                     let _ = spawn_stdout.map(bun_sys::Fd::close);

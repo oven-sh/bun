@@ -3091,8 +3091,7 @@ describe("redirect stdin from ReadableStream", () => {
   const childPump = `process.stdout.write(await Bun.stdin.text())`;
 
   test.concurrent("native source (subprocess stdout)", async () => {
-    // #18262 repro: a Bun.spawn stdout ReadableStream piped into a shell
-    // command's stdin via the SinkHandle path.
+    // https://github.com/oven-sh/bun/issues/18262
     await using proc = Bun.spawn({
       cmd: [BUN, "-e", "process.stdout.write('hello from stream')"],
       env: bunEnv,

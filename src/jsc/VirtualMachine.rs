@@ -489,11 +489,9 @@ impl VMHolder {
                 bun_core::Output::err(e, "Failed to write heap profile", ());
             }
         }
-        // Node runs every RunAtExit callback on self-directed fatal signals;
-        // the compile cache is one of them (env.cc AtExit(FlushCompileCache)).
-        // Non-latching: the signal may prove non-fatal (worker self-kill with
-        // a main-thread handler, or a default-ignored signal), and latching
-        // here would turn the real exit's persist into a no-op.
+        // Node runs RunAtExit (incl. compile cache) on self-directed fatal signals. Non-latching:
+        // the signal may prove non-fatal, and latching here would no-op the real exit's persist.
+        // https://github.com/nodejs/node/blob/main/src/env.cc (AtExit(FlushCompileCache))
         crate::node_compile_cache::persist_now();
     }
 }
@@ -1628,16 +1626,9 @@ impl VirtualMachine {
             // a terminal state. Ask it to reclaim them now (waits up to 1s).
             bun_http::shutdown_for_exit();
 
-            // The HTTP daemon is parked. Release any task it posted to our
-            // queue before observing `is_shutting_down` (the read is
-            // non-atomic and can lag the JS-thread store) — `FetchTasklet`'s
-            // `on_progress_update` would have dropped the JS-side ref, and
-            // without it the tasklet ⇄ `Box<AsyncHTTP>` cycle leaks. Must
-            // precede `destructOnExit` so `FetchTasklet::deinit` can drop its
-            // JSC `Strong`/`Weak` handles against a live heap.
-            // Same gate the worker shutdown takes: in-flight work-pool fs
-            // completions post with no ScriptExecutionContext gate, so wait
-            // for them before the drain (a post after it leaks the task).
+            // Release tasks the HTTP daemon posted before observing `is_shutting_down` (else the
+            // tasklet ⇄ `Box<AsyncHTTP>` cycle leaks); must precede `destructOnExit`. Wait for
+            // work-pool fs completions first — they post ungated; a post after the drain leaks.
             self.event_loop_mut().wait_for_concurrent_posters();
             self.event_loop_mut().release_queued_tasks_for_shutdown();
 

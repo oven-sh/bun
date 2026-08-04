@@ -1034,11 +1034,9 @@ static void applyTruthyBooleanOption(JSC::JSGlobalObject* globalObject, JSC::JSV
 
 namespace StringWidth {
 
-// node's per-code-point column width (src/node_i18n.cc GetColumnWidth,
-// v26.3.0): East Asian Width first, Emoji_Presentation on the
-// neutral/narrow-ambiguous path, then the zero-width general categories
-// (Cc/Cf/Me/Mn or Emoji_Modifier) with the SOFT HYPHEN exception.
-// https://github.com/nodejs/node/blob/v26.3.0/src/node_i18n.cc
+// node's per-code-point column width: EAW first, Emoji_Presentation on the neutral/narrow-
+// ambiguous path, then zero-width categories (Cc/Cf/Me/Mn or Emoji_Modifier), SOFT HYPHEN = 1.
+// https://github.com/nodejs/node/blob/main/src/node_i18n.cc (GetColumnWidth)
 static uint32_t perCodePointColumnWidth(char32_t cp, bool ambiguousAsWide)
 {
     switch (u_getIntPropertyValue(static_cast<UChar32>(cp), UCHAR_EAST_ASIAN_WIDTH)) {

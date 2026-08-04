@@ -669,9 +669,6 @@ pub extern "C" fn CompressionStreamCoder__transform(
     input_len: usize,
     finish: bool,
 ) -> JSValue {
-    // SAFETY: `this` is the live coder owned by the calling JS cell; it is
-    // only driven from the JS thread, so `&mut *this` has no alias.
-    let this = unsafe { &mut *this };
     let slice = if input.is_null() {
         &[][..]
     } else {
@@ -679,9 +676,13 @@ pub extern "C" fn CompressionStreamCoder__transform(
         // escape this call.
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
-    match this.transform(slice, finish) {
+    // SAFETY: `this` is the live coder owned by the calling JS cell; it is
+    // only driven from the JS thread, so the call-scoped `&mut *this` has no
+    // alias. No JS runs between `transform` and `take` below.
+    match unsafe { (*this).transform(slice, finish) } {
         Ok(()) => {
-            let out = core::mem::take(&mut this.out);
+            // SAFETY: as above.
+            let out = unsafe { core::mem::take(&mut (*this).out) };
             if out.is_empty() {
                 JSUint8Array::create_empty(global)
             } else {
@@ -747,27 +748,24 @@ pub extern "C" fn CompressionStreamCoder__transformInto(
     sink_id: u8,
     sink_ptr: *mut core::ffi::c_void,
 ) -> JSValue {
-    // SAFETY: as in `__transform`.
-    let this = unsafe { &mut *this };
     let slice = if input.is_null() {
         &[][..]
     } else {
         // SAFETY: as in `__transform`.
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
-    match this.transform(slice, finish) {
-        Ok(()) if this.out.is_empty() => JSValue::UNDEFINED,
+    // SAFETY: as in `__transform`.
+    match unsafe { (*this).transform(slice, finish) } {
         Ok(()) => {
+            // SAFETY: as above; the sink copies before returning.
+            let out = unsafe { &(*this).out };
+            if out.is_empty() {
+                return JSValue::UNDEFINED;
+            }
             // SAFETY: `sink_ptr` is a live JSSink of type `sink_id`; the sink
             // copies what it needs before returning.
             unsafe {
-                Bun__JSSink__writeBytesById(
-                    sink_id,
-                    sink_ptr,
-                    global,
-                    this.out.as_ptr(),
-                    this.out.len(),
-                )
+                Bun__JSSink__writeBytesById(sink_id, sink_ptr, global, out.as_ptr(), out.len())
             }
         }
         Err(e) => {
@@ -815,10 +813,11 @@ impl WorkTaskContext for CompressionAsyncCtx {
         // SAFETY: work-pool hand-off; `this`/`task` are live and exclusive.
         // `coder` is kept alive by `m_asyncCodecInFlight` on the rooted stream
         // cell, and TransformStream serializes writes so nothing else aliases it.
-        let ctx = unsafe { &mut *this };
-        let coder = unsafe { &mut *ctx.coder };
-        ctx.error = coder.transform(ctx.input.slice(), ctx.finish).err();
-        WorkTask::on_finish(unsafe { &mut *task });
+        unsafe {
+            let ctx = &mut *this;
+            ctx.error = (*ctx.coder).transform(ctx.input.slice(), ctx.finish).err();
+            WorkTask::on_finish(&mut *task);
+        }
     }
 
     fn then(this: *mut Self, global: &JSGlobalObject) -> Result<(), JsTerminated> {
@@ -827,9 +826,9 @@ impl WorkTaskContext for CompressionAsyncCtx {
         let ctx = unsafe { bun_core::heap::take(this) };
         let stream = ctx.stream.get();
         let (out, out_len, err) = match ctx.error {
-            // SAFETY: `m_asyncCodecInFlight` still holds; `coder` (and its
-            // `out` buffer) stay live until `deliverAsync` copies and clears it.
             None => {
+                // SAFETY: `m_asyncCodecInFlight` still holds; `coder` (and its
+                // `out` buffer) stay live until `deliverAsync` copies and clears it.
                 let coder = unsafe { &*ctx.coder };
                 (coder.out.as_ptr(), coder.out.len(), JSValue::ZERO)
             }

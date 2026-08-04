@@ -2,15 +2,15 @@ use core::cell::Cell;
 
 use bun_collections::VecExt as _;
 use bun_core::strings;
-use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JSUint8Array, JSValue};
 use bun_simdutf_sys::simdutf;
 
 bun_output::declare_scope!(TextEncoderStreamEncoder, visible);
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. `scratch`
-// is moved out via `.take()` before any call that could re-enter.
+/// Held by `JSTextEncoderStream` as a raw `void*` and driven via the
+/// `extern "C"` fns below; no JS wrapper class. `scratch` is moved out via
+/// `.take()` before any call that could re-enter.
 #[derive(Default)]
-#[bun_jsc::JsClass]
 pub struct TextEncoderStreamEncoder {
     pending_lead_surrogate: Cell<Option<u16>>,
     /// Reusable output buffer for the native-sink path so a
@@ -20,36 +20,6 @@ pub struct TextEncoderStreamEncoder {
 }
 
 impl TextEncoderStreamEncoder {
-    // No `#[bun_jsc::host_fn]` here — that macro's free-fn arm emits
-    // a bare `constructor(...)` which cannot resolve inside an `impl`. The
-    // `#[bun_jsc::JsClass]` derive already emits the `<Self>::constructor` shim.
-    pub(crate) fn constructor(
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<Box<TextEncoderStreamEncoder>> {
-        Ok(Box::new(TextEncoderStreamEncoder::default()))
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn encode(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let arguments = frame.arguments();
-        if arguments.is_empty() {
-            return Err(global.throw_not_enough_arguments(
-                "TextEncoderStreamEncoder.encode",
-                1,
-                arguments.len(),
-            ));
-        }
-
-        let str = arguments[0].get_zig_string(global)?;
-
-        if str.is_16bit() {
-            return Ok(self.encode_utf16(global, str.utf16_slice_aligned()));
-        }
-
-        Ok(self.encode_latin1(global, str.slice()))
-    }
-
     fn encode_latin1(&self, global: &JSGlobalObject, input: &[u8]) -> JSValue {
         if input.is_empty() {
             return JSUint8Array::create_empty(global);
@@ -220,11 +190,6 @@ impl TextEncoderStreamEncoder {
             }
         }
         Ok(())
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn flush(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        Ok(self.flush_body(global))
     }
 
     fn flush_body(&self, global: &JSGlobalObject) -> JSValue {

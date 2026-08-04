@@ -1344,10 +1344,8 @@ mod _async_tasks {
             // `this` transfers to the JS thread here — no use after this call.
             unsafe {
                 (*(*vm).event_loop()).enqueue_task_concurrent(ConcurrentTask::create_from(this));
-                // Pairs with `concurrent_poster_begin` in `create()`. The JS
-                // thread may free `this` the moment the task above is popped,
-                // and may tear the VM down once this count reaches zero — so
-                // this is the pool thread's last touch of `this` AND the loop.
+                // Pairs with `concurrent_poster_begin` in `create()`. The JS thread may free `this`
+                // once popped and tear the VM down at zero — this is the pool thread's last touch.
                 (*(*vm).event_loop()).concurrent_poster_end();
             }
         }
@@ -1630,9 +1628,8 @@ mod _async_tasks {
             }
             task.tracker.did_schedule(global_object);
 
-            // Counted so shutdown's `wait_for_concurrent_posters` covers the
-            // count-to-zero completion post; paired in `on_subtask_done`'s Js
-            // arm (the mini path never touches the JS event loop).
+            // Counted so shutdown's `wait_for_concurrent_posters` covers the completion post;
+            // paired in `on_subtask_done`'s Js arm (the mini path never touches the JS event loop).
             // SAFETY: `event_loop()` is a value field of the live `vm`.
             unsafe { (*vm.event_loop()).concurrent_poster_begin() };
             let raw = bun_core::heap::release(task);
@@ -1742,10 +1739,8 @@ mod _async_tasks {
                     })
                     .as_ptr(),
                 });
-                // Pairs with `concurrent_poster_begin` in `create_with_shell_task`.
-                // The JS thread may free the task the moment the post above is
-                // popped and may tear the VM down once the count hits zero —
-                // this is the pool thread's last touch of the loop.
+                // Pairs with `concurrent_poster_begin` in `create_with_shell_task`. The JS thread
+                // may free the task once popped and tear the VM down at zero — last touch of loop.
                 owner.concurrent_poster_end();
             } else {
                 this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
@@ -2601,9 +2596,8 @@ mod _async_tasks {
                     std::ptr::from_mut::<Self>(self),
                 )));
             }
-            // Pairs with `concurrent_poster_begin` in `create()`. The JS thread
-            // may free `self` the moment the task above is popped, and may tear
-            // the VM down once this count reaches zero — last touch of both.
+            // Pairs with `concurrent_poster_begin` in `create()`. The JS thread may free `self`
+            // once popped and tear the VM down at zero — last touch of both.
             // SAFETY: `event_loop()` is a value field of the process-static VM.
             unsafe { (*(*vm).event_loop()).concurrent_poster_end() };
         }

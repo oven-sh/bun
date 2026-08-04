@@ -304,11 +304,9 @@ where
         let Some(mut full_arg) = self.iter.next() else {
             return Ok(None);
         };
-        // Only tokens reaching here are being read as flags: option values and
-        // `--` targets are pulled straight off `iter`, so they stay verbatim.
-        // Restrict rewrites to flag-shaped tokens so a mapping can never touch
-        // the `-`/`--` sentinels or a positional, per the contract on
-        // `ParseOptions::short_aliases`.
+        // Only flag-shaped tokens reach here (option values and `--` targets are pulled straight
+        // off `iter`); restrict rewrites so a mapping never touches `-`/`--` or a positional,
+        // per the contract on `ParseOptions::short_aliases`.
         if full_arg.starts_with(b"-") && full_arg != b"-" && full_arg != b"--" {
             for (from, to) in self.short_aliases {
                 if full_arg == *from {

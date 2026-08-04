@@ -124,13 +124,9 @@ static unsigned countASCIIDigits(StringView string)
 void URLDecomposition::setHost(StringView value)
 {
     auto fullURL = this->fullURL();
-    // The value is a host[:port] by definition: apply the Unicode 16 IDNA
-    // delta to the host span only so old platform ICU data yields node's host
-    // (see DOMURL.cpp). The port span must stay verbatim: the delta's
-    // ignored-class entries (U+180E, U+206A..U+206F) are stripped, which
-    // would turn an invalid non-digit port character into a valid port.
-    // Non-special schemes have opaque hosts, and '['-prefixed hosts go to
-    // the IPv6 parser; neither runs IDNA.
+    // Apply the Unicode 16 IDNA delta to the host span only (see DOMURL.cpp). The port span must
+    // stay verbatim (the delta strips ignored-class chars, which could validate a bad port).
+    // Non-special schemes and '['-prefixed (IPv6) hosts never run IDNA.
     String mappedValue;
     if (fullURL.hasSpecialScheme() && !value.startsWith('[')) {
         size_t hostEnd = value.reverseFind(':');

@@ -118,14 +118,9 @@ function concatBytes(chunks) {
   // otherwise return a copy
   if (chunks.length === 1) {
     const chunk = chunks[0];
-    // If non-zero offset, skip the remaining buffer checks.
-    // Bun's Buffer.from has no shared pool, so small Buffers cover their whole
-    // backing store here, where Node's pool-backed Buffers (allocations below
-    // Buffer.poolSize >>> 1, node lib/buffer.js) fail the covers-whole-buffer
-    // check and take the copy path to a plain Uint8Array. Emulate that split:
-    // Buffers below the pool threshold always copy; anything else that covers
-    // its backing buffer is returned by identity, exactly like Node (large
-    // zlib/iter output Buffers stay Buffers).
+    // Bun's Buffer.from has no shared pool, so emulate Node's split: Buffers below the pool
+    // threshold always copy; anything else covering its backing buffer is returned by identity.
+    // https://github.com/nodejs/node/blob/main/lib/buffer.js (Buffer.poolSize >>> 1)
     if (chunk.byteOffset === 0) {
       const isSmallBuffer =
         chunk.byteLength < kBufferPoolBypassThreshold && ObjectGetPrototypeOf(chunk) === BufferPrototype;

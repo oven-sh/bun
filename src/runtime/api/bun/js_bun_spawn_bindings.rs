@@ -2032,8 +2032,12 @@ fn spawn_maybe_sync<const IS_SYNC: bool, const BUFFERED_ASYNC: bool>(
 
     subprocess.update_has_pending_activity();
 
-    let sync_value =
-        subprocess.build_sync_result(global_this, timeout.is_some(), did_timeout, max_buffer.is_some());
+    let sync_value = subprocess.build_sync_result(
+        global_this,
+        timeout.is_some(),
+        did_timeout,
+        max_buffer.is_some(),
+    );
     // SAFETY: `subprocess_ptr` was produced by `heap::into_raw(Box::new(...))`
     // above (spawnSync path: never handed to a JS wrapper); reclaim ownership.
     // `subprocess` (`&mut *subprocess_ptr`) is not used after this line.

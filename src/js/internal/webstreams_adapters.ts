@@ -133,7 +133,9 @@ class ReadableFromWeb extends Readable {
     try {
       callback(error);
     } catch (error) {
-      globalThis.reportError(error);
+      process.nextTick(() => {
+        throw error;
+      });
     }
   }
 }

@@ -27,7 +27,8 @@ foo();`,
     stdout: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
 
   expect(stdout).toBe("foo();\n");
   expect(exitCode).toBe(0);
@@ -47,7 +48,8 @@ foo();`,
     stdout: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
 
   expect(stderr).toContain(`Top-level await is currently not supported with the "cjs" output format`);
   expect(exitCode).not.toBe(0);
@@ -67,7 +69,8 @@ globalThis.output = await;`,
     stdout: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
 
   expect(stdout).toContain("var await = 42");
   expect(stdout).toContain("globalThis.output = await");
@@ -89,7 +92,8 @@ test.concurrent("await inside a non-async function nested in a CJS file still re
     stdout: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
 
   expect(stderr).toContain(`"await" can only be used inside an "async" function`);
   expect(exitCode).not.toBe(0);
@@ -113,7 +117,8 @@ foo();`,
     stdout: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
 
   expect(stdout).toBe("foo();\n");
   expect(exitCode).toBe(0);
@@ -135,7 +140,8 @@ test.concurrent("await as a tagged-template call identifier keeps working in CJS
     stdout: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
 
   expect(stdout).toContain("var await = String.raw");
   expect(exitCode).toBe(0);
@@ -160,7 +166,8 @@ bar();`,
     stdout: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
 
   expect(stdout).toBe("bar();\n");
   expect(exitCode).toBe(0);
@@ -186,7 +193,8 @@ bar();`,
     stdout: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
 
   expect(stdout).toBe("bar();\n");
   expect(exitCode).toBe(0);
@@ -207,7 +215,8 @@ test.concurrent("bun build --format=cjs still rejects a live top-level for await
     stdout: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
 
   expect(stderr).toContain(`Top-level await is currently not supported with the "cjs" output format`);
   expect(exitCode).not.toBe(0);
@@ -232,7 +241,8 @@ module.exports = foo;`,
     stdout: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
 
   expect(stderr).toContain(`"await" can only be used inside an "async" function`);
   expect(exitCode).not.toBe(0);
@@ -255,7 +265,8 @@ module.exports = fn;`,
     stdout: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
 
   expect(stderr).toContain(`"await" can only be used inside an "async" function`);
   expect(exitCode).not.toBe(0);
@@ -278,7 +289,8 @@ test.concurrent("bun build --format=cjs underlines the await token of a live for
     stdout: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
 
   // Column 5 points at the `a` of `await`; column 1 would point at `for`.
   expect(stderr).toContain("entry.js:1:5");
@@ -306,7 +318,8 @@ return;`,
     stdout: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
 
   expect(stdout).toContain("module.exports = 42");
   expect(stdout).toContain("return");
@@ -330,7 +343,8 @@ globalThis.output = await!.then(console.log);`,
     stdout: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
 
   // The `!` is a TypeScript postfix assertion and must drop out of the
   // JavaScript output entirely. `await` stays as a plain identifier.
@@ -358,7 +372,8 @@ for (await of [1, 2, 3]) {
     stdout: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
 
   expect(stdout).toContain("for (await of");
   expect(stdout).toContain("globalThis.output.push(await)");
@@ -389,7 +404,8 @@ if (false) {
       stdout: "pipe",
     });
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
 
     // Column 5 points at the `a` of the live for-await's `await`; column 3
     // would point at the dead `await` on line 5.
@@ -421,7 +437,8 @@ globalThis.output = [viaAs, viaSatisfies];`,
       stdout: "pipe",
     });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
 
     expect(stdout).toContain("var await = Promise.resolve(1)");
     expect(stdout).toContain("viaAs = await");
@@ -452,7 +469,8 @@ module.exports = NS;`,
     stdout: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
 
   expect(stdout).toContain("var await = 42");
   expect(stdout).toContain("NS.val = await + 1");
@@ -475,7 +493,8 @@ module.exports = x;`,
     stdout: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
 
   expect(stderr).toContain(`"await" can only be used inside an "async" function`);
   expect(exitCode).not.toBe(0);
@@ -497,7 +516,8 @@ module.exports = 1;`,
     stdout: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
 
   expect(stderr).toContain(`"await" can only be used inside an "async" function`);
   expect(exitCode).not.toBe(0);

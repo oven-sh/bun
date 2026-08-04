@@ -610,7 +610,7 @@ impl NodeHTTPResponse {
             || flags.contains(Flags::ENDED))
             && (self.body_read_ref.get().has
                 || self.body_read_state.get() == BodyReadState::Pending)
-            && (!flags.contains(Flags::HAS_CUSTOM_ON_DATA)
+            && (this_value.is_empty_or_undefined_or_null()
                 || js::on_data_get_cached(this_value).is_none())
         {
             let had_ref = self.body_read_ref.get().has;
@@ -632,6 +632,17 @@ impl NodeHTTPResponse {
 
     fn should_request_be_pending(&self) -> bool {
         let flags = self.flags.get();
+        // The body's fin was parsed onto the paused shim and the tail is still
+        // buffered: mark_request_as_done() would free it before the consumer
+        // drains, so stay pending regardless of which terminal flag is set.
+        if flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+            && !self
+                .buffered_request_body_data_during_pause
+                .get()
+                .is_empty()
+        {
+            return true;
+        }
         // Once the socket is closed or has been adopted by the WebSocket
         // layer, the HTTP request/response cycle is over — no further uws
         // callbacks will arrive on `raw_response` to balance the
@@ -644,12 +655,12 @@ impl NodeHTTPResponse {
         // A raw 'upgrade'/'connect' tunnel handoff ends the HTTP exchange the
         // same way, except an Upgrade carrying a body keeps parsing as HTTP
         // until the body's fin chunk (the actual tunnel start).
-        if flags.contains(Flags::TUNNELED) {
-            return self.body_read_state.get() == BodyReadState::Pending;
-        }
-
-        if flags.contains(Flags::ENDED) {
-            return self.body_read_state.get() == BodyReadState::Pending;
+        if flags.contains(Flags::TUNNELED) || flags.contains(Flags::ENDED) {
+            return self.body_read_state.get() == BodyReadState::Pending
+                || !self
+                    .buffered_request_body_data_during_pause
+                    .get()
+                    .is_empty();
         }
 
         true
@@ -701,6 +712,7 @@ impl NodeHTTPResponse {
 
         let vm = vm_get();
         self.clear_on_data_callback(self.get_this_value(), vm.global());
+        self.body_read_ref.with_mut(|r| r.unref(vm));
         self.clear_pending_pinned_write(vm.global(), JSValue::ZERO);
         self.upgrade_context.with_mut(|c| c.reset());
 
@@ -1347,10 +1359,11 @@ impl NodeHTTPResponse {
         let Some(raw) = self.raw_response.get() else {
             return Ok(JSValue::FALSE);
         };
-        if flags.contains(Flags::REQUEST_HAS_COMPLETED)
-            || flags.contains(Flags::SOCKET_CLOSED)
-            || flags.contains(Flags::ENDED)
-            || flags.contains(Flags::UPGRADED)
+        if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
+            return Ok(JSValue::FALSE);
+        }
+        if (flags.contains(Flags::REQUEST_HAS_COMPLETED) || flags.contains(Flags::ENDED))
+            && self.body_read_state.get() != BodyReadState::Pending
         {
             return Ok(JSValue::FALSE);
         }
@@ -1400,10 +1413,15 @@ impl NodeHTTPResponse {
             let bytes = self
                 .buffered_request_body_data_during_pause
                 .replace(Vec::new());
-            return Some(JSValue::create_buffer_from_box(
-                global_object,
-                bytes.into_boxed_slice(),
-            ));
+            let buf = JSValue::create_buffer_from_box(global_object, bytes.into_boxed_slice());
+            if self
+                .flags
+                .get()
+                .contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+            {
+                self.mark_request_as_done_if_necessary();
+            }
+            return Some(buf);
         }
         None
     }
@@ -1419,11 +1437,11 @@ impl NodeHTTPResponse {
         let Some(raw) = self.raw_response.get() else {
             return JSValue::FALSE;
         };
-        if flags.contains(Flags::REQUEST_HAS_COMPLETED)
-            || flags.contains(Flags::SOCKET_CLOSED)
-            || flags.contains(Flags::ENDED)
-            || flags.contains(Flags::UPGRADED)
-        {
+        if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
+            return JSValue::FALSE;
+        }
+        let ended = flags.contains(Flags::REQUEST_HAS_COMPLETED) || flags.contains(Flags::ENDED);
+        if ended && self.body_read_state.get() != BodyReadState::Pending {
             return JSValue::FALSE;
         }
         // Body already delivered: re-arming onData/onTimeout would overwrite a
@@ -1434,6 +1452,13 @@ impl NodeHTTPResponse {
         {
             self.set_on_aborted_handler();
             raw.on_data(on_data_shim, self.as_ctx_ptr());
+        }
+        // After the response has ended detachSocket() cleared
+        // socket._httpMessage, so #resumeSocket() can no longer route the
+        // drain to the IncomingMessage; leave it for _read()'s
+        // handle.drainRequestBody() which pushes to `this` directly.
+        if ended {
+            return JSValue::TRUE;
         }
         self.update_flags(|f| f.remove(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
         let mut result: JSValue = JSValue::TRUE;
@@ -1599,10 +1624,11 @@ impl NodeHTTPResponse {
         if last {
             self.capture_request_trailers();
             self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST));
+            self.body_read_state.set(BodyReadState::Done);
             if self.body_read_ref.get().has {
                 self.body_read_ref.with_mut(|r| r.unref(vm_get()));
-                self.mark_request_as_done_if_necessary();
             }
+            self.mark_request_as_done_if_necessary();
         }
     }
 
@@ -1688,8 +1714,8 @@ impl NodeHTTPResponse {
         if last {
             if self.body_read_ref.get().has {
                 self.body_read_ref.with_mut(|r| r.unref(vm_get()));
-                self.mark_request_as_done_if_necessary();
             }
+            self.mark_request_as_done_if_necessary();
             self.deref();
         }
     }
@@ -2013,12 +2039,11 @@ impl NodeHTTPResponse {
         self.spill_pending_pinned_write(global_object);
 
         if IS_END {
-            // Discard the body read ref if it's pending and no onData callback is set at this point.
-            // This is the equivalent of req._dump().
+            // Connection: close / HTTP/1.0: end(close=true) shuts the socket
+            // down before any later body segment could reach the parser.
             if self.body_read_ref.get().has
                 && self.body_read_state.get() == BodyReadState::Pending
-                && (!self.flags.get().contains(Flags::HAS_CUSTOM_ON_DATA)
-                    || js::on_data_get_cached(this_value).is_none())
+                && state.is_http_connection_close()
             {
                 self.body_read_ref.with_mut(|r| r.unref(vm_get()));
                 self.body_read_state.set(BodyReadState::None);
@@ -2038,6 +2063,26 @@ impl NodeHTTPResponse {
                 raw_response.end(bytes, state.is_http_connection_close());
             } else {
                 raw_response.end_stream(state.is_http_connection_close());
+            }
+            // markDone() nulled inStream; re-arm so the request body keeps
+            // flowing into the IncomingMessage after the response is sent.
+            // SOCKET_CLOSED means the HttpResponseData ext was just
+            // destructed by the context onClose, so it cannot be touched.
+            let post_end_flags = self.flags.get();
+            if self.body_read_state.get() == BodyReadState::Pending
+                && !post_end_flags.contains(Flags::SOCKET_CLOSED)
+            {
+                if let Some(raw_response) = self.raw_response.get() {
+                    if post_end_flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE)
+                        && !post_end_flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+                    {
+                        raw_response.on_data(on_buffer_paused_shim, self.as_ctx_ptr());
+                        #[cfg(not(windows))]
+                        self.pause_socket();
+                    } else {
+                        raw_response.on_data(on_data_shim, self.as_ctx_ptr());
+                    }
+                }
             }
             self.on_request_complete();
 
@@ -2212,11 +2257,17 @@ impl NodeHTTPResponse {
     fn clear_on_data_callback(&self, this_value: JSValue, global_object: &JSGlobalObject) {
         scoped_log!(NodeHTTPResponse, "clearOnDataCallback");
         if self.body_read_state.get() != BodyReadState::None {
-            if !this_value.is_empty() {
-                js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
-            }
             let flags = self.flags.get();
-            if !flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::UPGRADED) {
+            // Once REQUEST_HAS_COMPLETED is set the per-socket HttpResponseData
+            // (and get_this_value()'s currentResponseObject) may belong to the
+            // next keep-alive request; do not touch either.
+            if !flags.contains(Flags::SOCKET_CLOSED)
+                && !flags.contains(Flags::UPGRADED)
+                && !flags.contains(Flags::REQUEST_HAS_COMPLETED)
+            {
+                if !this_value.is_empty() {
+                    js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
+                }
                 scoped_log!(NodeHTTPResponse, "clearOnData");
                 if let Some(raw_response) = self.raw_response.get() {
                     raw_response.clear_on_data();
@@ -2246,10 +2297,11 @@ impl NodeHTTPResponse {
             || flags.contains(Flags::UPGRADED)
         {
             js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
+            let was_pending = self.body_read_state.get() == BodyReadState::Pending;
             // defer { if body_read_ref.has { unref } } — moved to tail of this branch.
             match self.body_read_state.get() {
                 BodyReadState::Pending | BodyReadState::Done => {
-                    if !flags.contains(Flags::REQUEST_HAS_COMPLETED)
+                    if (was_pending || !flags.contains(Flags::REQUEST_HAS_COMPLETED))
                         && !flags.contains(Flags::SOCKET_CLOSED)
                         && !flags.contains(Flags::UPGRADED)
                     {
@@ -2266,6 +2318,9 @@ impl NodeHTTPResponse {
                 self.body_read_ref
                     .with_mut(|r| r.unref(bun_vm_mut(global_object)));
             }
+            self.buffered_request_body_data_during_pause
+                .with_mut(|b| b.clear_and_free());
+            self.mark_request_as_done_if_necessary();
             return;
         }
 

@@ -37,7 +37,7 @@ export async function run() {
 
     const options = {
       protocol: "http:",
-      hostname: "localhost",
+      hostname: address.address,
       port: address.port,
       path: "/", // Change path to /
       headers: {

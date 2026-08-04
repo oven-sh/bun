@@ -74,7 +74,7 @@ it.skipIf(!canBuildNodeAddons())(
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("3 pass");
     expect(stderr).toContain("0 fail");
     expect(exitCode).toBe(0);
   },

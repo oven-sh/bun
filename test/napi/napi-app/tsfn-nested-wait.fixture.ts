@@ -43,3 +43,25 @@ test("calls queued behind a callback that blocks in a nested wait are dispatched
   await done.promise;
   expect(order).toEqual([1, 2, 3]);
 });
+
+test("calls queued behind a microtask that blocks in a nested wait are dispatched in order", async () => {
+  const done = Promise.withResolvers<void>();
+  const blocker = Promise.withResolvers<number>();
+  const order: number[] = [];
+  addon.startQueued((tag: number) => {
+    order.push(tag);
+    if (tag === 1) {
+      // The block happens in the microtask drained between the two queued
+      // calls, not in the callback itself.
+      queueMicrotask(() => {
+        expect(blocker.promise).resolves.toBe(2);
+        order.push(3);
+        done.resolve();
+      });
+    } else {
+      blocker.resolve(tag);
+    }
+  });
+  await done.promise;
+  expect(order).toEqual([1, 2, 3]);
+});

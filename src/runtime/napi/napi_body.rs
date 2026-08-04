@@ -2689,12 +2689,32 @@ impl ThreadSafeFunction {
         Some(t)
     }
 
-    /// Runs one queued call. `this` stays raw: `call` enters user JS, which
-    /// can re-enter this function's dispatch through a nested event loop.
+    /// Runs one queued call. `this` stays raw: the microtask drain and `call`
+    /// enter user JS, which can re-enter this function's dispatch through a
+    /// nested event loop.
     ///
     /// # Safety
     /// `this` is a live threadsafe function on the JS thread.
     unsafe fn dispatch_one(this: *mut Self, is_first: bool) -> bool {
+        // Drain microtasks between callbacks (node#38506) BEFORE dequeuing:
+        // if the drain blocks in a nested event loop, the next item is still
+        // in the queue for a nested dispatch to deliver, in push order.
+        if !is_first {
+            let loop_: *mut EventLoop = {
+                // SAFETY: scoped reborrow.
+                match unsafe { (*this).event_loop.as_mut() } {
+                    // SAFETY: BackRef invariant while `Some`; JS thread,
+                    // outside tick().
+                    Some(back_ref) => unsafe { back_ref.get_mut() },
+                    None => return false,
+                }
+            };
+            // SAFETY: the per-thread event loop outlives this call.
+            if unsafe { (*loop_).drain_microtasks() }.is_err() {
+                return false;
+            }
+        }
+
         let mut queue_finalizer_after_call = false;
         // SAFETY: call-scoped reborrow; `take_one_locked` never enters JS.
         let Some(task) = (unsafe { (*this).take_one_locked(&mut queue_finalizer_after_call) })
@@ -2704,9 +2724,7 @@ impl ThreadSafeFunction {
 
         // No borrow of `*this` is live while user JS runs.
         // SAFETY: per fn contract.
-        if unsafe { Self::call(this, task, is_first) }.is_err() {
-            return false;
-        }
+        unsafe { Self::call(this, task) };
 
         if queue_finalizer_after_call {
             // SAFETY: call-scoped reborrow; `this` is still live (destroy deferred).
@@ -2718,29 +2736,21 @@ impl ThreadSafeFunction {
         true
     }
 
-    /// This function can be called multiple times in one tick of the event loop.
-    /// See: https://github.com/nodejs/node/pull/38506
-    /// In that case, we need to drain microtasks.
-    ///
-    /// `this` stays raw: the microtask drain and the callback run user JS,
-    /// which can re-enter this function's dispatch through a nested event loop.
+    /// Invokes the callback for one item. `this` stays raw: the callback runs
+    /// user JS, which can re-enter this function's dispatch through a nested
+    /// event loop.
     ///
     /// # Safety
     /// `this` is a live threadsafe function on the JS thread.
-    unsafe fn call(
-        this: *mut Self,
-        task: *mut c_void,
-        is_first: bool,
-    ) -> Result<(), bun_jsc::JsTerminated> {
+    unsafe fn call(this: *mut Self, task: *mut c_void) {
         // SAFETY: scoped reborrow; `env` is a raw pointer copy.
         let Some(env) = (unsafe { &(*this).env }).as_ref().map(NapiEnvRef::get) else {
             // env torn down; nothing to call into.
-            return Ok(());
+            return;
         };
 
-        // Read the callback before the microtask drain: a nested dispatch in
-        // the drain can finalize and clear it, and the dequeued item must
-        // still be delivered.
+        // Copy the callback target out so no borrow of `*this` is live while
+        // user code runs.
         enum Target {
             Js(JSValue),
             C(
@@ -2763,19 +2773,6 @@ impl ThreadSafeFunction {
             ),
         };
 
-        if !is_first {
-            let loop_: *mut EventLoop = {
-                // SAFETY: scoped reborrow.
-                match unsafe { (*this).event_loop.as_mut() } {
-                    // SAFETY: BackRef invariant while `Some`; JS thread,
-                    // outside tick().
-                    Some(back_ref) => unsafe { back_ref.get_mut() },
-                    None => return Ok(()),
-                }
-            };
-            // SAFETY: the per-thread event loop outlives this call.
-            unsafe { (*loop_).drain_microtasks()? };
-        }
         // SAFETY: env is valid while the TSF is live.
         let global_object = unsafe { &*env }.to_js();
 
@@ -2786,7 +2783,7 @@ impl ThreadSafeFunction {
         match target {
             Target::Js(js) => {
                 if js.is_empty_or_undefined_or_null() {
-                    return Ok(());
+                    return;
                 }
 
                 let _ = js
@@ -2805,7 +2802,6 @@ impl ThreadSafeFunction {
                 call_js(env, js, ctx, task);
             }
         }
-        Ok(())
     }
 
     /// Runs on an addon thread. A call that reports `napi_closing` consumes the

@@ -579,10 +579,9 @@ impl SideEffects {
         false
     }
 
-    /// Like [`Self::should_keep_stmt_in_dead_control_flow`], but for statements
-    /// reached through an enclosing statement's body, where a surviving
-    /// function declaration is block-scoped (async/generator/strict; plain
-    /// sloppy-mode functions were already relocated) and can be dropped.
+    /// Body-recursion variant: a function declaration reached through an
+    /// enclosing statement's body is block-scoped there (plain sloppy-mode
+    /// functions were already relocated), so it drops with the dead husk.
     fn should_keep_nested_stmt_in_dead_control_flow(stmt: Stmt, bump: &Bump) -> bool {
         if matches!(stmt.data, StmtData::SFunction(_)) {
             return false;

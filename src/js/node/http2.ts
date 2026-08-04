@@ -6304,9 +6304,10 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
         const name = headers[i];
         const value = headers[i + 1];
         if (name.length === 1 && name.charCodeAt(0) === 0) {
-          // node:http's NUL-named framing sentinel pair (see NodeHTTP.cpp):
-          // value "2" = no body (HEAD), anything else = close-delimited.
+          // node:http's NUL-named framing sentinel pair (see NodeHTTP.cpp).
           if (value === "2") noBody = true;
+          else if (value === "3") chunked = true;
+          else if (value === "4") chunked = false;
           else closeDelimited = true;
           continue;
         }

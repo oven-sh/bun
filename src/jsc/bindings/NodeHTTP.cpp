@@ -985,6 +985,12 @@ static bool NodeHTTPServer__writeHead(
                 if (name.length() == 1 && name[0] == 0) {
                     if (value == "2"_s) {
                         httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_NO_BODY_STATUS;
+                    } else if (value == "3"_s) {
+                        // TE value is chunked: toggle uWS's !CL predicate so the body chunk-frames.
+                        httpResponseData->state &= ~uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+                    } else if (value == "4"_s) {
+                        // TE value is non-chunked: toggle uWS's !CL predicate so the body is raw.
+                        httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
                     } else {
                         httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_CLOSE_DELIMITED;
                     }

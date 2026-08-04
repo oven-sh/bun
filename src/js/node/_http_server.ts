@@ -1991,6 +1991,12 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
   }
 } as unknown as typeof import("node:net").Socket;
 
+// Node.js's matchHeader: undefined = no TE line reaches the wire (empty array), else chunkExpression on the value.
+function teValueSelectsChunked(teValue) {
+  if ($isArray(teValue) && teValue.length === 0) return undefined;
+  return chunkExpression.test($isArray(teValue) ? teValue.join(", ") : String(teValue));
+}
+
 // Node validates the `Trailer` header inside _storeHeader, after the body framing has
 // been decided, so `this.chunkedEncoding` is already set. Bun frames the body in uWS
 // and never sets `response.chunkedEncoding`, so reproduce Node's decision here.
@@ -2001,7 +2007,8 @@ function willBeChunked(response) {
   const outHeaders = response[kOutHeaders];
   const te = outHeaders !== null ? outHeaders["transfer-encoding"] : undefined;
   if (te !== undefined) {
-    return chunkExpression.test(String(te[1]));
+    const c = teValueSelectsChunked(te[1]);
+    if (c !== undefined) return c;
   }
   if (outHeaders !== null && outHeaders["content-length"] !== undefined) return false;
   if (response._hasBody === false) return false;
@@ -2264,12 +2271,14 @@ function renderNativeHeaders(res) {
     const storedTransferEncoding = headersMap === null ? undefined : headersMap["transfer-encoding"];
     const storedContentLength = headersMap === null ? undefined : headersMap["content-length"];
     let defectiveNoBodyResponse = false;
+    let userTEChunked;
     if (storedTransferEncoding !== undefined) {
       const statusCode = res[kSnapshotStatusCode] ?? res.statusCode;
       if (statusCode === 204 || statusCode === 304) {
         defectiveNoBodyResponse = true;
         res[kMustCloseConnection] = true;
       }
+      userTEChunked = teValueSelectsChunked(storedTransferEncoding[1]);
     }
 
     // Like Node.js's _storeHeader: with no framing headers on the wire, removing
@@ -2350,6 +2359,13 @@ function renderNativeHeaders(res) {
       // gate - a HEAD response ends at the first empty line whatever headers
       // it carries (RFC 9112 6.3).
       flat.push("\u0000", "2");
+    } else if (userTEChunked === true) {
+      // Sentinel "3": chunk-frame even with a Content-Length line on the wire.
+      flat.push("\u0000", "3");
+      res.chunkedEncoding = true;
+    } else if (userTEChunked === false && !defectiveNoBodyResponse) {
+      // Sentinel "4": non-chunked TE (identity, gzip, ...) writes the body raw.
+      flat.push("\u0000", "4");
     }
 
     if (closeDelimited) {
@@ -3101,7 +3117,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   if (
     trailer &&
     this._hasBody &&
-    !this.hasHeader("content-length") &&
+    willBeChunked(this) &&
     this.req?.httpVersionMajor === 1 &&
     this.req?.httpVersionMinor >= 1
   ) {

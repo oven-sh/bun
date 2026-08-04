@@ -135,7 +135,7 @@ public:
 
 
     /* Server name */
-    TemplatedApp &&addServerName(const std::string &hostname_pattern, SocketContextOptions options = {}, bool *success = nullptr) {
+    TemplatedApp &&addServerName(const std::string &hostname_pattern, SocketContextOptions options = {}, bool *success = nullptr, bool applyClientCertPolicy = false) {
 
         /* Do nothing if not even on SSL */
         if constexpr (SSL) {
@@ -144,6 +144,12 @@ public:
             if (!domainCtx) {
                 if (success) *success = false;
                 return std::move(*this);
+            }
+            /* A per-serverName entry carries its own client-certificate
+             * policy; the default entry's own hostname keeps the app-level
+             * one. */
+            if (applyClientCertPolicy) {
+                us_ssl_ctx_set_sni_policy(domainCtx, options.request_cert, options.reject_unauthorized);
             }
             auto *domainRouter = new HttpRouter<typename HttpContextData<SSL>::RouterData>();
             int result = 0;

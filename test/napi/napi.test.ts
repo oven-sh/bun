@@ -318,6 +318,17 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("can recover the value from a weak ref", async () => {
       await checkSameOutput("test_napi_ref", []);
     });
+    it("napi_reference_ref returns 0 after the referent is collected", async () => {
+      const output = await checkSameOutput("test_reference_ref_after_collect_driver", []);
+      expect(output).toContain("get_reference_value is undefined=1 reference_ref count=0");
+      expect(output).toContain("second reference_ref count=0");
+    });
+    it("napi_get_buffer_info rejects a bare ArrayBuffer", async () => {
+      const output = await checkSameOutput("test_napi_get_buffer_info_gate", []);
+      expect(output).toContain("get_buffer_info(ArrayBuffer): status=1 pending=0");
+      expect(output).toContain("get_buffer_info(Uint8Array): status=0 pending=0");
+      expect(output).toContain("get_buffer_info(DataView): status=0 pending=0");
+    });
     it("allows creating a handle scope in the finalizer", async () => {
       await checkSameOutput("test_napi_handle_scope_finalizer", []);
     });
@@ -336,6 +347,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("external utf16 empty: status=0 copied=0 finalized=1");
       expect(result).toContain("external utf16 empty: length=0");
       expect(result).toContain("external utf16 nonempty: copied=0");
+    });
+
+    it("accepts (NULL, 0) and rejects length > INT_MAX", async () => {
+      const output = await checkSameOutput("test_napi_external_string_args", []);
+      expect(output).toContain("ext_string_latin1(NULL,0): status=0 pending=0");
+      expect(output).toContain("ext_string_latin1(ptr,INT_MAX+1): status=1 pending=0");
+      expect(output).toContain("ext_string_utf16(ptr,INT_MAX+1): status=1 pending=0");
     });
   });
 

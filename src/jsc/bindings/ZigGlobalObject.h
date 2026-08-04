@@ -257,6 +257,10 @@ public:
     JSC::JSValue FetchRequestBodySinkPrototype() const { return m_JSFetchRequestBodySinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableNetworkSinkControllerPrototype() const { return m_JSFetchTaskletChunkedRequestControllerPrototype.getInitializedOnMainThread(this); }
 
+    JSC::Structure* HTMLRewriterSinkStructure() const { return m_JSHTMLRewriterSinkClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* HTMLRewriterSink() { return m_JSHTMLRewriterSinkClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue HTMLRewriterSinkPrototype() const { return m_JSHTMLRewriterSinkClassStructure.prototypeInitializedOnMainThread(this); }
+
     JSC::Structure* JSBufferListStructure() const { return m_JSBufferListClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* JSBufferList() { return m_JSBufferListClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue JSBufferListPrototype() const { return m_JSBufferListClassStructure.prototypeInitializedOnMainThread(this); }
@@ -398,8 +402,8 @@ public:
         jsFunctionOnLoadObjectResultReject,
         Bun__TestScope__Describe2__bunTestThen,
         Bun__TestScope__Describe2__bunTestCatch,
-        Bun__BodyValueBufferer__onRejectStream,
-        Bun__BodyValueBufferer__onResolveStream,
+        Bun__HTMLRewriter__onHandlerResolve,
+        Bun__HTMLRewriter__onHandlerReject,
         Bun__onResolveEntryPointResult,
         Bun__onRejectEntryPointResult,
         Bun__NodeHTTPRequest__onResolve,
@@ -422,8 +426,10 @@ public:
         Bun__FetchTasklet__onRejectRequestStream,
         Bun__S3UploadStream__onResolveStream,
         Bun__S3UploadStream__onRejectStream,
+        Bun__HTMLRewriter__onResolveInputStream,
+        Bun__HTMLRewriter__onRejectInputStream,
     };
-    static constexpr size_t promiseFunctionsSize = 46;
+    static constexpr size_t promiseFunctionsSize = 48;
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
 
@@ -568,6 +574,7 @@ public:
     V(private, LazyClassStructure, m_JSNetworkSinkClassStructure)                                            \
     V(private, LazyClassStructure, m_JSH3ResponseSinkClassStructure)                                         \
     V(private, LazyClassStructure, m_JSFetchRequestBodySinkClassStructure)                                   \
+    V(private, LazyClassStructure, m_JSHTMLRewriterSinkClassStructure)                                       \
                                                                                                              \
     V(private, LazyClassStructure, m_JSStringDecoderClassStructure)                                          \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSFFICStringConstructor)                              \

@@ -1,4 +1,5 @@
 use core::ffi::c_void;
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_boringssl as boringssl;
@@ -271,9 +272,9 @@ impl FetchTasklet {
     /// of the registration, and fires only on the JS thread — so the returned
     /// `&mut` is the sole live borrow.
     #[inline]
-    fn from_ctx<'a>(ctx: *mut c_void) -> &'a mut Self {
+    fn from_ctx<'a>(ctx: NonNull<c_void>) -> &'a mut Self {
         // SAFETY: see INVARIANT above.
-        unsafe { bun_ptr::callback_ctx::<FetchTasklet>(ctx) }
+        unsafe { bun_ptr::callback_ctx::<FetchTasklet>(ctx.as_ptr()) }
     }
 
     /// Recover `&mut Self` from a `*mut FetchTasklet` callback arg.
@@ -660,89 +661,30 @@ impl FetchTasklet {
         let sink_handle = SinkHandle::FetchRequestBody(bun_ptr::BackRef::new_mut(sink));
         self.sink = Some(core::ptr::NonNull::from(&mut *sink));
 
-        // Native ByteStream fast-path: wire SinkHandle directly, skip the JS pump.
-        if let Some(byte_stream) = stream.ptr.bytes() {
-            if byte_stream.sink.get().is_none() {
-                sink.source = SourceHandle::ByteStream(byte_stream);
-                byte_stream.sink.set(sink_handle);
-                byte_stream.sink_paused.set(false);
-                stream.lock_native(&global_this);
-                byte_stream.signal_consumer_attached();
-
-                if let Some(err) = byte_stream.take_pending_error() {
-                    byte_stream.sink.set(SinkHandle::None);
-                    sink.task = None;
+        // Native ByteStream/FileReader fast-path: wire the SinkHandle
+        // directly, skipping the JS pump.
+        match stream.wire_native_sink(&global_this, sink_handle, JSValue::UNDEFINED, |src| {
+            sink.source = src;
+        }) {
+            crate::webcore::readable_stream::NativeWireResult::Wired => return,
+            crate::webcore::readable_stream::NativeWireResult::EndedInline(err) => {
+                sink.task = None;
+                let err_js = err.map(|err| {
                     let err_js = err.to_js(&global_this);
                     err_js.ensure_still_alive();
-                    self.write_end_request(Some(err_js));
-                    return;
-                }
-
-                let buffered = byte_stream.drain();
-                let has_last = byte_stream.has_received_last_chunk.get();
-                if !buffered.is_empty() {
-                    let chunk = if has_last {
-                        StreamResult::OwnedAndDone(buffered)
-                    } else {
-                        StreamResult::Owned(buffered)
-                    };
-                    match sink.write(&chunk) {
-                        Writable::Backpressure(_) => byte_stream.sink_paused.set(true),
-                        Writable::Done | Writable::Err(_) => {
-                            byte_stream.sink.set(SinkHandle::None);
-                            sink.task = None;
-                            self.write_end_request(None);
-                            return;
-                        }
-                        _ => {}
-                    }
-                }
-                if has_last {
-                    byte_stream.sink.set(SinkHandle::None);
-                    sink.task = None;
-                    self.write_end_request(None);
-                }
+                    err_js
+                });
+                self.write_end_request(err_js);
                 return;
             }
-            // sink already attached: fall through to the JS pump.
+            crate::webcore::readable_stream::NativeWireResult::NotNative => {}
         }
 
-        // Native FileReader fast-path: same wiring as ByteStream, but the
-        // reader is pull-driven so kick it with `pull_into_sink` instead of
-        // draining a pre-buffered chunk. Bun's file streams defer `start()`
-        // to the first read, so drive it here; an error or synchronous
-        // completion is delivered immediately.
-        if let Some(file_reader) = stream.ptr.file() {
-            if !file_reader.done.get() && file_reader.sink.get().is_none() {
-                match file_reader.start_for_sink(&global_this) {
-                    Some(crate::webcore::streams::Start::Err(e)) => {
-                        use bun_sys_jsc::SystemErrorJsc;
-                        let err_js = e.to_system_error().to_error_instance(&global_this);
-                        err_js.ensure_still_alive();
-                        sink.task = None;
-                        self.write_end_request(Some(err_js));
-                        return;
-                    }
-                    Some(crate::webcore::streams::Start::OwnedAndDone(bytes)) => {
-                        let _ = sink.write(&StreamResult::OwnedAndDone(bytes));
-                        sink.task = None;
-                        self.write_end_request(None);
-                        return;
-                    }
-                    Some(_) => {}
-                    None => {}
-                }
-                sink.source = SourceHandle::FileReader(file_reader);
-                file_reader.sink.set(sink_handle);
-                file_reader.sink_paused.set(true);
-                stream.lock_native(&global_this);
-                file_reader.pull_into_sink();
-                return;
-            }
-        }
-
-        let assignment_result =
-            JSSink::<FetchRequestBodySink>::assign_to_stream(&global_this, stream.value, sink);
+        let assignment_result = JSSink::<FetchRequestBodySink>::assign_to_stream(
+            &global_this,
+            stream.value,
+            core::ptr::NonNull::from(&mut *sink),
+        );
         assignment_result.ensure_still_alive();
 
         if let Some(err) = assignment_result.to_error() {
@@ -1653,7 +1595,7 @@ impl FetchTasklet {
     }
 
     fn on_readable_stream_available(
-        ctx: *mut c_void,
+        ctx: NonNull<c_void>,
         global_this: &JSGlobalObject,
         readable: ReadableStream,
     ) {
@@ -1664,7 +1606,7 @@ impl FetchTasklet {
         this.is_buffering_body.store(false, Ordering::Release);
     }
 
-    fn on_start_streaming_http_response_body_callback(ctx: *mut c_void) -> DrainResult {
+    fn on_start_streaming_http_response_body_callback(ctx: NonNull<c_void>) -> DrainResult {
         let this = Self::from_ctx(ctx);
         if this.signal_store.aborted.load(Ordering::Relaxed) {
             return DrainResult::Aborted;
@@ -1765,7 +1707,7 @@ impl FetchTasklet {
             .try_transition_receive_mode(BodyReceiveMode::BufferAll, BodyReceiveMode::Paused);
     }
 
-    fn on_start_buffering_callback(ctx: *mut c_void) {
+    fn on_start_buffering_callback(ctx: NonNull<c_void>) {
         let this = Self::from_ctx(ctx);
         this.poll_ref.ref_(bun_io::js_vm_ctx());
         this.is_buffering_body.store(true, Ordering::Release);
@@ -1820,7 +1762,7 @@ impl FetchTasklet {
         if self.is_waiting_body {
             let mut pending = body::PendingValue::new(&self.global_this);
             pending.size_hint = self.get_size_hint();
-            pending.task = Some(std::ptr::from_mut(self).cast::<c_void>());
+            pending.task = Some(NonNull::from(&mut *self).cast::<c_void>());
             pending.on_start_streaming =
                 Some(FetchTasklet::on_start_streaming_http_response_body_callback);
             pending.on_readable_stream_available = Some(FetchTasklet::on_readable_stream_available);

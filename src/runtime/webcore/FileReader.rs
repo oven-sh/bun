@@ -1269,6 +1269,7 @@ pub type Source = readable_stream::NewSource<FileReader>;
 // `unsafe { (*ptr).method() }` scope and never hold `&mut Source` across other
 // `self.*` accesses.
 bun_core::impl_field_parent! { FileReader => Source.context; pub fn raw parent; }
+bun_core::impl_field_parent! { FileReader => Source.context; pub fn parent_const; }
 
 impl readable_stream::SourceContext for FileReader {
     const NAME: &'static str = "File";

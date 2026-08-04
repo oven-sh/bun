@@ -1,4 +1,7 @@
-// JSTransformStream — the TransformStream instance cell. Non-destructible.
+// JSTransformStream — the TransformStream instance cell, and the C++ base of the
+// native TransformerKind specializations (JSCompressionStream, JSDecompressionStream,
+// JSTextEncoderStream, JSTextDecoderStream). The subclasses free their native state
+// eagerly at ClearAlgorithms with vm.heap.addFinalizer as a fallback; no destroy().
 #pragma once
 
 #include "root.h"
@@ -6,18 +9,16 @@
 
 #include "JSDOMGlobalObject.h"
 #include "StreamConstructor.h"
-#include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSPromise.h>
 
 namespace WebCore {
 
-class JSTransformStream final : public JSC::JSNonFinalObject {
+class JSTransformStream : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr JSC::DestructionMode needsDestruction = JSC::DoesNotNeedDestruction;
 
-    // Internal (non-user) allocation entry point (createTransformStream).
+    // Internal (non-user) allocation entry point (setUpNativeTransformStream).
     static JSTransformStream* create(JSC::VM&, JSC::Structure*);
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
@@ -26,8 +27,7 @@ public:
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
     DECLARE_INFO;
-    // visitChildrenImpl MUST visit: m_readable, m_writable, m_controller,
-    // m_backpressureChangePromise, m_pendingWriteChunk.
+    // visitChildrenImpl MUST visit every WriteBarrier field below.
     DECLARE_VISIT_CHILDREN;
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
@@ -55,8 +55,31 @@ public:
     bool m_backpressure : 1 { false };
     // [[Detached]] (transferable streams are not implemented; the slot exists)
     bool m_detached : 1 { false };
+    // Native transform/flush arm is on the stack (coder pointer live); a re-entrant
+    // ClearAlgorithms defers the eager free to the arm's epilogue instead.
+    bool m_nativeStateInUse : 1 { false };
+    bool m_nativeStateReleasePending : 1 { false };
+    // An off-thread codec task holds the coder; ClearAlgorithms / runNativeArm must defer
+    // the free until the task's JS-thread completion clears this.
+    bool m_asyncCodecInFlight : 1 { false };
 
-private:
+    // Native byte-producing subclasses only: when `readStreamIntoSink` attaches a
+    // native JSSink controller to this transform, the transform arms write coder
+    // output straight to `m_nativeSinkPtr` via the Rust SinkHandle dispatcher
+    // (Bun__NativeTransformSink__writeBytes) instead of wrapping it in a
+    // JSUint8Array and enqueueing on the readable.
+    // `m_nativeSinkReadyPromise` is the transform-algorithm result returned on
+    // sink backpressure; the sink's onReady resolves it.
+    JSC::WriteBarrier<JSC::JSObject> m_nativeSinkCell;
+    JSC::WriteBarrier<JSC::JSPromise> m_nativeSinkReadyPromise;
+    // Pending transform-algorithm promise for the off-thread codec step; the
+    // WorkTask's single `Strong` roots this cell and this barrier keeps the
+    // promise alive until deliverAsync settles it.
+    JSC::WriteBarrier<JSC::JSPromise> m_asyncCodecPromise;
+    void* m_nativeSinkPtr { nullptr };
+    uint8_t m_nativeSinkId { 0 };
+
+protected:
     JSTransformStream(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&);
 };

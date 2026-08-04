@@ -900,6 +900,32 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(await Bun.file(dest).text()).toBe("<html><body><p>hi</p></body></html>");
   });
 
+  // Bun.write owns the Locked body (on_receive_value + retargeted task);
+  // clone()'s tee must see that and yield a used body instead of dispatching
+  // the producer callbacks with Bun.write's task as ctx.
+  it("Bun.write(path, HTMLRewriter.transform(resp)) survives clone() while a handler is suspended", async () => {
+    using dir = tempDir("bun-write-htmlrewriter-clone", {});
+    const dest = join(String(dir), "out.html");
+    const { promise: suspended, resolve: onSuspend } = Promise.withResolvers();
+    const { promise: gate, resolve: openGate } = Promise.withResolvers();
+    const out = new HTMLRewriter()
+      .on("p", {
+        async element(el) {
+          onSuspend();
+          await gate;
+          el.setInnerContent("x");
+        },
+      })
+      .transform(new Response("<p>y</p>"));
+    const write = Bun.write(dest, out);
+    await suspended;
+    const clone = out.clone();
+    expect(clone).toBeInstanceOf(Response);
+    openGate();
+    await write;
+    expect(await Bun.file(dest).text()).toBe("<p>x</p>");
+  });
+
   it("BunFile.name survives concurrent write() calls + GC", async () => {
     using dir = tempDir("bun-file-name-concurrent-write-gc", {});
     const filePath = join(String(dir), "out.txt");

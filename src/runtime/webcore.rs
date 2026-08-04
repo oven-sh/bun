@@ -357,8 +357,6 @@ pub enum PathOrFileDescriptor {
 // ─── SinkHandle ──────────────────────────────────────────────────────────────
 // Held by ByteStream; dispatches write()/end() to the native sink.
 
-pub type SinkWriteFn = fn(ctx: *mut core::ffi::c_void, data: &streams::Result) -> streams::Writable;
-
 #[derive(Copy, Clone, Default)]
 pub enum SinkHandle {
     #[default]
@@ -367,7 +365,6 @@ pub enum SinkHandle {
     FetchRequestBody(bun_ptr::BackRef<fetch::FetchRequestBodySink, bun_ptr::Mut>),
     S3Upload(bun_ptr::BackRef<streams::NetworkSink, bun_ptr::Mut>),
     FileSink(bun_ptr::BackRef<file_sink::FileSink>),
-    ValueBufferer(*mut core::ffi::c_void, SinkWriteFn),
     HTMLRewriter(bun_ptr::BackRef<crate::api::html_rewriter::RewriterPipe>),
     HttpResponse(bun_ptr::BackRef<streams::HTTPResponseSink, bun_ptr::Mut>),
     HttpsResponse(bun_ptr::BackRef<streams::HTTPSResponseSink, bun_ptr::Mut>),
@@ -397,7 +394,6 @@ impl SinkHandle {
             // SAFETY: live backref; ByteStream clears sink before free.
             SinkHandle::S3Upload(mut p) => unsafe { p.get_mut() }.write(data),
             SinkHandle::FileSink(p) => p.write(data),
-            SinkHandle::ValueBufferer(ctx, write) => write(ctx, data),
             SinkHandle::HTMLRewriter(p) => p.write(data),
             // SAFETY: live backref; transform detaches before the JSSink is finalized.
             SinkHandle::HttpResponse(mut p) => unsafe { p.get_mut() }.write(data),
@@ -422,11 +418,6 @@ impl SinkHandle {
             // Raw-ptr dispatch: may re-borrow and free the sink (see its doc).
             SinkHandle::S3Upload(p) => streams::NetworkSink::end_from_stream(p.as_ptr(), err),
             SinkHandle::FileSink(p) => p.end_from_stream(err),
-            SinkHandle::ValueBufferer(ctx, write) => {
-                if let Some(e) = err {
-                    let _ = write(ctx, &streams::Result::Err(e));
-                }
-            }
             SinkHandle::HTMLRewriter(p) => p.end_from_stream(err),
             SinkHandle::HttpResponse(_) => {}
             SinkHandle::HttpsResponse(_) => {}

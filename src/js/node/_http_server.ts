@@ -472,15 +472,16 @@ Server.prototype.unref = function () {
 };
 
 Server.prototype.closeAllConnections = function () {
-  const server = this[serverSymbol];
-  if (!server) {
+  // Node.js destroys every tracked connection and leaves the listen socket
+  // alone, so the server keeps accepting. It is also the forced half of
+  // close() + closeAllConnections(), which runs once the listener is gone.
+  const connections = this[kTrackedConnections];
+  if (!connections) {
     return;
   }
-  this[serverSymbol] = undefined;
-  clearInterval(this[kConnectionsCheckingInterval]);
-  this.listening = false;
-
-  server.stop(true);
+  for (const socket of connections) {
+    socket.destroy();
+  }
 };
 
 Server.prototype.getConnections = function (callback) {

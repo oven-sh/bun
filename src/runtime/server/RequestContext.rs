@@ -1399,7 +1399,8 @@ where
         if let Some(byte_stream) = this.byte_stream.take() {
             bun_ptr::BackRef::from(byte_stream).cancel_from_sink(None);
             any_js_calls.set(true);
-            this.response_body_readable_stream_ref.with_mut(|s| s.deinit());
+            this.response_body_readable_stream_ref
+                .with_mut(|s| s.deinit());
             this.deref();
         }
 

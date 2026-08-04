@@ -3,8 +3,8 @@
 // verified to have zero callers (rg across src/ and generated code) before
 // deletion; the build and affected-area tests pass with it gone.
 
-import { describe, expect, test } from "bun:test";
 import { file } from "bun";
+import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
 import path from "path";
 

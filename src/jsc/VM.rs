@@ -30,6 +30,7 @@ unsafe extern "C" {
     safe fn JSC__VM__runGC(vm: &VM, sync: bool) -> usize;
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM);
+    safe fn JSC__VM__collectNowFullSync(vm: &VM);
     safe fn JSC__VM__setExecutionForbidden(vm: &VM, forbidden: bool);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
@@ -100,6 +101,13 @@ impl VM {
 
     pub(crate) fn collect_async(&self) {
         JSC__VM__collectAsync(self)
+    }
+
+    /// `collectNow(Sync, CollectionScope::Full)` followed by
+    /// `WTF::releaseFastMallocFreeMemory()`. Unlike [`shrink_footprint`],
+    /// does not delete live JIT code. Blocks the caller.
+    pub(crate) fn collect_now_full_sync(&self) {
+        JSC__VM__collectNowFullSync(self)
     }
 
     pub fn set_execution_forbidden(&self, forbidden: bool) {

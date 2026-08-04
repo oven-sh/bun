@@ -2797,6 +2797,19 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
+// Synchronous full-scope collection + sweep, followed by an allocator
+// scavenge. Used by GarbageCollectionController when the heap size has been
+// stable for long enough that we consider the loop idle: collectAsync() is
+// usually serviced as an eden collection by JSC, so CodeBlock old-age
+// jettison (which only runs during full collections) never fires otherwise.
+// Unlike shrinkFootprintWhenIdle(), this does not delete live JIT code.
+void JSC__VM__collectNowFullSync(JSC::VM* vm)
+{
+    JSC::JSLockHolder lock(*vm);
+    vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+    WTF::releaseFastMallocFreeMemory();
+}
+
 extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)
 {
     JSC::JSLockHolder locker(vm);

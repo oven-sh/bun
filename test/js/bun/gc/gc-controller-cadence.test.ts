@@ -55,6 +55,52 @@ async function countEdenCollections(
   return { eden };
 }
 
+// The controller's fast→slow transition (30 consecutive ticks with no heap
+// growth) schedules `collectNow(Sync, Full)` so CodeBlock old-age jettison can
+// run and swept blocks get decommitted. Before this, the idle timer only
+// requested `collectAsync()`, and an otherwise-idle server stayed at its
+// post-burst RSS plateau.
+//
+// `collectNow(Sync, ...)` is the only path that calls `sweepSynchronously()`,
+// which JSC logs as "Full sweep:" under `logGC`. JSC's own `GCActivityCallback`
+// issues `collectAsync` requests (which the log shows as FullCollection /
+// EdenCollection without a sweep line), so counting "Full sweep:" isolates the
+// controller's contribution.
+test.concurrent("idle fast→slow transition schedules a synchronous full collection", async () => {
+  // Allocate briefly, then sit idle long enough for 30 consecutive controller
+  // ticks to see no heap growth. With a 20 ms fast interval that is ~600 ms;
+  // 3 s gives a wide margin.
+  const src = `
+    const fill = Buffer.alloc(80, "x").toString();
+    for (let k = 0; k < 30; k++) {
+      const arr = [];
+      for (let i = 0; i < 30000; i++) arr.push({ i, s: fill + i });
+      globalThis.sink = arr;
+      await new Promise(r => setTimeout(r, 5));
+    }
+    globalThis.sink = null;
+    await new Promise(r => setTimeout(r, 3000));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: {
+      ...bunEnv,
+      BUN_GC_TIMER_DISABLE: undefined,
+      BUN_GC_TIMER_INTERVAL: "20",
+      BUN_JSC_logGC: "true",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const log = stdout + stderr;
+  const fullSweeps = (log.match(/Full sweep:/g) ?? []).length;
+  expect(exitCode, log.slice(-2000)).toBe(0);
+  // One from the transition tick itself. The second is scheduled for the next
+  // slow tick 30 s later, outside this window.
+  expect(fullSweeps).toBeGreaterThanOrEqual(1);
+});
+
 describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
   // 100 ticks allocating ~50 KB each is ~5 MB total over ~2 s. Before the fix
   // this produced ~128 eden collections (one per ~16 ms of wall time). With the

@@ -12,11 +12,20 @@ use crate::virtual_machine::VirtualMachine;
 
 const SLOW_REPEAT_INTERVAL_MS: i32 = 30_000;
 
+/// Full synchronous collections scheduled across the fast→slow transition. Two
+/// lets CodeBlock old-age jettison run once immediately and once after the FTL
+/// tier's TTL has elapsed.
+const IDLE_FULL_COLLECTS: u8 = 2;
+
 pub struct GarbageCollectionController {
     pub gc_repeating_timer: JsCell<EventLoopTimer>,
     /// Written by every `perform_gc()` caller, so the fast/slow comparison sees the last such call, not strictly the last fire; external callers are one-shot so worst case is one extra 30 s slow interval.
     pub(crate) gc_last_heap_size: Cell<usize>,
     pub(crate) heap_size_didnt_change_for_repeating_timer_ticks_count: Cell<u8>,
+    /// Remaining `collect_now_full_sync()` calls to issue while in slow mode.
+    /// Charged to [`IDLE_FULL_COLLECTS`] on the fast→slow transition and
+    /// cleared when the heap grows again.
+    pub(crate) pending_idle_full_collects: Cell<u8>,
     pub(crate) gc_timer_interval: Cell<i32>,
     pub(crate) gc_repeating_timer_fast: Cell<bool>,
     pub(crate) disabled: Cell<bool>,
@@ -33,6 +42,7 @@ impl Default for GarbageCollectionController {
             gc_repeating_timer: JsCell::new(EventLoopTimer::init_paused(TimerTag::GcRepeating)),
             gc_last_heap_size: Cell::new(0),
             heap_size_didnt_change_for_repeating_timer_ticks_count: Cell::new(0),
+            pending_idle_full_collects: Cell::new(0),
             gc_timer_interval: Cell::new(0),
             gc_repeating_timer_fast: Cell::new(true),
             disabled: Cell::new(false),
@@ -133,6 +143,12 @@ impl GarbageCollectionController {
 
     /// `Tag::GcRepeating` fire body: 1 s in fast mode, 30 s in slow mode; drops to slow after 30 fires with no heap growth.
     ///
+    /// On the fast→slow transition, and on the slow tick that follows, the
+    /// `collect_async()` is upgraded to a blocking `collectNow(Sync, Full)` so
+    /// CodeBlock old-age jettison (full-scope only) can run and swept blocks
+    /// are decommitted. The loop is idle by definition at that point, so the
+    /// pause is not observable.
+    ///
     /// # Safety
     /// `this` is the live per-VM controller; `vm` is the per-thread VM.
     pub unsafe fn on_gc_repeating_timer(this: *mut Self, vm: *mut VirtualMachine) {
@@ -143,23 +159,37 @@ impl GarbageCollectionController {
         if this.disabled.get() {
             return;
         }
+        let jsc = VirtualMachine::get().jsc_vm();
         let prev_heap_size = this.gc_last_heap_size.get();
-        this.perform_gc();
-        if prev_heap_size == this.gc_last_heap_size.get() {
+        let heap_size_before = jsc.block_bytes_allocated();
+
+        // A synchronous full collection shrinks `block_bytes_allocated()`, so
+        // only treat growth (sampled before this tick's collection) as activity.
+        if heap_size_before <= prev_heap_size {
             let ticks = this
                 .heap_size_didnt_change_for_repeating_timer_ticks_count
                 .get()
                 .saturating_add(1);
             this.heap_size_didnt_change_for_repeating_timer_ticks_count
                 .set(ticks);
-            if ticks >= 30 {
-                this.gc_repeating_timer_fast.set(false);
+            if ticks >= 30 && this.gc_repeating_timer_fast.replace(false) {
+                this.pending_idle_full_collects.set(IDLE_FULL_COLLECTS);
             }
         } else {
             this.heap_size_didnt_change_for_repeating_timer_ticks_count
                 .set(0);
+            this.pending_idle_full_collects.set(0);
             this.gc_repeating_timer_fast.set(true);
         }
+
+        let pending = this.pending_idle_full_collects.get();
+        if pending > 0 {
+            this.pending_idle_full_collects.set(pending - 1);
+            jsc.collect_now_full_sync();
+        } else {
+            jsc.collect_async();
+        }
+        this.gc_last_heap_size.set(jsc.block_bytes_allocated());
         let interval = this.repeat_interval();
         Self::arm(
             vm,

@@ -1015,5 +1015,16 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       await Bun.write(join(String(dir), "b.txt"), f);
       expect(fs.readFileSync(join(String(dir), "b.txt"), "utf8")).toBe("hello world");
     });
+
+    it("a source BunFile whose store was re-stat'd via .lastModified does not cap the write", async () => {
+      using dir = tempDir("bun-write-lastmodified-desync", { "a.txt": "01234" });
+      const a = join(String(dir), "a.txt");
+      const f = Bun.file(a);
+      await f.exists();
+      await Bun.write(f, "0123456789ABCDEFGHIJ");
+      void f.lastModified;
+      await Bun.write(join(String(dir), "b.txt"), f);
+      expect(fs.readFileSync(join(String(dir), "b.txt"), "utf8")).toBe("0123456789ABCDEFGHIJ");
+    });
   });
 });

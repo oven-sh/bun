@@ -3067,7 +3067,7 @@ impl RunCommand {
 
     /// `--check` / `-c`: read the entry point (or stdin), boot with a no-op eval entry so
     /// `--require`/`--preload` still run like `node --check`; `Run::start` does the check.
-    pub fn exec_check(ctx: &mut ContextData) -> crate::Result<()> {
+    pub(crate) fn exec_check(ctx: &mut ContextData) -> crate::Result<()> {
         // `ctx.args.entry_points` is the positional list with the leading
         // subcommand keyword ("run") already stripped.
         let target: Option<Box<[u8]>> = ctx.args.entry_points.first().cloned();

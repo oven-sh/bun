@@ -466,6 +466,9 @@ pub fn set_watch_command_display(entry: &[u8], script_args: &[Box<[u8]>]) {
         joined.push(b' ');
         joined.extend_from_slice(arg);
     }
+    // argv bytes → display string; node's process.argv is already a lossy
+    // decode of OS argv, so U+FFFD substitution here is node-parity.
+    #[allow(clippy::disallowed_methods)]
     let _ = WATCH_COMMAND_DISPLAY.set(node_inspect_quote(&String::from_utf8_lossy(&joined)));
 }
 

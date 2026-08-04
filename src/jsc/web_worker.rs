@@ -569,7 +569,8 @@ impl WebWorker {
                 // Inherited execArgv means inherited profiling flags; snapshot
                 // the parent's config here on the parent thread (the only
                 // thread that mutates it, in `on_exit`/self-kill).
-                parent_ref.heap_profiler_config.clone()
+                // SAFETY: `parent` is live (see above); borrow ends at `;`.
+                unsafe { (*parent).heap_profiler_config.clone() }
             } else {
                 // SAFETY: caller passed valid (ptr,len) (or `(null,0)`);
                 // strings live as long as the C++ `WorkerOptions`.
@@ -977,9 +978,9 @@ impl WebWorker {
             // `--hot` reloads in-place on the main thread only; workers stay out.
             let parent_watcher = parent.bun_watcher;
             if !parent_watcher.is_null()
-                // SAFETY: set once during main-VM startup before any worker
-                // can spawn; points at the leaked process-lifetime watcher.
                 && matches!(
+                    // SAFETY: set once during main-VM startup before any worker
+                    // can spawn; points at the leaked process-lifetime watcher.
                     unsafe { &*parent_watcher },
                     crate::hot_reloader::ImportWatcher::Watch(_)
                 )

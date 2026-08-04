@@ -863,7 +863,7 @@ impl VirtualMachine {
     /// keep the cross-thread hazard visible. Callers must scope any reborrow to
     /// a single mutex-guarded `Watcher` operation.
     #[inline]
-    pub(crate) fn bun_watcher_ptr(&self) -> *mut crate::hot_reloader::ImportWatcher {
+    pub fn bun_watcher_ptr(&self) -> *mut crate::hot_reloader::ImportWatcher {
         self.bun_watcher
     }
 

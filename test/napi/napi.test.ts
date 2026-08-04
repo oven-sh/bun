@@ -436,6 +436,20 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   });
 
   describe("status code alignment with Node.js", () => {
+    it("matches Node for symbol description, empty named key, result-on-exception ordering, and module filename", async () => {
+      const output = await checkSameOutput("test_napi_symbol_key_result_ordering", []);
+      expect(output).toContain('set_named_property(""): status=0 pending=0');
+      expect(output).toContain('obj[""]=1');
+      expect(output).toContain("create_symbol(undefined): status=3 pending=0");
+      expect(output).toContain("create_symbol(null): status=3 pending=0");
+      expect(output).toContain('create_symbol(""): status=0 pending=0');
+      expect(output).toContain('create_symbol("") description: type=4 len=0');
+      expect(output).toContain("new_instance(throws): status=10 result_written=0");
+      expect(output).toContain("get_named_property(throws): status=10 result_written=0");
+      expect(output).toContain("has_named_property(throws): status=10 result_written=0");
+      expect(output).toContain("module_file_name: status=0 is_null=0");
+    });
+
     it("returns the same napi_status as Node.js for invalid inputs", async () => {
       const result = await checkSameOutput("test_napi_status_codes_node26", []);
 

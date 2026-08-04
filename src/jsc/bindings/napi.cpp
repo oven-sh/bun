@@ -582,8 +582,6 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, object);
     NAPI_CHECK_ARG(env, utf8name);
-    // TODO find a way to permit empty strings
-    NAPI_RETURN_EARLY_IF_FALSE(env, *utf8name, napi_invalid_arg);
     NAPI_CHECK_ARG(env, value);
 
     auto globalObject = toJS(env);
@@ -669,8 +667,10 @@ extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
     JSC::Identifier propertyName = identifierFromUtf8(vm, utf8Name);
 
     PropertySlot slot(target, PropertySlot::InternalMethodType::HasProperty);
-    *result = target->getPropertySlot(globalObject, propertyName, slot);
-    NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
+    bool has_property = target->getPropertySlot(globalObject, propertyName, slot);
+    NAPI_RETURN_IF_EXCEPTION(env);
+    *result = has_property;
+    NAPI_RETURN_SUCCESS(env);
 }
 extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
     const char* utf8Name,
@@ -688,8 +688,10 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
 
     JSC::Identifier propertyName = identifierFromUtf8(vm, utf8Name);
 
-    *result = toNapi(target->get(globalObject, propertyName), globalObject);
-    NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
+    JSValue got = target->get(globalObject, propertyName);
+    NAPI_RETURN_IF_EXCEPTION(env);
+    *result = toNapi(got, globalObject);
+    NAPI_RETURN_SUCCESS(env);
 }
 
 extern "C" size_t Bun__napi_module_register_count;
@@ -1598,7 +1600,7 @@ extern "C" JS_EXPORT napi_status node_api_get_module_file_name(napi_env env,
 {
     NAPI_PREAMBLE_NO_PENDING_CHECK(env);
     NAPI_CHECK_ARG(env, result);
-    *result = env->filename;
+    *result = env->filename ? env->filename : "";
     NAPI_RETURN_SUCCESS(env);
 }
 
@@ -3037,18 +3039,14 @@ extern "C" napi_status napi_create_symbol(napi_env env, napi_value description,
     JSC::VM& vm = JSC::getVM(globalObject);
 
     JSC::JSValue descriptionValue = toJS(description);
-    if (descriptionValue && !descriptionValue.isUndefinedOrNull()) {
+    if (descriptionValue) {
         NAPI_RETURN_EARLY_IF_FALSE(env, descriptionValue.isString(), napi_string_expected);
 
         WTF::String descriptionString = descriptionValue.getString(globalObject);
         NAPI_RETURN_IF_VM_EXCEPTION(env);
 
-        if (descriptionString.length() > 0) {
-            *result = toNapi(JSC::Symbol::createWithDescription(vm, descriptionString),
-                globalObject);
-            NAPI_RETURN_SUCCESS(env);
-        }
-        // TODO handle empty string?
+        *result = toNapi(JSC::Symbol::createWithDescription(vm, descriptionString), globalObject);
+        NAPI_RETURN_SUCCESS(env);
     }
 
     auto* symbol = JSC::Symbol::create(vm);
@@ -3089,9 +3087,10 @@ extern "C" napi_status napi_new_instance(napi_env env, napi_value constructor,
     });
 
     auto value = construct(globalObject, constructorValue, constructData, args);
+    NAPI_RETURN_IF_EXCEPTION(env);
     *result = toNapi(value, globalObject);
 
-    NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
+    NAPI_RETURN_SUCCESS(env);
 }
 
 extern "C" napi_status napi_instanceof(napi_env env, napi_value object, napi_value constructor, bool* result)

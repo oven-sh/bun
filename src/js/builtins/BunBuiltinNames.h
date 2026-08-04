@@ -33,7 +33,6 @@ using namespace JSC;
     macro(ReadableStreamDefaultController) \
     macro(ReadableStreamDefaultReader) \
     macro(SQL) \
-    macro(TextEncoderStreamEncoder) \
     macro(TransformStream) \
     macro(TransformStreamDefaultController) \
     macro(WritableStream) \
@@ -80,7 +79,6 @@ using namespace JSC;
     macro(disturbed) \
     macro(domain) \
     macro(drain) \
-    macro(encode) \
     macro(encoding) \
     macro(end) \
     macro(errno) \

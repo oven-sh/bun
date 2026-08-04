@@ -292,21 +292,6 @@ pub struct DirEntryResolveQueueItem {
     pub(crate) fd: FD,
 }
 
-impl Default for DirEntryResolveQueueItem {
-    fn default() -> Self {
-        Self {
-            result: allocators::Result {
-                hash: 0,
-                index: allocators::NOT_FOUND,
-                status: allocators::ItemStatus::Unknown,
-            },
-            unsafe_path: bun_ptr::RawSlice::EMPTY,
-            safe_path: bun_ptr::RawSlice::EMPTY,
-            fd: FD::INVALID,
-        }
-    }
-}
-
 // `bun_alloc::Result` doesn't derive Clone (yet); all its fields are Copy, so
 // hand-roll Clone here for the queue-item move at `dir_info_cached`.
 impl Clone for DirEntryResolveQueueItem {

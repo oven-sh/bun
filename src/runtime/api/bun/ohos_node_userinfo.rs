@@ -249,14 +249,30 @@ fn shim_identity() -> &'static ShimIdentity {
 // Preload file materialization
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Absolute path to the on-disk preload, materializing it on first use.
-/// `None` means "give up" -- no writable candidate, or the write failed --
-/// callers must treat that as "inject nothing".
+/// Absolute path to the on-disk preload, materializing it on first use and
+/// re-verifying on every later call. `None` means "give up" -- no writable
+/// candidate, or the write failed -- callers must treat that as "inject
+/// nothing".
 fn preload_path() -> Option<&'static [u8]> {
+    // Only the *choice of path* (which candidate directory won, and the
+    // content-hashed filename) is cacheable for the process lifetime -- it
+    // can't change without an env change this process would never see.
+    // Whether the file is still *there* can change at any time (deleted out
+    // from under a long-lived process), so that check must run on every
+    // call, not just live inside the one-shot `resolve_and_materialize`
+    // behind this `Once`. Bug found by `bun test`: the self-heal test
+    // deletes the file mid-run and the *next* call in the same process
+    // (same `bun test` invocation) got the stale cached path with no
+    // re-check, because the whole materialize-and-cache step used to sit
+    // inside `get_or_init`'s closure. Standalone `bun -e` invocations never
+    // caught this since each one is a fresh process with an uninitialized
+    // `Once`.
     static ONCE: Once<Option<ZBox>> = Once::new();
-    ONCE.get_or_init(resolve_and_materialize)
-        .as_ref()
-        .map(ZBox::as_bytes)
+    let final_z = ONCE.get_or_init(resolve_and_materialize).as_ref()?;
+    if sys::access(final_z, libc::F_OK).is_err() && !materialize(final_z) {
+        return None;
+    }
+    Some(final_z.as_bytes())
 }
 
 fn resolve_and_materialize() -> Option<ZBox> {

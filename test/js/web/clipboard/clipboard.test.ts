@@ -3,7 +3,7 @@
 // reachable system clipboard must reject with a "NotAllowedError"
 // DOMException instead, and that shape is asserted.
 import { heapStats } from "bun:jsc";
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { chmodSync } from "node:fs";
 import { join } from "node:path";
@@ -24,6 +24,20 @@ async function expectDOMException(promise: Promise<unknown>, name: string) {
   expect(error).toBeInstanceOf(DOMException);
   expect((error as DOMException).name).toBe(name);
 }
+
+// Several tests below land real OS writes on a machine with a reachable
+// clipboard. Bracket the whole file so running it locally puts back whatever
+// the developer had (all supported representations, not just text). `null`
+// means no reachable clipboard, in which case nothing here reached the OS.
+let savedClipboard: ClipboardItem[] | null = null;
+beforeAll(async () => {
+  savedClipboard = await navigator.clipboard.read().catch(() => null);
+});
+afterAll(async () => {
+  if (savedClipboard === null) return;
+  if (savedClipboard.length > 0) await navigator.clipboard.write(savedClipboard).catch(() => {});
+  else await navigator.clipboard.writeText("").catch(() => {});
+});
 
 describe("interface shape", () => {
   test("navigator.clipboard exists and is the [SameObject] Clipboard singleton", () => {
@@ -498,14 +512,9 @@ describe("read / write", () => {
   });
 
   test("round-trips representations, or rejects with NotAllowedError where there is no clipboard", async () => {
-    let saved: ClipboardItem[] = [];
-    try {
-      saved = await navigator.clipboard.read();
-    } catch (e) {
+    if (savedClipboard === null) {
       // No reachable clipboard (e.g. headless Linux): read() and write()
       // must fail with the same spec'd shape.
-      expect(e).toBeInstanceOf(DOMException);
-      expect((e as DOMException).name).toBe("NotAllowedError");
       await expectDOMException(navigator.clipboard.read(), "NotAllowedError");
       await expectDOMException(
         navigator.clipboard.write([new ClipboardItem({ "text/plain": "x" })]),
@@ -513,46 +522,39 @@ describe("read / write", () => {
       );
       return;
     }
-    try {
-      // A unique token makes an unrelated process racing the clipboard a
-      // visible mismatch instead of a false pass. Multi-representation items
-      // are native-only: the POSIX helpers can hold one representation.
-      const token = `bun clipboard read/write ${Date.now()} ${Math.random()}`;
-      const types: Record<string, string | Blob> = { "text/plain": token };
-      const multiRep = process.platform === "darwin" || process.platform === "win32";
-      const withHtml = multiRep && ClipboardItem.supports("text/html");
-      if (withHtml) types["text/html"] = `<b>${token}</b>`;
-      await navigator.clipboard.write([new ClipboardItem(types)]);
+    // A unique token makes an unrelated process racing the clipboard a
+    // visible mismatch instead of a false pass. Multi-representation items
+    // are native-only: the POSIX helpers can hold one representation.
+    const token = `bun clipboard read/write ${Date.now()} ${Math.random()}`;
+    const types: Record<string, string | Blob> = { "text/plain": token };
+    const multiRep = process.platform === "darwin" || process.platform === "win32";
+    const withHtml = multiRep && ClipboardItem.supports("text/html");
+    if (withHtml) types["text/html"] = `<b>${token}</b>`;
+    await navigator.clipboard.write([new ClipboardItem(types)]);
 
-      const items = await navigator.clipboard.read();
-      expect(items).toHaveLength(1);
-      expect(items[0]).toBeInstanceOf(ClipboardItem);
-      expect(items[0].types).toEqual(withHtml ? ["text/plain", "text/html"] : ["text/plain"]);
-      expect(await (await items[0].getType("text/plain")).text()).toBe(token);
-      if (withHtml) {
-        expect(await (await items[0].getType("text/html")).text()).toBe(`<b>${token}</b>`);
-      }
-      // readText() sees the text/plain representation written by write().
-      expect(await navigator.clipboard.readText()).toBe(token);
+    const items = await navigator.clipboard.read();
+    expect(items).toHaveLength(1);
+    expect(items[0]).toBeInstanceOf(ClipboardItem);
+    expect(items[0].types).toEqual(withHtml ? ["text/plain", "text/html"] : ["text/plain"]);
+    expect(await (await items[0].getType("text/plain")).text()).toBe(token);
+    if (withHtml) {
+      expect(await (await items[0].getType("text/html")).text()).toBe(`<b>${token}</b>`);
+    }
+    // readText() sees the text/plain representation written by write().
+    expect(await navigator.clipboard.readText()).toBe(token);
 
-      // Binary representations survive the platform round-trip.
-      await navigator.clipboard.write([new ClipboardItem({ "image/png": new Blob([PNG_1X1], { type: "image/png" }) })]);
-      const [imageItem] = await navigator.clipboard.read();
-      expect(imageItem.types).toEqual(["image/png"]);
-      const pngBytes = Buffer.from(await (await imageItem.getType("image/png")).arrayBuffer());
-      if (process.platform === "win32") {
-        // The Win32 clipboard reports `GlobalSize`, which over-reports by
-        // allocation granularity; the real payload is a prefix.
-        expect(pngBytes.length).toBeGreaterThanOrEqual(PNG_1X1.length);
-        expect(pngBytes.subarray(0, PNG_1X1.length).equals(PNG_1X1)).toBe(true);
-      } else {
-        expect(pngBytes.equals(PNG_1X1)).toBe(true);
-      }
-    } finally {
-      // Put back whatever was on the clipboard before the test (all supported
-      // representations, not just text) so running locally is non-destructive.
-      if (saved.length > 0) await navigator.clipboard.write(saved).catch(() => {});
-      else await navigator.clipboard.writeText("").catch(() => {});
+    // Binary representations survive the platform round-trip.
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": new Blob([PNG_1X1], { type: "image/png" }) })]);
+    const [imageItem] = await navigator.clipboard.read();
+    expect(imageItem.types).toEqual(["image/png"]);
+    const pngBytes = Buffer.from(await (await imageItem.getType("image/png")).arrayBuffer());
+    if (process.platform === "win32") {
+      // The Win32 clipboard reports `GlobalSize`, which over-reports by
+      // allocation granularity; the real payload is a prefix.
+      expect(pngBytes.length).toBeGreaterThanOrEqual(PNG_1X1.length);
+      expect(pngBytes.subarray(0, PNG_1X1.length).equals(PNG_1X1)).toBe(true);
+    } else {
+      expect(pngBytes.equals(PNG_1X1)).toBe(true);
     }
   });
 });
@@ -562,14 +564,7 @@ describe("clipboard events", () => {
   // that place data fire "copy", successful reads fire "paste" (both at
   // `navigator.clipboard`), failures fire nothing, and "cut" never auto-fires.
   test("copy/paste fire at navigator.clipboard on success, and only on success", async () => {
-    // Save before attaching listeners so the save itself is not recorded.
-    let saved: ClipboardItem[] = [];
-    let unavailable = false;
-    try {
-      saved = await navigator.clipboard.read();
-    } catch {
-      unavailable = true;
-    }
+    const unavailable = savedClipboard === null;
     const events: string[] = [];
     let lastEvent: ClipboardEvent | null = null;
     const record = (e: Event) => {
@@ -617,7 +612,6 @@ describe("clipboard events", () => {
       navigator.clipboard.removeEventListener("copy", record);
       navigator.clipboard.removeEventListener("paste", record);
       navigator.clipboard.removeEventListener("cut", record);
-      if (saved.length > 0) await navigator.clipboard.write(saved).catch(() => {});
     }
   });
 });
@@ -681,46 +675,36 @@ describe("readText / writeText", () => {
   });
 
   test("round-trips text, or rejects with NotAllowedError where there is no system clipboard", async () => {
-    let saved: ClipboardItem[] = [];
-    try {
-      saved = await navigator.clipboard.read();
-    } catch (e) {
+    if (savedClipboard === null) {
       // No reachable clipboard here (e.g. headless Linux with no display):
       // the spec'd failure is a "NotAllowedError" DOMException for both.
-      expect(e).toBeInstanceOf(DOMException);
-      expect((e as DOMException).name).toBe("NotAllowedError");
+      await expectDOMException(navigator.clipboard.readText(), "NotAllowedError");
       await expectDOMException(navigator.clipboard.writeText("x"), "NotAllowedError");
       return;
     }
-    try {
-      // A unique token makes an unrelated process racing the system clipboard
-      // a clear mismatch instead of a false pass.
-      const token = `bun-clipboard-test ${Date.now()} ${Math.random()}`;
-      expect(await navigator.clipboard.writeText(token)).toBeUndefined();
-      expect(await navigator.clipboard.readText()).toBe(token);
+    // A unique token makes an unrelated process racing the system clipboard
+    // a clear mismatch instead of a false pass.
+    const token = `bun-clipboard-test ${Date.now()} ${Math.random()}`;
+    expect(await navigator.clipboard.writeText(token)).toBeUndefined();
+    expect(await navigator.clipboard.readText()).toBe(token);
 
-      // Non-ASCII text must survive the platform round-trip byte-for-byte.
-      const unicode = "héllo 🌍 — ünïcödé ✂️📋";
-      await navigator.clipboard.writeText(unicode);
-      expect(await navigator.clipboard.readText()).toBe(unicode);
+    // Non-ASCII text must survive the platform round-trip byte-for-byte.
+    const unicode = "héllo 🌍 — ünïcödé ✂️📋";
+    await navigator.clipboard.writeText(unicode);
+    expect(await navigator.clipboard.readText()).toBe(unicode);
 
-      // WebIDL DOMString conversion: null becomes the string "null".
-      await navigator.clipboard.writeText(null as unknown as string);
-      expect(await navigator.clipboard.readText()).toBe("null");
+    // WebIDL DOMString conversion: null becomes the string "null".
+    await navigator.clipboard.writeText(null as unknown as string);
+    expect(await navigator.clipboard.readText()).toBe("null");
 
-      // Writing "" is legal, and readText() of an empty clipboard resolves "".
-      await navigator.clipboard.writeText("");
-      expect(await navigator.clipboard.readText()).toBe("");
-      // An empty text/plain representation is present, not absent: `read()`
-      // resolves `[ClipboardItem]` with a 0-byte text/plain Blob, like browsers.
-      const emptyItems = await navigator.clipboard.read();
-      expect(emptyItems).toHaveLength(1);
-      expect(emptyItems[0].types).toContain("text/plain");
-      expect(await (await emptyItems[0].getType("text/plain")).text()).toBe("");
-    } finally {
-      // Put the machine's clipboard back so running this locally doesn't
-      // clobber the developer's clipboard.
-      if (saved.length > 0) await navigator.clipboard.write(saved).catch(() => {});
-    }
+    // Writing "" is legal, and readText() of an empty clipboard resolves "".
+    await navigator.clipboard.writeText("");
+    expect(await navigator.clipboard.readText()).toBe("");
+    // An empty text/plain representation is present, not absent: `read()`
+    // resolves `[ClipboardItem]` with a 0-byte text/plain Blob, like browsers.
+    const emptyItems = await navigator.clipboard.read();
+    expect(emptyItems).toHaveLength(1);
+    expect(emptyItems[0].types).toContain("text/plain");
+    expect(await (await emptyItems[0].getType("text/plain")).text()).toBe("");
   });
 });

@@ -113,9 +113,7 @@ pub use bun_spawn::process::StdioKind;
 // codegen shim hands to whichever method JS calls next. `UnsafeCell`-backed
 // fields suppress `noalias` on the outer `&Subprocess`, making the miscompile
 // structurally impossible.
-// Intrusive ref-count: owned-resource teardown lives in [`Subprocess::deinit`],
-// which runs when the last ref drops (JS finalizer, process-exit handler,
-// stdin sink, or a pending `spawnAndWait` promise), not in the GC finalizer.
+// Intrusive ref-count; teardown runs in [`Subprocess::deinit`] on last deref.
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = Subprocess::deinit)]
 pub struct Subprocess<'a> {
@@ -1411,10 +1409,8 @@ impl Subprocess<'_> {
         }
     }
 
-    /// GC finalizer for the `JSSubprocess` wrapper (also used by `spawnSync`
-    /// as its explicit owner release). Drops the wrapper's +1 and force-releases
-    /// refs whose callbacks can no longer fire once the wrapper is gone; the
-    /// owned-resource teardown itself lives in [`Subprocess::deinit`].
+    /// JS wrapper finalizer (and spawnSync's explicit release): drops that
+    /// owner's +1. Resource teardown is in [`Subprocess::deinit`].
     pub fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(Subprocess, "finalize");
         // Refcounted: the trailing `this.deref()` releases the JS wrapper's +1;
@@ -1434,8 +1430,6 @@ impl Subprocess<'_> {
             !this.compute_has_pending_activity()
                 || VirtualMachine::VirtualMachine::get().is_shutting_down()
         );
-        // Nobody can observe the streams anymore; stop readers now rather than
-        // waiting for the last ref.
         this.finalize_streams();
 
         // `Writable::init()` took a +1 (`subprocess.ref_()`, guarded by
@@ -1458,9 +1452,8 @@ impl Subprocess<'_> {
             this.deref();
         }
 
-        // At VM teardown the wrapper can be swept while the child is still
-        // running; the exit handler would then fire into a dead VM, so detach
-        // it and release the ref it would have released.
+        // Swept at VM teardown with the child still running: the exit handler
+        // can no longer fire, so release its ref here.
         let exit_handler_pending = this.process().exit_handler.is_some();
         this.process_mut().detach();
         if exit_handler_pending {
@@ -1471,13 +1464,8 @@ impl Subprocess<'_> {
         this.deref();
     }
 
-    /// `RefCount` destructor: runs when the last ref drops, from whichever
-    /// owner that was (GC finalizer, `on_process_exit`, `on_stdin_destroyed`,
-    /// or `maybe_resolve_spawn_and_wait`). Every step is idempotent with the
-    /// eager calls in [`finalize`](Self::finalize) / `on_process_exit`.
-    ///
-    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-    /// whose generated trait `destructor` upholds the sole-owner contract.
+    /// `RefCount` destructor (last deref, whoever held it). Each step is
+    /// idempotent with the eager calls in `finalize` / `on_process_exit`.
     fn deinit(this: *mut Self) {
         bun_output::scoped_log!(Subprocess, "deinit");
         // SAFETY: refcount == 0 ⇒ `this` is the unique owner of a live Box.

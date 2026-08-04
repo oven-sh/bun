@@ -1335,10 +1335,8 @@ fn spawn_maybe_sync<const IS_SYNC: bool, const BUFFERED_ASYNC: bool>(
         stdin: JsCell::new(Writable::Ignore),
         stdout: JsCell::new(Readable::Ignore),
         stderr: JsCell::new(Readable::Ignore),
-        // 1=JS wrapper (released in Subprocess::finalize) or, for
-        // spawnAndWait, the pending promise (released in
-        // maybe_resolve_spawn_and_wait); 2=Process exit handler (released in
-        // Subprocess::on_process_exit). Last one out runs Subprocess::deinit.
+        // 1=JS wrapper / spawnSync owner / spawnAndWait promise,
+        // 2=Process exit handler. Last one out runs Subprocess::deinit.
         ref_count: bun_ptr::RefCount::init_exact_refs(2),
         stdio_pipes: JsCell::new(core::mem::take(&mut spawned_extra_pipes)),
         ipc_data: Cell::new(None),
@@ -1416,12 +1414,9 @@ fn spawn_maybe_sync<const IS_SYNC: bool, const BUFFERED_ASYNC: bool>(
     ) {
         Ok(v) => subprocess.stdin.set(v),
         Err(err) => {
-            // ref_count = 2 from the aggregate above, but neither the JS
-            // wrapper nor the process exit handler are wired up yet, so
-            // release both; the second `deref()` runs `Subprocess::deinit`
-            // (stdio_pipes, pidfd, Process ref, MaxBuf, IPC queue).
-            // stdout/stderr are still `.ignore` — close the raw spawned pipe
-            // handles directly since `Readable.init()` will not run.
+            // Neither owner is wired up yet: release both refs below (the
+            // second runs `deinit`). stdout/stderr are still `.ignore`, so
+            // close the raw spawned handles here.
             #[cfg(unix)]
             {
                 if let Some(fd) = spawned_stdout {
@@ -1646,8 +1641,6 @@ fn spawn_maybe_sync<const IS_SYNC: bool, const BUFFERED_ASYNC: bool>(
         // the by-value `JsClass::to_js` (which would re-box).
         SubprocessT::to_js_from_ptr(subprocess_ptr, global_this)
     } else {
-        // spawnSync / spawnAndWait never hand the Subprocess to JS; slot 1 of
-        // the refcount is released explicitly (finalize() / promise settle).
         JSValue::ZERO
     };
     if out != JSValue::ZERO {
@@ -1731,14 +1724,10 @@ fn spawn_maybe_sync<const IS_SYNC: bool, const BUFFERED_ASYNC: bool>(
     let subprocess_ptr_exit = subprocess_ptr;
     scopeguard::defer! {
         if send_exit_notification {
-            // SAFETY: subprocess_ptr is live until `on_exit` below dispatches
-            // `on_process_exit`, which may drop the last Subprocess ref (and
-            // with it the Subprocess's ref on `proc`); nothing reads
-            // `subprocess_ptr_exit` after that call.
+            // SAFETY: subprocess_ptr is live here; `on_exit` below may drop its
+            // last ref (and its ref on `proc`), so nothing reads it afterwards.
             let proc: *mut Process = unsafe { (*subprocess_ptr_exit).process.as_ptr() };
-            // Keep `proc` alive across its own exit dispatch, like the pidfd /
-            // waiter-thread paths do with their queued +1.
-            // SAFETY: `proc` is the live Process owned by the Subprocess.
+            // SAFETY: live Process; hold +1 across its own exit dispatch.
             let _keep = unsafe { bun_ptr::ScopedRef::<Process>::new(proc) };
             // SAFETY: `_keep` holds `proc` live for this scope.
             let proc = unsafe { &mut *proc };
@@ -1786,8 +1775,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool, const BUFFERED_ASYNC: bool>(
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this));
             if BUFFERED_ASYNC {
-                // No wrapper and no promise will ever own slot 1; release it
-                // so the exit handler's deref tears the Subprocess down.
+                // Nothing will own slot 1; the exit handler's deref then runs deinit.
                 subprocess.deref();
             }
             return Err(JsError::Thrown);
@@ -1845,10 +1833,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool, const BUFFERED_ASYNC: bool>(
         }
 
         if BUFFERED_ASYNC {
-            // Slot 1 of the refcount is owned by this pending promise and
-            // released in `maybe_resolve_spawn_and_wait`. If the child was
-            // already reaped, the `send_exit_notification` scopeguard above
-            // dispatches `on_process_exit` on the way out of this frame.
+            // Owns slot 1 of the refcount; released in `maybe_resolve_spawn_and_wait`.
             let promise = jsc::JSPromise::create(global_this).to_js();
             subprocess
                 .spawn_and_wait_promise

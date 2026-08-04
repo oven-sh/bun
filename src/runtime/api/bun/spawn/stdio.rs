@@ -409,9 +409,8 @@ impl Stdio {
         Ok(())
     }
 
-    /// `is_sync`: the caller only returns a buffered result object (spawnSync /
-    /// spawnAndWait), so options that need a live `Subprocess` handle
-    /// (ReadableStream stdin, 'socket-fd') are rejected.
+    /// `is_sync`: buffered-result caller (spawnSync / spawnAndWait); rejects
+    /// options that need a live Subprocess handle.
     pub(crate) fn extract(
         out_stdio: &mut Stdio,
         global: &JSGlobalObject,

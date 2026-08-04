@@ -450,6 +450,8 @@ void us_internal_loop_pre(struct us_loop_t *loop) {
      * before epoll blocks. loop_post handles what this iteration receives. */
     if (loop->data.quic_head) us_quic_loop_process(loop);
 #endif
+    /* Same corking as the QUIC block above, for node:quic's engines. */
+    if (loop->data.nq_head) us_nq_loop_flush_if_pending(loop);
 }
 
 void us_internal_loop_post(struct us_loop_t *loop) {
@@ -457,6 +459,7 @@ void us_internal_loop_post(struct us_loop_t *loop) {
 #ifdef LIBUS_USE_QUIC
     if (loop->data.quic_head) us_quic_loop_process(loop);
 #endif
+    if (loop->data.nq_head) us_nq_loop_flush_if_pending(loop);
     /* A poll callback may re-enter the loop (e.g. expect().toThrow() →
      * waitForPromise → us_loop_run_bun_tick). The inner tick must not free
      * closed sockets: the outer tick's dispatch is mid-iteration and may still
@@ -507,7 +510,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 if (error || eof) {
                     connect_error = us_socket_get_error((struct us_socket_t *) p);
                     if (connect_error == 0) {
+#ifdef _WIN32
+                        connect_error = WSAECONNRESET;
+#else
                         connect_error = ECONNRESET;
+#endif
                     }
                 }
                 us_internal_socket_after_open((struct us_socket_t *) p, connect_error);
@@ -777,6 +784,19 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         }
                         #undef LOOP_ISNT_VERY_BUSY_THRESHOLD
                         #else
+                        /* Windows eof-drain, same as the POSIX branch above:
+                         * poll_cb maps AFD DISCONNECT to the eof hint for a
+                         * socket whose write side we already shut down, and
+                         * AFD reports DISCONNECT with the tail of the peer's
+                         * stream still queued in the kernel. Stopping here
+                         * lets the is_shut_down raw-close below discard it
+                         * (a half-closed TLS/net client dropping the end of
+                         * a large response on Windows only). recv() returning
+                         * 0 or WSAEWOULDBLOCK ends the loop, so this is
+                         * bounded by the kernel receive buffer. */
+                        if (s && !us_socket_is_closed(s) && !s->flags.is_paused && (eof || error)) {
+                            continue;
+                        }
                         /* Windows AFD_POLL_ABORT is not level-triggered the way
                          * epoll's EPOLLHUP|EPOLLERR are: a peer RST that lands
                          * while this poll_cb is on the stack — typically when an

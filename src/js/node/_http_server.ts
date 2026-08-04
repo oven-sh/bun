@@ -1093,59 +1093,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
         return promise;
       },
-
-      // Be very careful not to access (web) Request object
-      // properties:
-      // - request.url
-      // - request.headers
-      //
-      // We want to avoid triggering the getter for these properties because
-      // that will cause the data to be cloned twice, which costs memory & performance.
-      // fetch(req, _server) {
-      //   var pendingResponse;
-      //   var pendingError;
-      //   var reject = err => {
-      //     if (pendingError) return;
-      //     pendingError = err;
-      //     if (rejectFunction) rejectFunction(err);
-      //   };
-      //   var reply = function (resp) {
-      //     if (pendingResponse) return;
-      //     pendingResponse = resp;
-      //     if (resolveFunction) resolveFunction(resp);
-      //   };
-      //   const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
-      //   isNextIncomingMessageHTTPS = isHTTPS;
-      //   const http_req = new RequestClass(req, {
-      //     [typeSymbol]: NodeHTTPIncomingRequestType.FetchRequest,
-      //   });
-      //   assignEventCallback(req, onRequestEvent.bind(http_req));
-      //   isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
-
-      //   const upgrade = http_req.headers.upgrade;
-      //   const http_res = new ResponseClass(http_req, { [kDeprecatedReplySymbol]: reply });
-      //   http_req.socket[kInternalSocketData] = [server, http_res, req];
-      //   server.emit("connection", http_req.socket);
-      //   const rejectFn = err => reject(err);
-      //   http_req.once("error", rejectFn);
-      //   http_res.once("error", rejectFn);
-      //   if (upgrade) {
-      //     server.emit("upgrade", http_req, http_req.socket, kEmptyBuffer);
-      //   } else {
-      //     server.emit("request", http_req, http_res);
-      //   }
-
-      //   if (pendingError) {
-      //     throw pendingError;
-      //   }
-
-      //   if (pendingResponse) {
-      //     return pendingResponse;
-      //   }
-
-      //   var { promise, resolve: resolveFunction, reject: rejectFunction } = $newPromiseCapability(GlobalPromise);
-      //   return promise;
-      // },
     });
 
     getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
@@ -1547,6 +1494,7 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
   // connection whose pipelined responses have buffered past the high water mark.
   _paused = false;
   #pendingCallback = null;
+  #pendingAbortMessage;
   constructor(server: Server, handle, encrypted) {
     // allowHalfOpen: node's connectionListener sockets never auto-end the
     // writable side on the peer's FIN (CONNECT/Upgrade tunnels stay writable);
@@ -1652,15 +1600,14 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
   }
   #closeHandle(handle, callback, err?: Error) {
     this[kHandle] = undefined;
+    // Capture the in-flight response before detachSocket() can clear it: a
+    // synchronous res.destroy() inside the request handler runs detachSocket()
+    // between here and the native close delivering #onClose. The abort itself
+    // is deferred to #onClose so the dispatch promise resolves only after the
+    // native on_abort has released the pending-request ref.
+    this.#pendingAbortMessage = this._httpMessage;
     handle.onclose = this.#onCloseForDestroy.bind(this, callback, err);
     handle.close();
-    // lets sync check and destroy the request if it's not complete
-    const message = this._httpMessage;
-    const req = message?.req;
-    if (req && !req.complete) {
-      // at this point the handle is not destroyed yet, lets destroy the request
-      req.destroy();
-    }
   }
   #onClose() {
     // freeParser equivalent: runs before 'close' listeners so they observe the
@@ -1692,7 +1639,16 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
     // flips `complete` before the response is written, so an aborted
     // connection would otherwise never reach `req.destroy()` →
     // `emit("close")` (test-http-should-emit-close-when-connection-is-aborted).
-    const message = this._httpMessage;
+    //
+    // `#pendingAbortMessage` is the `_httpMessage` captured when the destroy
+    // was initiated from JS (`#closeHandle`). It is only honoured when the
+    // captured response was itself destroy()ed: a `res.end()` followed by a
+    // JS-initiated socket.destroy() also reaches detachSocket() via the
+    // dispatcher's finished branch, and Node.js does not abort the request
+    // once the response has finished (resOnFinish shifts state.incoming).
+    const pending = this.#pendingAbortMessage;
+    this.#pendingAbortMessage = undefined;
+    const message = this._httpMessage ?? (pending?.destroyed ? pending : undefined);
     const req = message?.req;
 
     if (req && !req.destroyed && !req[kHandle]?.upgraded) {
@@ -1896,7 +1852,7 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
   get authorized() {
     if (!this.encrypted) return undefined;
     if (!this.server?.[tlsSymbol]?.requestCert) return false;
-    return this[kHandle]?.authorizationError === null;
+    return this[kHandle]?.peerCertVerified === true;
   }
 
   get authorizationError() {

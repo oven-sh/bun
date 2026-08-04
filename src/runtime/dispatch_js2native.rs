@@ -20,7 +20,7 @@ pub use bun_sql_jsc::mysql::create_binding as sql_jsc_mysql_create_binding;
 pub use bun_sql_jsc::postgres::create_binding as sql_jsc_postgres_create_binding;
 
 // The real body already lives in this crate.
-pub use crate::api::crash_handler_jsc::js_bindings::generate as crash_handler_crash_handler_js_bindings_generate;
+pub(crate) use crate::api::crash_handler_jsc::js_bindings::generate as crash_handler_crash_handler_js_bindings_generate;
 
 pub use bun_install_jsc::dependency_jsc::dependency_from_js as install_dependency_from_js;
 pub use bun_install_jsc::dependency_jsc::tag_infer_from_js as install_dependency_version_tag_infer_from_js;
@@ -42,7 +42,7 @@ pub use bun_jsc::event_loop::get_active_tasks as jsc_event_loop_get_active_tasks
 pub use bun_jsc::virtual_machine_exports::Bun__setSyntheticAllocationLimitForTesting as jsc_virtual_machine_exports_bun__set_synthetic_allocation_limit_for_testing;
 // `emit_handle_ipc_message` is implemented in this crate (`ipc_host.rs`)
 // because it dereferences `Subprocess`, a runtime type.
-pub use crate::ipc_host::emit_handle_ipc_message as jsc_ipc_emit_handle_ipc_message;
+pub(crate) use crate::ipc_host::emit_handle_ipc_message as jsc_ipc_emit_handle_ipc_message;
 
 pub use bun_jsc::bun_string_jsc::js_escape_reg_exp as string_escape_reg_exp_js_escape_reg_exp;
 pub use bun_jsc::bun_string_jsc::js_escape_reg_exp_for_package_name_matching as string_escape_reg_exp_js_escape_reg_exp_for_package_name_matching;
@@ -64,10 +64,8 @@ pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_uv_error_to_e as sys_sys_
 pub use bun_http_jsc::headers_jsc::h2_live_counts as http_h2_client_testing_ap_is_live_counts;
 pub use bun_http_jsc::headers_jsc::h3_quic_live_counts as http_h3_client_testing_ap_is_quic_live_counts;
 
-/// Per-VM, not a process-wide atomic: node treats `--use-system-ca` as an
-/// Environment option, so a Worker's execArgv can differ from the process.
-/// `undefined` means neither flag was given and NODE_USE_SYSTEM_CA decides —
-/// only the explicit `--no-use-system-ca` beats that env var.
+/// Per-VM (node treats `--use-system-ca` as an Environment option, so a Worker's execArgv can differ).
+/// `undefined` ⇒ neither flag given, NODE_USE_SYSTEM_CA decides; only `--no-use-system-ca` beats the env var.
 pub(crate) fn bun_get_use_system_ca(
     _global: &JSGlobalObject,
     _frame: &CallFrame,
@@ -119,6 +117,6 @@ pub use css::test_with_options as css_jsc_css_internals_test_with_options;
 // `LinearFifo` has no JSC consumer of its own; this `bun:internal-for-testing`
 // probe lives in `bun_runtime` (which depends on both `bun_collections` and
 // `bun_jsc`) rather than inventing a JSC edge into the collections crate.
-pub use crate::linear_fifo_testing::ordered_remove_probe as collections_linear_fifo_testing_ap_is_ordered_remove_probe;
+pub(crate) use crate::linear_fifo_testing::ordered_remove_probe as collections_linear_fifo_testing_ap_is_ordered_remove_probe;
 
 // ported from: generated_js2native.rs

@@ -1,5 +1,3 @@
-// import type { Readable, Writable } from "node:stream";
-// import type { WorkerOptions } from "node:worker_threads";
 declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 
@@ -1152,10 +1150,8 @@ class Worker extends EventEmitter {
     }
   }
 
-  // node's WORKER resource is the C++ handle, so hasRef() follows ref()/unref()
-  // and reads back undefined once the handle is gone. Bun delivered init for
-  // TickObject only; this extends the same array to the type worker consumers
-  // look for. Only hasRef() is exposed, not the full handle.
+  // node's WORKER resource is the C++ handle: hasRef() follows ref()/unref() and reads undefined
+  // once the handle is gone. Extends the TickObject init array to WORKER; only hasRef() is exposed.
   #emitAsyncHooksInit() {
     const count = tickInitHooks.length;
     if (count === 0) return;

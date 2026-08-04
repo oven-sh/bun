@@ -30,7 +30,6 @@
 #endif
 #endif
 
-#include "ActiveDOMObject.h"
 #include "EventNames.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
@@ -301,10 +300,8 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
                     env.add(key.impl()->isolatedCopy(), str);
                 }
 
-                // node_worker.cc: only an explicitly provided env object has its
-                // NODE_OPTIONS validated (the Rust side skips when it is
-                // byte-identical to the process's OS-startup NODE_OPTIONS;
-                // runtime process.env writes are still validated).
+                // Only an explicit env's NODE_OPTIONS is validated (Rust skips when
+                // byte-identical to the parent's): https://github.com/nodejs/node/blob/main/src/node_worker.cc
                 if (envValue && envValue.isCell()) {
                     auto nodeOptions = env.find("NODE_OPTIONS"_s);
                     if (nodeOptions != env.end()) {

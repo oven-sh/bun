@@ -284,7 +284,7 @@ pub fn populate_manifest_cache(
             err: Option<crate::Error>,
         }
         impl RunClosure {
-            pub(crate) fn is_done(closure: &mut Self) -> bool {
+            fn is_done(closure: &mut Self) -> bool {
                 // SAFETY: `closure.manager` is the raw provenance root set
                 // below; `sleep_until`/`tick_raw` hold no `&mut` across this
                 // callback, so this is the unique live borrow.

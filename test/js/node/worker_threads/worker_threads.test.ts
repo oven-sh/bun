@@ -460,18 +460,69 @@ describe("execArgv option", async () => {
   });
 
   it("SHARE_ENV process.env validates descriptors like node", async () => {
-    const w = new Worker(
-      `const { parentPort } = require("worker_threads");
-       const out = {};
-       try { Object.defineProperty(process.env, "BUN_TEST_SHARE_DEFINE", { writable: false }); out.partial = null; }
-       catch (e) { out.partial = e.code; }
-       try { Object.defineProperty(process.env, Symbol("s"), { value: "v", writable: true, enumerable: true, configurable: true }); out.symbol = null; }
-       catch (e) { out.symbol = e.name; }
-       parentPort.postMessage(out);`,
-      { eval: true, env: SHARE_ENV },
-    );
-    const [out] = await once(w, "message");
-    expect(out).toEqual({ partial: "ERR_INVALID_OBJECT_DEFINE_PROPERTY", symbol: "TypeError" });
+    // Founding a SHARE_ENV tree permanently swaps the founding thread's
+    // process.env; run in a subprocess so the test runner stays untouched.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker, SHARE_ENV } = require("worker_threads");
+         new Worker(
+           'const out = {};' +
+           'try { Object.defineProperty(process.env, "BUN_TEST_SHARE_DEFINE", { writable: false }); out.partial = null; }' +
+           'catch (e) { out.partial = e.code; }' +
+           'try { Object.defineProperty(process.env, Symbol("s"), { value: "v", writable: true, enumerable: true, configurable: true }); out.symbol = null; }' +
+           'catch (e) { out.symbol = e.name; }' +
+           'try { Object.defineProperty(process.env, "BUN_TEST_SHARE_NUM", { value: 7, writable: true, enumerable: true, configurable: true }); out.numeric = typeof process.env.BUN_TEST_SHARE_NUM; }' +
+           'catch (e) { out.numeric = e.code; }' +
+           'try { Object.freeze(process.env); out.freeze = null; } catch (e) { out.freeze = e.name; }' +
+           'out.extensibleAfterFreeze = Object.isExtensible(process.env);' +
+           'require("worker_threads").parentPort.postMessage(out);',
+           { eval: true, env: SHARE_ENV },
+         ).on("message", out => { console.log(JSON.stringify(out)); process.exit(0); });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+      out: {
+        partial: "ERR_INVALID_OBJECT_DEFINE_PROPERTY",
+        symbol: "TypeError",
+        numeric: "string",
+        freeze: "TypeError",
+        extensibleAfterFreeze: true,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("a bare optional-value flag does not swallow the next flag", async () => {
+    // `--config` takes a value only via `=` (OneOptional in bun_clap), so the
+    // `-r <p>` after it must stay a preload and the round-trip must accept
+    // the reported execArgv.
+    using dir = tempDir("worker-execargv-optval", {
+      "preload-o.js": "globalThis.__o = 'O';",
+      "main.js": `console.log(JSON.stringify(process.execArgv));
+        new (require("worker_threads").Worker)(
+          "require('worker_threads').parentPort.postMessage(globalThis.__o)",
+          { eval: true, execArgv: process.execArgv },
+        ).on("message", t => { console.log(t); process.exit(0); });`,
+    });
+    const p = join(String(dir), "preload-o.js");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--config", "-r", p, "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ lines: stdout.trim().split(/\r?\n/), stderr, exitCode }).toEqual({
+      lines: [JSON.stringify(["--config", "-r", p]), "O"],
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   it("bun's own glued short flags round-trip through process.execArgv", async () => {
@@ -542,6 +593,18 @@ describe("execArgv option", async () => {
     });
     const [got] = await once(w, "message");
     expect(got).toBe("G");
+  });
+
+  it("accepts node's whole-token short aliases", async () => {
+    // `-pe` is emitted verbatim into process.execArgv (process.test.js pins
+    // it); node's option parser recognizes it as a whole-token alias, so the
+    // worker validator accepts it too.
+    const w = new Worker("require('worker_threads').parentPort.postMessage(process.execArgv);", {
+      eval: true,
+      execArgv: ["-pe", "1"],
+    });
+    const [got] = await once(w, "message");
+    expect(got).toEqual(["-pe", "1"]);
   });
 
   it("rejects glued short flags in NODE_OPTIONS like node", async () => {
@@ -638,6 +701,27 @@ describe("execArgv option", async () => {
         bunExe(),
         "--cwd",
         process.cwd(),
+        "--expose-gc",
+        "-e",
+        "new (require('worker_threads').Worker)(\"require('worker_threads').parentPort.postMessage(typeof globalThis.gc)\", { eval: true }).on('message', t => { console.log(t); process.exit(0); })",
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "function", stderr: "", exitCode: 0 });
+  });
+
+  it("inheriting workers take --expose-gc behind a chained short whose value is the next token", async () => {
+    // `-br <path>` is a bun_clap short chain with the value in the next argv
+    // token; the inherit-path scanner sees the same normalized stream as
+    // process.execArgv, so the following --expose-gc is still reached.
+    using dir = tempDir("worker-inherit-chained-short", { "noop.js": "" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-br",
+        join(String(dir), "noop.js"),
         "--expose-gc",
         "-e",
         "new (require('worker_threads').Worker)(\"require('worker_threads').parentPort.postMessage(typeof globalThis.gc)\", { eval: true }).on('message', t => { console.log(t); process.exit(0); })",

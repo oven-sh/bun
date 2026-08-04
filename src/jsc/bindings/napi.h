@@ -228,6 +228,10 @@ public:
         while (!m_cleanupHooks.empty()) {
             drain();
         }
+        // erase() above leaves the bucket array allocated; release it here
+        // since ~NapiEnv may not run before process exit (late finalizers can
+        // hold the last Ref past GlobalObject teardown).
+        m_cleanupHooks = Napi::HookSet();
         clearExceptionsBetweenFinalizers();
 
         // Defer GC during entire finalizer cleanup to prevent iterator invalidation.
@@ -644,14 +648,7 @@ private:
 extern "C" void napi_internal_cleanup_env_cpp(napi_env);
 extern "C" void napi_internal_remove_finalizer(napi_env, napi_finalize callback, void* hint, void* data);
 
-namespace JSC {
-class JSGlobalObject;
-class JSSourceCode;
-}
-
 namespace Napi {
-
-JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSObject* object, JSC::JSGlobalObject* globalObject);
 
 class NapiRefWeakHandleOwner final : public JSC::WeakHandleOwner {
 public:
@@ -719,11 +716,6 @@ public:
     void clear();
     bool isClear() const;
 
-    bool isSet() const { return m_tag != WeakTypeTag::NotSet; }
-    bool isPrimitive() const { return m_tag == WeakTypeTag::Primitive; }
-    bool isCell() const { return m_tag == WeakTypeTag::Cell; }
-    bool isString() const { return m_tag == WeakTypeTag::String; }
-
     void setPrimitive(JSValue);
     void setCell(JSCell*, WeakHandleOwner&, void* context);
     void setString(JSString*, WeakHandleOwner&, void* context);
@@ -741,24 +733,6 @@ public:
         default:
             return {};
         }
-    }
-
-    JSCell* cell() const
-    {
-        ASSERT(isCell());
-        return m_value.cell.get();
-    }
-
-    JSValue primitive() const
-    {
-        ASSERT(isPrimitive());
-        return m_value.primitive;
-    }
-
-    JSString* string() const
-    {
-        ASSERT(isString());
-        return m_value.string.get();
     }
 
 private:
@@ -888,10 +862,6 @@ public:
 
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
-    static void destroy(JSCell* cell)
-    {
-        static_cast<NapiClass*>(cell)->NapiClass::~NapiClass();
-    }
 
     template<typename, SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
@@ -1017,7 +987,10 @@ public:
         // TODO change to global? or find another way to avoid JSGlobalProxy
         JSC::JSObject* jscThis = globalObject->globalThis();
         if (!m_callFrame->thisValue().isUndefinedOrNull()) {
-            auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+            // TopExceptionScope: this runs before the addon's callback and its
+            // first NAPI_PREAMBLE; a ThrowScope would simulate a throw on
+            // destruction that the next preamble would see as unchecked.
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
             jscThis = m_callFrame->thisValue().toObject(globalObject);
             // https://tc39.es/ecma262/#sec-toobject
             // toObject only throws for undefined and null, which we checked for

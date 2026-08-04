@@ -53,10 +53,7 @@ fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
 pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(IPC, "sendHelperChild");
 
-    let arguments = frame.arguments_old::<3>().ptr;
-    let message = arguments[0];
-    let handle = arguments[1];
-    let callback = arguments[2];
+    let [message, handle, callback] = frame.arguments_as_array::<3>();
 
     let vm = global.bun_vm().as_mut();
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global; sole &mut on JS thread.
@@ -103,8 +100,7 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
 
     #[bun_jsc::host_fn]
     fn impl_(global_: &JSGlobalObject, frame_: &CallFrame) -> JsResult<JSValue> {
-        let arguments_ = frame_.arguments_old::<1>();
-        let arguments_ = arguments_.slice();
+        let arguments_ = frame_.arguments();
         let ex = arguments_[0];
         Process__emitErrorEvent(global_, ex.to_error().unwrap_or(ex));
         Ok(JSValue::UNDEFINED)
@@ -144,7 +140,7 @@ pub(crate) fn on_internal_message_child(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     bun_output::scoped_log!(IPC, "onInternalMessageChild");
-    let arguments = frame.arguments_old::<2>().ptr;
+    let arguments = frame.arguments_as_array::<2>();
     let singleton = child_singleton();
     // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
     singleton.worker = StrongOptional::create(arguments[0], global);
@@ -167,7 +163,7 @@ pub(crate) fn handle_internal_message_child(
 pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(IPC, "sendHelperPrimary");
 
-    let arguments = frame.arguments_old::<4>().ptr;
+    let arguments = frame.arguments_as_array::<4>();
     // `as_class_ref` is the safe shared-borrow downcast (centralised deref
     // proof in `JSValue`); `Subprocess::ipc(&self)` projects the `JsCell`.
     // `cluster.Worker({ process })` accepts any object, so `process[kHandle]`
@@ -272,7 +268,7 @@ pub(crate) fn on_internal_message_primary(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<3>().ptr;
+    let arguments = frame.arguments_as_array::<3>();
     // `as_class_ref` is the safe shared-borrow downcast; `ipc()` takes `&self`.
     // Same guard as `send_helper_primary`: nothing to subscribe to when the
     // worker's process has no native child handle.
@@ -349,7 +345,7 @@ pub(crate) fn handle_internal_message_primary(
 
 #[bun_jsc::host_fn]
 pub(crate) fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<1>().ptr;
+    let arguments = frame.arguments_as_array::<1>();
 
     if arguments.len() == 0 {
         return Err(global.throw_missing_arguments_value(&["enabled"]));

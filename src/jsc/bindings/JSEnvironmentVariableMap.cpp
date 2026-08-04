@@ -62,21 +62,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
     return JSValue::encode(result);
 }
 
-JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
-{
-    VM& vm = globalObject->vm();
-    JSC::JSObject* object = JSValue::decode(thisValue).getObject();
-    if (!object)
-        return false;
-
-    auto string = JSValue::decode(value).toString(globalObject);
-    if (!string) [[unlikely]]
-        return false;
-
-    object->putDirect(vm, propertyName, string, 0);
-    return true;
-}
-
 // Proxy-related env vars (HTTP_PROXY, HTTPS_PROXY, NO_PROXY and lowercase
 // variants) are read by fetch()'s native proxy resolution via
 // env_loader.getHttpProxyFor(). Writes from JS must sync back to the native env
@@ -119,14 +104,8 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * glo
     BunString val = Bun::toStringView(view);
     Bun__setEnvValue(globalObject, &name, &val);
 
-    // The proxy-var accessors are added with `DontEnum` when the var was not
-    // present in the OS env at startup. The regular env-var setter
-    // (`jsSetterEnvironmentVariable`) makes a written var enumerable by
-    // replacing the accessor with a data property; this setter keeps the
-    // accessor (so the native env map stays the source of truth) but must
-    // still clear `DontEnum` — otherwise `process.env.HTTP_PROXY = "..."`
-    // followed by `Bun.spawn({env: {...process.env}})` silently drops the var
-    // (the spread skips non-enumerable properties).
+    // Proxy-var accessors are installed DontEnum when absent from the OS env
+    // at startup; clear it on write so `{...process.env}` picks the var up.
     unsigned attributes;
     JSValue existing = object->getDirect(vm, propertyName, attributes);
     if (existing && (attributes & JSC::PropertyAttribute::DontEnum)) {
@@ -393,22 +372,15 @@ static SharedEnvStore* sharedEnvStoreFor(JSC::JSObject* object)
     return globalObject ? sharedEnvStoreFor(globalObject) : nullptr;
 }
 
-// node rejects anything but a full, fully-permissive data descriptor on
-// process.env (src/node_env_var.cc, EnvDefiner). Bun deliberately still accepts
-// accessors — see the "does not let the store shadow an accessor defined on
-// process.env" test — so only the data-descriptor half of node's rule is
-// enforced here: value present, and writable/enumerable/configurable all
-// present and true. Returns false with an exception pending on reject.
+// Node rejects all but a full writable+enumerable+configurable data descriptor
+// (https://github.com/nodejs/node/blob/main/src/node_env_var.cc EnvDefiner).
+// Bun diverges: accessors are still accepted. Returns false with a pending exception on reject.
 static bool validateEnvPropertyDescriptor(JSC::JSGlobalObject* globalObject, const JSC::PropertyDescriptor& descriptor, JSC::ThrowScope& scope)
 {
     static constexpr auto dataDescriptorMessage = "'process.env' only accepts a configurable, writable, and enumerable data descriptor"_s;
 
-    // Accessors are deliberately accepted (divergence documented above the
-    // JSSharedEnvMap declaration); everything else must be a full permissive
-    // data descriptor per node (node_env_var.cc EnvDefiner, verified on
-    // v26.3.0) — including attribute-only ({writable: false}) and empty ({})
-    // descriptors, which would otherwise silently make the var non-writable
-    // or non-enumerable.
+    // Accessors pass (Bun divergence); everything else — including attribute-only
+    // and empty descriptors — must be a full permissive data descriptor per node.
     if (descriptor.isAccessorDescriptor())
         return true;
     if (!descriptor.value()
@@ -466,6 +438,11 @@ public:
     static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned);
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
     static bool defineOwnProperty(JSObject*, JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
+    // See JSProcessEnvMap::preventExtensions — node parity for freeze/seal.
+    static bool preventExtensions(JSC::JSObject*, JSC::JSGlobalObject*)
+    {
+        return false;
+    }
 
 private:
     JSSharedEnvMap(JSC::VM& vm, JSC::Structure* structure)
@@ -646,10 +623,8 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
 
     auto* uid = propertyName.uid();
     if (propertyName.isSymbol() || !uid || descriptor.isAccessorDescriptor()) {
-        // The descriptor lands on the Base object, but getOwnPropertySlot reads the
-        // store first, so a store entry would shadow it. Move the entry onto Base as
-        // an enumerable data property first: the accessor then replaces it, keeping
-        // the key's enumerability, exactly as on the regular process.env.
+        // getOwnPropertySlot reads the store first, so a store entry would shadow the
+        // Base-landed accessor; hoist it to Base as an enumerable data property first.
         if (!propertyName.isSymbol() && uid) {
             if (auto* store = sharedEnvStoreFor(object)) {
                 String existing = store->get(String(uid));
@@ -783,11 +758,8 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     return store;
 }
 
-// The ordinary (non-SHARE_ENV) process.env. A plain object apart from
-// defineOwnProperty, which node intercepts to reject descriptors that are not
-// fully-permissive data descriptors; without a method-table hook the validation
-// has nowhere to live, so process.env needs its own class rather than a
-// constructEmptyObject().
+// Ordinary (non-SHARE_ENV) process.env: a plain object plus a defineOwnProperty
+// hook for node's descriptor validation (https://github.com/nodejs/node/blob/main/src/node_env_var.cc).
 class JSProcessEnvMap final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -823,15 +795,31 @@ public:
         if (!validateEnvPropertyDescriptor(globalObject, descriptor, scope))
             return false;
 
+        if (descriptor.isAccessorDescriptor())
+            RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
+
         // node coerces the key to a string after validating the descriptor,
         // so a symbol key throws the plain conversion TypeError (no code).
         // Symbol-keyed accessors flow through with the accessor divergence.
-        if (propertyName.isSymbol() && !descriptor.isAccessorDescriptor()) {
+        if (propertyName.isSymbol()) {
             JSC::throwTypeError(globalObject, scope, "Cannot convert a Symbol value to a string"_s);
             return false;
         }
 
-        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
+        // node's EnvDefiner stringifies the value, matching the assignment
+        // trap; storing the raw value would break the string-only contract
+        // the Windows env sync (editWindowsEnvVar) relies on.
+        String stringValue = descriptor.value().toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        JSC::PropertyDescriptor coerced(jsString(vm, stringValue), 0);
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, coerced, shouldThrow));
+    }
+
+    // Node's process.env fails [[PreventExtensions]] so freeze/seal throw and the
+    // map stays extensible (https://github.com/nodejs/node/blob/main/src/node_env_var.cc).
+    static bool preventExtensions(JSC::JSObject*, JSC::JSGlobalObject*)
+    {
+        return false;
     }
 
 private:
@@ -861,11 +849,8 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     void* list;
     size_t count = Bun__getEnvCount(globalObject, &list);
-    // Unlike the constructEmptyObject() this replaces, the storage is not
-    // pre-sized to the env count: JSNonFinalObject asserts it has no inline
-    // storage, so the vars below always land in the butterfly. Only JSFinalObject
-    // gets inline slots, and it is `final` — a defineOwnProperty hook and inline
-    // storage are mutually exclusive here.
+    // Not pre-sized: JSNonFinalObject has no inline storage (only JSFinalObject
+    // does, and it is `final`), so a defineOwnProperty hook precludes inline slots.
     JSC::JSObject* object = JSProcessEnvMap::create(vm, JSProcessEnvMap::createStructure(vm, globalObject, globalObject->objectPrototype()));
 
 #if OS(WINDOWS)

@@ -145,7 +145,7 @@ class AsyncLocalStorage {
       var prev = get();
       set(context);
       try {
-        return fn(...args);
+        return fn.$apply(undefined, args);
       } finally {
         set(prev);
       }
@@ -192,7 +192,7 @@ class AsyncLocalStorage {
     // so a match here would skip installing store_value and let the callback
     // read the unmasked frame value instead.
     if (!this.#disabled && sameValue(this.getStore(), store_value)) {
-      return callback(...args);
+      return callback.$apply(undefined, args);
     }
     var context = get() as any[]; // we make sure to .slice() before mutating
     var hasPrevious = false;
@@ -230,7 +230,9 @@ class AsyncLocalStorage {
     $assert(i > -1, "i was not set");
     $assert(sameValue(this.getStore(), store_value), "run: store_value was not set");
     try {
-      return callback(...args);
+      // $apply, not a spread: spreading goes through Array.prototype[Symbol.iterator],
+      // which userland can delete (node uses ReflectApply here for the same reason).
+      return callback.$apply(undefined, args);
     } finally {
       // Note: early `return` will prevent `throw` above from working. I think...
       // Set AsyncContextFrame to undefined if we are out of context values.
@@ -496,14 +498,9 @@ function createHook(hook) {
   const asyncHook = {
     enable() {
       if (init !== undefined && enabledInit === undefined) {
-        // init is delivered for TickObject (process.nextTick) and WORKER
-        // resources; other resource types are still unimplemented.
-        // Per-instance wrapper: two hooks registered with the same init
-        // function must stay independently removable (removal is by
-        // identity, and removing the other instance's entry would reorder
-        // its callback relative to unrelated hooks).
-        // node invokes init as a method on the AsyncHook instance
-        // (lib/internal/async_hooks.js), so `this.disable()` inside init works.
+        // Only TickObject and WORKER init are delivered. Per-instance wrapper so two hooks with the
+        // same init stay independently removable. node calls init as a method on the AsyncHook
+        // (https://github.com/nodejs/node/blob/main/lib/internal/async_hooks.js), so `this.disable()` works.
         enabledInit = (asyncId, type, triggerAsyncId, resource) =>
           init.$call(asyncHook, asyncId, type, triggerAsyncId, resource);
         require("internal/async_hooks_tick").tickInitHooks.push(enabledInit);

@@ -26,7 +26,7 @@ pub mod bun_install_js_bindings {
     // `#[bun_jsc::host_fn]` Free-kind shim body emits `#fn_name(__g, __f)` without
     // a `Self::` qualifier, so the wrapped fn must resolve unqualified.
     #[bun_jsc::host_fn]
-    pub(crate) fn js_parse_lockfile(
+    fn js_parse_lockfile(
         global: &JSGlobalObject,
         frame: &bun_jsc::CallFrame,
     ) -> bun_jsc::JsResult<JSValue> {
@@ -43,8 +43,7 @@ pub mod bun_install_js_bindings {
 
         let mut log = bun_ast::Log::init();
 
-        let args = frame.arguments_old::<1>();
-        let args = args.slice();
+        let args = frame.arguments();
         let cwd = args[0].to_slice_or_null(global)?;
 
         let dir = match bun_sys::open_dir_absolute_not_for_deleting_or_renaming(cwd.slice()) {

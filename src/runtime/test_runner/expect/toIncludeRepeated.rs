@@ -5,7 +5,7 @@ use super::{Expect, get_signature, throw};
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
-    pub fn to_include_repeated(
+    pub(crate) fn to_include_repeated(
         &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -15,8 +15,7 @@ impl Expect {
         let this = self.post_match_guard(global);
 
         let this_value = frame.this();
-        let arguments_ = frame.arguments_old::<2>();
-        let arguments = arguments_.slice();
+        let arguments = frame.arguments();
 
         if arguments.len() < 2 {
             return Err(global.throw_invalid_arguments(format_args!(

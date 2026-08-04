@@ -638,10 +638,8 @@ void emitMessagePortAsyncHooksInit(WebCore::ScriptExecutionContext& context, Web
     if (callData.type == JSC::CallData::Type::None)
         return;
 
-    // node constructs port1 then port2 (src/node_messaging.cc MessageChannel), so
-    // the two init events arrive in that order. The JS side swallows a throwing
-    // hook the way node's fatalError does, so nothing but a termination request
-    // comes back here.
+    // port1 then port2, matching https://github.com/nodejs/node/blob/main/src/node_messaging.cc.
+    // JS side handles throwing hooks via fatalError, so only termination propagates back.
     WebCore::MessagePort* ports[] = { &port1, &port2 };
     for (auto* port : ports) {
         JSC::JSValue portValue = WebCore::toJS(globalObject, globalObject, *port);

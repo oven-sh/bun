@@ -1660,6 +1660,19 @@ pub extern "C" fn Bun__imageAdoptMainThreadVM() {
     bun_core::Global::IMAGE_RESTORED.store(true, ::core::sync::atomic::Ordering::Relaxed);
     bun_jsc::virtual_machine::VirtualMachine::adopt_on_current_thread(vm_ptr);
     crate::jsc_hooks::adopt_main_thread_runtime_state();
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: main-thread VM adopted above; single-threaded at this point of restore.
+        let vm = unsafe { &mut *vm_ptr };
+        let loop_ = vm.uws_loop();
+        if let Some(store) = vm.rare_data().file_polls.as_deref_mut() {
+            // SAFETY: loop_ is the process-global uws loop.
+            let (rearmed, hung_up) = store.rearm_for_image(unsafe { &mut *loop_ });
+            bun_core::Output::debug_warn(format_args!(
+                "[image] file polls: {rearmed} re-armed, {hung_up} hung up"
+            ));
+        }
+    }
 }
 
 #[unsafe(no_mangle)]

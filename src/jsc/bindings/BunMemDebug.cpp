@@ -44,6 +44,8 @@
 #include <fcntl.h>
 #if OS(DARWIN)
 #include <mach/mach.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <sys/ucontext.h>
 #include <signal.h>
 #include <libkern/OSCacheControl.h>
@@ -786,8 +788,15 @@ static void imageTrapHandler(int sig, siginfo_t* info, void* uctx)
 {
     uintptr_t a = (uintptr_t)info->si_addr; size_t pg = 16384; uintptr_t page = a & ~(pg - 1);
     auto it = std::upper_bound(s_frozenRanges.begin(), s_frozenRanges.end(), std::make_pair(a, UINTPTR_MAX));
-    bool ours = it != s_frozenRanges.begin() && a < std::prev(it)->second;
-    if (!ours) { struct sigaction* prev = sig == SIGBUS ? &s_prevBus : &s_prevSegv; if (prev->sa_flags & SA_SIGINFO) prev->sa_sigaction(sig, info, uctx); else if (prev->sa_handler == SIG_DFL || prev->sa_handler == SIG_IGN) { signal(sig, SIG_DFL); raise(sig); } else prev->sa_handler(sig); return; }
+    bool ours = s_trapCap && it != s_frozenRanges.begin() && a < std::prev(it)->second;
+    if (!ours) {
+        { // not an image page: real crash. Dump a raw backtrace we can atos, then chain.
+            ucontext_t* uc = (ucontext_t*)uctx; char line[96]; int n = snprintf(line, sizeof line, "[imagecrash] sig=%d addr=%lx pc=%llx lr=%llx frames:", sig, (unsigned long)a, (unsigned long long)__darwin_arm_thread_state64_get_pc(uc->uc_mcontext->__ss), (unsigned long long)__darwin_arm_thread_state64_get_lr(uc->uc_mcontext->__ss)); write(2, line, n);
+            uintptr_t fp = (uintptr_t)__darwin_arm_thread_state64_get_fp(uc->uc_mcontext->__ss);
+            for (int k = 0; k < 40 && fp && !(fp & 7); k++) { uintptr_t* f = (uintptr_t*)fp; n = snprintf(line, sizeof line, " %lx", (unsigned long)f[1]); write(2, line, n); if (f[0] <= fp) break; fp = f[0]; }
+            write(2, "\n", 1);
+        }
+        struct sigaction* prev = sig == SIGBUS ? &s_prevBus : &s_prevSegv; if (prev->sa_flags & SA_SIGINFO) prev->sa_sigaction(sig, info, uctx); else if (prev->sa_handler == SIG_DFL || prev->sa_handler == SIG_IGN) { signal(sig, SIG_DFL); raise(sig); } else prev->sa_handler(sig); return; }
     mprotect((void*)page, pg, PROT_READ | PROT_WRITE);
     size_t i = s_trapCount.fetch_add(1);
     if (i < s_trapCap) {
@@ -904,6 +913,18 @@ static void imageDump(JSC::VM& vm, const char* path)
     hdr.mainThread = (uint64_t)&WTF::Thread::currentSingleton();
     hdr.reserved[0] = (uint64_t)mi_theap_get_default(); // main thread's mimalloc theap (TLS-referenced, lives in the heap)
     { pthread_key_t k = 0; if (!pthread_key_create(&k, nullptr)) { hdr.reserved[1] = (uint64_t)k; pthread_key_delete(k); } } // high-water mark of pthread TLS keys
+    { // fds that are the controlling TTY (dup'd stdin/stdout readers): the restoring process recreates them from its own 0/1/2
+        struct stat st[3]; bool have[3]; for (int i = 0; i < 3; i++) have[i] = !fstat(i, &st[i]) && S_ISCHR(st[i].st_mode);
+        int n = 0;
+        for (int fd = 3; fd < 256 && n < 6; fd++) {
+            struct stat fs; if (fstat(fd, &fs) || !S_ISCHR(fs.st_mode)) continue;
+            int fl = fcntl(fd, F_GETFL); int src = -1;
+            for (int i = 0; i < 3; i++) if (have[i] && fs.st_rdev == st[i].st_rdev) { src = ((fl & O_ACCMODE) == O_RDONLY) ? 0 : (i == 0 ? 1 : i); break; }
+            if (src < 0) continue;
+            hdr.reserved[2 + n++] = ((uint64_t)fd << 16) | ((uint64_t)(fl & 0xffff) << 4) | (uint64_t)(src + 1);
+            if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] tty fd %d (flags %x) <- std%d\n", fd, fl, src);
+        }
+    }
     hdr.nregions = out.size();
     size_t tableOff = sizeof(ImageHeader); size_t dataOff = (tableOff + out.size() * sizeof(ImageRegion) + pg - 1) & ~(pg - 1);
     size_t fileOff = dataOff, total = 0;
@@ -979,6 +1000,10 @@ static void imageRestoreAndRun(const char* path)
     // Re-seat allocator TLS: this thread's default theap must be the image's main theap, not whatever this process created before the overlay.
     if (hdr.reserved[0]) mi_theap_set_default((mi_theap_t*)hdr.reserved[0]);
     _mi_scavenger_forked_child(); // same situation as a fork child: the image says a scavenger runs, but no such thread exists here
+    for (int i = 2; i < 8 && hdr.reserved[i]; i++) { // recreate TTY fds at their old numbers from our own stdio
+        int fd = (int)(hdr.reserved[i] >> 16), fl = (int)((hdr.reserved[i] >> 4) & 0xfff), src = (int)(hdr.reserved[i] & 0xf) - 1;
+        if (isatty(src) && dup2(src, fd) == fd) { if (fl & O_NONBLOCK) fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK); if (verbose) fprintf(stderr, "[image] dup2(%d, %d)\n", src, fd); }
+    }
     { const char* d = getenv("BUN_MEMDEBUG"); s_dir = (d && *d) ? strdup(d) : nullptr; } // globals now hold the build process's env pointers
     if (!getenv("BUN_IMAGE_NOFRESHHEAP")) {
         // Image payload pages are immortal: never free into them (that would dirty a clean file-backed page for allocator metadata) and allocate from fresh pages.
@@ -994,6 +1019,7 @@ static void imageRestoreAndRun(const char* path)
         mi_theap_set_default(mi_heap_theap(fresh ? fresh : mi_heap_new()));
     }
     if (getenv("BUN_IMAGE_TRAP")) imageTrapArm();
+    else if (getenv("BUN_IMAGE_CRASHBT")) { struct sigaction sa {}; sa.sa_sigaction = imageTrapHandler; sa.sa_flags = SA_SIGINFO | SA_NODEFER; sigemptyset(&sa.sa_mask); sigaction(SIGBUS, &sa, &s_prevBus); sigaction(SIGSEGV, &sa, &s_prevSegv); } // backtrace-only: s_frozenRanges stays as-is but nothing is protected
     // pthread TLS keys created by the build process (WTF::ThreadSpecific etc.) must exist here too, or setspecific silently fails; burn keys up to the image's high-water mark.
     if (hdr.reserved[1]) { for (int i = 0; i < 1024; i++) { pthread_key_t k = 0; if (pthread_key_create(&k, nullptr)) break; if ((uint64_t)k + 1 >= hdr.reserved[1]) break; } }
     fprintf(stderr, "[image] restored %zu regions: %.1fMB mapped clean, %.1fMB __DATA copied\n", regions.size(), mapped / 1048576.0, copied / 1048576.0);
@@ -1005,6 +1031,7 @@ static void imageRestoreAndRun(const char* path)
     JSC::JSGlobalObject* globalObject = (JSC::JSGlobalObject*)hdr.globalObject;
     us_loop_reinit_for_image(uws_get_loop());
     Bun__imageAdoptMainThreadVM();
+    { JSC::JSLockHolder lock(*vm); vm->didRestoreFromImage(); }
     if (!getenv("BUN_IMAGE_NOEVACUATE")) {
         // Tables that take inserts on every run get fresh storage now, so the inserts don't COW image pages one by one.
         JSC::JSLockHolder lock(*vm);

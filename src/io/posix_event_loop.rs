@@ -1323,6 +1323,70 @@ pub struct Store {
 
 #[cfg(not(windows))]
 impl Store {
+    /// Heap-image restore: the kqueue is new and every knote from the build process is gone. Re-add polls whose fd still exists; hang up the rest.
+    #[cfg(target_os = "macos")]
+    pub fn rearm_for_image(&mut self, loop_: &mut Loop) -> (usize, usize) {
+        let mut rearmed = 0usize;
+        let mut hung_up = 0usize;
+        let mut polls: Vec<*mut FilePoll> = Vec::new();
+        let mut it = self.hive.hive.used.iter_set();
+        while let Some(i) = it.next() {
+            polls.push(self.hive.hive.at(i as u16));
+        }
+        for p in polls {
+            // SAFETY: slot is marked used in the hive; FilePoll is POD-ish and lives for the Store's lifetime.
+            let poll = unsafe { &mut *p };
+            if poll.fd == INVALID_FD
+                || !poll.flags.contains(Flags::WasEverRegistered)
+                || poll.flags.contains(Flags::Closed)
+            {
+                continue;
+            }
+            let want = if poll.flags.contains(Flags::PollReadable) {
+                Some(Flags::Readable)
+            } else if poll.flags.contains(Flags::PollWritable) {
+                Some(Flags::Writable)
+            } else if poll.flags.contains(Flags::PollProcess) {
+                Some(Flags::Process)
+            } else {
+                None
+            };
+            // SAFETY: probing an integer fd.
+            let exists = unsafe { libc::fcntl(poll.fd.native(), libc::F_GETFD) } != -1;
+            match (want, exists) {
+                (Some(flag), true) => {
+                    let one_shot = poll.flags.contains(Flags::OneShot)
+                        || poll.flags.contains(Flags::NeedsRearm);
+                    poll.flags.remove(Flags::NeedsRearm);
+                    if poll
+                        .register_with_fd(
+                            loop_,
+                            flag,
+                            if one_shot {
+                                OneShotFlag::OneShot
+                            } else {
+                                OneShotFlag::None
+                            },
+                            poll.fd,
+                        )
+                        .is_ok()
+                    {
+                        rearmed += 1;
+                    }
+                }
+                (Some(_), false) => {
+                    poll.flags
+                        .remove_all(Flags::PollReadable | Flags::PollWritable | Flags::PollProcess);
+                    poll.flags.insert(Flags::Hup);
+                    poll.on_update(0);
+                    hung_up += 1;
+                }
+                _ => {}
+            }
+        }
+        (rearmed, hung_up)
+    }
+
     pub fn init() -> Store {
         Store {
             hive: FilePollHive::init(),

@@ -217,7 +217,7 @@ pub struct RareData {
     // This does not handle ShadowRealm correctly!
     pub(crate) cleanup_hooks: Vec<CleanupHook>,
 
-    pub(crate) file_polls: Option<Box<FilePollStore>>,
+    pub file_polls: Option<Box<FilePollStore>>,
 
     /// Embedded socket groups for kinds that aren't tied to a Listener / server.
     /// Lazily linked into the loop on first socket; never separately allocated.

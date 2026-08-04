@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("Bun.version", () => {
   expect(process.versions.bun).toBe(Bun.version);
@@ -40,4 +40,43 @@ console.log("OK");`,
 
   expect(stdout).toBe("OK\n");
   expect(exitCode).toBe(0);
+});
+
+// Printing the failure for a test that rejects with a value whose
+// toString/Symbol.toPrimitive throws used to leave that secondary exception
+// pending on the VM, aborting the whole runner when the next test callback was
+// invoked.
+test("runner survives a rejection whose toString/Symbol.toPrimitive throws", async () => {
+  using dir = tempDir("test-hostile-tostring", {
+    "hostile.test.js": `
+      import { test } from "bun:test";
+      test("boxed string", async () => {
+        throw Object.assign(new String("q"), { toString() { throw 1; }, [Symbol.toPrimitive]() { throw 1; } });
+      });
+      test("regexp", async () => {
+        throw Object.assign(/re/, { toString() { throw 1; }, [Symbol.toPrimitive]() { throw 1; } });
+      });
+      test("next test still runs", () => {
+        throw new Error("plain error");
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "hostile.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const output = stdout + stderr;
+  expect(output).toContain("(fail) boxed string");
+  expect(output).toContain("(fail) regexp");
+  expect(output).toContain("(fail) next test still runs");
+  expect(output).toContain("error: plain error");
+  expect(output).toContain("3 fail");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(1);
 });

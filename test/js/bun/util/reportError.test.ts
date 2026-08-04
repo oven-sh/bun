@@ -122,3 +122,30 @@ test("native error printer handles lone surrogates in message and stack frame na
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(1);
 });
+
+// If formatting the reported value throws (hostile toString/Symbol.toPrimitive),
+// the printer must clear that secondary exception instead of leaving it pending
+// on the VM, which severed the rest of module evaluation and reported a phantom
+// second uncaught error.
+test("reportError clears a pending exception thrown while formatting the value", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `reportError(Object.assign(new String("q"), { toString() { throw 1; }, [Symbol.toPrimitive]() { throw 1; } }));
+console.log("after");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Execution continues past the reportError call.
+  expect(stdout).toBe("after\n");
+  // No phantom second uncaught error from the leftover pending exception.
+  expect(stderr).not.toContain("error: 1");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(1);
+});

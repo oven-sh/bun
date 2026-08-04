@@ -1554,8 +1554,8 @@ describe.concurrent("--interactive", () => {
   ])(
     "%s reaches the REPL",
     async (_label, extra) => {
-      // The three -i spellings the install-meaning predicate must classify as
-      // REPL-bound (Arguments.rs repl_bound_i).
+      // Locks in the Arguments.rs `interactive` extension: these -i spellings
+      // now reach exec_node_repl (bare `bun -i` previously printed help).
       await using proc = Bun.spawn({
         cmd: [bunExe(), ...extra],
         env,

@@ -1260,12 +1260,14 @@ describe.concurrent(() => {
 
   it("process._fatalException", async () => {
     // Returns whether an uncaughtException handler claimed the error
-    // (Node semantics), so it is a boolean rather than undefined.
+    // (Node semantics), so it is a boolean rather than undefined. The second
+    // argument (fromPromise) selects the origin passed to the handler.
     await runInlineFixture(
       `console.log(process._fatalException(new Error("nobody listening")));
-       process.on("uncaughtException", () => {});
-       console.log(process._fatalException(new Error("handled")));`,
-      "false\ntrue\n",
+       process.on("uncaughtException", (err, origin) => console.log(origin));
+       console.log(process._fatalException(new Error("handled")));
+       console.log(process._fatalException(new Error("from promise"), true));`,
+      "false\nuncaughtException\ntrue\nunhandledRejection\ntrue\n",
       0,
     );
   });

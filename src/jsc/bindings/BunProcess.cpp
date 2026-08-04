@@ -4229,9 +4229,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReportUncaughtException, (JSC::JSGlobalObject
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionFatalException, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    // Node-compat: process._fatalException(err) runs the uncaught-exception
-    // machinery and returns whether a handler claimed the error.
-    return JSValue::encode(jsBoolean(Bun__handleUncaughtException(globalObject, callFrame->argument(0), 0) > 0));
+    // Node-compat: process._fatalException(err, fromPromise) runs the uncaught-exception
+    // machinery and returns whether a handler claimed the error. fromPromise selects
+    // origin 'unhandledRejection' vs 'uncaughtException'.
+    int isRejection = callFrame->argument(1).toBoolean(globalObject) ? 1 : 0;
+    return JSValue::encode(jsBoolean(Bun__handleUncaughtException(globalObject, callFrame->argument(0), isRejection) > 0));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionDrainMicrotaskQueue, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

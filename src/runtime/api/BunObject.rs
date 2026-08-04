@@ -971,7 +971,7 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
         let env = vm.transpiler.env_mut();
 
         if let Some(opts) = arguments.next_eat() {
-            if !opts.is_undefined_or_null() {
+            if opts.is_object() {
                 if let Some(editor_val) = opts.get_truthy(global_this, "editor")? {
                     let sliced = editor_val.to_slice(global_this)?;
                     let prev_name = edit.name;
@@ -1018,6 +1018,9 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
                 if let Some(column_) = opts.get_truthy(global_this, "column")? {
                     column = Some(column_.to_slice(global_this)?);
                 }
+            } else if !opts.is_undefined_or_null() {
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("Expected options to be an object",)));
             }
         }
 

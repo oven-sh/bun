@@ -555,3 +555,60 @@ module.exports = 1;`,
   expect(stdout).toContain("var fromWith");
   expect(exitCode).toBe(0);
 });
+
+// Async/generator function declarations are block-scoped (no Annex B hoist),
+// so a dead switch/with body holding one must still drop with its await husk.
+test.concurrent("bun build --format=cjs drops a dead switch/with holding an async function declaration", async () => {
+  using dir = tempDir("issue-29243-dead-async-fn", {
+    "entry.js": `if (false) {
+  switch (await a()) {
+    case 1:
+      async function fromSwitch() {}
+  }
+  with (await b()) {
+    function* fromWith() {}
+  }
+  while (await c()) {
+    async function fromWhile() {}
+  }
+}
+module.exports = 1;`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+
+  expect(stdout).not.toContain("await");
+  expect(exitCode).toBe(0);
+});
+
+// A dead module-level async function still hoists; it must not be trimmed.
+test.concurrent("bun build --format=cjs keeps a hoisted async function after a top-level return", async () => {
+  using dir = tempDir("issue-29243-hoisted-async-fn", {
+    "entry.js": `f();
+return;
+async function f() {}`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+
+  expect(stdout).toContain("async function f()");
+  expect(exitCode).toBe(0);
+});

@@ -15,8 +15,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 
-extern "C" JSC::EncodedJSValue Bun__NativeTransformSink__writeBytes(uint8_t sinkId, void* sinkPtr, JSC::JSGlobalObject*, const uint8_t* ptr, size_t len);
-
 namespace Bun {
 namespace WebStreams {
 

@@ -90,12 +90,6 @@ function validateUndefined(value, name) {
   if (value !== undefined) throw $ERR_INVALID_ARG_TYPE(name, "undefined", value);
 }
 
-function validateInternalField(object, fieldKey, className) {
-  if (typeof object !== "object" || object === null || !ObjectPrototypeHasOwnProperty.$call(object, fieldKey)) {
-    throw $ERR_INVALID_ARG_TYPE("this", className, object);
-  }
-}
-
 function validateThisInternalField(object, fieldKey, className) {
   if (typeof object !== "object" || object === null || !ObjectPrototypeHasOwnProperty.$call(object, fieldKey)) {
     throw $ERR_INVALID_THIS(className);
@@ -187,7 +181,7 @@ function warnOnNonPortableTemplate(template: any) {
   }
 }
 
-hideFromStack(validateLinkHeaderValue, validateInternalField, validateThisInternalField, validateObject);
+hideFromStack(validateLinkHeaderValue, validateThisInternalField, validateObject);
 hideFromStack(validateString, validateFunction, validateBoolean, validateUndefined);
 hideFromStack(getValidatedPath, getValidatedFsPath, throwIfNullBytesInFileName);
 hideFromStack(warnOnNonPortableTemplate);
@@ -240,8 +234,6 @@ export default {
   /** `(value, name, oneOf)` */
   validateOneOf: $newCppFunction("NodeValidator.cpp", "jsFunction_validateOneOf", 0),
   isUint8Array: value => value instanceof Uint8Array,
-  /** `(object, fieldKey, className)` */
-  validateInternalField,
   /** `(object, fieldKey, className)` — throws ERR_INVALID_THIS */
   validateThisInternalField,
   /** `(path)` — accepts a string or file URL, returns it resolved to an absolute path string */

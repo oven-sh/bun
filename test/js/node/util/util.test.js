@@ -574,7 +574,7 @@ describe("util.debuglog", () => {
 });
 
 // https://nodejs.org/docs/latest-v26.x/api/util.html#utildebuglogsection-callback
-describe("util.debuglog", () => {
+describe("util.debuglog section matching", () => {
   const script = `
     const assert = require("node:assert");
     const util = require("node:util");

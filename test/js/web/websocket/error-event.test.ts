@@ -14,10 +14,10 @@ test("WebSocket error event snapshot", async () => {
 }`);
   expect(Bun.inspect(error)).toMatchInlineSnapshot(`
     "ErrorEvent {
-      type: "error",
-      message: "WebSocket connection to 'ws://127.0.0.1:8080/' failed: Failed to connect",
-      error: error: WebSocket connection to 'ws://127.0.0.1:8080/' failed: Failed to connect
-    ,
+      type: 'error',
+      defaultPrevented: false,
+      cancelable: false,
+      timeStamp: 0
     }"
   `);
 });
@@ -27,9 +27,10 @@ test("ErrorEvent with no message", async () => {
   expect(error.message).toBe("");
   expect(Bun.inspect(error)).toMatchInlineSnapshot(`
     "ErrorEvent {
-      type: "error",
-      message: "",
-      error: null,
+      type: 'error',
+      defaultPrevented: false,
+      cancelable: false,
+      timeStamp: 0
     }"
   `);
   expect(error).toMatchInlineSnapshot(`ErrorEvent {

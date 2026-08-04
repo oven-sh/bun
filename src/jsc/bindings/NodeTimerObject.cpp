@@ -80,6 +80,7 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
     bool hadException = reportPendingException(globalObject, scope);
 
     emitImmediateAsyncHook(globalObject, timerObject, ImmediateAsyncHook::After);
+    hadException |= reportPendingException(globalObject, scope);
     emitImmediateAsyncHook(globalObject, timerObject, ImmediateAsyncHook::Destroy);
     hadException |= reportPendingException(globalObject, scope);
 

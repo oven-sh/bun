@@ -137,9 +137,9 @@ domain.createDomain = domain.create = function () {
       } catch (er2) {
         // The domain error handler threw: see if an outer domain catches it.
         stack.pop();
-        const depth = stack.length;
-        if (depth) {
-          domain.active = process.domain = stack[depth - 1];
+        const { length } = stack;
+        if (length) {
+          domain.active = process.domain = stack[length - 1];
           caught = process.domain._errorHandler(er2);
         } else {
           throw er2;

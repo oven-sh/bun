@@ -442,8 +442,7 @@ impl Stdio {
                     )));
                 }
                 if is_sync {
-                    // spawnSync/spawnAndWait results have no .stdio, so the
-                    // caller could never receive the fd it's supposed to own.
+                    // spawnSync/spawnAndWait results have no .stdio to hand the fd to.
                     return Err(global.throw_invalid_arguments(format_args!(
                         "stdio: 'socket-fd' cannot be used with spawnSync or spawnAndWait"
                     )));

@@ -2862,9 +2862,9 @@ impl ThreadSafeFunction {
         (NapiStatus::ok as napi_status, false)
     }
 
-    /// Caller must hold `lock`. Reached from addon threads (`enqueue`,
-    /// `release_locked`), so it may only take a shared `&EventLoop`: the JS
-    /// thread can be inside `tick()` with its own `&mut` at the same time.
+    /// Caller must hold `lock`. Reachable from addon threads, so it may only
+    /// take a shared `&EventLoop`: the JS thread can be inside `tick()` with
+    /// its own `&mut` at the same time.
     fn schedule_dispatch(&mut self) {
         let _ = self
             .dispatch_state

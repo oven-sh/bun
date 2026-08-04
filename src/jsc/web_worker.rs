@@ -228,6 +228,11 @@ unsafe extern "C" {
     // `ctx`. `&JSGlobalObject` is the non-null handle proof; remaining args are
     // by-value scalars/`#[repr(C)]` PODs.
     safe fn WebWorker__dispatchExit(cpp_worker: *mut c_void, exit_code: i32);
+    // safe: `cpp_worker` opaque round-trip (see `WebWorker__dispatchExit`);
+    // `message` is a caller-owned `BunString` whose bytes are read (and reffed
+    // for the cross-thread copy) before return. Touches no worker-VM state —
+    // for init failure before a VM exists.
+    safe fn WebWorker__dispatchInitFailed(cpp_worker: *mut c_void, message: &mut BunString);
     // safe: no args; frees this thread's lazily-allocated HPACK scratch buffer.
     safe fn Bun__freeSharedHeaderBufferForThreadExit();
     // Re-declared here (also private in VM.rs) so `thread_main` can take the
@@ -863,13 +868,34 @@ impl WebWorker {
             return;
         }
 
+        // Pre-create this thread's uws loop so fd exhaustion (epoll_create1 /
+        // eventfd EMFILE/ENFILE) is observed here, before `start_vm()` builds
+        // a JSC VM on top of it. On success the loop is cached in the C++
+        // thread-local and every later `uws::Loop::get()` returns it.
+        if bun_uws::Loop::try_get().is_none() {
+            let mut msg = BunString::static_(
+                b"Worker initialization failed: could not create event loop (out of file descriptors?)",
+            );
+            WebWorker__dispatchInitFailed(self.cpp_worker, &mut msg);
+            // No VM / arena / env-loader — same early-terminate shape as the
+            // `has_requested_terminate` checkpoint above: shutdown() posts
+            // dispatchExit and releases the live-workers entry + thread ref.
+            self.shutdown();
+            return;
+        }
+
         let vm_ptr = match self.start_vm() {
             Ok(vm) => vm,
             Err(err) => {
-                bun_core::output::panic(format_args!(
-                    "An unhandled error occurred while starting a worker: {}\n",
+                // Reachable for failures that are not a recoverable
+                // single-worker problem (e.g. OOM during arena/loader init).
+                let mut msg = bun_core::OwnedString::new(BunString::create_format(format_args!(
+                    "Worker initialization failed: {}",
                     err.name()
-                ));
+                )));
+                WebWorker__dispatchInitFailed(self.cpp_worker, &mut msg);
+                self.shutdown();
+                return;
             }
         };
 

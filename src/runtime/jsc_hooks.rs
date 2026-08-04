@@ -3939,6 +3939,20 @@ unsafe fn get_loader_and_virtual_source<'a>(
         loader_for_path(&path, unsafe { &(*jsc_vm).transpiler.options.loaders });
     let mut virtual_source: Option<&'a bun_ast::Source> = None;
 
+    // data: URLs pick their loader from the MIME type and reject unknown types, per
+    // https://github.com/nodejs/node/blob/main/lib/internal/modules/esm/get_format.js
+    // (mimeToFormat). text/css is a Bun extension.
+    if let Ok(Some(data_url)) = bun_resolver::data_url::DataURL::parse(path.text) {
+        use bun_http_types::MimeType::Category;
+        loader = Some(match data_url.decode_mime_type().category {
+            Category::Javascript => Loader::Js,
+            Category::Json => Loader::Json,
+            Category::Wasm => Loader::Wasm,
+            Category::Css => Loader::Css,
+            _ => return Err(crate::Error::UnknownDataURLModuleFormat),
+        });
+    }
+
     // Synthetic `[eval]`/`[stdin]` source.
     // SAFETY: per fn contract.
     if let Some(eval_source) = unsafe { &*jsc_vm }.module_loader.eval_source.as_deref() {
@@ -4194,13 +4208,42 @@ unsafe fn transpile_file(
         )
     } {
         Ok(lr) => lr,
-        Err(_) => {
-            let js = global_ref
-                .err(
-                    bun_jsc::ErrCode::ERR_MODULE_NOT_FOUND,
-                    format_args!("Blob not found"),
-                )
-                .to_js();
+        Err(err) => {
+            // ERR_UNKNOWN_MODULE_FORMAT (RangeError) names the MIME, not the format:
+            // https://github.com/nodejs/node/blob/main/lib/internal/modules/esm/load.js (throwUnknownModuleFormat).
+            let js = if matches!(err, crate::Error::UnknownDataURLModuleFormat) {
+                let specifier_bytes = _specifier.slice();
+                // node's capture is `([^/]+\/[^;,]+)`, i.e. the media type only —
+                // any `;parameters` are excluded.
+                let media_type = bun_resolver::data_url::DataURL::parse(specifier_bytes)
+                    .ok()
+                    .flatten()
+                    .map(|data_url| {
+                        let mime = data_url.mime_type;
+                        match mime.iter().position(|&b| b == b';') {
+                            Some(idx) => &mime[..idx],
+                            None => mime,
+                        }
+                    })
+                    .unwrap_or(b"null");
+                global_ref
+                    .err(
+                        bun_jsc::ErrCode::ERR_UNKNOWN_MODULE_FORMAT,
+                        format_args!(
+                            "Unknown module format: {} for URL {}",
+                            bstr::BStr::new(media_type),
+                            bstr::BStr::new(specifier_bytes)
+                        ),
+                    )
+                    .to_js()
+            } else {
+                global_ref
+                    .err(
+                        bun_jsc::ErrCode::ERR_MODULE_NOT_FOUND,
+                        format_args!("Blob not found"),
+                    )
+                    .to_js()
+            };
             // SAFETY: per fn contract — `ret` is a valid out-param.
             unsafe {
                 *ret = ErrorableResolvedSource::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), js);
@@ -4255,6 +4298,11 @@ unsafe fn transpile_file(
 
     // ── module_type sniff from extension / package.json ─────────────────────
     let module_type: ModuleType = 'brk: {
+        // data: URLs are always ESM in node (no CJS sniff); json/wasm/css loaders
+        // ignore this via `module_type_only_for_wrappables`.
+        if lr.path.text.starts_with(b"data:") {
+            break 'brk ModuleType::Esm;
+        }
         let ext = lr.path.name().ext;
         // regex /\.[cm][jt]s$/
         if ext.len() == b".cjs".len() {

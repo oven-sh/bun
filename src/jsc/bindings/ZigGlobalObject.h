@@ -180,6 +180,7 @@ public:
     WebCore::ScriptExecutionContext* scriptExecutionContext() const;
 
     void queueTask(WebCore::EventLoopTask* task);
+    void queueTaskOnNextIteration(WebCore::EventLoopTask* task);
     void queueTaskConcurrently(WebCore::EventLoopTask* task);
 
     JSDOMStructureMap& structures() WTF_REQUIRES_LOCK(m_gcLock) { return m_structures; }
@@ -442,6 +443,9 @@ public:
     }
 
     bool asyncHooksNeedsCleanup = false;
+    // Enabled node:async_hooks count, published by src/js/internal/async_hooks.ts
+    // so native `init` emitters (MessageChannel) gate on a single load. Per-VM.
+    unsigned asyncHooksActiveCount = 0;
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;
 

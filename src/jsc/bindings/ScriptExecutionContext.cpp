@@ -289,6 +289,12 @@ void ScriptExecutionContext::postTask(EventLoopTask* task)
     static_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
 }
 
+void ScriptExecutionContext::postTaskOnNextIteration(Function<void(ScriptExecutionContext&)>&& lambda)
+{
+    auto* task = new EventLoopTask(WTF::move(lambda));
+    static_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskOnNextIteration(task);
+}
+
 // Native bindings
 extern "C" ScriptExecutionContextIdentifier ScriptExecutionContextIdentifier__forGlobalObject(JSC::JSGlobalObject* globalObject)
 {

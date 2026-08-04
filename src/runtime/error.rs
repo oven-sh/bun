@@ -336,6 +336,8 @@ pub enum Error {
     NotSupported,
     #[error("BlobNotFound")]
     BlobNotFound,
+    #[error("UnknownDataURLModuleFormat")]
+    UnknownDataURLModuleFormat,
     #[error("JSErrorObject")]
     JSErrorObject,
     #[error("PluginError")]
@@ -757,6 +759,7 @@ impl Error {
             Self::AsyncModule => "AsyncModule",
             Self::NotSupported => "NotSupported",
             Self::BlobNotFound => "BlobNotFound",
+            Self::UnknownDataURLModuleFormat => "UnknownDataURLModuleFormat",
             Self::JSErrorObject => "JSErrorObject",
             Self::PluginError => "PluginError",
             Self::InvalidRoutePattern => "InvalidRoutePattern",

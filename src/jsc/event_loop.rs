@@ -51,6 +51,16 @@ pub type Queue =
 pub struct EventLoop {
     pub tasks: Queue,
 
+    /// C++ `EventLoopTask`s deferred to the NEXT `tick()` call. Drained into
+    /// `tasks` once at the top of `tick()` (never inside its drain loop), so a
+    /// task that posts here mid-tick cannot be picked up until `auto_tick`'s
+    /// poll/timer phase has run — the "run on the next event-loop iteration"
+    /// primitive node's `env->SetImmediate` provides. Without it,
+    /// `MessagePortPipe::drainAndDispatch`'s 1000-message yield reschedules via
+    /// `postTaskTo` → `concurrent_tasks`, which `tick()` re-drains in-loop, so
+    /// a same-thread ping-pong starves timers completely.
+    pub next_iteration_tasks: Queue,
+
     /// setImmediate() gets it's own two task queues
     /// When you call `setImmediate` in JS, it queues to the start of the next tick
     /// This is confusing, but that is how it works in Node.js.
@@ -111,6 +121,7 @@ impl Default for EventLoop {
     fn default() -> Self {
         Self {
             tasks: Queue::init(),
+            next_iteration_tasks: Queue::init(),
             immediate_tasks: Vec::new(),
             next_immediate_tasks: Vec::new(),
             concurrent_tasks: ConcurrentQueue::default(),
@@ -610,6 +621,13 @@ impl EventLoop {
         // scopeguard closure would alias `&mut self`).
 
         let ctx = self.vm();
+        // Promote deferred next-iteration tasks exactly once, BEFORE the drain
+        // loop below. A `CppTask` enqueued here mid-tick (via
+        // `enqueue_task_next_iteration`) waits for the caller's next `tick()`
+        // — i.e. after `auto_tick`'s I/O poll and timer drain have run.
+        while let Some(task) = self.next_iteration_tasks.read_item() {
+            let _ = self.tasks.write_item(task);
+        }
         self.tick_concurrent();
         self.process_gc_timer();
 
@@ -666,6 +684,13 @@ impl EventLoop {
 
     pub fn enqueue_task(&mut self, task: Task) {
         let _ = self.tasks.write_item(task);
+    }
+
+    /// Queue a C++ `EventLoopTask` for the NEXT `tick()` call. Same-thread
+    /// only (called via `Bun__queueTaskOnNextIteration` from a drain handler
+    /// already running on this loop's thread).
+    pub fn enqueue_task_next_iteration(&mut self, task: Task) {
+        let _ = self.next_iteration_tasks.write_item(task);
     }
 
     /// Drain `concurrent_tasks` without running them and `delete` any
@@ -732,6 +757,11 @@ impl EventLoop {
     /// definer can't safely dispatch every erased callback at shutdown.
     pub fn release_queued_tasks_for_shutdown(&mut self) {
         self.drop_concurrent_cpp_tasks();
+        // Fold deferred next-iteration CppTasks in so the per-tag release below
+        // (CppTask → `Bun__deleteEventLoopTask`) reclaims their captured Ref<>.
+        while let Some(task) = self.next_iteration_tasks.read_item() {
+            let _ = self.tasks.write_item(task);
+        }
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
         while let Some(task) = self.tasks.read_item() {
             // SAFETY: tag-specific release (drops JSC handles while the VM is

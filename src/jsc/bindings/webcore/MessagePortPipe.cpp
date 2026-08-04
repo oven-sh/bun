@@ -133,7 +133,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
     }
     auto* globalObject = defaultGlobalObject(context->globalObject());
 
-    ScriptExecutionContextIdentifier rescheduleCtx = 0;
+    bool reschedule = false;
     while (true) {
         std::optional<MessageWithMessagePorts> message;
         {
@@ -155,7 +155,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
             if (limit-- == 0) {
                 // Yield to the rest of the event loop; DrainScheduled stays
                 // set so concurrent sends don't double-schedule.
-                rescheduleCtx = s.ctxId;
+                reschedule = true;
                 break;
             }
             message = s.inbox.takeFirst();
@@ -179,8 +179,17 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         }
     }
 
-    if (rescheduleCtx)
-        scheduleDrain(side, rescheduleCtx);
+    if (reschedule) {
+        // postTaskOnNextIteration (not scheduleDrain → postTaskTo): the latter
+        // lands in the queue EventLoop::tick() drains to exhaustion, so a
+        // same-thread ping-pong keeps this drain running inside one tick and
+        // timers never fire (node's OnMessage uses SetImmediate for the same
+        // reason). We are running on `context`'s thread and `context` is live
+        // for this frame, so the same-thread postTaskOnNextIteration is safe.
+        context->postTaskOnNextIteration([pipe = Ref { *this }, side, expectedCtx](ScriptExecutionContext&) {
+            pipe->drainAndDispatch(side, expectedCtx);
+        });
+    }
 }
 
 std::optional<MessageWithMessagePorts> MessagePortPipe::takeOne(uint8_t side)

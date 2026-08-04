@@ -156,7 +156,11 @@ void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct
     loop->data.pre_cb = pre_cb;
     loop->data.post_cb = post_cb;
     loop->data.wakeup_async = us_internal_create_async(loop, 1, 0);
-    us_internal_async_set(loop->data.wakeup_async, (void (*)(struct us_internal_async *)) wakeup_cb);
+    /* eventfd/mach_port_allocate can fail on fd/port exhaustion; us_create_loop
+     * checks wakeup_async for NULL and unwinds. */
+    if (loop->data.wakeup_async) {
+        us_internal_async_set(loop->data.wakeup_async, (void (*)(struct us_internal_async *)) wakeup_cb);
+    }
 #if ASSERT_ENABLED
     if (Bun__lock__size != sizeof(loop->data.mutex)) {
         BUN_PANIC("The size of the mutex must match the size of the lock");

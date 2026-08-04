@@ -1650,6 +1650,25 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_emitWarning, (JSC::JSGlobalObject * lexicalG
         process->wrapped().emit(ident, args);
         return JSValue::encode(jsUndefined());
     } else if (!Bun__NODE_NO_WARNINGS()) {
+        // node routes warnings through console, not fd 2, so worker warnings reach worker.stderr:
+        // https://github.com/nodejs/node/blob/main/lib/internal/process/warning.js (writeOut).
+        // Use `warn` (not node's `error`) so Bun's Error source-preview doesn't alter the bytes.
+        JSValue consoleValue = globalObject->get(globalObject, JSC::Identifier::fromString(vm, "console"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (JSObject* consoleObject = consoleValue.getObject()) {
+            JSValue warnFunction = consoleObject->get(globalObject, JSC::Identifier::fromString(vm, "warn"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            auto callData = JSC::getCallData(warnFunction);
+            if (callData.type != JSC::CallData::Type::None) {
+                JSC::MarkedArgumentBuffer args;
+                args.append(value);
+                JSC::profiledCall(globalObject, ProfilingReason::API, warnFunction, callData, consoleObject, args);
+                RETURN_IF_EXCEPTION(scope, {});
+                return JSValue::encode(jsUndefined());
+            }
+        }
+        // globalThis.console was deleted or replaced with something uncallable —
+        // still surface the warning rather than dropping it.
         auto jsArgs = JSValue::encode(value);
         Bun__ConsoleObject__messageWithTypeAndLevel(reinterpret_cast<Bun::ConsoleObject*>(globalObject->consoleClient().get())->m_client, static_cast<uint32_t>(MessageType::Log), static_cast<uint32_t>(MessageLevel::Warning), globalObject, &jsArgs, 1);
         RETURN_IF_EXCEPTION(scope, {});

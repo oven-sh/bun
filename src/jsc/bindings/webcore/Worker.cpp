@@ -348,7 +348,10 @@ void Worker::drainToWorker(ScriptExecutionContext& context)
         globalObject->globalEventScope->dispatchEvent(event);
     });
     if (reschedule) {
-        ScriptExecutionContext::postTaskTo(m_clientIdentifier, [protectedThis = Ref { *this }](ScriptExecutionContext& ctx) {
+        // postTaskOnNextIteration (not postTaskTo) so the current tick returns
+        // and auto_tick's poll/timer phase runs before the next batch — a
+        // ping-pong onmessage would otherwise starve timers completely.
+        context.postTaskOnNextIteration([protectedThis = Ref { *this }](ScriptExecutionContext& ctx) {
             protectedThis->drainToWorker(ctx);
         });
     }
@@ -366,7 +369,7 @@ void Worker::drainToParent(ScriptExecutionContext& context)
         dispatchEvent(event);
     });
     if (reschedule) {
-        postTaskToParent([protectedThis = Ref { *this }](ScriptExecutionContext& c) {
+        context.postTaskOnNextIteration([protectedThis = Ref { *this }](ScriptExecutionContext& c) {
             protectedThis->drainToParent(c);
         });
     }
@@ -738,6 +741,16 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
 extern "C" void WebWorker__dispatchExit(Worker* worker, int32_t exitCode)
 {
     worker->dispatchExit(exitCode);
+}
+
+// Worker thread failed before a JSC VM / JSGlobalObject existed
+// (us_create_loop EMFILE/ENFILE). WebWorker__dispatchError needs the worker's
+// global to fire the worker-side ErrorEvent and to serialise the value, so
+// route through dispatchErrorWithMessage instead — the parent builds a plain
+// Error with code ERR_WORKER_INIT_FAILED, matching node's node_worker.cc.
+extern "C" void WebWorker__dispatchInitFailed(Worker* worker, BunString* message)
+{
+    worker->dispatchErrorWithMessage(message->transferToWTFString(), "ERR_WORKER_INIT_FAILED"_s);
 }
 
 // The entry module just finished (or failed) its top-level evaluation. Flush

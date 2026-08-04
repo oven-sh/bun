@@ -368,6 +368,7 @@ const errors: ErrorCodeMapping = [
   // distinct from a malformed chunk-size line (HPE_INVALID_CHUNK_SIZE).
   ["HPE_STRICT", Error],
   ["ERR_WORKER_INVALID_EXEC_ARGV", Error],
+  ["ERR_UNKNOWN_MODULE_FORMAT", RangeError],
   ["ERR_CANNOT_WATCH_SIGINT", Error],
   ["ERR_INSPECTOR_NOT_AVAILABLE", Error],
   ["ERR_INVALID_REPL_EVAL_CONFIG", TypeError],

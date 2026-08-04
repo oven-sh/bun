@@ -478,4 +478,49 @@ describe("Worker postMessage inbox", () => {
     expect(stdout.trim()).toBe("OK");
     expect(exitCode).toBe(0);
   });
+
+  // node parallel/test-worker-message-port-infinite-message-loop.js: a
+  // same-thread ping-pong must yield to timers. Before the
+  // postTaskOnNextIteration reschedule, drainAndDispatch's 1000-message cap
+  // re-posted into the queue EventLoop::tick() drains to exhaustion, so the
+  // setTimeout armed before the loop never fired.
+  test("a same-thread onmessage ping-pong yields to setTimeout", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { port1, port2 } = new MessageChannel();
+          let count = 0;
+          port1.onmessage = () => {
+            if (count++ === 0) {
+              setTimeout(() => {
+                console.log("timer " + count);
+                port1.close();
+                port2.close();
+              }, 0);
+            }
+            port2.postMessage(0);
+          };
+          port2.onmessage = () => port1.postMessage(0);
+          port2.postMessage(0);
+          // Safety net so a regression hangs for seconds, not forever.
+          setTimeout(() => { console.error("starved"); process.exit(1); }, 10000).unref();
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // The per-drain cap is 1000; both ports hand off, so the first yield to
+    // the timer phase is after ~2000 iterations. Assert only that it fired
+    // in a bounded window — the exact count is an implementation detail.
+    expect(stdout.trim()).toMatch(/^timer \d+$/);
+    const fired = Number(stdout.trim().split(" ")[1]);
+    expect(fired).toBeGreaterThan(1);
+    expect(fired).toBeLessThan(20000);
+    expect(exitCode).toBe(0);
+  }, 30000);
 });

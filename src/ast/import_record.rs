@@ -111,8 +111,6 @@ pub enum Tag {
     /// For Bun Kit, if a module in the server graph should actually
     /// crossover to the SSR graph. See bake.Framework.ServerComponents.separate_ssr_graph
     BakeResolveToSsrGraph,
-
-    Tailwind,
 }
 
 impl Tag {

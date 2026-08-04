@@ -170,12 +170,10 @@ impl IOReader {
     /// owns the IO struct that holds this `Arc`) for the lifetime of this
     /// reader; single-threaded.
     #[inline]
-    // Forwards `interp` to `ParentRef::from_nullable_mut` without dereferencing;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn set_interp(&self, interp: *mut Interpreter) {
         // SAFETY: precondition above.
-        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable_mut(interp) };
+        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable(interp) };
     }
 
     #[inline]

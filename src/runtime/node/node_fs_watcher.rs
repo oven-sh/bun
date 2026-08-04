@@ -261,16 +261,14 @@ impl FSWatchTaskPosix {
     /// `this` must be the unique `heap::alloc` pointer produced by
     /// `enqueue()`; called from the JS-thread task dispatcher only.
     pub(crate) unsafe fn deinit(this: *mut Self) {
-        // SAFETY: caller contract — `this` is the live heap clone.
-        let this_ref = unsafe { &mut *this };
-        this_ref.clean_entries();
+        // SAFETY: caller contract — `this` is the unique live heap clone from
+        // `enqueue()`; reclaim ownership (paired with its `heap::alloc`).
+        let mut task = unsafe { bun_core::heap::take(this) };
+        task.clean_entries();
         #[cfg(debug_assertions)]
         {
-            // SAFETY: ctx is valid for the lifetime of any task (ParentRef).
-            debug_assert!(!core::ptr::eq(this_ref.ctx().current_task.as_ptr(), this));
+            debug_assert!(!core::ptr::eq(task.ctx().current_task.as_ptr(), this));
         }
-        // SAFETY: paired with `heap::alloc` in `enqueue()`.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -555,7 +553,7 @@ impl FSWatcher {
         let task = bun_core::heap::into_raw(Box::new(FSWatchTaskWindows {
             // SAFETY: `this` is the live owning `&FSWatcher` (BACKREF) recovered
             // from the registered userdata; outlives every task it enqueues.
-            ctx: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(this.as_ctx_ptr()) }),
+            ctx: Some(unsafe { bun_ptr::ParentRef::from_raw(this.as_ctx_ptr()) }),
             event,
         }));
         // `vm()` is the BACKREF accessor; `event_loop_mut()` is the audited
@@ -751,8 +749,8 @@ impl FSWatcher {
             if s.aborted() {
                 // safely abort next tick
                 this_ref.current_task.set(FSWatchTask {
-                    // SAFETY: `this` is the live boxed FSWatcher; write provenance.
-                    ctx: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(this) }),
+                    // SAFETY: `this` is the live boxed FSWatcher (shared; the task only reads).
+                    ctx: Some(unsafe { bun_ptr::ParentRef::from_raw(this) }),
                     ..Default::default()
                 });
                 this_ref.current_task.with_mut(|t| t.append_abort());
@@ -1129,8 +1127,8 @@ impl FSWatcher {
         // SAFETY: `ctx` is the freshly-boxed payload; uniquely owned here.
         // R-2: deref as shared; mutation goes through `JsCell`.
         let ctx_ref = unsafe { &*ctx };
-        // SAFETY: `ctx` is the heap-stable Box address; write provenance.
-        let parent = unsafe { bun_ptr::ParentRef::from_raw_mut(ctx) };
+        // SAFETY: `ctx` is the heap-stable Box address (shared; the task only reads).
+        let parent = unsafe { bun_ptr::ParentRef::from_raw(ctx) };
         ctx_ref.current_task.with_mut(|t| t.ctx = Some(parent));
 
         ctx_ref

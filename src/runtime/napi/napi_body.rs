@@ -2704,17 +2704,15 @@ impl ThreadSafeFunction {
                 js: cb_js,
                 napi_threadsafe_function_call_js,
             } => {
-                let js: JSValue = cb_js.get().unwrap_or(JSValue::UNDEFINED);
-
                 // SAFETY: `env` is held alive by `self.env` (`NapiEnvRef`) for the TSF's lifetime.
                 let env_ref = unsafe { &*env };
                 let _hs = NapiHandleScope::open_scoped(env_ref);
-                napi_threadsafe_function_call_js(
-                    env,
-                    napi_value::create(env_ref, js),
-                    self.ctx,
-                    task,
-                );
+                // No func at creation => null js_callback (Node), not encoded undefined.
+                let js = match cb_js.get() {
+                    Some(v) => napi_value::create(env_ref, v),
+                    None => napi_value(0),
+                };
+                napi_threadsafe_function_call_js(env, js, self.ctx, task);
             }
         }
         Ok(())

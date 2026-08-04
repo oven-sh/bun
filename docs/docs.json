@@ -281,7 +281,7 @@
           {
             "group": "Test Execution",
             "icon": "zap",
-            "pages": ["/test/runtime-behavior", "/test/discovery"]
+            "pages": ["/test/runtime-behavior", "/test/discovery", "/test/parallel"]
           },
           {
             "group": "Test Features",

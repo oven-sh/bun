@@ -85,7 +85,6 @@ public:
 
     void signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReason reason);
     void signalAbort(JSC::JSValue reason);
-    void signalFollow(AbortSignal&);
 
     bool aborted() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::Aborted); }
     void markAborted(JSC::JSValue reason);
@@ -174,14 +173,6 @@ private:
             m_flags |= static_cast<uint8_t>(AbortSignalFlags::Dependent);
         } else {
             m_flags &= ~static_cast<uint8_t>(AbortSignalFlags::Dependent);
-        }
-    }
-    void setAborted(bool aborted)
-    {
-        if (aborted) {
-            m_flags |= static_cast<uint8_t>(AbortSignalFlags::Aborted);
-        } else {
-            m_flags &= ~static_cast<uint8_t>(AbortSignalFlags::Aborted);
         }
     }
     void setHasAbortEventListener(bool hasAbortEventListener)

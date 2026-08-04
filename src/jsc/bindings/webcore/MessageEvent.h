@@ -51,8 +51,6 @@ public:
     static Ref<MessageEvent> create(const AtomString& type, DataType&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
     static Ref<MessageEvent> create(DataType&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
 
-    static Ref<MessageEvent> createForBindings();
-
     struct Init : EventInit {
         JSC::JSValue data;
         String origin;

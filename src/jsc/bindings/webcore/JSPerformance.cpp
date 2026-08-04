@@ -299,32 +299,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsPerformanceConstructor, (JSGlobalObject * lexicalGlob
     return JSValue::encode(JSPerformance::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
-// static inline JSValue jsPerformance_timeOriginGetter(JSGlobalObject& lexicalGlobalObject, JSPerformance& thisObject)
-// {
-//     auto& vm = JSC::getVM(&lexicalGlobalObject);
-//     auto throwScope = DECLARE_THROW_SCOPE(vm);
-//     auto& impl = thisObject.wrapped();
-//     RELEASE_AND_RETURN(throwScope, (toJS<IDLDouble>(lexicalGlobalObject, throwScope, impl.timeOrigin())));
-// }
-
-// JSC_DEFINE_CUSTOM_GETTER(jsPerformance_timeOrigin, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-// {
-//     return IDLAttribute<JSPerformance>::get<jsPerformance_timeOriginGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
-// }
-
-// static inline JSValue jsPerformance_navigationGetter(JSGlobalObject& lexicalGlobalObject, JSPerformance& thisObject)
-// {
-//     auto& vm = JSC::getVM(&lexicalGlobalObject);
-//     auto throwScope = DECLARE_THROW_SCOPE(vm);
-//     auto& impl = thisObject.wrapped();
-//     RELEASE_AND_RETURN(throwScope, (toJS<IDLInterface<PerformanceNavigation>>(lexicalGlobalObject, *thisObject.globalObject(), throwScope, impl.navigation())));
-// }
-
-// JSC_DEFINE_CUSTOM_GETTER(jsPerformance_navigation, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-// {
-//     return IDLAttribute<JSPerformance>::get<jsPerformance_navigationGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
-// }
-
 static inline JSValue jsPerformance_timingGetter(JSGlobalObject& lexicalGlobalObject, JSPerformance& thisObject)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);

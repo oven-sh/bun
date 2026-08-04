@@ -78,11 +78,6 @@ Ref<MessageEvent> MessageEvent::create(DataType&& data, const String& origin, co
     return create(eventNames().messageEvent, WTF::move(data), origin, lastEventId, WTF::move(source), WTF::move(ports));
 }
 
-Ref<MessageEvent> MessageEvent::createForBindings()
-{
-    return adoptRef(*new MessageEvent);
-}
-
 Ref<MessageEvent> MessageEvent::create(const AtomString& type, Init&& initializer, IsTrusted isTrusted)
 {
     return adoptRef(*new MessageEvent(type, WTF::move(initializer), isTrusted));

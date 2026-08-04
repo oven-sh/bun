@@ -1367,7 +1367,7 @@ impl Subprocess<'_> {
         }
     }
 
-    // This must only be run once per Subprocess
+    // Idempotent: called eagerly from `finalize()` and again from `deinit()`.
     pub(crate) fn finalize_streams(&self) {
         bun_output::scoped_log!(Subprocess, "finalizeStreams");
         self.close_process();

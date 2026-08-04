@@ -3941,6 +3941,87 @@ test_napi_external_string_args(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// napi_get_buffer_info must reject a bare ArrayBuffer/SharedArrayBuffer like
+// Node's node::Buffer::HasInstance (IsArrayBufferView).
+static napi_value
+test_napi_get_buffer_info_gate(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+#ifndef _WIN32
+  BlockingStdoutScope blocking_stdout;
+#endif
+  napi_value ab;
+  void *d;
+  size_t sz;
+  NODE_API_CALL(env, napi_create_arraybuffer(env, 8, &d, &ab));
+  report_status(env, "get_buffer_info(ArrayBuffer)",
+                napi_get_buffer_info(env, ab, &d, &sz));
+  napi_value ta;
+  NODE_API_CALL(env,
+                napi_create_typedarray(env, napi_uint8_array, 8, ab, 0, &ta));
+  report_status(env, "get_buffer_info(Uint8Array)",
+                napi_get_buffer_info(env, ta, &d, &sz));
+  napi_value dv;
+  NODE_API_CALL(env, napi_create_dataview(env, 8, ab, 0, &dv));
+  report_status(env, "get_buffer_info(DataView)",
+                napi_get_buffer_info(env, dv, &d, &sz));
+  return ok(env);
+}
+
+// Returns a weak napi_ref to a fresh object so the JS side can GC and then
+// inspect napi_reference_ref behaviour after the referent is collected.
+static napi_value
+test_create_weak_ref_for_gc(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value obj;
+  NODE_API_CALL(env, napi_create_object(env, &obj));
+  napi_ref ref;
+  NODE_API_CALL(env, napi_create_reference(env, obj, 0, &ref));
+  napi_value ext;
+  NODE_API_CALL(env,
+                napi_create_external(env, reinterpret_cast<void *>(ref), NULL,
+                                     NULL, &ext));
+  return ext;
+}
+
+// Predicate for gcUntil: true once the weak ref's value is undefined.
+static napi_value
+test_weak_ref_is_collected(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  void *p;
+  NODE_API_CALL(env, napi_get_value_external(env, info[1], &p));
+  napi_ref ref = reinterpret_cast<napi_ref>(p);
+  napi_value v = NULL;
+  NODE_API_CALL(env, napi_get_reference_value(env, ref, &v));
+  napi_valuetype t = napi_undefined;
+  if (v) napi_typeof(env, v, &t);
+  napi_value r;
+  NODE_API_CALL(env,
+                napi_get_boolean(env, v == NULL || t == napi_undefined, &r));
+  return r;
+}
+
+static napi_value
+test_reference_ref_after_collect(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  void *p;
+  NODE_API_CALL(env, napi_get_value_external(env, info[1], &p));
+  napi_ref ref = reinterpret_cast<napi_ref>(p);
+
+  napi_value v = NULL;
+  NODE_API_CALL(env, napi_get_reference_value(env, ref, &v));
+  napi_valuetype t = napi_undefined;
+  if (v) napi_typeof(env, v, &t);
+  uint32_t count = 999;
+  NODE_API_CALL(env, napi_reference_ref(env, ref, &count));
+  printf("get_reference_value is undefined=%d reference_ref count=%u\n",
+         (v == NULL || t == napi_undefined), count);
+  uint32_t count2 = 999;
+  NODE_API_CALL(env, napi_reference_ref(env, ref, &count2));
+  printf("second reference_ref count=%u\n", count2);
+  NODE_API_CALL(env, napi_delete_reference(env, ref));
+  return ok(env);
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_typedarray_info_byte_offset);
   REGISTER_FUNCTION(env, exports, test_dataview_info_byte_offset);
@@ -4025,6 +4106,10 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_toobject_coercion_node26);
   REGISTER_FUNCTION(env, exports, test_napi_symbol_key_result_ordering);
   REGISTER_FUNCTION(env, exports, test_napi_external_string_args);
+  REGISTER_FUNCTION(env, exports, test_napi_get_buffer_info_gate);
+  REGISTER_FUNCTION(env, exports, test_create_weak_ref_for_gc);
+  REGISTER_FUNCTION(env, exports, test_weak_ref_is_collected);
+  REGISTER_FUNCTION(env, exports, test_reference_ref_after_collect);
 }
 
 } // namespace napitests

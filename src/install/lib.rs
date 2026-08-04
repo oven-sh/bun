@@ -93,9 +93,7 @@ pub mod external_slice {
     };
 }
 pub mod versioned_url {
-    pub use bun_install_types::resolver_hooks::{
-        OldV2VersionedURL, VersionedURL, VersionedURLType,
-    };
+    pub use bun_install_types::resolver_hooks::{VersionedURL, VersionedURLType};
 }
 
 pub mod extract_tarball;

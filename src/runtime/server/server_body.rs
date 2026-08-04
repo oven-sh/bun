@@ -1796,6 +1796,12 @@ where
             {
                 return Ok(JSValue::FALSE);
             }
+            // upgrade() below cannot succeed for a request uWS never classified as a WebSocket
+            // upgrade: bail before the one-shot 101 status + headers are committed to the
+            // socket, so the app's fallback response stays well-formed (see #1339).
+            if !node_http_response.can_upgrade() {
+                return Ok(JSValue::FALSE);
+            }
 
             let mut data_value = JSValue::ZERO;
 
@@ -1894,6 +1900,15 @@ where
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use
                                 .fast_remove(HTTPHeaderName::SecWebSocketExtensions);
+                        }
+                        // Option getters ran user JS (res.end()/destroy()/re-entrant upgrade()
+                        // may have fired): re-check the guards (mirrors the native path below)
+                        // so the one-shot 101 preamble isn't committed for a refusing upgrade().
+                        if node_http_response.flags.get().intersects(
+                            NodeHTTPResponseFlags::ENDED | NodeHTTPResponseFlags::SOCKET_CLOSED,
+                        ) || !node_http_response.can_upgrade()
+                        {
+                            return Ok(JSValue::FALSE);
                         }
                         if let Some(raw_response) = node_http_response.raw_response.get() {
                             // we must write the status first so that 200 OK isn't written

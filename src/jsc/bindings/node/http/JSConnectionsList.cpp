@@ -89,7 +89,9 @@ JSArray* JSConnectionsList::idle(JSGlobalObject* globalObject)
     size_t i = 0;
     while (iter->next(globalObject, item)) {
         JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(item);
-        if (!parser) {
+        // A close()d parser has no impl but stays in the list (remove() after close()
+        // is a no-op, matching Node); it must be skipped, not dereferenced.
+        if (!parser || !parser->impl()) {
             continue;
         }
 
@@ -143,7 +145,9 @@ JSArray* JSConnectionsList::expired(JSGlobalObject* globalObject, uint64_t heade
     size_t i = 0;
     while (iter->next(globalObject, item)) {
         JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(item);
-        if (!parser) {
+        // A close()d parser has no impl but stays in the list (remove() after close()
+        // is a no-op, matching Node); it must be skipped, not dereferenced.
+        if (!parser || !parser->impl()) {
             continue;
         }
 

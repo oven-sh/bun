@@ -1011,7 +1011,8 @@ impl Connection {
         let cap = (self.enforced_max_header_list_size as usize).max(65536);
         if self.header_block.len().saturating_add(payload.len()) > cap {
             // nghttp2's NGHTTP2_MAX_HEADERSLEN (65536) overflow returns NGHTTP2_ERR_HEADER_COMP,
-            // which node surfaces as a session COMPRESSION_ERROR.
+            // which node surfaces as a session COMPRESSION_ERROR
+            // (test-http2-options-max-headers-exceeds-nghttp2.js).
             self.send_go_away(sink, ErrorCode::CompressionError, b"header block too large");
             return true;
         }
@@ -1066,6 +1067,11 @@ impl Connection {
         let mut saw_connect = false;
         let mut saw_host = false;
         let mut informational = false;
+        // nghttp2 check_path() flags for the RFC 9113 §8.3.1 :path validation.
+        let mut path_regular = false;
+        let mut path_asterisk = false;
+        let mut scheme_http = false;
+        let mut meth_options = false;
         let mut content_length: Option<u64> = None;
         while off < block.len() {
             match self.hpack.decode(&block[off..]) {
@@ -1106,11 +1112,14 @@ impl Connection {
                                 b"protocol" => pseudo::PROTOCOL,
                                 _ => pseudo::UNKNOWN,
                             };
-                            // 8.3.1: requests never carry :status - a server seeing it inbound is
-                            // a malformed block. (The client direction also constrains pseudo
-                            // headers, but inbound PUSH_PROMISE blocks legitimately carry request
-                            // pseudo-headers, so that check needs the push context first.)
-                            let wrong_direction = self.is_server && rest == b"status";
+                            // RFC 9113 §8.3.1/§8.3.2: :status only in response blocks, request
+                            // pseudo-headers only in request blocks. Key on `is_request` (not
+                            // is_server) — a client-received PUSH_PROMISE is a request block.
+                            let wrong_direction = if is_request {
+                                bit == pseudo::STATUS
+                            } else {
+                                bit != pseudo::STATUS && bit != pseudo::UNKNOWN
+                            };
                             // RFC 8441 §4: :protocol is only valid when SETTINGS_ENABLE_CONNECT_PROTOCOL
                             // has been enabled by this endpoint. nghttp2 (and so node) checks the
                             // submitted local value here, not the ACKed one — so a request that arrives
@@ -1120,9 +1129,9 @@ impl Connection {
                             let protocol_disabled = self.is_server
                                 && rest == b"protocol"
                                 && self.local_settings.enable_connect_protocol == 0;
-                            // nghttp2 (check_pseudo_header) treats an empty pseudo-header value as
-                            // malformed, so `:path: ""` never counts as a present :path (§8.3.1:
-                            // `:path` "MUST NOT be empty" for http/https).
+                            // RFC 9113 §8.1: pseudo-headers never appear in a trailer section.
+                            // nghttp2 (check_pseudo_header) also treats an empty pseudo-header
+                            // value as malformed, so `:path: ""` never counts as a present :path.
                             if seen_regular
                                 || bit == pseudo::UNKNOWN
                                 || (seen_pseudo & bit) != 0
@@ -1137,15 +1146,43 @@ impl Connection {
                                 informational = true;
                             }
                             seen_pseudo |= bit;
-                            if rest == b"method" && value_b == b"CONNECT" {
-                                saw_connect = true;
+                            // nghttp2 http_request_on_header: per-field flags for check_path()/
+                            // nghttp2_http_on_request_headers below; CONNECT on a pushed (even)
+                            // stream is rejected up front ("we won't allow CONNECT for push").
+                            match rest {
+                                b"method" => {
+                                    if value_b == b"CONNECT" {
+                                        if push_parent != 0 {
+                                            malformed = true;
+                                        }
+                                        saw_connect = true;
+                                    }
+                                    meth_options |= value_b == b"OPTIONS";
+                                }
+                                b"path" => {
+                                    path_regular |= value_b.first() == Some(&b'/');
+                                    path_asterisk |= value_b == b"*";
+                                }
+                                b"scheme" => {
+                                    scheme_http |= value_b.eq_ignore_ascii_case(b"http")
+                                        || value_b.eq_ignore_ascii_case(b"https");
+                                }
+                                _ => {}
                             }
                         } else {
                             seen_regular = true;
                             match name_b {
                                 b"connection" | b"keep-alive" | b"proxy-connection"
                                 | b"transfer-encoding" | b"upgrade" => malformed = true,
-                                b"host" if is_request => saw_host = true,
+                                // nghttp2 http_request_on_header: in request blocks Host is checked
+                                // like :authority (empty/repeated => malformed); in a response it
+                                // is an ordinary field and node delivers it.
+                                b"host" if self.is_server || is_request => {
+                                    if value_b.is_empty() || saw_host {
+                                        malformed = true;
+                                    }
+                                    saw_host = true;
+                                }
                                 b"te" => {
                                     // RFC 9110 10.1.4: field values are case-insensitive.
                                     if !value_b.eq_ignore_ascii_case(b"trailers") {
@@ -1199,11 +1236,9 @@ impl Connection {
             sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
             return false;
         }
-        // RFC 9113 §8.3.1 (nghttp2_http_on_request_headers): a request block needs exactly one
-        // non-empty :method, :scheme and :path plus an :authority or Host; plain CONNECT omits
-        // :scheme/:path and carries :authority; extended CONNECT (:protocol, RFC 8441) requires
-        // :method CONNECT and :authority. Without this a block with an empty or missing :path
-        // reaches JS as a request with an empty url (no compliant peer can produce that shape).
+        // RFC 9113 §8.3.1 / nghttp2_http_on_request_headers: request block = :method+:scheme
+        // +:path + (:authority|Host); plain CONNECT omits :scheme/:path with :authority;
+        // extended CONNECT (RFC 8441) needs :method CONNECT. Applies to HEADERS & PUSH_PROMISE.
         if is_request && !rejected && !malformed {
             use pseudo::{AUTHORITY, METHOD, PATH, PROTOCOL, SCHEME};
             let extended_connect = (seen_pseudo & PROTOCOL) != 0;
@@ -1213,8 +1248,19 @@ impl Connection {
                 (seen_pseudo & (METHOD | SCHEME | PATH)) != (METHOD | SCHEME | PATH)
                     || ((seen_pseudo & AUTHORITY) == 0 && !saw_host)
                     || (extended_connect && (!saw_connect || (seen_pseudo & AUTHORITY) == 0))
+                    // nghttp2 check_path(): under http/https, :path must start with '/'
+                    // (or be '*' for OPTIONS).
+                    || (scheme_http && !(path_regular || (meth_options && path_asterisk)))
             };
+        } else if !is_trailer && !rejected && !malformed && !informational {
+            // RFC 9113 §8.3.2 (nghttp2_http_on_response_headers): a final response block must
+            // carry exactly :status and no request pseudo-header. wrong_direction above already
+            // rejected a request pseudo per-field; this catches a block with :status omitted.
+            malformed = (seen_pseudo & pseudo::STATUS) == 0;
         }
+        // RFC 9113 §8.1.1: an inbound request's content-length must be coherent — the declared
+        // value is attached to the stream and, at END_STREAM, must equal the DATA received
+        // (plain CONNECT is exempt).
         if push_parent == 0 && self.is_server && !malformed && !rejected {
             if let Some(s) = self.streams.get_mut(&target) {
                 if !saw_connect && s.content_length.is_none() {
@@ -1229,9 +1275,9 @@ impl Connection {
             }
         }
         if malformed && !rejected {
-            // node (Http2Session::OnInvalidFrame): every locally-rejected invalid frame counts
-            // against maxSessionInvalidFrames; exceeding it tears the session down with
-            // ERR_HTTP2_TOO_MANY_INVALID_FRAMES (same post-increment comparison as node).
+            // nghttp2 session_handle_invalid_stream2 / RFC 9113 §8.4.1: malformed HEADERS or
+            // PUSH_PROMISE → RST_STREAM(PROTOCOL_ERROR) on the target id + invalid-frame count.
+            // node Http2Session::OnInvalidFrame tears down on maxSessionInvalidFrames overflow.
             let count = self.invalid_frame_count;
             self.invalid_frame_count = count.saturating_add(1);
             if count > self.max_invalid_frames {

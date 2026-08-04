@@ -930,21 +930,34 @@ impl FileSink {
         // contexts: no touching live JS cells (sweep), and no tearing down
         // state that in-flight IO still needs (close).
 
-        // Shutdown never unwinds the writer: the loop stops ticking, so the
-        // `onWrite`/`onClose`/EOF callbacks that balance these refs can no
-        // longer arrive, and a queued FlushPendingFileSinkTask never runs.
-        // Release them here (a piped stdout whose write once returned
-        // `.pending` otherwise strands its keep-alive ref forever and the sink
-        // leaks). Only under `is_shutting_down`: on a live VM those events
-        // still arrive and must keep the sink alive past the wrapper.
+        // Under `is_shutting_down` the loop stops ticking: onWrite/onClose/EOF and queued
+        // FlushPendingFileSinkTask never arrive to balance these refs, so release them here
+        // (else e.g. a piped stdout with a `.pending` write strands its keep-alive forever).
         if let Some(vm) = self.js_vm() {
             if vm.is_shutting_down() {
                 let this = std::ptr::from_mut::<Self>(self);
-                // SAFETY: `this` is the canonical allocation pointer (finalize
-                // receives the wrapper's `m_ctx`); the wrapper's +1 is still
-                // held until the trailing `deref` below, so neither release
-                // can free `this` mid-body. `clear_keep_alive_ref` is
-                // flag-gated, so a (theoretical) late `onClose` is a no-op.
+                // SAFETY: `this` is the canonical alloc (finalize's `m_ctx`); the wrapper's +1
+                // is held until the trailing `deref` so neither release frees `this` mid-body.
+                // `clear_keep_alive_ref` is flag-gated, so a late `onClose` is a no-op.
+                unsafe { FileSink::clear_keep_alive_ref(this) };
+                if self.run_pending_later.has.get() {
+                    self.run_pending_later.has.set(false);
+                    // SAFETY: as above; balances the `ref_()` taken in
+                    // `run_pending_later()` for a task that will never run.
+                    unsafe { FileSink::deref(this) };
+                }
+            }
+        }
+
+        // Under `is_shutting_down` the loop stops ticking: onWrite/onClose/EOF and queued
+        // FlushPendingFileSinkTask never arrive to balance these refs, so release them here
+        // (else e.g. a piped stdout with a `.pending` write strands its keep-alive forever).
+        if let Some(vm) = self.js_vm() {
+            if vm.is_shutting_down() {
+                let this = std::ptr::from_mut::<Self>(self);
+                // SAFETY: `this` is the canonical alloc (finalize's `m_ctx`); the wrapper's +1
+                // is held until the trailing `deref` so neither release frees `this` mid-body.
+                // `clear_keep_alive_ref` is flag-gated, so a late `onClose` is a no-op.
                 unsafe { FileSink::clear_keep_alive_ref(this) };
                 if self.run_pending_later.has.get() {
                     self.run_pending_later.has.set(false);

@@ -1013,7 +1013,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         data.destroy(error);
       } else if (
         data.isServer &&
-        data._rejectUnauthorized &&
+        data._rejectUnauthorized !== false &&
         /peer did not return a certificate/.test(error?.message)
       ) {
         // Ignore server's authorization errors

@@ -152,6 +152,7 @@ pub fn strip_type_script_types_native(
         replace_exports: Default::default(),
         experimental_decorators: false,
         emit_decorator_metadata: false,
+        use_define_for_class_fields: false,
         macro_js_ctx: MacroJSCtx::ZERO,
         file_fd_ptr: None,
         inject_jest_globals: false,

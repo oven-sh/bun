@@ -76,7 +76,7 @@ pub unsafe fn parse_worker_exec_argv(
         }
     }
 
-    enabled.then(|| HeapProfilerConfig {
+    enabled.then_some(HeapProfilerConfig {
         name,
         dir,
         text_format: false,

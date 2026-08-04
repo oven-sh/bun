@@ -3060,15 +3060,6 @@ fn transpile_source_code_inner(
                     *mut bun_bundler::analyze_transpiled_module::ModuleInfo,
                 > = module_info.as_deref_mut().map(core::ptr::from_mut);
 
-                // ── js_printer::print ───────────────────────────────────────
-                // SAFETY: `extra.source_code_printer` is non-null per `TranspileExtra`
-                // contract.
-                // Note: do NOT bind a long-lived `&mut BufferPrinter`
-                // here — the `source_map_handler` / `print_with_source_map`
-                // calls below each rederive `&mut *(*extra).source_code_printer`
-                // from the raw pointer, which would invalidate any earlier
-                // Unique tag under Stacked Borrows. Rederive at each use-site
-                // instead (reset, mapper, print, get_written).
                 // Node compile cache: the transpilation entry is keyed by the raw
                 // source, which `print` below consumes by value — copy it out first.
                 let raw_ts_for_compile_cache: Option<Box<[u8]>> =
@@ -3081,6 +3072,15 @@ fn transpile_source_code_inner(
                         None
                     };
 
+                // ── js_printer::print ───────────────────────────────────────
+                // SAFETY: `extra.source_code_printer` is non-null per `TranspileExtra`
+                // contract.
+                // Note: do NOT bind a long-lived `&mut BufferPrinter`
+                // here — the `source_map_handler` / `print_with_source_map`
+                // calls below each rederive `&mut *(*extra).source_code_printer`
+                // from the raw pointer, which would invalidate any earlier
+                // Unique tag under Stacked Borrows. Rederive at each use-site
+                // instead (reset, mapper, print, get_written).
                 unsafe { (*(*extra).source_code_printer).ctx.reset() };
                 // Install the VM's sourcemap handler on the printer, then
                 // print the parse result (ESM, ASCII) with sourcemaps.

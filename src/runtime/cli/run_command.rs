@@ -3041,7 +3041,7 @@ impl RunCommand {
     /// `--preload` modules still execute the way they do under `node --check`.
     /// `Run::start` performs the actual syntax check against the stored source
     /// instead of executing anything user-provided.
-    pub fn exec_check(ctx: &mut ContextData) -> crate::Result<()> {
+    pub(crate) fn exec_check(ctx: &mut ContextData) -> crate::Result<()> {
         // `ctx.args.entry_points` is the positional list with the leading
         // subcommand keyword ("run") already stripped.
         let target: Option<Box<[u8]>> = ctx.args.entry_points.first().cloned();

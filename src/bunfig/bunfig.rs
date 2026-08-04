@@ -1065,10 +1065,8 @@ impl<'a> Parser<'a> {
                 let key = key_expr
                     .as_string(self.bump)
                     .expect("infallible: type checked");
-                if key.is_empty() {
-                    continue;
-                }
-                if key[0] != b'.' {
+                // An empty key maps files with no extension, as `--loader :ts` does.
+                if !key.is_empty() && key[0] != b'.' {
                     self.add_error(
                         key_expr.loc,
                         b"file extension for loader must start with a '.'",

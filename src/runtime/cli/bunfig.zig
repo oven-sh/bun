@@ -1188,8 +1188,8 @@ pub const Bunfig = struct {
 
                 for (properties, 0..) |item, i| {
                     const key = item.key.?.asString(allocator).?;
-                    if (key.len == 0) continue;
-                    if (key[0] != '.') {
+                    // An empty key maps files with no extension, as `--loader :ts` does.
+                    if (key.len > 0 and key[0] != '.') {
                         try this.addError(item.key.?.loc, "file extension for loader must start with a '.'");
                     }
                     var value = item.value.?;

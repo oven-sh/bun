@@ -198,7 +198,8 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--loader" type="string">
-  Parse files with <code>.ext:loader</code>, e.g. <code>--loader .js:jsx</code>. Valid loaders: <code>js</code>,{" "}
+  Parse files with <code>.ext:loader</code>, e.g. <code>--loader .js:jsx</code>. An empty extension maps
+  files that have none, e.g. <code>--loader :ts</code>. Valid loaders: <code>js</code>,{" "}
   <code>jsx</code>, <code>ts</code>, <code>tsx</code>, <code>json</code>, <code>toml</code>, <code>text</code>,{" "}
   <code>file</code>, <code>wasm</code>, <code>napi</code>. Alias: <code>-l</code>
 </ParamField>

@@ -87,6 +87,8 @@ Configure how Bun maps file extensions to loaders. This is useful for loading fi
 [loader]
 # when a .bagel file is imported, treat it like a tsx file
 ".bagel" = "tsx"
+# an empty extension maps files that have none, which Bun otherwise treats as tsx
+"" = "ts"
 ```
 
 Bun supports the following loaders:

@@ -28,13 +28,6 @@
 
 #include "BunBuiltinNames.h"
 
-// #include "DOMWindow.h"
-// #include "DOMWrapperWorld.h"
-// #include "JSDOMWindow.h"
-// #include "JSRemoteDOMWindow.h"
-// #include "SerializedScriptValue.h"
-// #include <JavaScriptCore/Error.h>
-
 namespace WebCore {
 
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSDOMObject);

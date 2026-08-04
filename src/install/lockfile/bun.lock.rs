@@ -165,10 +165,6 @@ pub(crate) struct Stringifier;
 impl Stringifier {
     const INDENT_SCALAR: usize = 2;
 
-    // pub fn save(this: &Lockfile) {
-    //     let _ = this;
-    // }
-
     pub(crate) fn save_from_binary(
         lockfile: &mut BinaryLockfile,
         load_result: &LoadResult,

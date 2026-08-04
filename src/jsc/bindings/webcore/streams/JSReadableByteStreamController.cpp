@@ -678,6 +678,8 @@ void readableByteStreamControllerClearAlgorithms(JSReadableByteStreamController*
     controller->m_algorithms.method1.clear();
     controller->m_algorithms.method2.clear();
     controller->m_algorithms.algorithmContext.clear();
+    if (auto* stream = controller->m_stream.get())
+        readableStreamClearSourceBarriers(stream);
 }
 
 void readableByteStreamControllerClearPendingPullIntos(JSReadableByteStreamController* controller)

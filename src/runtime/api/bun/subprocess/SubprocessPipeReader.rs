@@ -138,7 +138,9 @@ impl PipeReader {
 
     pub(crate) fn read_all(&mut self) {
         if matches!(self.state, State::Pending) {
-            self.reader.read();
+            // SAFETY: `self.reader` is live; `read` is the raw
+            // re-entrancy-safe entry (its dispatch runs user JS).
+            unsafe { IOReader::read(&raw mut self.reader) };
         }
     }
 

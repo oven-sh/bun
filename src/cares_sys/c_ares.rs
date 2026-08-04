@@ -69,6 +69,7 @@ impl EAI {
     #[cfg(not(target_os = "linux"))]
     pub(crate) const ADDRFAMILY: Self = Self(1);
 
+    pub(crate) const AGAIN: Self = Self(libc::EAI_AGAIN);
     pub(crate) const BADFLAGS: Self = Self(libc::EAI_BADFLAGS);
     pub(crate) const FAIL: Self = Self(libc::EAI_FAIL);
     pub(crate) const FAMILY: Self = Self(libc::EAI_FAMILY);
@@ -1906,6 +1907,7 @@ impl Error {
             }
             match eai {
                 EAI::ADDRFAMILY => Some(Error::EBADFAMILY),
+                EAI::AGAIN => Some(Error::ETIMEOUT), // transient; matches libuv
                 EAI::BADFLAGS => Some(Error::EBADFLAGS), // Invalid hints
                 EAI::FAIL => Some(Error::EBADRESP),
                 EAI::FAMILY => Some(Error::EBADFAMILY),

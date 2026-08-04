@@ -83,14 +83,6 @@ extern "C" void DOMFormData__forEach(DOMFormData* form, void* context, void (*ca
     }
 }
 
-Ref<DOMFormData> DOMFormData::clone() const
-{
-    auto newFormData = adoptRef(*new DOMFormData(scriptExecutionContext()));
-    newFormData->m_items = m_items;
-
-    return newFormData;
-}
-
 // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#create-an-entry
 static auto createStringEntry(const String& name, const String& value) -> DOMFormData::Item
 {

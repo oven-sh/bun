@@ -105,7 +105,9 @@ pub enum Protocol {
 }
 
 pub use bun_http_types::Encoding::Encoding;
-pub use header_value_iterator::HeaderValueIterator;
+pub use header_value_iterator::{
+    HeaderValueIterator, connection_header_keep_alive, upgrade_header_is_not_h2,
+};
 pub use init_error::InitError;
 
 /// Cloned response metadata (headers + url + status). Ownership transfers to
@@ -207,17 +209,7 @@ pub struct Flags {
     pub(crate) defer_fail_until_connecting_is_complete: bool,
     pub(crate) upgrade_state: HTTPUpgradeState,
     pub(crate) protocol: Protocol,
-    /// Set by `fetch(url, { protocol: "http2" })`: ALPN advertises only h2
-    /// and the request fails if the server selects anything else.
-    pub force_http2: bool,
-    /// Set by `fetch(url, { protocol: "http1.1" })`: opt out of h2 even when
-    /// the experimental env flag would otherwise advertise it.
-    pub force_http1: bool,
-    /// Set by `fetch(url, { protocol: "http3" })`: skip TCP entirely and open
-    /// a QUIC connection. HTTPS-only; no proxy/unix-socket support.
-    pub force_http3: bool,
-    /// Set after the first H3 retry so a stale-session/GOAWAY race retries
-    /// once on a fresh connection but never loops.
+    pub forced_protocol: Option<Protocol>,
     pub(crate) h3_retried: bool,
     pub is_node_http_client: bool,
 }
@@ -238,9 +230,7 @@ impl Default for Flags {
             defer_fail_until_connecting_is_complete: false,
             upgrade_state: HTTPUpgradeState::None,
             protocol: Protocol::Http1_1,
-            force_http2: false,
-            force_http1: false,
-            force_http3: false,
+            forced_protocol: None,
             h3_retried: false,
             is_node_http_client: false,
         }
@@ -339,7 +329,7 @@ pub const DECODED_BODY_RETAIN_CAP: usize = 512 * 1024;
 /// Whether the experimental Alt-Svc-driven HTTP/3 upgrade is enabled at all
 /// (CLI flag or env var). Used on its own to gate `H3.AltSvc.record` — a
 /// response that arrived over a request shape h3 can't serve (proxy, sendfile,
-/// `force_http1`) still carries an authoritative Alt-Svc for the origin.
+/// pinned to h1) still carries an authoritative Alt-Svc for the origin.
 pub(crate) fn h3_alt_svc_enabled() -> bool {
     // SAFETY: set once at startup before HTTP thread spawns; only read thereafter.
     let cli = EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI.load(Ordering::Relaxed);
@@ -1265,7 +1255,7 @@ enum PendingH2Resolution<'a> {
     /// ALPN selected h2; waiters attach onto this session.
     H2(&'a mut h2::ClientSession),
     /// Handshake completed and ALPN selected http/1.1. Waiters can be pinned
-    /// to h1 (and force_http2 waiters failed) since the server has spoken.
+    /// to h1 (and h2-pinned waiters failed) since the server has spoken.
     H1,
     /// Leader's connect/handshake failed or was aborted before ALPN. Nothing
     /// has been learned about the server's protocol support, so waiters must
@@ -1604,10 +1594,12 @@ impl<'a> HTTPClient<'a> {
             // `detach_socket` (formerly the first half of `detach_and_deref`)
             // must run before the strong ref is released so a refcount>1
             // tunnel keeps no dangling socket.
-            let tunnel = proxy_tunnel::raw_as_mut(t.as_ptr());
             if shutdown {
-                tunnel.shutdown();
+                proxy_tunnel::ProxyTunnel::shutdown(
+                    core::ptr::NonNull::new(t.as_ptr()).expect("live strong ref is non-null"),
+                );
             }
+            let tunnel = proxy_tunnel::raw_as_mut(t.as_ptr());
             tunnel.detach_socket();
             // Release the strong ref this client held (formerly the `deref`
             // half of `detach_and_deref`).
@@ -1827,22 +1819,23 @@ impl<'a> HTTPClient<'a> {
                 // configured regardless, so the helper is called unconditionally
                 // below with `null` SNI in the IP case.
                 let mut owned: Vec<u8>; // drops on scope exit
-                let host_z: *const core::ffi::c_char = if !strings::is_ip_address(raw_hostname) {
-                    // SAFETY: TEMP_HOSTNAME only accessed from HTTP thread
-                    let temp = scratch::temp_hostname();
-                    if raw_hostname.len() < temp.len() {
-                        temp[..raw_hostname.len()].copy_from_slice(raw_hostname);
-                        temp[raw_hostname.len()] = 0;
-                        temp.as_ptr().cast::<core::ffi::c_char>()
+                let host_z: *const core::ffi::c_char =
+                    if !bun_core::ip_address::is_ip_address(raw_hostname) {
+                        // SAFETY: TEMP_HOSTNAME only accessed from HTTP thread
+                        let temp = scratch::temp_hostname();
+                        if raw_hostname.len() < temp.len() {
+                            temp[..raw_hostname.len()].copy_from_slice(raw_hostname);
+                            temp[raw_hostname.len()] = 0;
+                            temp.as_ptr().cast::<core::ffi::c_char>()
+                        } else {
+                            owned = Vec::with_capacity(raw_hostname.len() + 1);
+                            owned.extend_from_slice(raw_hostname);
+                            owned.push(0);
+                            owned.as_ptr().cast::<core::ffi::c_char>()
+                        }
                     } else {
-                        owned = Vec::with_capacity(raw_hostname.len() + 1);
-                        owned.extend_from_slice(raw_hostname);
-                        owned.push(0);
-                        owned.as_ptr().cast::<core::ffi::c_char>()
-                    }
-                } else {
-                    core::ptr::null()
-                };
+                        core::ptr::null()
+                    };
 
                 // SAFETY: `ssl_ptr` was null-checked above and is the live SSL
                 // handle for this just-opened socket.
@@ -1870,7 +1863,7 @@ impl<'a> HTTPClient<'a> {
         if self.signals.get(signals::Field::CertErrors) {
             return false;
         }
-        if self.flags.force_http1 {
+        if self.flags.forced_protocol == Some(Protocol::Http1_1) {
             return false;
         }
         if self.http_proxy.is_some() {
@@ -1888,7 +1881,7 @@ impl<'a> HTTPClient<'a> {
         ) {
             return false;
         }
-        self.flags.force_http2
+        self.flags.forced_protocol == Some(Protocol::Http2)
             || EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.load(Ordering::Relaxed)
             || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT
                 .get()
@@ -1899,7 +1892,7 @@ impl<'a> HTTPClient<'a> {
         if !self.can_offer_h2() {
             return AlpnOffer::H1;
         }
-        if self.flags.force_http2 {
+        if self.flags.forced_protocol == Some(Protocol::Http2) {
             AlpnOffer::H2Only
         } else {
             AlpnOffer::H1OrH2
@@ -1916,7 +1909,10 @@ impl<'a> HTTPClient<'a> {
         if self.signals.get(signals::Field::CertErrors) {
             return false;
         }
-        if self.flags.force_http1 || self.flags.force_http2 {
+        if matches!(
+            self.flags.forced_protocol,
+            Some(Protocol::Http1_1 | Protocol::Http2)
+        ) {
             return false;
         }
         if self.http_proxy.is_some() {
@@ -1987,7 +1983,7 @@ impl<'a> HTTPClient<'a> {
             }
             self.flags.protocol = Protocol::Http1_1;
             self.resolve_pending_h2(PendingH2Resolution::H1);
-            if self.flags.force_http2 {
+            if self.flags.forced_protocol == Some(Protocol::Http2) {
                 self.close_and_fail::<IS_SSL>(crate::Error::HTTP2Unsupported, socket);
                 return;
             }
@@ -2337,6 +2333,7 @@ impl<'a> HTTPClient<'a> {
         let mut override_accept_header = false;
         let mut override_host_header = false;
         let mut override_connection_header = false;
+        let mut connection_close_requested = false;
         let mut override_user_agent = false;
         let mut add_transfer_encoding = true;
         let mut original_content_length: Option<&[u8]> = None;
@@ -2368,17 +2365,15 @@ impl<'a> HTTPClient<'a> {
                 h if h == hash_header_const(b"Connection") => {
                     if will_append {
                         override_connection_header = true;
-                        let connection_value = self.header_str(header_values[i]);
-                        if bun_core::strings::eql_case_insensitive_ascii_check_length(
-                            connection_value,
-                            b"close",
-                        ) {
-                            self.flags.disable_keepalive = true;
-                        } else if bun_core::strings::eql_case_insensitive_ascii_check_length(
-                            connection_value,
-                            b"keep-alive",
-                        ) {
-                            self.flags.disable_keepalive = false;
+                        match connection_header_keep_alive(self.header_str(header_values[i])) {
+                            Some(false) => {
+                                connection_close_requested = true;
+                                self.flags.disable_keepalive = true;
+                            }
+                            Some(true) if !connection_close_requested => {
+                                self.flags.disable_keepalive = false;
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -2413,11 +2408,7 @@ impl<'a> HTTPClient<'a> {
                 }
                 h if h == hash_header_const(b"Upgrade") => {
                     if will_append {
-                        let value = self.header_str(header_values[i]);
-                        if !bun_core::strings::eql_any_case_insensitive_ascii(
-                            value,
-                            &[b"h2", b"h2c"],
-                        ) {
+                        if upgrade_header_is_not_h2(self.header_str(header_values[i])) {
                             self.flags.upgrade_state = HTTPUpgradeState::Pending;
                         }
                     }
@@ -2710,10 +2701,10 @@ impl<'a> HTTPClient<'a> {
         }
 
         // protocol: "http2" is documented as HTTPS-only (h2c is out of scope).
-        // Every consumer of force_http2 is gated on the SSL const-generic, so without
-        // this an http:// request would silently fall through to HTTP/1.1.
+        // Every h2 consumer is gated on the SSL const-generic, so without this
+        // an http:// request would silently fall through to HTTP/1.1.
         if !IS_SSL {
-            if self.flags.force_http2 {
+            if self.flags.forced_protocol == Some(Protocol::Http2) {
                 self.fail(crate::Error::HTTP2Unsupported);
                 self.complete_connecting_process();
                 return;
@@ -2723,13 +2714,13 @@ impl<'a> HTTPClient<'a> {
         if IS_SSL {
             // Opportunistic Alt-Svc upgrade: a previous response from this origin
             // advertised `h3`, and the experimental flag is on. Don't touch
-            // `flags.force_http3` — that's the user's explicit `protocol:"http3"`
+            // `flags.forced_protocol` — that's the user's explicit `protocol:"http3"`
             // choice and persists across redirects, whereas an Alt-Svc upgrade is
             // per-origin and a cross-origin redirect must re-evaluate from h1.
             // `doRedirectMultiplexed` resets `flags.protocol`, so the redirected
-            // request lands back here with `force_http3` still false and consults
-            // the cache for the new origin.
-            if !self.flags.force_http3 && self.can_try_h3_alt_svc() {
+            // request lands back here with `forced_protocol` still `None` and
+            // consults the cache for the new origin.
+            if self.flags.forced_protocol != Some(Protocol::Http3) && self.can_try_h3_alt_svc() {
                 if let Some(alt_port) =
                     h3::alt_svc::lookup(self.url.hostname, self.url.get_port_auto())
                 {
@@ -2757,13 +2748,15 @@ impl<'a> HTTPClient<'a> {
         // `can_offer_h2` refuses to advertise h2 when a JS `checkServerIdentity`
         // callback is set, so `protocol: "http2"` + callback would handshake and
         // then fail in `first_call` anyway. Fail up front instead.
-        if self.flags.force_http2 && self.signals.get(signals::Field::CertErrors) {
+        if self.flags.forced_protocol == Some(Protocol::Http2)
+            && self.signals.get(signals::Field::CertErrors)
+        {
             self.fail(crate::Error::HTTP2Unsupported);
             self.complete_connecting_process();
             return;
         }
 
-        if self.flags.force_http3 {
+        if self.flags.forced_protocol == Some(Protocol::Http3) {
             // h3 never routes through `check_server_identity`; refuse the
             // combination instead of silently skipping the JS callback.
             if self.signals.get(signals::Field::CertErrors) {
@@ -3930,11 +3923,11 @@ impl<'a> HTTPClient<'a> {
             match &mut resolution {
                 PendingH2Resolution::H2(s) => s.enqueue(waiter),
                 PendingH2Resolution::H1 => {
-                    // ALPN selected http/1.1 on the leader's handshake; a
-                    // force_http2 waiter would just open a fresh TLS connection
+                    // ALPN selected http/1.1 on the leader's handshake; an
+                    // h2-pinned waiter would just open a fresh TLS connection
                     // and fail the same way, so fail it here instead of burning
                     // another handshake.
-                    if waiter.flags.force_http2 {
+                    if waiter.flags.forced_protocol == Some(Protocol::Http2) {
                         waiter.fail(crate::Error::HTTP2Unsupported);
                         continue;
                     }
@@ -3942,7 +3935,7 @@ impl<'a> HTTPClient<'a> {
                     // PendingConnect that the rest of this loop would re-coalesce
                     // onto (which would serialise N cold fetches into N
                     // sequential handshakes). The origin already chose h1 once.
-                    waiter.flags.force_http1 = true;
+                    waiter.flags.forced_protocol = Some(Protocol::Http1_1);
                     waiter.start_::<true>();
                 }
                 // The first waiter becomes the new leader; the rest re-coalesce
@@ -4759,6 +4752,7 @@ impl<'a> HTTPClient<'a> {
         let mut location: &[u8] = b"";
         let mut pretend_304 = false;
         let mut is_server_sent_events = false;
+        let mut content_codings: u32 = 0;
         for (header_i, header) in response.headers.list.iter().enumerate() {
             match hash_header_name(header.name()) {
                 h if h == hash_header_const(b"Content-Length") => {
@@ -4807,25 +4801,21 @@ impl<'a> HTTPClient<'a> {
                 }
                 h if h == hash_header_const(b"Content-Encoding") => {
                     if !self.flags.disable_decompression {
-                        // RFC 9110 §8.4.1: content codings are case-insensitive.
-                        // `x-gzip` is a registered deprecated alias of `gzip`.
-                        let value = header.value();
-                        if strings::eql_case_insensitive_ascii_check_length(value, b"gzip")
-                            || strings::eql_case_insensitive_ascii_check_length(value, b"x-gzip")
-                        {
-                            self.state.encoding = Encoding::Gzip;
-                            self.state.content_encoding_i = header_i as u8;
-                        } else if strings::eql_case_insensitive_ascii_check_length(
-                            value, b"deflate",
-                        ) {
-                            self.state.encoding = Encoding::Deflate;
-                            self.state.content_encoding_i = header_i as u8;
-                        } else if strings::eql_case_insensitive_ascii_check_length(value, b"br") {
-                            self.state.encoding = Encoding::Brotli;
-                            self.state.content_encoding_i = header_i as u8;
-                        } else if strings::eql_case_insensitive_ascii_check_length(value, b"zstd") {
-                            self.state.encoding = Encoding::Zstd;
-                            self.state.content_encoding_i = header_i as u8;
+                        for token in HeaderValueIterator::init(header.value()) {
+                            match Encoding::from_token(token) {
+                                Some(Encoding::Identity) => {}
+                                Some(coding) if coding.is_compressed() && content_codings == 0 => {
+                                    self.state.encoding = coding;
+                                    self.state.content_encoding_i = header_i as u8;
+                                    content_codings = 1;
+                                }
+                                // Stacked or unknown codings: we can only strip one layer, so pass through raw.
+                                _ => {
+                                    self.state.encoding = Encoding::Identity;
+                                    self.state.content_encoding_i = u8::MAX;
+                                    content_codings = u32::MAX;
+                                }
+                            }
                         }
                     }
                 }
@@ -4839,52 +4829,27 @@ impl<'a> HTTPClient<'a> {
                     {
                         continue;
                     }
-                    // RFC 9112 §7: transfer-coding names are case-insensitive.
-                    let value = header.value();
-                    if strings::eql_case_insensitive_ascii_check_length(value, b"gzip")
-                        || strings::eql_case_insensitive_ascii_check_length(value, b"x-gzip")
-                    {
-                        if !self.flags.disable_decompression {
-                            self.state.transfer_encoding = Encoding::Gzip;
+                    // RFC 9112 §6.1: `chunked`, if present, must be the final coding.
+                    for token in HeaderValueIterator::init(header.value()) {
+                        if self.state.transfer_encoding == Encoding::Chunked {
+                            return Err(crate::Error::UnsupportedTransferEncoding);
                         }
-                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"deflate") {
-                        if !self.flags.disable_decompression {
-                            self.state.transfer_encoding = Encoding::Deflate;
+                        match Encoding::from_token(token) {
+                            Some(Encoding::Chunked) => {
+                                self.state.transfer_encoding = Encoding::Chunked;
+                            }
+                            Some(_) => {}
+                            None => return Err(crate::Error::UnsupportedTransferEncoding),
                         }
-                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"br") {
-                        if !self.flags.disable_decompression {
-                            self.state.transfer_encoding = Encoding::Brotli;
-                        }
-                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"zstd") {
-                        if !self.flags.disable_decompression {
-                            self.state.transfer_encoding = Encoding::Zstd;
-                        }
-                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"identity") {
-                        self.state.transfer_encoding = Encoding::Identity;
-                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"chunked") {
-                        self.state.transfer_encoding = Encoding::Chunked;
-                    } else {
-                        return Err(crate::Error::UnsupportedTransferEncoding);
                     }
                 }
                 h if h == hash_header_const(b"Location") => {
                     location = header.value();
                 }
                 h if h == hash_header_const(b"Connection") => {
-                    // `close` applies on any status (RFC 9112 §9.6); only an
-                    // explicit `keep-alive` is gated on a 2xx success.
-                    if bun_core::strings::eql_case_insensitive_ascii_check_length(
-                        header.value(),
-                        b"close",
-                    ) {
+                    // `close` on any field line, any status, is sticky (RFC 9110 §5.3, RFC 9112 §9.6).
+                    if connection_header_keep_alive(header.value()) == Some(false) {
                         self.state.flags.allow_keepalive = false;
-                    } else if (200..=299).contains(&response.status_code)
-                        && bun_core::strings::eql_case_insensitive_ascii_check_length(
-                            header.value(),
-                            b"keep-alive",
-                        )
-                    {
-                        self.state.flags.allow_keepalive = true;
                     }
                 }
                 h if h == hash_header_const(b"Last-Modified") => {

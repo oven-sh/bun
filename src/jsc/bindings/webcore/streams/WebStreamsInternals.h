@@ -221,6 +221,11 @@ void readableStreamReaderGenericRelease(JSC::JSGlobalObject*, JSReadableStreamRe
 JSC::JSPromise* readableStreamCancel(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue reason); // userJS: yes — ReadableStreamOperations.cpp
 void readableStreamClose(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes (read-request close-steps dispatch) — ReadableStreamOperations.cpp
 void readableStreamError(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue error); // userJS: yes (error-steps dispatch) — ReadableStreamOperations.cpp
+// Eagerly drop WriteBarriers on the stream that exist only to feed user source callbacks
+// (pull/cancel/close). Called once no more source callbacks will run: each controller's
+// ClearAlgorithms, the tail of readableStreamCancel, and the direct controller's
+// close/error. Idempotent.
+void readableStreamClearSourceBarriers(JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
 // Bun helper used by every consumer teardown: closes the stream iff its state still allows
 // it. Callers: BunStreamConsumers.cpp, BunStreamSource.cpp, JSDirectStreamController.cpp.
 void readableStreamCloseIfPossible(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — ReadableStreamOperations.cpp
@@ -566,6 +571,9 @@ JSC::JSPromise* readStreamIntoSink(JSC::JSGlobalObject*, JSReadableStream*, JSC:
 // Installs a JSDirectStreamController of the given flavor on the stream, nulls the stream's
 // m_directUnderlyingSource, and sets m_bunMode = Default.
 void setUpDirectStreamController(JSC::JSGlobalObject*, JSReadableStream*, DirectSinkKind, double highWaterMark); // userJS: yes — JSDirectStreamController.cpp
+// Drop the direct controller's retained user-source state once no further pull/close callbacks
+// can run (m_closed set, or the stream has left Readable). Idempotent.
+void directStreamControllerClearSource(JSDirectStreamController*); // userJS: no — JSDirectStreamController.cpp
 
 // BunStreamConsumers.cpp — Bun.readableStreamTo*, the buffered fast path, the direct
 // consumers, and the generic accumulators. These are the native entry points; their

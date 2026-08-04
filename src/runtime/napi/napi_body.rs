@@ -365,6 +365,8 @@ pub enum NapiStatus {
     arraybuffer_expected = 19,
     detachable_arraybuffer_expected = 20,
     would_deadlock = 21,
+    no_external_buffers_allowed = 22,
+    cannot_run_js = 23,
 }
 
 /// This is not an `enum` so that the enum values cannot be trivially returned from NAPI functions,
@@ -701,7 +703,7 @@ extern "C" fn napi_create_string_utf8(
     let global_object = env.to_js();
     let string = match jsc::bun_string_jsc::create_utf8_for_js(global_object, slice) {
         Ok(v) => v,
-        Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception),
+        Err(_) => return env.generic_failure(),
     };
     result.set(env, string);
     env.ok()
@@ -1129,14 +1131,12 @@ extern "C" fn napi_async_init(
     env_: napi_env,
     _async_resource: napi_value,
     _async_resource_name: napi_value,
-    async_ctx: *mut *mut c_void,
+    async_ctx_: *mut *mut c_void,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_async_init");
     let env = get_env!(env_);
-    // SAFETY: async_ctx is a valid out-pointer per N-API contract. We store the
-    // original `*mut NapiEnv` (preserving write provenance) rather than deriving
-    // it from the `&NapiEnv` borrow.
-    unsafe { *async_ctx = env_.cast::<c_void>() };
+    let async_ctx = get_out!(env, async_ctx_);
+    *async_ctx = env_.cast::<c_void>();
     env.ok()
 }
 
@@ -1162,20 +1162,23 @@ extern "C" fn napi_make_callback(
     bun_output::scoped_log!(napi, "napi_make_callback");
     let env = preamble!(env_);
     let (recv, func) = (recv_.get(), func_.get());
+    if recv.is_empty() {
+        return env.invalid_arg();
+    }
+    if arg_count > 0 && args.is_null() {
+        return env.invalid_arg();
+    }
     if func.is_empty_or_undefined_or_null()
         || (!func.is_callable() && !func.is_async_context_frame())
     {
-        return NapiEnv::set_last_error(Some(env), NapiStatus::function_expected);
+        return env.invalid_arg();
     }
 
-    let this_value = if !recv.is_empty() {
-        recv
-    } else {
-        JSValue::UNDEFINED
-    };
-    let args_slice: &[JSValue] = if arg_count > 0 && !args.is_null() {
-        // SAFETY: napi_value is repr(transparent) over i64, same as JSValue; caller guarantees
-        // [args, args+arg_count) is valid.
+    let this_value = recv;
+    let args_slice: &[JSValue] = if arg_count > 0 {
+        // SAFETY: napi_value is repr(transparent) over i64, same as JSValue; the
+        // arg_count > 0 && args.is_null() case returned napi_invalid_arg above,
+        // and caller guarantees [args, args+arg_count) is valid.
         unsafe { bun_core::ffi::slice(args.cast::<JSValue>(), arg_count) }
     } else {
         &[]
@@ -1299,7 +1302,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_is_error(env_: napi_env, value_: napi_value, result: *mut bool) -> napi_status {
+extern "C" fn napi_is_error(env_: napi_env, value_: napi_value, result_: *mut bool) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_error");
     let env = get_env!(env_);
     env.check_gc();
@@ -1307,8 +1310,8 @@ extern "C" fn napi_is_error(env_: napi_env, value_: napi_value, result: *mut boo
     if value.is_empty() {
         return env.invalid_arg();
     }
-    // SAFETY: result is a valid out-pointer per N-API contract.
-    unsafe { *result = value.is_any_error() };
+    let result = get_out!(env, result_);
+    *result = value.is_any_error();
     env.ok()
 }
 
@@ -1549,7 +1552,7 @@ extern "C" fn napi_resolve_deferred(
     let resolution = resolution_.get();
     let prom = deferred_box.get();
     if prom.resolve(env.to_js(), resolution).is_err() {
-        return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception);
+        return env.generic_failure();
     }
     env.ok()
 }
@@ -1567,7 +1570,7 @@ extern "C" fn napi_reject_deferred(
     let rejection = rejection_.get();
     let prom = deferred_box.get();
     if prom.reject(env.to_js(), Ok(rejection)).is_err() {
-        return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception);
+        return env.generic_failure();
     }
     env.ok()
 }
@@ -1754,7 +1757,6 @@ impl napi_async_work {
             // SAFETY: env outlives the async work; clone bumps the C++ refcount.
             env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
             execute,
-            // SAFETY: bun_vm() never null for a Bun-owned global.
             // SAFETY: `event_loop()` is the live JS-thread loop (non-null,
             // stable address) and outlives every napi_async_work.
             event_loop: unsafe { bun_ptr::BackRef::from_raw(global.bun_vm().event_loop()) },
@@ -1785,9 +1787,9 @@ impl napi_async_work {
     }
 
     pub(crate) unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        // SAFETY: task points to napi_async_work.task.
-        let this = unsafe { &mut *napi_async_work::from_task_ptr(task) };
-        this.run();
+        // SAFETY: `task` is the `task` field of a live heap `napi_async_work`,
+        // exclusively owned by the work pool for this callback's duration.
+        unsafe { (*napi_async_work::from_task_ptr(task)).run() };
     }
 
     fn run(&mut self) {
@@ -2002,7 +2004,7 @@ extern "C" fn napi_create_buffer_copy(
     let result = get_out!(env, result_);
     let buffer: JSValue = match JSValue::create_buffer_from_length(env.to_js(), length) {
         Ok(b) => b,
-        Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception),
+        Err(_) => return env.generic_failure(),
     };
     if let Some(mut array_buf) = buffer.as_array_buffer(env.to_js()) {
         if length > 0 {
@@ -2393,7 +2395,7 @@ pub(crate) struct ThreadSafeFunction {
     // EventLoop`; reborrowed at use sites (single JS thread). `None` once the
     // owning env is torn down: the loop lives inside a VirtualMachine that a
     // worker's shutdown frees, while addon threads outlive it.
-    pub(crate) event_loop: Option<bun_ptr::BackRef<EventLoop>>,
+    pub(crate) event_loop: Option<bun_ptr::BackRef<EventLoop, bun_ptr::Mut>>,
     pub(crate) tracker: Debugger::AsyncTaskTracker,
 
     /// Dropped on the JS thread by `env_teardown`; `None` afterwards.
@@ -2503,14 +2505,15 @@ impl ThreadSafeFunction {
     // a `*mut ThreadSafeFunction`; the signature is fixed by that registry.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn on_dispatch(this: *mut ThreadSafeFunction) {
-        // SAFETY: `this` is a live heap allocation owned by the event loop dispatch.
-        let self_ = unsafe { &mut *this };
-        if self_.env_dead.load(Ordering::SeqCst) {
+        // SAFETY: `this` is a live heap allocation owned by the event loop
+        // dispatch; `env_dead` is atomic so a shared reborrow suffices.
+        if unsafe { (*this).env_dead.load(Ordering::SeqCst) } {
             // `env_teardown` already released everything and owns the free
             // decision. The loop this task came from is being destroyed.
             return;
         }
-        if self_.closing.load(Ordering::SeqCst) == ClosingState::Closed as u8 {
+        // SAFETY: as above.
+        if unsafe { (*this).closing.load(Ordering::SeqCst) } == ClosingState::Closed as u8 {
             // Finalize the ThreadSafeFunction.
             // SAFETY: `this` is the live heap allocation we own; closed state guarantees no other thread will touch it.
             unsafe { ThreadSafeFunction::destroy(this) };
@@ -2521,14 +2524,22 @@ impl ThreadSafeFunction {
 
         // Run the tasks.
         loop {
-            self_
-                .dispatch_state
-                .store(DispatchState::Running as u8, Ordering::SeqCst);
-            if self_.dispatch_one(is_first) {
-                is_first = false;
-                self_
+            // SAFETY: as above.
+            unsafe {
+                (*this)
                     .dispatch_state
-                    .store(DispatchState::Pending as u8, Ordering::SeqCst);
+                    .store(DispatchState::Running as u8, Ordering::SeqCst)
+            };
+            // SAFETY: as above. `dispatch_one` runs JS that can re-enter other
+            // TSFN entry points, so the exclusive borrow is scoped to this call.
+            if unsafe { (*this).dispatch_one(is_first) } {
+                is_first = false;
+                // SAFETY: as above.
+                unsafe {
+                    (*this)
+                        .dispatch_state
+                        .store(DispatchState::Pending as u8, Ordering::SeqCst)
+                };
             } else {
                 // We're done running tasks, for now. Transition Running → Idle
                 // via CAS instead of an unconditional store: between
@@ -2540,15 +2551,16 @@ impl ThreadSafeFunction {
                 // up. If we blindly stored Idle we'd overwrite that Pending
                 // and the callback would be dropped (flaky lost-wakeup under
                 // load). On CAS failure, loop and re-drain.
-                if self_
-                    .dispatch_state
-                    .compare_exchange(
+                // SAFETY: as above.
+                if unsafe {
+                    (*this).dispatch_state.compare_exchange(
                         DispatchState::Running as u8,
                         DispatchState::Idle as u8,
                         Ordering::SeqCst,
                         Ordering::SeqCst,
                     )
-                    .is_ok()
+                }
+                .is_ok()
                 {
                     break;
                 }
@@ -2688,17 +2700,15 @@ impl ThreadSafeFunction {
                 js: cb_js,
                 napi_threadsafe_function_call_js,
             } => {
-                let js: JSValue = cb_js.get().unwrap_or(JSValue::UNDEFINED);
-
                 // SAFETY: `env` is held alive by `self.env` (`NapiEnvRef`) for the TSF's lifetime.
                 let env_ref = unsafe { &*env };
                 let _hs = NapiHandleScope::open_scoped(env_ref);
-                napi_threadsafe_function_call_js(
-                    env,
-                    napi_value::create(env_ref, js),
-                    self.ctx,
-                    task,
-                );
+                // No func at creation => null js_callback (Node), not encoded undefined.
+                let js = match cb_js.get() {
+                    Some(v) => napi_value::create(env_ref, v),
+                    None => napi_value(0),
+                };
+                napi_threadsafe_function_call_js(env, js, self.ctx, task);
             }
         }
         Ok(())
@@ -2715,11 +2725,9 @@ impl ThreadSafeFunction {
         ctx: *mut c_void,
         block: bool,
     ) -> napi_status {
-        let (status, orphaned) = {
-            // SAFETY: live allocation; the borrow ends before the free below.
-            let self_ = unsafe { &mut *this };
-            self_.enqueue(ctx, block)
-        };
+        // SAFETY: live allocation; the borrow is scoped to this call and ends
+        // before the free below.
+        let (status, orphaned) = unsafe { (*this).enqueue(ctx, block) };
 
         if orphaned {
             // SAFETY: the lock is dropped, we dropped the last thread reference
@@ -2794,13 +2802,16 @@ impl ThreadSafeFunction {
     /// SAFETY: `this` must be a live `*mut ThreadSafeFunction` returned from `heap::alloc`
     /// and not aliased; caller transfers ownership.
     pub(crate) unsafe fn destroy(this: *mut ThreadSafeFunction) {
-        // SAFETY: caller contract — `this` is a live heap allocation; we consume it here.
-        let self_ = unsafe { &mut *this };
+        // SAFETY: caller contract — `this` is a live heap allocation and we are
+        // the sole owner; reclaim the Box up front so the body works on owned
+        // state and the drop at scope end frees it.
+        let mut self_ = unsafe { bun_core::heap::take(this) };
         self_.unref();
 
         if let Some(env) = self_.env.as_ref() {
             // SAFETY: env is live (we hold a ref); drops our registry entry so
-            // teardown cannot hand this pointer out after we free it.
+            // teardown cannot hand this pointer out after we free it. `this` is
+            // passed as an opaque registry key only, never dereferenced.
             unsafe { NapiEnv__unregisterThreadSafeFunction(env.get(), this.cast()) };
         }
 
@@ -2816,11 +2827,6 @@ impl ThreadSafeFunction {
             };
             finalizer.enqueue();
         }
-        // else-branch: `env` drops with the Box below.
-
-        // callback.deinit() and queue.deinit() run via Drop.
-        // SAFETY: `this` was allocated by heap::alloc in `new`.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 
     /// Frees the allocation and nothing else: no finalizer, no registry entry,
@@ -2938,10 +2944,12 @@ impl ThreadSafeFunction {
         mode: napi_threadsafe_function_release_mode,
     ) -> napi_status {
         let (status, orphaned) = {
-            // SAFETY: live allocation; the borrow ends before the free below.
-            let self_ = unsafe { &mut *this };
-            let _g = self_.lock.lock_guard();
-            self_.release_locked(mode)
+            // SAFETY: live allocation. `MutexGuard` holds the lock by raw
+            // pointer, so it does not keep `*this` borrowed across the call
+            // below; both borrows are scoped and end before the free.
+            let _g = unsafe { (*this).lock.lock_guard() };
+            // SAFETY: as above.
+            unsafe { (*this).release_locked(mode) }
         };
 
         if orphaned {
@@ -3004,9 +3012,9 @@ impl ThreadSafeFunction {
 extern "C" fn napi_internal_threadsafe_function_env_teardown(tsfn: *mut c_void) {
     let this = tsfn.cast::<ThreadSafeFunction>();
     // SAFETY: the registry only holds live TSFN pointers — `destroy` and
-    // `env_teardown` both remove the entry before freeing.
-    let self_ = unsafe { &mut *this };
-    if self_.env_teardown() {
+    // `env_teardown` both remove the entry before freeing. Exclusive borrow
+    // scoped to this call.
+    if unsafe { (*this).env_teardown() } {
         // SAFETY: no other thread holds a reference (thread_count == 0) and no
         // event-loop task will run again.
         unsafe { ThreadSafeFunction::free_orphaned(this) };
@@ -3060,7 +3068,7 @@ extern "C" fn napi_create_threadsafe_function(
     let function = ThreadSafeFunction::new(ThreadSafeFunction {
         // SAFETY: the loop is live now; `NapiEnv::cleanup()` clears this field
         // (via `env_teardown`) before the VirtualMachine holding it is freed.
-        event_loop: Some(unsafe { bun_ptr::BackRef::from_raw(vm.event_loop()) }),
+        event_loop: Some(unsafe { bun_ptr::BackRef::from_raw_mut(vm.event_loop()) }),
         // SAFETY: env is a live C++-owned napi_env.
         env: Some(unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) }),
         callback,
@@ -3095,11 +3103,11 @@ extern "C" fn napi_create_threadsafe_function(
         return env.generic_failure();
     }
 
-    // SAFETY: function is non-null (just allocated).
-    let function_ref = unsafe { &mut *function };
     // nodejs by default keeps the event loop alive until the thread-safe function is unref'd
-    function_ref.ref_();
-    function_ref.tracker.did_schedule(vm.global());
+    // SAFETY: function is non-null (just allocated) and not yet handed out.
+    unsafe { (*function).ref_() };
+    // SAFETY: as above.
+    unsafe { (*function).tracker.did_schedule(vm.global()) };
 
     *result = function;
     env.ok()
@@ -3153,14 +3161,24 @@ extern "C" fn napi_unref_threadsafe_function(
     func: napi_threadsafe_function,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_unref_threadsafe_function");
-    let env = get_env!(env_);
-    // SAFETY: func is non-null per N-API contract.
-    let func = unsafe { &mut *func };
-    if let Some(loop_) = func.event_loop.as_ref() {
-        debug_assert!(core::ptr::eq(loop_.global.unwrap().as_ptr(), env.to_js()));
+    if func.is_null() {
+        return NapiStatus::invalid_arg as napi_status;
     }
-    func.unref();
-    env.ok()
+    #[cfg(debug_assertions)]
+    {
+        // SAFETY: `func` was null-checked above; JS thread, shared read.
+        let loop_ = unsafe { (*func).event_loop.as_ref() };
+        // SAFETY: `env_` is either null or a valid napi_env per N-API contract.
+        let env = unsafe { env_.as_ref() };
+        if let (Some(loop_), Some(env)) = (loop_, env) {
+            debug_assert!(core::ptr::eq(loop_.global.unwrap().as_ptr(), env.to_js()));
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = env_;
+    // SAFETY: `func` was null-checked above; exclusive borrow scoped to this call.
+    unsafe { (*func).unref() };
+    NapiStatus::ok as napi_status
 }
 
 #[unsafe(no_mangle)]
@@ -3169,14 +3187,24 @@ extern "C" fn napi_ref_threadsafe_function(
     func: napi_threadsafe_function,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_ref_threadsafe_function");
-    let env = get_env!(env_);
-    // SAFETY: func is non-null per N-API contract.
-    let func = unsafe { &mut *func };
-    if let Some(loop_) = func.event_loop.as_ref() {
-        debug_assert!(core::ptr::eq(loop_.global.unwrap().as_ptr(), env.to_js()));
+    if func.is_null() {
+        return NapiStatus::invalid_arg as napi_status;
     }
-    func.ref_();
-    env.ok()
+    #[cfg(debug_assertions)]
+    {
+        // SAFETY: `func` was null-checked above; JS thread, shared read.
+        let loop_ = unsafe { (*func).event_loop.as_ref() };
+        // SAFETY: `env_` is either null or a valid napi_env per N-API contract.
+        let env = unsafe { env_.as_ref() };
+        if let (Some(loop_), Some(env)) = (loop_, env) {
+            debug_assert!(core::ptr::eq(loop_.global.unwrap().as_ptr(), env.to_js()));
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = env_;
+    // SAFETY: `func` was null-checked above; exclusive borrow scoped to this call.
+    unsafe { (*func).ref_() };
+    NapiStatus::ok as napi_status
 }
 
 const NAPI_AUTO_LENGTH: usize = usize::MAX;

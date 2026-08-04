@@ -154,7 +154,11 @@ impl BuildCommand {
         this_transpiler.options.source_map =
             options::SourceMapOption::from_api(ctx.args.source_map);
 
-        this_transpiler.options.compile = ctx.bundler_options.compile;
+        this_transpiler.options.compile_mode = if ctx.bundler_options.compile {
+            options::CompileMode::Executable
+        } else {
+            options::CompileMode::None
+        };
 
         if this_transpiler.options.source_map == options::SourceMapOption::External
             && ctx.bundler_options.outdir.is_empty()
@@ -284,9 +288,8 @@ impl BuildCommand {
                     Global::exit(1);
                 }
 
-                this_transpiler.options.compile_to_standalone_html = true;
                 // This is not a bun executable compile - clear compile flags
-                this_transpiler.options.compile = false;
+                this_transpiler.options.compile_mode = options::CompileMode::StandaloneHtml;
                 ctx.bundler_options.compile = false;
 
                 if ctx.bundler_options.outdir.is_empty() && outfile.is_empty() {

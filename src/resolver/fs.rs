@@ -664,15 +664,6 @@ impl bun_dotenv::DirEntryProbe for DirEntry {
     }
 }
 
-// pub fn statBatch(fs: *FileSystemEntry, paths: []string) ![]?Stat {
-// }
-// pub fn stat(fs: *FileSystemEntry, path: string) !Stat {
-// }
-// pub fn readFile(fs: *FileSystemEntry, path: string) ?string {
-// }
-// pub fn readDir(fs: *FileSystemEntry, path: string) ?[]string {
-// }
-
 #[derive(Default, Clone, Copy)]
 pub struct ModKey {
     pub(crate) size: u64,

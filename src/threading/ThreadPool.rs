@@ -606,10 +606,7 @@ impl ThreadPool {
             // `current` is the calling worker's own stack-local `Thread` (set in
             // `ThreadRegistration::new`); BackRef invariant — pointee outlives
             // this read — holds for the `thread_pool` field load.
-            if bun_ptr::BackRef::from(current)
-                .thread_pool
-                .as_ptr()
-                .cast_const()
+            if bun_ptr::BackRef::from(current).thread_pool.as_const_ptr()
                 == std::ptr::from_ref::<ThreadPool>(self)
             {
                 current.as_ptr()
@@ -1078,7 +1075,7 @@ impl Drop for ThreadRegistration {
         // SAFETY: per `new()` contract. `unregister` takes `*const` (not the
         // `BackRef`) because the pool may be freed by the joiner before it
         // returns — see `unregister`'s doc.
-        unsafe { ThreadPool::unregister(self.pool.as_ptr(), self.thread) };
+        unsafe { ThreadPool::unregister(self.pool.as_const_ptr(), self.thread) };
         CURRENT.with(|c| c.set(ptr::null_mut()));
     }
 }

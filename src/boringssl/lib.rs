@@ -394,7 +394,7 @@ fn match_dns_name(pattern: &[u8], hostname: &[u8]) -> bool {
 
 pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> bool {
     let hostname = unfqdn(hostname);
-    let host_is_ip = strings::is_ip_address(hostname);
+    let host_is_ip = bun_core::ip_address::is_ip_address(hostname);
     let mut has_dns_san = false;
 
     match x509.subject_alt_names() {
@@ -699,7 +699,7 @@ pub fn write_server_identity_mismatch_reason(
     const NO_DNS: &str = "Cert does not contain a DNS name";
     let hostname = unfqdn(hostname);
     let host = NameBytes(hostname);
-    let host_is_ip = strings::is_ip_address(hostname);
+    let host_is_ip = bun_core::ip_address::is_ip_address(hostname);
 
     let Some(x509) = ssl_ptr.peer_leaf_certificate() else {
         return out.write_str(NO_DNS);

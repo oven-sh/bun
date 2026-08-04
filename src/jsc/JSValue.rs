@@ -2141,8 +2141,8 @@ pub enum ProxyField {
 /// `JSValue.SerializedFlags`.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SerializedFlags {
-    pub(crate) for_cross_process_transfer: bool,
-    pub(crate) for_storage: bool,
+    pub for_cross_process_transfer: bool,
+    pub for_storage: bool,
 }
 
 /// `JSValue.SerializedScriptValue` — owned view over a
@@ -2156,7 +2156,7 @@ impl SerializedScriptValue {
     /// Borrow the serialized bytes. Valid only while `self` is alive (the
     /// backing buffer is freed on drop); the lifetime is tied to `&self`.
     #[inline]
-    pub(crate) fn data(&self) -> &[u8] {
+    pub fn data(&self) -> &[u8] {
         // SAFETY: C++ guarantees `bytes[..size]` is valid for the lifetime of
         // `handle` (until `Bun__SerializedScriptSlice__free`); the returned
         // borrow is tied to `&self` so it cannot outlive `Drop`.
@@ -2637,14 +2637,14 @@ impl JSValue {
 
     // ── Structured clone. ────────────────────────
     /// `JSValue.deserialize(bytes, global)`.
-    pub(crate) fn deserialize(bytes: &[u8], global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn deserialize(bytes: &[u8], global: &JSGlobalObject) -> JsResult<JSValue> {
         // SAFETY: `global` is live; `bytes` valid for the call.
         host_fn::from_js_host_call(global, || unsafe {
             Bun__JSValue__deserialize(global, bytes.as_ptr(), bytes.len())
         })
     }
     /// `JSValue.serialize(global, flags)` — structured-clone to bytes.
-    pub(crate) fn serialize(
+    pub fn serialize(
         self,
         global: &JSGlobalObject,
         flags: SerializedFlags,

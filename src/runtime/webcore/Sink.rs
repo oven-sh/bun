@@ -209,6 +209,22 @@ impl<T: JsSinkAbi> JSSink<T> {
             std::ptr::from_mut::<T>(ptr).cast::<c_void>(),
             (&raw mut bits).cast::<*mut c_void>(),
         );
+        // `${name}__assignToStream` creates the JSReadable*SinkController with
+        // m_sinkPtr=ptr before calling into the stream pump. If the pump setup
+        // throws (e.g. a direct stream's `pull` getter), nothing ever calls
+        // end()/close() on the controller, so its destructor would run
+        // `${name}__finalize(m_sinkPtr)` after the caller has freed the sink.
+        // Detach it now while `ptr` is still live; the controller's later GC
+        // then sees m_sinkPtr==null and skips the native finalize.
+        if bits != 0 && result.to_error().is_some() {
+            if let Some(src) = ptr.source() {
+                *src = streams::SourceHandle::None;
+            }
+            let _ = ::bun_jsc::call_check_slow(global, || {
+                streams::controller_abi::detach_ptr(JSValue::from_encoded(bits))
+            });
+            return result;
+        }
         if let Some(src) = ptr.source() {
             if matches!(*src, streams::SourceHandle::JSController(_)) {
                 *src = if bits != 0 {

@@ -480,3 +480,25 @@ module.exports = x;`,
   expect(stderr).toContain(`"await" can only be used inside an "async" function`);
   expect(exitCode).not.toBe(0);
 });
+
+// `declare enum` bodies parse without their own scope; `await` in an
+// initializer must keep identifier semantics and its parse error.
+test.concurrent("bun build --format=cjs still rejects await in a declare-enum initializer", async () => {
+  using dir = tempDir("issue-29243-declare-enum", {
+    "entry.ts": `declare enum x { y = await 1 }
+module.exports = 1;`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.ts", "--format=cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(`"await" can only be used inside an "async" function`);
+  expect(exitCode).not.toBe(0);
+});

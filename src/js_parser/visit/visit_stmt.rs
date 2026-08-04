@@ -1861,8 +1861,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         local.decls.slice(),
                         RelocateVarsMode::Normal,
                     );
-                    if let Some(relocated) = relocate.stmt {
-                        data.init = Some(relocated);
+                    // `ok` with no statement means the decls were fully
+                    // relocated; the init slot must be cleared, not kept.
+                    if relocate.ok {
+                        data.init = relocate.stmt;
                     }
                 }
             }

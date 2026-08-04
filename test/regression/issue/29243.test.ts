@@ -612,3 +612,29 @@ async function f() {}`,
   expect(stdout).toContain("async function f()");
   expect(exitCode).toBe(0);
 });
+
+// A value-less `var` in a for-init is fully relocated; the init slot must be
+// cleared so a dead loop drops instead of keeping its await-bearing test.
+test.concurrent("bun build --format=cjs drops a dead for loop with awaits and a var init", async () => {
+  using dir = tempDir("issue-29243-dead-for-var-init", {
+    "entry.js": `if (false) {
+  for (var x; await a(); await b()) {}
+}
+module.exports = 1;`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+
+  expect(stdout).not.toContain("await");
+  expect(stdout).toContain("var x");
+  expect(exitCode).toBe(0);
+});

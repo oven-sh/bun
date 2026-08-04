@@ -8,6 +8,7 @@ const isBuffer = Buffer.isBuffer;
 const ObjectKeys = Object.keys;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const SafeSet = Set;
 
 /** Returns null when `value` holds no Buffers, else the [value, buffers] envelope. */
@@ -27,14 +28,14 @@ function tagBuffers(value: unknown): [unknown, unknown[]] | null {
       continue;
     }
     if ($isMap(current)) {
-      for (const { 0: key, 1: entry } of current) {
+      current.$forEach((entry, key) => {
         stack.push(key);
         stack.push(entry);
-      }
+      });
       continue;
     }
     if ($isSet(current)) {
-      for (const entry of current) stack.push(entry);
+      current.$forEach(entry => stack.push(entry));
       continue;
     }
     // Objects, arrays and errors: the serializer walks own enumerable
@@ -42,7 +43,7 @@ function tagBuffers(value: unknown): [unknown, unknown[]] | null {
     const keys = ObjectKeys(current);
     for (let i = 0; i < keys.length; i++) {
       const desc = ObjectGetOwnPropertyDescriptor(current, keys[i]);
-      if (desc && "value" in desc) stack.push(desc.value);
+      if (desc && ObjectPrototypeHasOwnProperty.$call(desc, "value")) stack.push(desc.value);
     }
   }
   return buffers === null ? null : [value, buffers];

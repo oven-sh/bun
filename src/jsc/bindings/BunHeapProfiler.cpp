@@ -1,5 +1,4 @@
 #include "root.h"
-#include "BunHeapProfiler.h"
 #include "BunCPUProfiler.h"
 #include "headers-handwritten.h"
 #include "ZigGlobalObject.h"
@@ -125,7 +124,7 @@ static WTF::String formatBytes(size_t bytes)
     return sb.toString();
 }
 
-WTF::String generateHeapProfile(JSC::VM& vm)
+static WTF::String generateHeapProfile(JSC::VM& vm)
 {
     vm.ensureHeapProfiler();
     auto& heapProfiler = *vm.heapProfiler();
@@ -1022,7 +1021,7 @@ static void appendSamplingHeapNodeJSON(WTF::StringBuilder& sb, const WTF::Vector
     sb.append("]}"_s);
 }
 
-WTF::String generateHeapSamplingProfile(JSC::VM& vm)
+static WTF::String generateHeapSamplingProfile(JSC::VM& vm)
 {
     WTF::Vector<SamplingHeapNode> nodes;
     {

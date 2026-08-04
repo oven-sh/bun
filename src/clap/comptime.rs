@@ -248,7 +248,7 @@ pub const fn build_long_index<Id, const M: usize>(params: &[Param<Id>]) -> [Long
 }
 
 /// `[i16; 128]` ASCII → index into `converted`. `-1` = no such short.
-pub(crate) const fn build_short_index(converted: &[Param<usize>]) -> [i16; 128] {
+const fn build_short_index(converted: &[Param<usize>]) -> [i16; 128] {
     let mut idx = [-1i16; 128];
     let mut i = 0;
     while i < converted.len() {
@@ -267,7 +267,7 @@ pub(crate) const fn build_short_index(converted: &[Param<usize>]) -> [i16; 128] 
 /// FNV-1a 64. `const fn` so `comptime_table!` can pre-hash; also used at
 /// runtime for the long-name index.
 #[inline]
-pub(crate) const fn fnv1a64(bytes: &[u8]) -> u64 {
+const fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     let mut i = 0;
     while i < bytes.len() {
@@ -290,10 +290,10 @@ pub struct LongEntry {
 /// lazily built once per unique input slice via [`ConvertedTable::for_params`]
 /// and interned for the process lifetime.
 pub struct ConvertedTable {
-    pub converted: &'static [Param<usize>],
-    pub n_flags: usize,
-    pub n_single: usize,
-    pub n_multi: usize,
+    pub(crate) converted: &'static [Param<usize>],
+    pub(crate) n_flags: usize,
+    pub(crate) n_single: usize,
+    pub(crate) n_multi: usize,
     /// Sorted by `hash`; binary-searched in `find`. Populated by both the
     /// const-eval path ([`build_long_index`] via `comptime_table!`) and the
     /// runtime fallback path (`build`).
@@ -331,7 +331,7 @@ impl ConvertedTable {
     /// handful of non-startup callers (`bun create`, `bun install`) that still
     /// hand a raw `&'static [Param<Id>]` to `clap::parse`.
     #[cold]
-    pub fn for_params<Id>(params: &'static [Param<Id>]) -> &'static ConvertedTable {
+    pub(crate) fn for_params<Id>(params: &'static [Param<Id>]) -> &'static ConvertedTable {
         let key = (params.as_ptr() as usize, params.len());
         {
             let reg = registry().lock();
@@ -490,11 +490,11 @@ fn registry() -> &'static Registry {
 /// Deprecated: Use `parse_ex` instead
 pub struct ComptimeClap<Id> {
     // Inner `&'static [u8]` slices borrow argv (process-lifetime).
-    pub single_options: Box<[Option<&'static [u8]>]>,
-    pub multi_options: Box<[Box<[&'static [u8]]>]>,
-    pub flags: Box<[bool]>,
-    pub pos: Box<[&'static [u8]]>,
-    pub passthrough_positionals: Box<[&'static [u8]]>,
+    pub(crate) single_options: Box<[Option<&'static [u8]>]>,
+    pub(crate) multi_options: Box<[Box<[&'static [u8]]>]>,
+    pub(crate) flags: Box<[bool]>,
+    pub(crate) pos: Box<[&'static [u8]]>,
+    pub(crate) passthrough_positionals: Box<[&'static [u8]]>,
 
     // The converted params are
     // carried as a `&'static` table — either rodata (`comptime_table!`) or
@@ -518,7 +518,7 @@ impl<Id> ComptimeClap<Id> {
     /// it's marked `#[cold]` to keep the runtime-conversion machinery
     /// (`for_params` registry, `build`) out of the startup hot cluster.
     #[cold]
-    pub fn parse<I>(
+    pub(crate) fn parse<I>(
         params: &'static [Param<Id>],
         iter: &mut I,
         opt: ParseOptions<'_>,
@@ -531,7 +531,7 @@ impl<Id> ComptimeClap<Id> {
 
     /// Parse against a pre-converted table (see [`comptime_table!`](crate::comptime_table)).
     /// This is the zero-conversion-cost entry point — `table` is rodata.
-    pub fn parse_with_table<I>(
+    pub(crate) fn parse_with_table<I>(
         table: &'static ConvertedTable,
         iter: &mut I,
         opt: ParseOptions<'_>,
@@ -618,7 +618,7 @@ impl<Id> ComptimeClap<Id> {
     // All fields are owned, so `Drop` handles cleanup; no explicit deinit needed.
 
     #[inline]
-    pub fn flag(&self, name: &[u8]) -> bool {
+    pub(crate) fn flag(&self, name: &[u8]) -> bool {
         let param = self.table.find(name);
         debug_assert!(
             matches!(
@@ -632,7 +632,7 @@ impl<Id> ComptimeClap<Id> {
     }
 
     #[inline]
-    pub fn option(&self, name: &[u8]) -> Option<&'static [u8]> {
+    pub(crate) fn option(&self, name: &[u8]) -> Option<&'static [u8]> {
         let param = self.table.find(name);
         debug_assert!(
             param.takes_value != Values::None,
@@ -648,7 +648,7 @@ impl<Id> ComptimeClap<Id> {
     }
 
     #[inline]
-    pub fn options(&self, name: &[u8]) -> &[&'static [u8]] {
+    pub(crate) fn options(&self, name: &[u8]) -> &[&'static [u8]] {
         let param = self.table.find(name);
         debug_assert!(
             param.takes_value != Values::None,
@@ -669,42 +669,11 @@ impl<Id> ComptimeClap<Id> {
         &self.multi_options[param.id]
     }
 
-    pub fn positionals(&self) -> &[&'static [u8]] {
+    pub(crate) fn positionals(&self) -> &[&'static [u8]] {
         &self.pos
     }
 
-    pub fn remaining(&self) -> &[&'static [u8]] {
+    pub(crate) fn remaining(&self) -> &[&'static [u8]] {
         &self.passthrough_positionals
-    }
-
-    /// `const fn` so `const { has_flag(PARAMS, b"--foo") }` folds.
-    pub const fn has_flag(params: &[Param<Id>], name: &[u8]) -> bool {
-        let mut i = 0;
-        while i < params.len() {
-            let n = &params[i].names;
-            if name.len() == 2 && name[0] == b'-' {
-                if let Some(s) = n.short {
-                    if s == name[1] {
-                        return true;
-                    }
-                }
-            } else if name.len() > 2 && name[0] == b'-' && name[1] == b'-' {
-                let (_, key) = name.split_at(2);
-                if let Some(l) = n.long {
-                    if bytes_eq(l, key) {
-                        return true;
-                    }
-                }
-                let mut a = 0;
-                while a < n.long_aliases.len() {
-                    if bytes_eq(n.long_aliases[a], key) {
-                        return true;
-                    }
-                    a += 1;
-                }
-            }
-            i += 1;
-        }
-        false
     }
 }

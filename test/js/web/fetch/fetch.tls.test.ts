@@ -487,6 +487,59 @@ describe.concurrent("fetch-tls", () => {
     }
   });
 
+  it("honors a tls.ciphers list on the request", async () => {
+    let secureConnections = 0;
+    const server = tls.createServer(
+      {
+        key: validTls.key,
+        cert: validTls.cert,
+        ciphers: "ECDHE-RSA-AES128-GCM-SHA256",
+        maxVersion: "TLSv1.2",
+      },
+      socket => {
+        secureConnections++;
+        const chunks: Buffer[] = [];
+        socket.on("data", chunk => {
+          chunks.push(chunk);
+          if (Buffer.concat(chunks).includes("\r\n\r\n")) {
+            socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+          }
+        });
+        socket.on("error", () => {});
+      },
+    );
+    server.on("tlsClientError", () => {});
+    try {
+      const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+      server.listen(0, onListening);
+      await listening;
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const url = `https://127.0.0.1:${port}/`;
+
+      const matching = await fetch(url, {
+        keepalive: false,
+        tls: { ca: validTls.cert, ciphers: "ECDHE-RSA-AES128-GCM-SHA256" },
+      });
+      expect(await matching.text()).toBe("ok");
+      expect(matching.status).toBe(200);
+      expect(secureConnections).toBe(1);
+
+      let err: unknown;
+      try {
+        await fetch(url, {
+          keepalive: false,
+          tls: { ca: validTls.cert, ciphers: "ECDHE-RSA-AES256-GCM-SHA384" },
+        });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(Error);
+      expect(secureConnections).toBe(1);
+    } finally {
+      server.close();
+    }
+  });
+
   it("fetch with self-sign certificate tls + rejectUnauthorized: false should not throw", async () => {
     await createServer(CERT_LOCALHOST_IP, async port => {
       const urls = [`https://localhost:${port}`, `https://127.0.0.1:${port}`];

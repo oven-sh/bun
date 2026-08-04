@@ -110,7 +110,7 @@ enum DeclarationLoc {
     ParamOrContext,
 }
 
-pub fn rewrite_instruction_kinds_based_on_reassignment(
+pub(crate) fn rewrite_instruction_kinds_based_on_reassignment(
     func: &mut HirFunction,
     env: &Environment,
 ) -> Result<(), CompilerError> {

@@ -102,7 +102,7 @@ const hasOpenSSL = (major = 0, minor = 0, patch = 0) => {
   return OPENSSL_VERSION_NUMBER >= opensslVersionNumber(major, minor, patch);
 };
 
-const hasQuic = hasCrypto && !!process.config.variables.openssl_quic;
+const hasQuic = hasCrypto && !!process.features.quic;
 
 function parseTestMetadata(filename = process.argv[1]) {
   // The copyright notice is relatively big and the metadata could come afterwards.
@@ -160,6 +160,9 @@ if (process.argv.length === 2 &&
     require('cluster').isPrimary &&
     fs.existsSync(process.argv[1])) {
   const { flags, envs } = parseTestMetadata();
+  if (process.versions.bun && process.execArgv.includes("--expose-internals")) {
+    installBunExposeInternalsRequireInterceptor();
+  }
   const envsTriggerSpawn = Object.keys(envs).some((key) => process.env[key] !== envs[key]);
   let flagsTriggerSpawn = false;
   for (const flag of flags) {
@@ -282,6 +285,8 @@ if (process.versions.bun &&
 // for release). Unknown internal/* specifiers fall through to the
 // original require and fail exactly as before.
 function installBunExposeInternalsRequireInterceptor() {
+  if (installBunExposeInternalsRequireInterceptor.installed) return;
+  installBunExposeInternalsRequireInterceptor.installed = true;
   const BunModule = require('module');
   const originalRequire = BunModule.prototype.require;
   let exposedInternals;

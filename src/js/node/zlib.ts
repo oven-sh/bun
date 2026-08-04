@@ -688,7 +688,7 @@ function createConvenienceMethod(ctor, sync, methodName, isZstd) {
           bufferSize = 0;
         }
         // Set pledgedSrcSize if not already set
-        if (!opts.pledgedSrcSize && bufferSize > 0) {
+        if (!opts?.pledgedSrcSize && bufferSize > 0) {
           opts = { ...opts, pledgedSrcSize: bufferSize };
         }
       }

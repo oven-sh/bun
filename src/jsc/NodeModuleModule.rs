@@ -17,7 +17,7 @@ use bun_options_types::schema::api;
 pub(crate) struct ApiLoader(pub u8);
 impl ApiLoader {
     /// `_none = 254`.
-    pub(crate) const NONE: Self = Self(api::Loader::_none as u8);
+    const NONE: Self = Self(api::Loader::_none as u8);
 
     /// Reconstruct the closed schema enum. Only valid when `self != NONE` is
     /// already established and the C++ caller honoured the `BunLoaderType`
@@ -34,7 +34,7 @@ impl ApiLoader {
 // `jsFunctionFindPath`) does the CallFrame → (BunString, JSArray*) extraction itself and
 // invokes this with the coerced args directly — there is no CallFrame here.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn NodeModuleModule__findPath(
+extern "C" fn NodeModuleModule__findPath(
     global: &JSGlobalObject,
     request_bun_str: BunString,
     paths_maybe: *mut JSArray,
@@ -101,8 +101,7 @@ fn find_path_inner(
         request,
         cur_path,
         None,
-        false,
-        true,
+        crate::virtual_machine::ResolveMode::RequireResolve,
     ) {
         Ok(()) => {}
         Err(JsError::Thrown) => {
@@ -115,7 +114,7 @@ fn find_path_inner(
     errorable.unwrap().ok()
 }
 
-pub fn _stat(path: &[u8]) -> i32 {
+pub fn stat(path: &[u8]) -> i32 {
     // PERF: `exists_at_type`
     // takes a `&ZStr`, so we copy into a NUL-terminated heap buffer here.
     let zpath = bun_core::ZBox::from_bytes(path);
@@ -248,7 +247,7 @@ pub fn find_longest_registered_extension<'a>(
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn NodeModuleModule__onRequireExtensionModify(
+extern "C" fn NodeModuleModule__onRequireExtensionModify(
     global: &JSGlobalObject,
     str: &BunString,
     loader: ApiLoader,
@@ -261,7 +260,7 @@ pub(crate) extern "C" fn NodeModuleModule__onRequireExtensionModify(
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
+extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
     global: &JSGlobalObject,
     str: &BunString,
 ) {
@@ -301,10 +300,9 @@ pub fn module_hooks_read_load_result(
     Ok((source, loader, module_type))
 }
 
-/// True when `specifier` is a scheme-prefixed virtual id that only
-/// `module.registerHooks()` hooks can produce (e.g. `test://x`,
-/// `virtual:entry`) — as opposed to a filesystem path, a Windows drive path,
-/// or a builtin id.
+/// True when `specifier` is a scheme-prefixed virtual id only hook chains can
+/// produce (e.g. `test://x`, `virtual:entry`) — not a filesystem/drive path or
+/// builtin id.
 pub fn module_hooks_virtual_specifier(specifier: &[u8]) -> bool {
     let Some(colon) = specifier.iter().position(|&b| b == b':') else {
         return false;

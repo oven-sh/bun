@@ -91,5 +91,9 @@ function createTestCmdLine(options) {
     // continuous testing and developers' machines
     escapedArgs[0] = 'ulimit -c 0 && ' + escapedArgs[0];
   }
+  // Bun: intentional abort — don't upload to CI's crash-report server.
+  escapedArgs[1] = escapedArgs[1] || { env: { ...process.env } };
+  escapedArgs[1].env.BUN_CRASH_REPORT_URL = '';
+  escapedArgs[1].env.BUN_ENABLE_CRASH_REPORTING = '0';
   return escapedArgs;
 }

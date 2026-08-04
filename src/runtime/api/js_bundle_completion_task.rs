@@ -1050,6 +1050,7 @@ impl CompletionStruct for JSBundleCompletionTask {
             },
             inject: Vec::new(),
             external: config.external.keys().to_vec(),
+            internal: config.internal.keys().to_vec(),
             main_fields: Vec::new(),
             extension_order: Vec::new(),
             env_files: Vec::new(),

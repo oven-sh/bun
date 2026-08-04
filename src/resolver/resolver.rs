@@ -940,10 +940,44 @@ impl<'a> Resolver<'a> {
     }
 
     pub(crate) fn is_external_pattern(&self, import_path: &[u8]) -> bool {
+        // `--internal` never-external patterns take precedence over both
+        // `packages = external` and positive `--external` patterns.
+        if self.matches_excluded_external(import_path) {
+            return false;
+        }
         if self.opts.packages == options::Packages::External && is_package_path(import_path) {
             return true;
         }
         self.matches_user_external_pattern(import_path)
+    }
+
+    /// True iff `import_path` matches a user-supplied `--internal` never-external
+    /// pattern. Does NOT consider `packages = external` or positive
+    /// `--external` patterns; callers combine those via `is_external_pattern`.
+    pub(crate) fn matches_excluded_external(&self, import_path: &[u8]) -> bool {
+        for pattern in self.opts.external.excludes.iter() {
+            if import_path.len() >= pattern.prefix.len() + pattern.suffix.len()
+                && (import_path.starts_with(pattern.prefix.as_ref())
+                    && import_path.ends_with(pattern.suffix.as_ref()))
+            {
+                return true;
+            }
+        }
+        if self.opts.external.excludes_node_modules.count() == 0 || import_path.ends_with(b"/") {
+            return false;
+        }
+        // Same subpath-walking semantics as the positive `node_modules`
+        // externals: an exclusion of "foo" also covers "foo/bar".
+        let mut query = import_path;
+        loop {
+            if self.opts.external.excludes_node_modules.contains(query) {
+                return true;
+            }
+            let Some(slash) = strings::last_index_of_char(query, b'/') else {
+                return false;
+            };
+            query = &query[0..slash];
+        }
     }
 
     /// True iff `import_path` matches a user-supplied `--external` wildcard
@@ -2020,10 +2054,13 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            // Check for external packages first
-            if self.opts.external.node_modules.count() > 0
-            // Imports like "process/" need to resolve to the filesystem, not a builtin
-            && !import_path.ends_with(b"/")
+            // Check for external packages first — but never externalize
+            // anything matched by `--internal` (falls through to normal
+            // resolution below).
+            if !self.matches_excluded_external(import_path)
+                && self.opts.external.node_modules.count() > 0
+                // Imports like "process/" need to resolve to the filesystem, not a builtin
+                && !import_path.ends_with(b"/")
             {
                 let mut query = import_path;
                 loop {

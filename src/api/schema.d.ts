@@ -557,6 +557,7 @@ export interface TransformOptions {
   inject?: string[];
   output_dir?: string;
   external?: string[];
+  internal?: string[];
   loaders?: LoaderMap;
   main_fields?: string[];
   target?: Target;

@@ -121,6 +121,8 @@ pub(crate) fn init_external_modules(
     let mut result = ExternalModules {
         node_modules: StringSet::default(),
         abs_paths: StringSet::default(),
+        excludes: Vec::new(),
+        excludes_node_modules: StringSet::default(),
         patterns: default_wildcard_patterns(),
     };
 
@@ -148,6 +150,45 @@ pub(crate) fn init_external_modules(
 
     for external in externals {
         let path = *external;
+
+        // `--internal` entries arrive with a leading `!` marker (see
+        // `BundleOptions::from_api`): these modules are NEVER external,
+        // taking precedence over both `packages: external` and positive
+        // `--external` patterns.
+        if let Some(rest) = path.strip_prefix(b"!") {
+            if let Some(i) = strings::index_of_char(rest, b'*') {
+                let i = i as usize;
+                if strings::index_of_char(&rest[i + 1..], b'*').is_some() {
+                    log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "External path \"{}\" cannot have more than one \"*\" wildcard",
+                            bstr::BStr::new(external)
+                        ),
+                    );
+                    return result;
+                }
+                result.excludes.push(WildcardPattern {
+                    prefix: Box::from(&rest[0..i]),
+                    suffix: Box::from(&rest[i + 1..]),
+                });
+            } else if bun_paths::is_package_path(rest) {
+                result
+                    .excludes_node_modules
+                    .insert(rest)
+                    .expect("unreachable");
+            } else {
+                // Absolute paths and other exact specifiers: match by prefix
+                // (covers the path itself and anything beneath it).
+                result.excludes.push(WildcardPattern {
+                    prefix: Box::from(rest),
+                    suffix: Box::default(),
+                });
+            }
+            continue;
+        }
+
         if let Some(i) = strings::index_of_char(path, b'*') {
             let i = i as usize;
             if strings::index_of_char(&path[i + 1..], b'*').is_some() {
@@ -1849,14 +1890,21 @@ impl<'a> BundleOptions<'a> {
 
         // Reborrow the raw `*mut Log`
         // for the duration of this call only.
+        // `internal` entries are injected as `!`-prefixed never-external
+        // markers; `init_external_modules` routes them to `excludes`, which
+        // take precedence over `packages: external` and `--external`.
+        let mut external_entries: Vec<Box<[u8]>> = transform.external.clone();
+        external_entries.extend(transform.internal.iter().map(|s| {
+            let mut entry = Vec::with_capacity(s.len() + 1);
+            entry.push(b'!');
+            entry.extend_from_slice(s.as_ref());
+            entry.into_boxed_slice()
+        }));
+        let external_refs: Vec<&[u8]> = external_entries.iter().map(|s| s.as_ref()).collect();
         opts.external = init_external_modules(
             &mut fs.fs,
             fs.top_level_dir,
-            &transform
-                .external
-                .iter()
-                .map(|s| s.as_ref())
-                .collect::<Vec<&[u8]>>(),
+            &external_refs,
             // sole live `&mut` for this call (struct not yet returned).
             opts.log_mut(),
             opts.target,

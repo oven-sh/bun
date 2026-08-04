@@ -1,0 +1,148 @@
+import { describe, test } from "bun:test";
+import { itBundled } from "./expectBundled";
+
+// `internal` is the inverse of `external`: never externalize these modules,
+// even when `packages: "external"` or a positive `--external` would mark them
+// external. Backed by the `--internal` CLI flag / `Bun.build({ internal })`.
+describe("bundler", () => {
+  // The core use case: `packages: "external"` externalizes every package,
+  // `internal` keeps the listed ones bundled.
+  itBundled("internal/OverridesPackagesExternal", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "foo";
+        console.log(a);
+      `,
+    },
+    runtimeFiles: {
+      "/node_modules/foo/index.js": /* js */ `
+        export const a = "Hello World";
+      `,
+      "/node_modules/foo/package.json": /* json */ `
+        {
+          "name": "foo",
+          "version": "1.0.0",
+          "main": "index.js"
+        }
+      `,
+    },
+    packages: "external",
+    internal: ["foo"],
+    onAfterBundle(api) {
+      // "foo" is bundled — its code must appear in the output instead of a
+      // runtime `import ... from "foo"`.
+      api.expectFile("/out.js").toContain("Hello World");
+      api.expectFile("/out.js").not.toContain(`from "foo"`);
+    },
+  });
+
+  // `internal` takes precedence over a positive `external` entry.
+  itBundled("internal/OverridesExternal", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "foo";
+        console.log(a);
+      `,
+    },
+    runtimeFiles: {
+      "/node_modules/foo/index.js": /* js */ `
+        export const a = "Hello World";
+      `,
+      "/node_modules/foo/package.json": /* json */ `
+        {
+          "name": "foo",
+          "version": "1.0.0",
+          "main": "index.js"
+        }
+      `,
+    },
+    external: ["foo"],
+    internal: ["foo"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("Hello World");
+      api.expectFile("/out.js").not.toContain(`from "foo"`);
+    },
+  });
+
+  // Subpaths of an internal package are bundled too (same subpath-walking
+  // semantics as the positive `node_modules` externals).
+  itBundled("internal/Subpath", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "foo/sub";
+        console.log(a);
+      `,
+    },
+    runtimeFiles: {
+      "/node_modules/foo/sub.js": /* js */ `
+        export const a = "Hello Subpath";
+      `,
+      "/node_modules/foo/package.json": /* json */ `
+        {
+          "name": "foo",
+          "version": "1.0.0"
+        }
+      `,
+    },
+    packages: "external",
+    internal: ["foo"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("Hello Subpath");
+    },
+  });
+
+  // Wildcards are supported.
+  itBundled("internal/Wildcard", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "@scope/pkg";
+        console.log(a);
+      `,
+    },
+    runtimeFiles: {
+      "/node_modules/@scope/pkg/index.js": /* js */ `
+        export const a = "Hello Scope";
+      `,
+      "/node_modules/@scope/pkg/package.json": /* json */ `
+        {
+          "name": "@scope/pkg",
+          "version": "1.0.0",
+          "main": "index.js"
+        }
+      `,
+    },
+    packages: "external",
+    internal: ["@scope/*"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("Hello Scope");
+    },
+  });
+
+  // Sanity control: without `internal`, `packages: "external"` leaves the
+  // import as-is — proving the tests above exercise the new behavior.
+  itBundled("internal/ControlExternal", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "foo";
+        console.log(a);
+      `,
+    },
+    runtimeFiles: {
+      "/node_modules/foo/index.js": /* js */ `
+        export const a = "Hello World";
+      `,
+      "/node_modules/foo/package.json": /* json */ `
+        {
+          "name": "foo",
+          "version": "1.0.0",
+          "main": "index.js"
+        }
+      `,
+    },
+    packages: "external",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("Hello World");
+      api.expectFile("/out.js").toContain(`from "foo"`);
+    },
+  });
+});

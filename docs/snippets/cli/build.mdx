@@ -86,6 +86,12 @@ bun build <entry points>
   Exclude modules from the bundle (supports wildcards). Alias: <code>-e</code>
 </ParamField>
 
+<ParamField path="--internal" type="string">
+  Never externalize these modules (supports wildcards). Takes precedence over
+  <code>--external</code> and <code>--packages external</code>. Useful with
+  <code>--packages external</code> to keep specific dependencies in the bundle.
+</ParamField>
+
 <ParamField path="--packages" type="string" default="bundle">
   How to treat dependencies: <code>external</code> or <code>bundle</code>
 </ParamField>

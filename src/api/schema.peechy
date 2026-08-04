@@ -329,6 +329,7 @@ message TransformOptions {
   string output_dir = 11;
 
   string[] external = 12;
+  string[] internal = 26;
 
   LoaderMap loaders = 13;
 

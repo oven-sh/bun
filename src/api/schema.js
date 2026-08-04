@@ -1667,6 +1667,12 @@ function decodeTransformOptions(bb) {
         for (var i = 0; i < length; i++) values[i] = bb.readString();
         break;
 
+      case 26:
+        var length = bb.readVarUint();
+        var values = (result["internal"] = Array(length));
+        for (var i = 0; i < length; i++) values[i] = bb.readString();
+        break;
+
       case 13:
         result["loaders"] = decodeLoaderMap(bb);
         break;
@@ -1815,6 +1821,18 @@ function encodeTransformOptions(message, bb) {
   var value = message["external"];
   if (value != null) {
     bb.writeByte(12);
+    var values = value,
+      n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      bb.writeString(value);
+    }
+  }
+
+  var value = message["internal"];
+  if (value != null) {
+    bb.writeByte(26);
     var values = value,
       n = values.length;
     bb.writeVarUint(n);

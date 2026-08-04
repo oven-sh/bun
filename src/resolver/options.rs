@@ -24,6 +24,12 @@ pub struct ExternalModules {
     pub patterns: Vec<WildcardPattern>,
     pub abs_paths: StringSet,
     pub node_modules: StringSet,
+    /// Never-external patterns (the `--internal` flag / `internal` option).
+    /// Matched FIRST, with precedence over `packages: external` and positive
+    /// `--external` patterns.
+    pub excludes: Vec<WildcardPattern>,
+    /// Never-external package names (subpath-aware, like `node_modules`).
+    pub excludes_node_modules: StringSet,
 }
 impl Clone for ExternalModules {
     fn clone(&self) -> Self {
@@ -33,6 +39,8 @@ impl Clone for ExternalModules {
             patterns: self.patterns.clone(),
             abs_paths: self.abs_paths.clone().expect("oom"),
             node_modules: self.node_modules.clone().expect("oom"),
+            excludes: self.excludes.clone(),
+            excludes_node_modules: self.excludes_node_modules.clone().expect("oom"),
         }
     }
 }

@@ -3842,6 +3842,16 @@ async function runStandalone() {
   const reporterDone = Promise.all(reporterFlush);
   const root = getRootNode();
 
+  // node auto-honors .only in standalone mode (nodejs/node #54832); prune
+  // like the runFilesInProcess twin, awaiting builds first so a late it.only
+  // is visible to the scan.
+  await awaitSuiteBuilds(standaloneQueue);
+  if (standaloneQueueHasOnly(standaloneQueue)) {
+    const pruned = pruneToOnly(standaloneQueue);
+    standaloneQueue.length = 0;
+    standaloneQueue.push(...pruned);
+  }
+
   // node's harness runs the --test-global-setup module's globalSetup before the
   // first test executes and its globalTeardown after the run, in every mode —
   // including a file run directly, without --test.

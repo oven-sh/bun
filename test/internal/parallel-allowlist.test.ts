@@ -62,14 +62,31 @@ describe("scripts/update-parallel-allowlist.mjs", () => {
     expect(flaked).toMatchObject({ dirs: ["a"], excludeFiles: ["a/two.test.ts"] });
   });
 
-  test("previous exclude whose dir drops below the threshold is not emitted", () => {
-    // 1 good of 3 is < 2/3, so the dir is not listed and nothing is emitted for it.
+  test("carried excludes do not count against the dir's 2/3 threshold", () => {
+    // 4 files, 1 carried exclude, 1 fresh flake. If the carried exclude counted
+    // against the threshold, good=2 of 4 < ceil(4*2/3)=3 would drop the dir and
+    // lose the carried exclude. With the threshold over the 3 fresh files only,
+    // good=2 of 3 >= ceil(3*2/3)=2 keeps the dir and emits both excludes.
+    const files = ["b/a.test.ts", "b/b.test.ts", "b/c.test.ts", "b/d.test.ts"];
+    const { dirs, excludeFiles } = computeAllowlist({
+      ...base,
+      files,
+      flaky: new Map([["b/c.test.ts", 1]]),
+      previousExcludes: new Set(["b/d.test.ts"]),
+    });
+    expect({ dirs, excludeFiles }).toEqual({ dirs: ["b"], excludeFiles: ["b/c.test.ts", "b/d.test.ts"] });
+  });
+
+  test("a dir still drops when its fresh files fall below the threshold", () => {
     const files = ["b/x.test.ts", "b/y.test.ts", "b/z.test.ts"];
     const { dirs, excludeFiles } = computeAllowlist({
       ...base,
       files,
-      flaky: new Map([["b/y.test.ts", 1]]),
-      previousExcludes: new Set(["b/z.test.ts"]),
+      flaky: new Map([
+        ["b/x.test.ts", 1],
+        ["b/y.test.ts", 1],
+      ]),
+      previousExcludes: new Set(),
     });
     expect({ dirs, excludeFiles }).toEqual({ dirs: [], excludeFiles: [] });
   });

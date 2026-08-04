@@ -44,8 +44,13 @@ export function computeAllowlist({ files, flaky, durations, previousExcludes, do
   const excludeFiles = [];
   let eligibleFiles = 0;
   for (const [dir, dirFiles] of [...byDir.entries()].sort()) {
-    const good = dirFiles.filter(isGood);
-    if (good.length < Math.max(1, Math.ceil(dirFiles.length * DIR_MIN_FRACTION))) continue;
+    // Threshold is computed over files with fresh evidence only: a carried
+    // exclude has no batch data in this window, so letting it count against
+    // dir eligibility can drop the dir, which drops its carried excludes and
+    // recreates the ping-pong at the dir level.
+    const fresh = dirFiles.filter(f => !previousExcludes.has(f));
+    const good = fresh.filter(isGood);
+    if (good.length < Math.max(1, Math.ceil(fresh.length * DIR_MIN_FRACTION))) continue;
     dirs.push(dir);
     eligibleFiles += good.length;
     for (const f of dirFiles) if (!isGood(f)) excludeFiles.push(f);

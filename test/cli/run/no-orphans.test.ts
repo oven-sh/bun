@@ -640,14 +640,16 @@ test.concurrent.skipIf(!isPosix)(
     const env: Record<string, string> = { ...bunEnv };
     delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
 
-    const N = 20;
+    // The rest of this file's test.concurrent suite supplies most of the
+    // preemption pressure; keep N modest so debug+ASAN has headroom.
+    const N = 12;
     const runs = Array.from({ length: N }, () =>
       Bun.spawn({
         cmd: [bunExe(), "run", "--no-orphans", "--silent", "go"],
         env,
         cwd: String(dir),
         stdout: "ignore",
-        stderr: "ignore",
+        stderr: "pipe",
       }),
     );
     try {
@@ -656,8 +658,14 @@ test.concurrent.skipIf(!isPosix)(
       const hung = runs.filter(p => p.exitCode === null && p.signalCode === null).map(p => p.pid);
       for (const p of runs) if (p.exitCode === null && p.signalCode === null) p.kill("SIGKILL");
       await allExited.catch(() => {});
-      expect({ ok, hung }).toEqual({ ok: true, hung: [] });
-      expect(runs.map(p => p.exitCode)).toEqual(Array(N).fill(0));
+      const results = await Promise.all(
+        runs.map(async p => ({ exitCode: p.exitCode, signal: p.signalCode, stderr: await p.stderr.text() })),
+      );
+      expect({ ok, hung, results }).toEqual({
+        ok: true,
+        hung: [],
+        results: Array(N).fill({ exitCode: 0, signal: null, stderr: "" }),
+      });
     } finally {
       for (const p of runs)
         try {

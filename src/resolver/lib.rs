@@ -1227,12 +1227,15 @@ pub mod fs {
                 },
             };
 
-            // Close the handle on every exit path. Use
-            // scopeguard so close happens even if `readdir`/`put` early-return with `?`.
+            // A freshly-opened handle is ours to close on every exit path until it
+            // is published into the returned DirEntry; `handle_published` flips
+            // once that happens so the `store_fd` success path keeps the fd while
+            // the `?`/error returns below still close it.
             let should_close_handle = !had_handle && (!store_fd || self.need_to_close_files());
-            let _close_guard = scopeguard::guard(handle, move |h| {
-                if should_close_handle {
-                    let _ = bun_sys::close(h);
+            let handle_published = core::cell::Cell::new(false);
+            let _close_guard = scopeguard::guard((), |()| {
+                if !had_handle && (should_close_handle || !handle_published.get()) {
+                    let _ = bun_sys::close(handle);
                 }
             });
 
@@ -1259,7 +1262,12 @@ pub mod fs {
             });
             let mut entries = match self.readdir(store_fd, prev, dir, generation, handle, iterator)
             {
-                Ok(e) => e,
+                Ok(e) => {
+                    // `e.fd == handle` when `store_fd`; every remaining path moves
+                    // `e` into long-lived storage before the next `?`.
+                    handle_published.set(true);
+                    e
+                }
                 Err(err) => {
                     if let Some(existing) = in_place {
                         // SAFETY: see above.

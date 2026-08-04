@@ -171,13 +171,13 @@ test("does not block the event loop", async () => {
   expect(tick).toBeGreaterThan(0);
 });
 
-test("ENOENT rejects synchronously", () => {
+test("ENOENT throws synchronously", () => {
   expect(() =>
     Bun.spawnAndWait({
       cmd: ["this-binary-definitely-does-not-exist-12345"],
       env: bunEnv,
     }),
-  ).toThrow();
+  ).toThrow(expect.objectContaining({ code: "ENOENT" }));
 });
 
 test("terminal option is rejected", () => {
@@ -268,5 +268,7 @@ test("AbortSignal aborts and resolves", async () => {
   });
   ac.abort();
   const result = await promise;
+  expect(result.signalCode).toBe("SIGKILL");
   expect(result.success).toBe(false);
+  expect(result.exitCode).toBe(null);
 });

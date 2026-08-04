@@ -6185,6 +6185,24 @@ pub extern "C" fn Blob__implClearFile(blob: &mut Blob) {
     blob.name.set(BunString::dead());
 }
 
+/// Sets the Blob's content type verbatim. The clipboard stamps a lazily-read
+/// dupe with its representation key when the source declared something else.
+/// # Safety
+/// `[mime, mime+len)` must be readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Blob__implSetContentType(blob: &mut Blob, mime: *const u8, len: usize) {
+    if mime.is_null() || len == 0 {
+        return;
+    }
+    // SAFETY: forwarded from the caller's contract.
+    let slice = unsafe { bun_core::ffi::slice(mime, len) };
+    if !is_valid_blob_type(slice) {
+        return;
+    }
+    blob.content_type.set(BlobContentType::Owned(slice.into()));
+    blob.content_type_was_set.set(true);
+}
+
 /// Borrows the Blob's content type. The bytes live as long as the Blob.
 /// # Safety
 /// `out_ptr` and `out_len` must be valid for writes.

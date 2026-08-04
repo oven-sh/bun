@@ -74,7 +74,7 @@ void ClipboardItemPlatformDataSource::getType(const String& type, Ref<DeferredPr
         promise->reject(ExceptionCode::InvalidStateError);
         return;
     }
-    promise->resolveWithJSValue(clipboardBlobToJS(globalObject, m_data[matchIndex].value.get()));
+    promise->resolveWithJSValue(clipboardBlobToJS(globalObject, m_data[matchIndex].value.get(), type));
 }
 
 void ClipboardItemPlatformDataSource::collectDataForWriting(Clipboard&, CollectCompletionHandler&& completion)

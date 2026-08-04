@@ -431,6 +431,9 @@ describe("read / write", () => {
     const item = new ClipboardItem({ "text/html": Bun.file(join(String(fileDir), "a.txt")) });
     const blob = await item.getType("text/html");
     expect(blob).not.toBeInstanceOf(File);
+    // The lazy dupe reports the requested type, like the resident re-wrap
+    // path, not the source file's extension-inferred one.
+    expect(blob.type).toBe("text/html");
     expect(await blob.text()).toBe("lazy bytes");
   });
 

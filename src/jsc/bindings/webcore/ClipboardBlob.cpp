@@ -13,6 +13,7 @@ extern "C" void Blob__implGetSpan(BlobImpl*, const uint8_t** outPtr, size_t* out
 extern "C" bool Blob__implNeedsToReadFile(BlobImpl*);
 extern "C" void Blob__implGetContentType(BlobImpl*, const uint8_t** outPtr, size_t* outLength);
 extern "C" void Blob__implClearFile(BlobImpl*);
+extern "C" void Blob__implSetContentType(BlobImpl*, const uint8_t* mime, size_t length);
 extern "C" void Blob__implReadBytes(BlobImpl*, JSC::JSGlobalObject*, void* ctx, void (*callback)(void* ctx, const uint8_t* ptr, size_t length, const uint8_t* error, size_t errorLength));
 extern "C" void* Blob__fromBytesWithNormalizedType(JSC::JSGlobalObject*, const uint8_t* ptr, size_t len, const uint8_t* mime, size_t mimeLength, bool normalize);
 extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(JSC::JSGlobalObject*, void*);
@@ -88,7 +89,7 @@ Ref<Blob> createClipboardBlob(JSC::JSGlobalObject* globalObject, std::span<const
     return blob.releaseNonNull();
 }
 
-JSC::JSValue clipboardBlobToJS(JSC::JSGlobalObject* globalObject, Blob& blob)
+JSC::JSValue clipboardBlobToJS(JSC::JSGlobalObject* globalObject, Blob& blob, const String& type)
 {
     auto* impl = blob.impl();
     if (!impl)
@@ -98,8 +99,8 @@ JSC::JSValue clipboardBlobToJS(JSC::JSGlobalObject* globalObject, Blob& blob)
     // A Bun-specific file-/network-backed Blob has none and falls back to a
     // dupe with the File flag cleared so it reads as a Blob, not a File.
     if (!Blob__implNeedsToReadFile(impl)) {
-        auto type = clipboardBlobContentType(blob);
-        Bun::UTF8View mime(type);
+        auto declared = clipboardBlobContentType(blob);
+        Bun::UTF8View mime(declared);
         auto mimeBytes = mime.bytes();
         auto bytes = clipboardBlobBytes(blob);
         void* fresh = Blob__fromBytesWithNormalizedType(globalObject, bytes.data(), bytes.size(), mimeBytes.data(), mimeBytes.size(), false);
@@ -108,6 +109,13 @@ JSC::JSValue clipboardBlobToJS(JSC::JSGlobalObject* globalObject, Blob& blob)
     }
     auto* dupe = static_cast<BlobImpl*>(Blob__dupe(impl));
     Blob__implClearFile(dupe);
+    // The resident mismatch path re-wraps under the representation key; stamp
+    // the lazy dupe with it too so both report the type that was asked for.
+    if (!clipboardBlobTypeMatches(clipboardBlobContentType(blob), type)) {
+        Bun::UTF8View requested(type);
+        auto requestedBytes = requested.bytes();
+        Blob__implSetContentType(dupe, requestedBytes.data(), requestedBytes.size());
+    }
     return JSC::JSValue::decode(Blob__create(globalObject, dupe));
 }
 

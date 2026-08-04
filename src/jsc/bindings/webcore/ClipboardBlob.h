@@ -44,9 +44,11 @@ Ref<Blob> createClipboardBlob(JSC::JSGlobalObject*, std::span<const uint8_t>, co
 // `requested`: an exact match, or `requested` plus a parameter.
 bool clipboardBlobTypeMatches(const String& declared, const String& requested);
 
-// A plain-Blob JS wrapper. blob.h's toJS(Blob&) was written for FormData,
-// whose spec'd return is a File, and unconditionally flips is_jsdom_file; the
-// spec for getType() says "a new Blob", and browsers agree.
-JSC::JSValue clipboardBlobToJS(JSC::JSGlobalObject*, Blob&);
+// A plain-Blob JS wrapper for getType()'s resolution. blob.h's toJS(Blob&) was
+// written for FormData, whose spec'd return is a File, and unconditionally
+// flips is_jsdom_file; the spec for getType() says "a new Blob", and browsers
+// agree. `type` is the representation key; a lazy pass-through that declared a
+// different type is stamped with it, like the resident re-wrap path.
+JSC::JSValue clipboardBlobToJS(JSC::JSGlobalObject*, Blob&, const String& type);
 
 } // namespace WebCore

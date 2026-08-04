@@ -215,6 +215,12 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--heap-prof-interval <STR>        Specify the average sampling interval in bytes for heap profiling (default: 524288)"
     ),
     parse_param!(
+        "--diagnostic-dir <STR>            Directory diagnostic output is written to (default: cwd); --cpu-prof-dir and --heap-prof-dir take precedence"
+    ),
+    parse_param!(
+        "--heapsnapshot-signal <STR>       Write a heap snapshot each time the process receives this signal"
+    ),
+    parse_param!(
         "--if-present                      Exit without an error if the entrypoint does not exist"
     ),
     parse_param!("--no-install                      Disable auto install in the Bun runtime"),
@@ -1282,6 +1288,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             };
         }
 
+        // --diagnostic-dir is the fallback output dir; --cpu-prof-dir/--heap-prof-dir override it.
+        // https://github.com/nodejs/node/blob/main/src/node_options.cc (diagnostic_dir)
+        let diagnostic_dir = args.option(b"--diagnostic-dir");
+
         let cpu_prof_flag = args.flag(b"--cpu-prof");
         let cpu_prof_md_flag = args.flag(b"--cpu-prof-md");
 
@@ -1293,7 +1303,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             if let Some(name) = args.option(b"--cpu-prof-name") {
                 ctx.runtime_options.cpu_prof.name = replace_pid_placeholder(name);
             }
-            if let Some(dir) = args.option(b"--cpu-prof-dir") {
+            if let Some(dir) = args.option(b"--cpu-prof-dir").or(diagnostic_dir) {
                 ctx.runtime_options.cpu_prof.dir = dir.into();
             }
             // md_format is true if --cpu-prof-md is passed (regardless of --cpu-prof)
@@ -1347,7 +1357,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             if let Some(name) = args.option(b"--heap-prof-name") {
                 ctx.runtime_options.heap_prof.name = name.into();
             }
-            if let Some(dir) = args.option(b"--heap-prof-dir") {
+            if let Some(dir) = args.option(b"--heap-prof-dir").or(diagnostic_dir) {
                 ctx.runtime_options.heap_prof.dir = dir.into();
             }
         } else if heap_prof_v8 || heap_prof_md {
@@ -1358,7 +1368,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             if let Some(name) = args.option(b"--heap-prof-name") {
                 ctx.runtime_options.heap_prof.name = name.into();
             }
-            if let Some(dir) = args.option(b"--heap-prof-dir") {
+            if let Some(dir) = args.option(b"--heap-prof-dir").or(diagnostic_dir) {
                 ctx.runtime_options.heap_prof.dir = dir.into();
             }
         } else {

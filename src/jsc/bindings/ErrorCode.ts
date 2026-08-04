@@ -378,5 +378,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_INSPECTOR_NOT_CONNECTED", Error],
   ["ERR_INSPECTOR_NOT_WORKER", Error],
   ["ERR_INSPECTOR_COMMAND", Error],
+  ["ERR_HEAP_PROFILE_HAVE_BEEN_STARTED", Error],
+  ["ERR_CPU_PROFILE_TOO_MANY", Error],
 ];
 export default errors;

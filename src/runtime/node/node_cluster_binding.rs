@@ -4,16 +4,16 @@
 //   at all. It should happen in the protocol before it reaches JS.
 // - We should not be creating JSFunction's in process.nextTick.
 
+use crate::ipc::{Handle, IsInternal, SerializeAndSendResult};
 use bun_core::String as BunString;
-use bun_jsc::ipc::{Handle, IsInternal, SerializeAndSendResult};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, StrongOptional};
 
 use crate::api::bun::subprocess::Subprocess;
 
-// Struct moved to `bun_jsc::ipc` (cycle-break per docs/PORTING.md) —
+// Struct lives in `crate::ipc` —
 // `SendQueue` stores one inline so it must live at that tier. Re-exported here so
 // existing `bun_runtime` paths (`node_cluster_binding::InternalMsgHolder`) keep working.
-pub use bun_jsc::ipc::InternalMsgHolder;
+pub use crate::ipc::InternalMsgHolder;
 
 bun_output::declare_scope!(IPC, visible);
 
@@ -58,7 +58,7 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
     let vm = global.bun_vm().as_mut();
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global; sole &mut on JS thread.
 
-    if vm.ipc.is_none() {
+    if !crate::ipc_host::has_ipc(vm) {
         return Ok(JSValue::FALSE);
     }
     if message.is_undefined() {
@@ -94,9 +94,9 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
         );
     }
 
-    let ipc_instance = vm.get_ipc_instance().unwrap();
-    // SAFETY: `get_ipc_instance` returns a live owned IPCInstance pointer; sole &mut on JS thread.
-    let ipc_instance = unsafe { &mut *ipc_instance };
+    let ipc_instance = crate::ipc_host::get_ipc_instance(vm).unwrap();
+    // SAFETY: `get_ipc_instance` returns a live owned IPCInstance pointer.
+    let ipc_instance = unsafe { &*ipc_instance };
 
     #[bun_jsc::host_fn]
     fn impl_(global_: &JSGlobalObject, frame_: &CallFrame) -> JsResult<JSValue> {
@@ -106,7 +106,7 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
         Ok(JSValue::UNDEFINED)
     }
 
-    let good = ipc_instance.data.serialize_and_send(
+    let good = ipc_instance.data().serialize_and_send(
         global,
         message,
         IsInternal::Internal,
@@ -228,20 +228,19 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         }
     };
 
-    if callback.is_function() {
-        let _ = ipc_data.internal_msg_queue.callbacks.put(
-            ipc_data.internal_msg_queue.seq,
-            StrongOptional::create(callback, global),
-        );
-    }
+    let seq = ipc_data.internal_msg_queue.with_mut(|q| {
+        if callback.is_function() {
+            let _ = q
+                .callbacks
+                .put(q.seq, StrongOptional::create(callback, global));
+        }
+        let seq = q.seq;
+        q.seq = q.seq.wrapping_add(1);
+        seq
+    });
 
     // sequence number for InternalMsgHolder
-    message.put(
-        global,
-        b"seq",
-        JSValue::js_number(ipc_data.internal_msg_queue.seq as f64),
-    );
-    ipc_data.internal_msg_queue.seq = ipc_data.internal_msg_queue.seq.wrapping_add(1);
+    message.put(global, b"seq", JSValue::js_number(seq as f64));
 
     // similar code as bun.jsc.Subprocess.doSend
     #[cfg(debug_assertions)]
@@ -279,8 +278,10 @@ pub(crate) fn on_internal_message_primary(
         return Ok(JSValue::UNDEFINED);
     };
     // TODO: remove these strongs.
-    ipc_data.internal_msg_queue.worker = StrongOptional::create(arguments[1], global);
-    ipc_data.internal_msg_queue.cb = StrongOptional::create(arguments[2], global);
+    ipc_data.internal_msg_queue.with_mut(|q| {
+        q.worker = StrongOptional::create(arguments[1], global);
+        q.cb = StrongOptional::create(arguments[2], global);
+    });
     Ok(JSValue::UNDEFINED)
 }
 
@@ -293,7 +294,7 @@ pub(crate) fn handle_internal_message_primary(
         return Ok(());
     };
 
-    if !ipc_data.internal_msg_queue.is_ready() {
+    if !ipc_data.internal_msg_queue.get().is_ready() {
         return Ok(());
     }
 
@@ -303,20 +304,18 @@ pub(crate) fn handle_internal_message_primary(
     if let Some(p) = message.get(global, "ack")? {
         if !p.is_undefined() {
             let ack = p.to_int32();
-            // Peek the JSValue first (ending the immutable borrow), then
-            // swap_remove (which drops the Strong).
-            let entry = ipc_data
-                .internal_msg_queue
-                .callbacks
-                .get(&ack)
-                .map(|s| s.get());
-            if let Some(callback_opt) = entry {
-                ipc_data.internal_msg_queue.callbacks.swap_remove(&ack);
-                let cb = callback_opt.unwrap();
+            let entry = ipc_data.internal_msg_queue.with_mut(|q| {
+                let cb = q.callbacks.get(&ack).and_then(|s| s.get());
+                if q.callbacks.contains_key(&ack) {
+                    q.callbacks.swap_remove(&ack);
+                }
+                cb.zip(q.worker.get())
+            });
+            if let Some((cb, worker)) = entry {
                 event_loop.run_callback(
                     cb,
                     global,
-                    ipc_data.internal_msg_queue.worker.get().unwrap(),
+                    worker,
                     &[
                         message,
                         JSValue::NULL, // handle
@@ -326,11 +325,14 @@ pub(crate) fn handle_internal_message_primary(
             }
         }
     }
-    let cb = ipc_data.internal_msg_queue.cb.get().unwrap();
+    let (cb, worker) = {
+        let q = ipc_data.internal_msg_queue.get();
+        (q.cb.get().unwrap(), q.worker.get().unwrap())
+    };
     event_loop.run_callback(
         cb,
         global,
-        ipc_data.internal_msg_queue.worker.get().unwrap(),
+        worker,
         &[
             message,
             JSValue::NULL, // handle

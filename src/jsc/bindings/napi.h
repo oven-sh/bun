@@ -648,14 +648,7 @@ private:
 extern "C" void napi_internal_cleanup_env_cpp(napi_env);
 extern "C" void napi_internal_remove_finalizer(napi_env, napi_finalize callback, void* hint, void* data);
 
-namespace JSC {
-class JSGlobalObject;
-class JSSourceCode;
-}
-
 namespace Napi {
-
-JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSObject* object, JSC::JSGlobalObject* globalObject);
 
 class NapiRefWeakHandleOwner final : public JSC::WeakHandleOwner {
 public:
@@ -723,11 +716,6 @@ public:
     void clear();
     bool isClear() const;
 
-    bool isSet() const { return m_tag != WeakTypeTag::NotSet; }
-    bool isPrimitive() const { return m_tag == WeakTypeTag::Primitive; }
-    bool isCell() const { return m_tag == WeakTypeTag::Cell; }
-    bool isString() const { return m_tag == WeakTypeTag::String; }
-
     void setPrimitive(JSValue);
     void setCell(JSCell*, WeakHandleOwner&, void* context);
     void setString(JSString*, WeakHandleOwner&, void* context);
@@ -745,24 +733,6 @@ public:
         default:
             return {};
         }
-    }
-
-    JSCell* cell() const
-    {
-        ASSERT(isCell());
-        return m_value.cell.get();
-    }
-
-    JSValue primitive() const
-    {
-        ASSERT(isPrimitive());
-        return m_value.primitive;
-    }
-
-    JSString* string() const
-    {
-        ASSERT(isString());
-        return m_value.string.get();
     }
 
 private:
@@ -892,10 +862,6 @@ public:
 
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
-    static void destroy(JSCell* cell)
-    {
-        static_cast<NapiClass*>(cell)->NapiClass::~NapiClass();
-    }
 
     template<typename, SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {

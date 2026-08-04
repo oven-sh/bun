@@ -536,77 +536,6 @@ size_t HtmlEscapeExtraLen16Impl(const uint16_t* HWY_RESTRICT text, size_t text_l
     return extra;
 }
 
-// Implementation for scanCharFrequency (Unchanged from previous correct version)
-void ScanCharFrequencyImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, int32_t* HWY_RESTRICT freqs, int32_t delta)
-{
-    if (text_len == 0 || delta == 0) return;
-    D8 d;
-    const size_t N = hn::Lanes(d);
-
-    const auto vec_a = hn::Set(d, 'a');
-    const auto vec_z = hn::Set(d, 'z');
-    const auto vec_A = hn::Set(d, 'A');
-    const auto vec_Z = hn::Set(d, 'Z');
-    const auto vec_0 = hn::Set(d, '0');
-    const auto vec_9 = hn::Set(d, '9');
-    const auto vec_underscore = hn::Set(d, '_');
-    const auto vec_dollar = hn::Set(d, '$');
-
-    const auto vec_offset_a = hn::Set(d, 'a');
-    const auto vec_offset_A = hn::Set(d, 'A');
-    const auto vec_offset_0 = hn::Set(d, '0');
-
-    size_t i = 0;
-    size_t simd_text_len = text_len - (text_len % N);
-    for (; i < simd_text_len; i += N) {
-        const auto text_vec = hn::LoadU(d, text + i);
-        const auto mask_az = hn::And(hn::Ge(text_vec, vec_a), hn::Le(text_vec, vec_z));
-        const auto mask_AZ = hn::And(hn::Ge(text_vec, vec_A), hn::Le(text_vec, vec_Z));
-        const auto mask_09 = hn::And(hn::Ge(text_vec, vec_0), hn::Le(text_vec, vec_9));
-        const auto mask_underscore = hn::Eq(text_vec, vec_underscore);
-        const auto mask_dollar = hn::Eq(text_vec, vec_dollar);
-        auto valid_mask = hn::Or(mask_az, hn::Or(mask_AZ, hn::Or(mask_09, hn::Or(mask_underscore, mask_dollar))));
-        if (hn::AllFalse(d, valid_mask)) continue;
-
-        const auto idx_az = hn::Sub(text_vec, vec_offset_a);
-        const auto idx_AZ = hn::Add(hn::Sub(text_vec, vec_offset_A), hn::Set(d, uint8_t { 26 }));
-        const auto idx_09 = hn::Add(hn::Sub(text_vec, vec_offset_0), hn::Set(d, uint8_t { 52 }));
-
-        auto indices_vec = hn::Zero(d);
-        indices_vec = hn::IfThenElse(mask_az, idx_az, indices_vec);
-        indices_vec = hn::IfThenElse(mask_AZ, idx_AZ, indices_vec);
-        indices_vec = hn::IfThenElse(mask_09, idx_09, indices_vec);
-        indices_vec = hn::IfThenElse(mask_underscore, hn::Set(d, uint8_t { 62 }), indices_vec);
-        indices_vec = hn::IfThenElse(mask_dollar, hn::Set(d, uint8_t { 63 }), indices_vec);
-
-        alignas(HWY_ALIGNMENT) uint8_t indices_array[HWY_MAX_LANES_D(D8)];
-        alignas(HWY_ALIGNMENT) uint8_t valid_bits_array[(HWY_MAX_LANES_D(D8) + 7) / 8];
-        hn::Store(indices_vec, d, indices_array);
-        hn::StoreMaskBits(d, valid_mask, valid_bits_array);
-
-        for (size_t j = 0; j < N; ++j) {
-            if ((valid_bits_array[j / 8] >> (j % 8)) & 1) {
-                assert(indices_array[j] < 64);
-                freqs[indices_array[j]] += delta;
-            }
-        }
-    }
-
-    for (; i < text_len; ++i) {
-        const uint8_t c = text[i];
-        if (c >= 'a' && c <= 'z')
-            freqs[c - 'a'] += delta;
-        else if (c >= 'A' && c <= 'Z')
-            freqs[c - 'A' + 26] += delta;
-        else if (c >= '0' && c <= '9')
-            freqs[c - '0' + 52] += delta;
-        else if (c == '_')
-            freqs[62] += delta;
-        else if (c == '$')
-            freqs[63] += delta;
-    }
-}
-
 // Implementation for finding interesting characters in string literals
 size_t IndexOfInterestingCharacterInStringLiteralImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t quote)
 {
@@ -2167,7 +2096,6 @@ HWY_EXPORT(MemMemImpl);
 HWY_EXPORT(MemRMemImpl);
 HWY_EXPORT(MemMem16Impl);
 HWY_EXPORT(MemRMem16Impl);
-HWY_EXPORT(ScanCharFrequencyImpl);
 HWY_EXPORT(VisibleLatin1WidthExcludeANSIImpl);
 HWY_EXPORT(VisibleLatin1WidthImpl);
 HWY_EXPORT(VisibleUTF16WidthImpl);
@@ -2251,12 +2179,6 @@ void highway_copy_u16_to_u8(
 size_t highway_index_of_any_char(const uint8_t* HWY_RESTRICT text, size_t text_len, const uint8_t* HWY_RESTRICT chars, size_t chars_len)
 {
     return HWY_DYNAMIC_DISPATCH(IndexOfAnyCharImpl)(text, text_len, chars, chars_len);
-}
-
-void highway_char_frequency(const uint8_t* HWY_RESTRICT text, size_t text_len,
-    int32_t* freqs, int32_t delta)
-{
-    HWY_DYNAMIC_DISPATCH(ScanCharFrequencyImpl)(text, text_len, freqs, delta);
 }
 
 size_t highway_index_of_char(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,

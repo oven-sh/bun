@@ -259,9 +259,6 @@ impl S3Credentials {
             + self.bucket.len()
     }
 
-    // `hash_const` DELETED — dead code (no callers). If
-    // resurrected: `bun_wyhash::hash_ascii_lowercase(0, acl)`.
-
     pub fn dupe(&self) -> IntrusiveRc<S3Credentials> {
         IntrusiveRc::new(S3Credentials {
             ref_count: RefCount::init(),

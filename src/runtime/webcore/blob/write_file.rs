@@ -188,21 +188,20 @@ impl FileCloser for WriteFile {
     }
 
     fn schedule_close(request: &mut io::Request) -> io::Action<'_> {
-        // SAFETY: request is &mut self.io_request (intrusive); recover parent.
-        let this = unsafe { &mut *WriteFile::from_io_request(std::ptr::from_mut(request)) };
+        // SAFETY: `request` is `&mut self.io_request` (intrusive); recover parent.
+        let this = unsafe { WriteFile::from_io_request(std::ptr::from_mut(request)) };
         fn on_done(ctx: *mut ()) {
             // SAFETY: ctx is `self as *mut WriteFile` set below.
             let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(ctx.cast()) };
             <WriteFile as FileCloser>::on_io_request_closed(this);
         }
-        // reshaped for borrowck — compute the parent raw pointer
-        // before mutably borrowing `io_poll` so the two borrows do not overlap.
-        let ctx = std::ptr::from_mut::<WriteFile>(this).cast::<()>();
-        let fd = this.opened_fd;
+        // SAFETY: `request` is `&mut self.io_request` (intrusive), so `this` is the live
+        // parent; `fd` copy and the `io_poll` field borrow are the only borrows formed.
+        let (fd, poll) = unsafe { ((*this).opened_fd, &mut (*this).io_poll) };
         io::Action::Close(io::CloseAction {
             fd,
-            poll: &mut this.io_poll,
-            ctx,
+            poll,
+            ctx: this.cast::<()>(),
             tag: <Self as FileCloser>::IO_TAG,
             on_done,
         })
@@ -214,12 +213,13 @@ impl FileCloser for WriteFile {
     // in `on_io_request_closed` and is guaranteed live.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
-        // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
-        // `&mut self.task` (intrusive) registered in `on_io_request_closed`;
-        // recover parent.
-        let this = unsafe { &mut *WriteFile::from_task_ptr(task) };
-        this.close_after_io = false;
-        WriteFile::update(this);
+        // SAFETY: only reached via `WorkPoolTask::callback` with `task` = `&mut self.task`
+        // (intrusive) registered in `on_io_request_closed`; recover parent.
+        let this = unsafe { WriteFile::from_task_ptr(task) };
+        // SAFETY: `this` is the live parent (see above); scoped access.
+        unsafe { (*this).close_after_io = false };
+        // SAFETY: as above; exclusive borrow scoped to the call.
+        WriteFile::update(unsafe { &mut *this });
     }
 }
 
@@ -253,13 +253,16 @@ impl WriteFile {
     pub(crate) fn on_request_writable(request: &mut io::Request) -> io::Action<'_> {
         bun_output::scoped_log!(WriteFile, "WriteFile.onRequestWritable()");
         request.scheduled = false;
-        // SAFETY: request points to WriteFile.io_request (intrusive); recover parent.
-        let this = unsafe { &mut *WriteFile::from_io_request(std::ptr::from_mut(request)) };
+        // SAFETY: `request` points to WriteFile.io_request (intrusive); recover parent.
+        let this = unsafe { WriteFile::from_io_request(std::ptr::from_mut(request)) };
+        // SAFETY: `request` points to WriteFile.io_request (intrusive), so `this` is the
+        // live parent; `fd` copy and the `io_poll` field borrow are the only borrows formed.
+        let (fd, poll) = unsafe { ((*this).opened_fd, &mut (*this).io_poll) };
         io::Action::Writable(io::FileAction {
             on_error: Self::on_io_error,
-            ctx: std::ptr::from_mut::<WriteFile>(this).cast::<()>(),
-            fd: this.opened_fd,
-            poll: &mut this.io_poll,
+            ctx: this.cast::<()>(),
+            fd,
+            poll,
             tag: WriteFile::IO_TAG,
         })
     }
@@ -522,16 +525,17 @@ impl WriteFile {
     }
 
     fn do_write_loop_task(task: *mut WorkPoolTask) {
-        // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
-        // `&mut self.task` (intrusive) registered in `on_writable`/`init`;
-        // recover parent.
-        let this = unsafe { &mut *WriteFile::from_task_ptr(task) };
+        // SAFETY: only reached via `WorkPoolTask::callback` with `task` = `&mut self.task`
+        // (intrusive) registered in `on_writable`/`init`; recover parent.
+        let this = unsafe { WriteFile::from_task_ptr(task) };
         // On macOS, we use one-shot mode, so we don't need to unregister.
         #[cfg(target_os = "macos")]
         {
-            this.close_after_io = false;
+            // SAFETY: `this` is the live parent (see above); scoped access.
+            unsafe { (*this).close_after_io = false };
         }
-        this.do_write_loop();
+        // SAFETY: `this` is the live parent (see above); exclusive borrow scoped to the call.
+        unsafe { (*this).do_write_loop() };
     }
 
     pub(crate) fn update(&mut self) {
@@ -1296,19 +1300,24 @@ impl WriteFilePromise {
             drop(bun_core::heap::take(handler));
             (promise, global_this)
         };
-        // SAFETY: GC-owned cell; sole `&mut` borrow at each call site.
-        let promise = unsafe { &mut *promise };
-        let value = promise.to_js();
+        // SAFETY: GC-owned cell (kept alive below); scoped shared access.
+        let value = unsafe { (*promise).to_js() };
         value.ensure_still_alive();
         match count {
             WriteFileResultType::Err(err) => {
-                promise.reject(
-                    global_this,
-                    Ok(err.to_error_instance_with_async_stack(global_this, promise)),
-                )?;
+                // SAFETY: GC-owned cell; the error build's shared borrow ends before the
+                // scoped exclusive `reject` borrow.
+                unsafe {
+                    let err_js = err.to_error_instance_with_async_stack(global_this, &*promise);
+                    (*promise).reject(global_this, Ok(err_js))?;
+                }
             }
             WriteFileResultType::Result(wrote) => {
-                promise.resolve(global_this, JSValue::js_number_from_uint64(wrote as u64))?;
+                // SAFETY: GC-owned cell; exclusive borrow scoped to the call.
+                unsafe {
+                    (*promise)
+                        .resolve(global_this, JSValue::js_number_from_uint64(wrote as u64))?;
+                }
             }
         }
         Ok(())
@@ -1328,58 +1337,44 @@ pub struct WriteFileWaitFromLockedValueTask {
 }
 
 impl WriteFileWaitFromLockedValueTask {
-    pub(crate) fn then_wrap(this: *mut c_void, value: &mut body::Value) {
-        // SAFETY: `this` is the Box-allocated task registered as `locked.task` below.
-        let _ = Self::then(
-            NonNull::new(this.cast::<WriteFileWaitFromLockedValueTask>()).unwrap(),
-            value,
-        );
+    pub(crate) fn then_wrap(this: NonNull<c_void>, value: &mut body::Value) {
+        // SAFETY: `this` is the Box-allocated task registered as `locked.task` below;
+        // ownership is reclaimed here (the `Locked` arm re-leaks it).
+        let this = unsafe {
+            bun_core::heap::take(this.cast::<WriteFileWaitFromLockedValueTask>().as_ptr())
+        };
+        let _ = Self::then(this, value);
         // TODO: properly propagate exception upwards
     }
 
-    /// # Safety
-    /// `this` must point to a live Box-allocated `WriteFileWaitFromLockedValueTask`.
-    /// On every arm except `body::Value::Locked`, the allocation is consumed.
     pub(crate) fn then(
-        this: NonNull<WriteFileWaitFromLockedValueTask>,
+        mut this: Box<WriteFileWaitFromLockedValueTask>,
         value: &mut body::Value,
     ) -> Result<(), JsTerminated> {
-        let this = this.as_ptr();
-        // SAFETY: this is the Box-allocated task created in Blob.rs
-        // (`heap::into_raw(Box::new(WriteFileWaitFromLockedValueTask { .. }))`).
-        let this_ref = unsafe { &mut *this };
-        // `get()` returns a GC-owned cell, valid past `heap::take(this)`.
-        let promise: &mut JSPromise = &mut *this_ref.promise.get();
-        // Copy the `BackRef` out so the borrow is detached from `this_ref`
-        // (must coexist with `&mut this_ref` and survive `heap::take(this)`).
-        let global_ref = this_ref.global_this;
+        let promise: *mut JSPromise = std::ptr::from_mut(this.promise.get());
+        let global_ref = this.global_this;
         let global_this = global_ref.get();
-        // `heap::take(this)` drops fields,
-        // so leaving the `StoreRef` in `this.file_blob` would double-deref it.
-        // Move ownership out instead; the `Locked` arm — the only path that
-        // keeps `this` alive for a future callback — moves it back so the next
-        // `then()` invocation sees an intact `file_blob`. This also avoids the
-        // throwaway `content_type`/`name` clones that `Blob::dupe()` performs.
-        let mut file_blob = core::mem::take(&mut this_ref.file_blob);
+        let mut file_blob = core::mem::take(&mut this.file_blob);
         match value {
             body::Value::Error(err_ref) => {
                 let err = err_ref.to_js(global_this);
                 file_blob.detach();
                 let _ = value.use_();
-                // SAFETY: consume Box allocation (drops `promise`/`file_blob` Strongs).
-                unsafe { drop(bun_core::heap::take(this)) };
-                promise.reject_with_async_stack(global_this, Ok(err))?;
+                drop(this);
+                JSPromise::opaque_mut(promise).reject_with_async_stack(global_this, Ok(err))?;
             }
             body::Value::Used => {
                 file_blob.detach();
                 let _ = value.use_();
-                // SAFETY: consume Box allocation.
-                unsafe { drop(bun_core::heap::take(this)) };
-                promise.reject(
-                    global_this,
-                    Ok(ZigString::init(b"Body was used after it was consumed")
-                        .to_error_instance(global_this)),
-                )?;
+                drop(this);
+                // SAFETY: GC-owned promise cell; exclusive borrow scoped to the call.
+                unsafe {
+                    (*promise).reject(
+                        global_this,
+                        Ok(ZigString::init(b"Body was used after it was consumed")
+                            .to_error_instance(global_this)),
+                    )?;
+                }
             }
             body::Value::WTFStringImpl(_)
             | body::Value::InternalBlob(_)
@@ -1393,36 +1388,36 @@ impl WriteFileWaitFromLockedValueTask {
                     &mut blob,
                     &mut file_blob,
                     &blob::WriteFileOptions {
-                        mkdirp_if_not_exists: Some(this_ref.mkdirp_if_not_exists),
+                        mkdirp_if_not_exists: Some(this.mkdirp_if_not_exists),
                         ..Default::default()
                     },
                 ) {
                     Ok(p) => p,
                     Err(err) => {
                         file_blob.detach();
-                        // SAFETY: consume Box allocation.
-                        unsafe { drop(bun_core::heap::take(this)) };
-                        promise.reject(global_this, Err(err))?;
+                        drop(this);
+                        JSPromise::opaque_mut(promise).reject(global_this, Err(err))?;
                         return Ok(());
                     }
                 };
 
-                // Reclaim the Box now so it drops last; `file_blob` (a local
-                // declared after) drops first.
-                // SAFETY: `this` was Box-allocated (see Self::new). `this_ref` is dead
-                // past this point — all further field access goes through `_this_box`.
-                let _this_box = unsafe { bun_core::heap::take(this) };
+                let _this_box = this;
                 let _g = scopeguard::guard((), |()| file_blob.detach());
 
                 if let Some(p) = new_promise.as_any_promise() {
-                    match p.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
-                        // Fulfill the new promise using the pending promise
-                        jsc::PromiseResult::Pending => promise.resolve(global_this, new_promise)?,
-                        jsc::PromiseResult::Rejected(err) => {
-                            promise.reject(global_this, Ok(err))?
-                        }
-                        jsc::PromiseResult::Fulfilled(result) => {
-                            promise.resolve(global_this, result)?
+                    // SAFETY: GC-owned promise cell; exclusive borrows scoped per call.
+                    unsafe {
+                        match p.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
+                            // Fulfill the new promise using the pending promise
+                            jsc::PromiseResult::Pending => {
+                                (*promise).resolve(global_this, new_promise)?
+                            }
+                            jsc::PromiseResult::Rejected(err) => {
+                                (*promise).reject(global_this, Ok(err))?
+                            }
+                            jsc::PromiseResult::Fulfilled(result) => {
+                                (*promise).resolve(global_this, result)?
+                            }
                         }
                     }
                 }
@@ -1430,9 +1425,13 @@ impl WriteFileWaitFromLockedValueTask {
             body::Value::Locked(locked) => {
                 // Re-registering for a future callback — `this` stays alive.
                 // Restore the moved-out blob so the next `then()` has its store.
-                this_ref.file_blob = file_blob;
+                this.file_blob = file_blob;
                 locked.on_receive_value = Some(Self::then_wrap);
-                locked.task = Some(this.cast::<c_void>());
+                locked.task = Some(
+                    NonNull::new(bun_core::heap::into_raw(this))
+                        .unwrap()
+                        .cast::<c_void>(),
+                );
             }
         }
         Ok(())

@@ -246,15 +246,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         }
     }
 
-    let dependency_list: &'static [u8] = if manager.options.update.development {
-        b"devDependencies"
-    } else if manager.options.update.optional {
-        b"optionalDependencies"
-    } else if manager.options.update.peer {
-        b"peerDependencies"
-    } else {
-        b"dependencies"
-    };
+    let dependency_list: &'static [u8] = manager.options.update.prop;
     let mut any_changes = false;
 
     let mut not_in_workspace_root: Option<PatchCommitResult> = None;

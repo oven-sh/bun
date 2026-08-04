@@ -179,8 +179,9 @@ use bun_jsc::AbortSignalRef;
 use super::stat::Stats;
 use super::time_like::TimeLike;
 use super::types::{
-    ArgumentsSlice, Dirent, Encoding, FdArgExt as _, FileSystemFlags, FileSystemFlagsKind,
-    NameTooLong, PathLike, PathLikeExt as _, PathOrFdExt as _, StringOrBuffer, VectorArrayBuffer,
+    ArgumentsSlice, BUFFER_EXPECTED_TYPES, Dirent, Encoding, FdArgExt as _, FileSystemFlags,
+    FileSystemFlagsKind, NameTooLong, PathLike, PathLikeExt as _, PathOrFdExt as _, StringOrBuffer,
+    VectorArrayBuffer,
 };
 // Re-exported publicly: `crate::node::fs::PathOrFileDescriptor` is the
 // canonical path used by `cli/build_command.rs` et al.
@@ -4167,9 +4168,9 @@ pub mod args {
                 0.0
             };
             let buffer = Buffer::from_js(ctx, buffer_value).ok_or_else(|| {
-                ctx.throw_invalid_argument_type_list(
+                ctx.throw_invalid_argument_type_value2(
                     b"buffer",
-                    &[b"Buffer", b"TypedArray", b"DataView"],
+                    BUFFER_EXPECTED_TYPES,
                     buffer_value,
                 )
             })?;

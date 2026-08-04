@@ -57,7 +57,7 @@ describe("ResolveMessage", () => {
     } catch (e) {
       err = e;
     }
-    expect(err.name).toBe("ResolveMessage");
+    expect(err.name).toBe("Error");
     expect(err.specifier).toBe(spec);
     expect(err.message).toContain(spec);
     expect(String(err)).toContain(spec);

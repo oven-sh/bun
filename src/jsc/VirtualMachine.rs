@@ -1436,7 +1436,10 @@ impl VirtualMachine {
                 (self.on_unhandled_rejection)(self, global_object, err);
                 return false;
             }
-            self.run_error_handler(err, None);
+            // `err` may be the JSC::Exception wrapper (handler throw re-reported
+            // via `report_active_exception_as_unhandled`); unwrap so the printer
+            // sees the Error's own stack/properties, not the rethrow-site capture.
+            self.run_error_handler(err.to_error().unwrap_or(err), None);
             // SAFETY: `global_object` is the live VM global; `process_exit` is
             // `bun_runtime::node::process::exit` (main-thread `noreturn`).
             unsafe { (hooks.process_exit)(global_object.as_ptr(), 7) };
@@ -4575,6 +4578,10 @@ impl VirtualMachine {
         allow_side_effects: bool,
     ) {
         let mut formatter = crate::console_object::Formatter::new(self.global());
+        // `bun test` keeps Bun's classic failure rendering; everything else
+        // (uncaught exceptions, unhandled rejections, server error handlers)
+        // prints Node's shape.
+        formatter.node_uncaught_style = !isBunTest.load(core::sync::atomic::Ordering::Relaxed);
         let colors = bun_core::Output::enable_ansi_colors_stderr();
         self.print_errorlike_object(
             exception.value(),
@@ -5069,7 +5076,35 @@ impl VirtualMachine {
                     if self.had_errors {
                         let _ = writer.write_all(b"\n");
                     }
-                    write_msg!(resolve_error.msg, writer, allow_ansi_color);
+                    // Uncaught module-resolution errors print Node's shape
+                    // (`Error: Cannot find module 'x'\nRequire stack:\n- ...`),
+                    // not the transpiler-log rendering.
+                    if let Some(display_name) = resolve_error
+                        .node_display_name()
+                        .filter(|_| formatter.node_uncaught_style)
+                    {
+                        let node_message = resolve_error.node_message();
+                        let message: &[u8] = node_message
+                            .as_deref()
+                            .unwrap_or(&resolve_error.msg.data.text);
+                        let _ = if allow_ansi_color {
+                            write!(
+                                writer,
+                                bun_core::pretty_fmt!("<red>{}<r><d>:<r> <b>{}<r>", true),
+                                bstr::BStr::new(display_name),
+                                bstr::BStr::new(message)
+                            )
+                        } else {
+                            write!(
+                                writer,
+                                "{}: {}",
+                                bstr::BStr::new(display_name),
+                                bstr::BStr::new(message)
+                            )
+                        };
+                    } else {
+                        write_msg!(resolve_error.msg, writer, allow_ansi_color);
+                    }
                     resolve_error.logged.set(true);
                     let _ = writer.write_all(b"\n");
                 }
@@ -5986,6 +6021,7 @@ impl VirtualMachine {
                         message,
                         !exception.browser_url.is_empty(),
                         code,
+                        formatter.node_uncaught_style,
                         writer,
                         allow_ansi_color,
                         formatter.error_display_level,
@@ -6036,6 +6072,7 @@ impl VirtualMachine {
                         message,
                         !exception.browser_url.is_empty(),
                         code,
+                        formatter.node_uncaught_style,
                         writer,
                         allow_ansi_color,
                         formatter.error_display_level,
@@ -6051,6 +6088,7 @@ impl VirtualMachine {
                 message,
                 !exception.browser_url.is_empty(),
                 code,
+                formatter.node_uncaught_style,
                 writer,
                 allow_ansi_color,
                 formatter.error_display_level,
@@ -6188,11 +6226,24 @@ impl VirtualMachine {
                 let pad_left = longest_name.saturating_sub(b"code".len());
                 is_first_property = false;
                 splat_space(writer, pad_left as u64)?;
-                pretty_write!(
-                    writer,
-                    " code<r><d>:<r> <green>{}<r>\n",
-                    bun_core::fmt::quote(code_str)
-                )?;
+                if formatter.node_uncaught_style
+                    && code_str
+                        .iter()
+                        .all(|&b| (0x20..0x7f).contains(&b) && b != b'\'' && b != b'\\')
+                {
+                    // Node single-quotes inspect strings: `code: 'ENOENT'`.
+                    pretty_write!(
+                        writer,
+                        " code<r><d>:<r> <green>'{}'<r>\n",
+                        bstr::BStr::new(code_str)
+                    )?;
+                } else {
+                    pretty_write!(
+                        writer,
+                        " code<r><d>:<r> <green>{}<r>\n",
+                        bun_core::fmt::quote(code_str)
+                    )?;
+                }
             }
 
             if !is_first_property {
@@ -6270,11 +6321,13 @@ impl VirtualMachine {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn print_error_name_and_message(
         name: bun_core::String,
         message: bun_core::String,
         is_browser_error: bool,
         optional_code: Option<&[u8]>,
+        node_uncaught_style: bool,
         writer: &mut bun_core::io::Writer,
         allow_ansi_color: bool,
         error_display_level: crate::console_object::ErrorDisplayLevel,
@@ -6293,43 +6346,47 @@ impl VirtualMachine {
             writer.write_all(bun_core::pretty_fmt!("<red>frontend<r> ", true).as_bytes())?;
         }
         if !name.is_empty() && !message.is_empty() {
-            let (display_name, display_message) = if name.eql_comptime(b"Error") {
-                'brk: {
-                    if let Some(code) = optional_code {
-                        if bun_core::is_all_ascii(code) {
-                            let has_prefix = if message.is_utf16() {
-                                let msg_chars = message.utf16();
-                                msg_chars.len() > code.len() + 2 + 1
-                                    && code
-                                        .iter()
-                                        .zip(msg_chars.iter())
-                                        .all(|(&a, &b)| u16::from(a) == b)
-                                    && msg_chars[code.len()] == u16::from(b':')
-                                    && msg_chars[code.len() + 1] == u16::from(b' ')
-                            } else {
-                                let msg_chars = message.latin1();
-                                msg_chars.len() > code.len() + 2 + 1
-                                    && bun_core::strings::eql_long(
-                                        &msg_chars[..code.len()],
-                                        code,
-                                        false,
-                                    )
-                                    && msg_chars[code.len()] == b':'
-                                    && msg_chars[code.len() + 1] == b' '
-                            };
-                            if has_prefix {
-                                break 'brk (
-                                    bun_core::String::init(code),
-                                    message.substring(code.len() + 2),
-                                );
+            // Node prints the error's own name verbatim (`Error: boom`); Bun's
+            // classic rendering lowercases plain `Error` to `error:` and
+            // promotes a `CODE: `-prefixed message's code to the name slot.
+            let (display_name, display_message) =
+                if name.eql_comptime(b"Error") && !node_uncaught_style {
+                    'brk: {
+                        if let Some(code) = optional_code {
+                            if bun_core::is_all_ascii(code) {
+                                let has_prefix = if message.is_utf16() {
+                                    let msg_chars = message.utf16();
+                                    msg_chars.len() > code.len() + 2 + 1
+                                        && code
+                                            .iter()
+                                            .zip(msg_chars.iter())
+                                            .all(|(&a, &b)| u16::from(a) == b)
+                                        && msg_chars[code.len()] == u16::from(b':')
+                                        && msg_chars[code.len() + 1] == u16::from(b' ')
+                                } else {
+                                    let msg_chars = message.latin1();
+                                    msg_chars.len() > code.len() + 2 + 1
+                                        && bun_core::strings::eql_long(
+                                            &msg_chars[..code.len()],
+                                            code,
+                                            false,
+                                        )
+                                        && msg_chars[code.len()] == b':'
+                                        && msg_chars[code.len() + 1] == b' '
+                                };
+                                if has_prefix {
+                                    break 'brk (
+                                        bun_core::String::init(code),
+                                        message.substring(code.len() + 2),
+                                    );
+                                }
                             }
                         }
+                        (bun_core::String::empty(), message)
                     }
-                    (bun_core::String::empty(), message)
-                }
-            } else {
-                (name, message)
-            };
+                } else {
+                    (name, message)
+                };
             pretty_write!(
                 "{}<b>{}<r>\n",
                 error_display_level.formatter(display_name, allow_ansi_color, Colon::IncludeColon),

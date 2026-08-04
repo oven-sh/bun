@@ -241,7 +241,7 @@ test("error.stack of // @bun code with a truncated VLQ in sourceMappingURL warns
   // The truncated mapping is rejected with a warning rather than silently
   // decoded as 0 (which left no trace that the map was corrupt).
   expect(stderr).toContain("Could not decode sourcemap");
-  expect(stderr).toContain("error: boom");
+  expect(stderr).toContain("Error: boom");
   expect(stderr).toContain("entry.js:2:");
   expect(stdout).toBe("");
   expect(exitCode).toBe(1);

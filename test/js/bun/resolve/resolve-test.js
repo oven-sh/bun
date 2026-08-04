@@ -25,7 +25,7 @@ it.todo("#imports", async () => {
   } catch (exception) {
     expect(exception instanceof ResolveMessage).toBe(true);
     expect(exception.referrer).toBe(import.meta.path);
-    expect(exception.name).toBe("ResolveMessage");
+    expect(exception.name).toBe("Error");
   }
 
   // Chcek that package-json-imports/#foo doesn't work
@@ -35,7 +35,7 @@ it.todo("#imports", async () => {
   } catch (exception) {
     expect(exception instanceof ResolveMessage).toBe(true);
     expect(exception.referrer).toBe(import.meta.path);
-    expect(exception.name).toBe("ResolveMessage");
+    expect(exception.name).toBe("Error");
   }
 });
 
@@ -100,7 +100,7 @@ it("import.meta.resolveSync", async () => {
   } catch (exception) {
     expect(exception instanceof ResolveMessage).toBe(true);
     expect(exception.referrer).toBe(import.meta.path);
-    expect(exception.name).toBe("ResolveMessage");
+    expect(exception.name).toBe("Error");
   }
 });
 

@@ -44,7 +44,7 @@ describe("bun run --tsconfig-override", () => {
 
     const [failStderr, failExitCode] = await Promise.all([failProc.stderr.text(), failProc.exited]);
 
-    expect(failStderr).toContain("Cannot find module");
+    expect(failStderr).toContain("Cannot find package");
     expect(failExitCode).not.toBe(0);
 
     await using successProc = Bun.spawn({

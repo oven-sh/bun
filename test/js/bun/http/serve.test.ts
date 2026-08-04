@@ -641,7 +641,7 @@ describe("streaming", () => {
 
       let [exitCode, stderr] = await Promise.all([subprocess.exited, subprocess.stderr.text()]);
       expect(exitCode).toBeInteger();
-      expect(stderr).toContain("error: Oops");
+      expect(stderr).toContain("Error: Oops");
       expect(onMessage).toHaveBeenCalled();
     });
 
@@ -666,7 +666,7 @@ describe("streaming", () => {
 
       let [exitCode, stderr] = await Promise.all([subprocess.exited, subprocess.stderr.text()]);
       expect(exitCode).toBeInteger();
-      expect(stderr).toContain("error: Oops");
+      expect(stderr).toContain("Error: Oops");
       expect(onMessage).toHaveBeenCalled();
     });
 

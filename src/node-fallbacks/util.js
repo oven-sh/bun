@@ -903,7 +903,7 @@ export function callbackifyOnRejected(reason, cb) {
   // occurred", we error-wrap so the callback consumer can distinguish between
   // "the promise rejected with null" or "the promise fulfilled with undefined".
   if (!reason) {
-    var newReason = new Error("Promise was rejected with a falsy value");
+    var newReason = new Error("Promise was rejected with falsy value");
     newReason.reason = reason;
     reason = newReason;
   }

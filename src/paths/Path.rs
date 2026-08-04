@@ -582,10 +582,7 @@ pub type AbsPath<
 /// Absolute path with auto separator.
 pub type AutoAbsPath = Path<u8, { Kind::ABS }, { PathSeparators::AUTO }>;
 
-/// Absolute path with auto separator and `CheckLength::CheckForGreaterThanMaxPath`.
-/// `from`/`append`/`append_fmt`/`join` return `Err(MaxPathExceeded)` on overflow
-/// instead of panicking in `PooledBuf` slice indexing. Use for unbounded user
-/// input (CLI args, JS strings).
+/// [`AutoAbsPath`] that returns `Err(MaxPathExceeded)` on overflow. Use for unbounded user input.
 pub type AutoAbsPathChecked =
     Path<u8, { Kind::ABS }, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
 

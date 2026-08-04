@@ -40,9 +40,6 @@ pub use bun_jsc::bindgen_test::get_bindgen_test_functions as jsc_bindgen_test_ge
 pub use bun_jsc::counters::create_counters_object as jsc_counters_create_counters_object;
 pub use bun_jsc::event_loop::get_active_tasks as jsc_event_loop_get_active_tasks;
 pub use bun_jsc::virtual_machine_exports::Bun__setSyntheticAllocationLimitForTesting as jsc_virtual_machine_exports_bun__set_synthetic_allocation_limit_for_testing;
-// `emit_handle_ipc_message` is implemented in this crate (`ipc_host.rs`)
-// because it dereferences `Subprocess`, a runtime type.
-pub(crate) use crate::ipc_host::emit_handle_ipc_message as jsc_ipc_emit_handle_ipc_message;
 
 pub use bun_jsc::bun_string_jsc::js_escape_reg_exp as string_escape_reg_exp_js_escape_reg_exp;
 pub use bun_jsc::bun_string_jsc::js_escape_reg_exp_for_package_name_matching as string_escape_reg_exp_js_escape_reg_exp_for_package_name_matching;
@@ -83,15 +80,18 @@ pub(crate) fn bun_get_use_system_ca(
 /// active as now - loopStart - idle).
 pub(crate) fn bun_get_loop_elu(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let vm = bun_jsc::virtual_machine::VirtualMachine::get();
-    // SAFETY: the VM owns this loop and this runs on its thread.
-    let loop_ = unsafe { (*vm.event_loop).usockets_loop().as_ref() };
-    let Some(loop_) = loop_ else {
+    // SAFETY: the VM owns this loop and this runs on its thread. Raw *mut, no
+    // &Loop — a &mut PosixLoop is live above us via tick_with_timeout for the
+    // whole tick (see the re-export comment in Loop.rs).
+    let loop_ptr = unsafe { (*vm.event_loop).usockets_loop() };
+    if loop_ptr.is_null() {
         return Ok(JSValue::NULL);
-    };
+    }
     // Idle BEFORE elapsed, matching node's order (it passes loopIdleTime() in
     // and reads process.hrtime() after). Reversed, idle is dated after now and
     // active = now - idle comes out short.
-    let idle_ms = loop_.idle_ns() as f64 / 1_000_000.0;
+    // SAFETY: `loop_ptr` is the live usockets loop (non-null checked above).
+    let idle_ms = unsafe { bun_uws::us_loop_idle_ns(loop_ptr) } as f64 / 1_000_000.0;
     let elapsed_ms = vm.loop_start.elapsed().as_secs_f64() * 1000.0;
     let arr = JSValue::create_empty_array(global, 2)?;
     arr.put_index(global, 0, JSValue::js_number(elapsed_ms))?;

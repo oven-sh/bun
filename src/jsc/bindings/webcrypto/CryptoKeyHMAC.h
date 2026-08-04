@@ -39,11 +39,6 @@ struct JsonWebKey;
 
 class CryptoKeyHMAC final : public CryptoKey {
 public:
-    static Ref<CryptoKeyHMAC> create(const Vector<uint8_t>& key, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap usage)
-    {
-        return adoptRef(*new CryptoKeyHMAC(key, hash, extractable, usage));
-    }
-
     virtual ~CryptoKeyHMAC();
 
     static RefPtr<CryptoKeyHMAC> generate(size_t lengthBits, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap);
@@ -59,7 +54,6 @@ public:
     static ExceptionOr<std::optional<size_t>> getKeyLength(const CryptoAlgorithmParameters&);
 
 private:
-    CryptoKeyHMAC(const Vector<uint8_t>& key, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap);
     CryptoKeyHMAC(Vector<uint8_t>&& key, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap);
 
     KeyAlgorithm algorithm() const final;

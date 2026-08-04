@@ -228,6 +228,11 @@ unsafe extern "C" {
     // `ctx`. `&JSGlobalObject` is the non-null handle proof; remaining args are
     // by-value scalars/`#[repr(C)]` PODs.
     safe fn WebWorker__dispatchExit(cpp_worker: *mut c_void, exit_code: i32);
+    // safe: `cpp_worker` opaque round-trip (see `WebWorker__dispatchExit`);
+    // `message` is a caller-owned `BunString` whose bytes are read (and reffed
+    // for the cross-thread copy) before return. Touches no worker-VM state —
+    // for init failure before a VM exists.
+    safe fn WebWorker__dispatchInitFailed(cpp_worker: *mut c_void, message: &mut BunString);
     // safe: no args; frees this thread's lazily-allocated HPACK scratch buffer.
     safe fn Bun__freeSharedHeaderBufferForThreadExit();
     // Re-declared here (also private in VM.rs) so `thread_main` can take the
@@ -542,17 +547,21 @@ impl WebWorker {
         log!("[{}] create", this_context_id);
 
         let spec_slice = specifier_str.to_utf8();
-        // SAFETY: `parent` is the calling thread's live VM (BACKREF).
-        let parent_ref = unsafe { &mut *parent };
-        let prev_log = parent_ref.transpiler.log;
         let mut temp_log = bun_ast::Log::default();
-        parent_ref.transpiler.set_log(&raw mut temp_log);
+        // SAFETY: `parent` is the calling thread's live VM (BACKREF); borrows
+        // are scoped to each statement.
+        let prev_log = unsafe {
+            let prev = (*parent).transpiler.log;
+            (*parent).transpiler.set_log(&raw mut temp_log);
+            prev
+        };
         // RAII: log pointer restored and temp log dropped on every return path.
-        let mut restore = scopeguard::guard((parent_ref, temp_log), |(p, log)| {
-            p.transpiler.set_log(prev_log);
+        let mut restore = scopeguard::guard(temp_log, move |log| {
+            // SAFETY: `parent` outlives the guard (this call's frame).
+            unsafe { (*parent).transpiler.set_log(prev_log) };
             drop(log);
         });
-        let (parent_ref, temp_log) = &mut *restore;
+        let temp_log = &mut *restore;
 
         // SAFETY: caller passed valid (ptr,len) (or `(null,0)`); slice borrowed from C++.
         let preload_modules: &[BunString] =
@@ -568,15 +577,10 @@ impl WebWorker {
                 preloads.push(utf8_slice.slice().to_vec().into_boxed_slice());
                 continue;
             }
-            // SAFETY: `parent_ref` is the live VM on the calling (parent)
-            // thread — its `transpiler` is uniquely owned here.
+            // SAFETY: `parent` is the live VM on the calling (parent) thread;
+            // `resolve_entry_point_specifier` takes the raw pointer.
             if let Some(preload) = unsafe {
-                resolve_entry_point_specifier(
-                    *parent_ref,
-                    utf8_slice.slice(),
-                    error_message,
-                    temp_log,
-                )
+                resolve_entry_point_specifier(parent, utf8_slice.slice(), error_message, temp_log)
             } {
                 preloads.push(preload.to_vec().into_boxed_slice());
             }
@@ -593,7 +597,8 @@ impl WebWorker {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         let mut own_exec_argv_options = virtual_machine::WorkerExecArgv::default();
         let expose_gc = if inherit_exec_argv {
-            match parent_ref.worker_ref() {
+            // SAFETY: `parent` is the live calling-thread VM; borrow ends at `;`.
+            match unsafe { (*parent).worker_ref() } {
                 Some(parent_worker) => parent_worker.expose_gc,
                 // SAFETY: `None` reads only process-constant state.
                 None => unsafe { (hooks.parse_worker_exec_argv)(None) }.expose_gc,
@@ -613,7 +618,8 @@ impl WebWorker {
             expose_gc
         };
 
-        let store_fd = parent_ref.transpiler.resolver.store_fd;
+        // SAFETY: `parent` is live (see above); borrow ends at `;`.
+        let store_fd = unsafe { (*parent).transpiler.resolver.store_fd };
 
         let worker = bun_core::heap::into_raw(Box::new(WebWorker {
             cpp_worker,
@@ -662,7 +668,8 @@ impl WebWorker {
         // worker keeping the process alive. Exception: a nested worker (parent is
         // itself a worker, not joined on exit) must hold the parent-loop keepalive
         // regardless, because the child holds a non-owning `BackRef` to the parent VM.
-        if !default_unref || parent_ref.worker_ref().is_some() {
+        // SAFETY: `parent` is live (see above); borrow scoped to the call.
+        if !default_unref || unsafe { (*parent).worker_ref().is_some() } {
             // `worker` is a fresh heap allocation; not yet shared.
             // `bun_io::js_vm_ctx()` resolves to this (parent) thread's loop.
             worker_ref.with_parent_poll_ref(|p| p.ref_(bun_io::js_vm_ctx()));
@@ -861,13 +868,34 @@ impl WebWorker {
             return;
         }
 
+        // Pre-create this thread's uws loop so fd exhaustion (epoll_create1 /
+        // eventfd EMFILE/ENFILE) is observed here, before `start_vm()` builds
+        // a JSC VM on top of it. On success the loop is cached in the C++
+        // thread-local and every later `uws::Loop::get()` returns it.
+        if bun_uws::Loop::try_get().is_none() {
+            let mut msg = BunString::static_(
+                b"Worker initialization failed: could not create event loop (out of file descriptors?)",
+            );
+            WebWorker__dispatchInitFailed(self.cpp_worker, &mut msg);
+            // No VM / arena / env-loader — same early-terminate shape as the
+            // `has_requested_terminate` checkpoint above: shutdown() posts
+            // dispatchExit and releases the live-workers entry + thread ref.
+            self.shutdown();
+            return;
+        }
+
         let vm_ptr = match self.start_vm() {
             Ok(vm) => vm,
             Err(err) => {
-                bun_core::output::panic(format_args!(
-                    "An unhandled error occurred while starting a worker: {}\n",
+                // Reachable for failures that are not a recoverable
+                // single-worker problem (e.g. OOM during arena/loader init).
+                let mut msg = bun_core::OwnedString::new(BunString::create_format(format_args!(
+                    "Worker initialization failed: {}",
                     err.name()
-                ));
+                )));
+                WebWorker__dispatchInitFailed(self.cpp_worker, &mut msg);
+                self.shutdown();
+                return;
             }
         };
 

@@ -244,7 +244,26 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
     loop->fd = kqueue();
 #endif
 
+    /* EMFILE/ENFILE here means the thread can't have a loop at all. Return
+     * NULL so a Worker bootstrap can report ERR_WORKER_INIT_FAILED instead of
+     * aborting the process; the main thread creates its loop early enough that
+     * this is not reached in practice. */
+    if (loop->fd == -1) {
+        us_free(loop);
+        return NULL;
+    }
+
     us_internal_loop_data_init(loop, wakeup_cb, pre_cb, post_cb);
+    /* us_internal_create_async (eventfd/mach_port_allocate) can also fail on
+     * fd/port exhaustion and leaves wakeup_async NULL. recv_buf/send_buf are
+     * allocated unconditionally, so reclaim them. */
+    if (loop->data.wakeup_async == NULL) {
+        us_free(loop->data.recv_buf);
+        us_free(loop->data.send_buf);
+        close(loop->fd);
+        us_free(loop);
+        return NULL;
+    }
     return loop;
 }
 
@@ -720,10 +739,12 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
 
     int efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (efd == -1) {
-        // eventfd only fails on EMFILE/ENFILE — the loop is unusable without
-        // wakeup_async, and the sole caller doesn't NULL-check. Crash loudly
-        // rather than NULL-deref or store -1 as a poll fd.
-        BUN_PANIC("eventfd() failed during loop init (out of file descriptors?)");
+        /* EMFILE/ENFILE — the loop is unusable without wakeup_async.
+         * us_internal_loop_data_init / us_create_loop propagate the NULL so a
+         * Worker bootstrap reports ERR_WORKER_INIT_FAILED instead of aborting. */
+        us_free(p);
+        if (!fallthrough) loop->num_polls--;
+        return NULL;
     }
     us_poll_init(p, efd, POLL_TYPE_CALLBACK);
 

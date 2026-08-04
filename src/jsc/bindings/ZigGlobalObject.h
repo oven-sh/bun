@@ -180,6 +180,7 @@ public:
     WebCore::ScriptExecutionContext* scriptExecutionContext() const;
 
     void queueTask(WebCore::EventLoopTask* task);
+    void queueTaskOnNextIteration(WebCore::EventLoopTask* task);
     void queueTaskConcurrently(WebCore::EventLoopTask* task);
 
     JSDOMStructureMap& structures() WTF_REQUIRES_LOCK(m_gcLock) { return m_structures; }

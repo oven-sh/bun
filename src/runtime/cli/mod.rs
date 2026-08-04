@@ -279,6 +279,10 @@ pub mod test {
     #[path = "ChangedFilesFilter.rs"]
     pub mod changed_files_filter;
 
+    /// `bun test --timings` / `--update-timings`: per-file duration table.
+    #[path = "Timings.rs"]
+    pub mod timings;
+
     /// `bun test --parallel`: process-pool coordinator/worker entry points.
     /// Thin façade re-exporting from `parallel::runner`.
     #[path = "ParallelRunner.rs"]

@@ -8,14 +8,6 @@ interface BufferExt extends Buffer {
   toString(offset: number, length: number, encoding?: BufferEncoding): string;
 }
 
-export function setBigUint64(this: BufferExt, offset, value, le) {
-  return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigUint64(
-    offset,
-    value,
-    le,
-  );
-}
-
 export function readInt8(this: BufferExt, offset) {
   if (offset === undefined) offset = 0;
   if (typeof offset !== "number" || this[offset] === undefined) $checkBufferRead(this, offset, 1);

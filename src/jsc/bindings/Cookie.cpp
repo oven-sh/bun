@@ -1,6 +1,5 @@
 #include "Cookie.h"
 #include "EncodeURIComponent.h"
-#include "JSCookie.h"
 #include "helpers.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <wtf/WallTime.h>
@@ -9,11 +8,6 @@
 #include <JavaScriptCore/DateInstance.h>
 #include "HTTPParsers.h"
 namespace WebCore {
-
-extern "C" WebCore::Cookie* Cookie__fromJS(JSC::EncodedJSValue value)
-{
-    return WebCoreCast<WebCore::JSCookie, WebCore::Cookie>(value);
-}
 
 Cookie::~Cookie() = default;
 

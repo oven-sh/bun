@@ -100,6 +100,4 @@ template<> struct JSDOMWrapperConverterTraits<FetchHeaders> {
 
 JSC::EncodedJSValue fetchHeadersGetSetCookie(JSC::JSGlobalObject* lexicalGlobalObject, VM& vm, WebCore::FetchHeaders* impl);
 
-JSC_DECLARE_HOST_FUNCTION(jsFetchHeaders_getRawKeys);
-
 } // namespace WebCore

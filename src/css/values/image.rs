@@ -1,6 +1,5 @@
 use crate as css;
 use crate::css_parser::CssResult as Result;
-use crate::dependencies::UrlDependency;
 use crate::generics::DeepClone as _;
 use crate::values::color::ColorFallbackKind;
 use crate::values::gradient::Gradient;
@@ -121,7 +120,6 @@ impl Image {
             Image::None => Image::None,
             Image::Url(u) => Image::Url(Url {
                 import_record_idx: u.import_record_idx,
-                loc: u.loc,
             }),
             Image::Gradient(g) => Image::Gradient(g.deep_clone(arena)),
             Image::ImageSet(s) => Image::ImageSet(s.deep_clone(arena)),
@@ -380,7 +378,6 @@ pub struct ImageSetOption {
 impl ImageSetOption {
     fn parse(input: &mut css::Parser) -> Result<ImageSetOption> {
         let start_position = input.input.tokenizer.get_position();
-        let loc = input.current_source_location();
         // `expect_url_or_string` returns a borrow of the parser, so
         // it can't be used as a `try_parse` callback directly (the result type
         // `R` may not borrow the closure arg). Erase the borrow via `*const`
@@ -393,7 +390,6 @@ impl ImageSetOption {
             let record_idx = input.add_import_record(url, start_position, ImportKind::Url)?;
             Image::Url(Url {
                 import_record_idx: record_idx,
-                loc: css::dependencies::Location::from_source_location(loc),
             })
         } else {
             Image::parse(input)?
@@ -427,35 +423,11 @@ impl ImageSetOption {
             let Image::Url(url) = &self.image else {
                 unreachable!()
             };
-            let dep_: Option<UrlDependency> = if dest.dependencies.is_some() {
-                // Hoist `get_import_records` (mut borrow) out of the
-                // arg list so `filename()` (shared borrow) can run; result is `&'a _`.
-                let import_records = dest.get_import_records()?;
-                Some(UrlDependency::new(
-                    dest.arena,
-                    url,
-                    dest.filename(),
-                    import_records,
-                ))
-            } else {
-                None
-            };
-
-            if let Some(dep) = dep_ {
-                // SAFETY: placeholder borrows the printer arena.
-                let placeholder = unsafe { crate::arena_str(dep.placeholder) };
-                dest.serialize_string(placeholder)?;
-                if let Some(dependencies) = &mut dest.dependencies {
-                    // Vec::push aborts on OOM by default.
-                    dependencies.push(css::Dependency::Url(dep));
-                }
-            } else {
-                let record_url = dest.get_import_record_url(url.import_record_idx)?;
-                // SAFETY: `record_url` borrows arena-backed `import_info` data
-                // valid for the printer's `'a`; detach so `dest` is reusable.
-                let record_url: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(record_url) };
-                dest.serialize_string(record_url)?;
-            }
+            let record_url = dest.get_import_record_url(url.import_record_idx)?;
+            // SAFETY: `record_url` borrows arena-backed `import_info` data
+            // valid for the printer's `'a`; detach so `dest` is reusable.
+            let record_url: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(record_url) };
+            dest.serialize_string(record_url)?;
         } else {
             self.image.to_css(dest)?;
         }

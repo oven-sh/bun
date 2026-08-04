@@ -27,7 +27,7 @@ pub use crate::css_modules::{
     self, Config as CssModuleConfig, CssModule, CssModuleExports, CssModuleReference,
     CssModuleReferences,
 };
-pub use crate::dependencies::{self, Dependency};
+pub use crate::dependencies;
 pub use crate::error::{
     self as errors_, BasicParseError, BasicParseErrorKind, Err, ErrorLocation, MinifyErr,
     MinifyError, MinifyErrorKind, ParseError, ParserError, PrinterError, PrinterErrorKind,
@@ -2458,14 +2458,11 @@ mod stylesheet_impl {
             &'a self,
             arena: &'a Bump,
             writer: &'a mut dyn bun_io::Write,
-            options: &PrinterOptions<'a>,
+            options: &PrinterOptions,
             import_info: Option<ImportInfo<'a>>,
             local_names: Option<&'a LocalsResultsMap>,
             symbols: &'a bun_ast::symbol::Map,
         ) -> PrintResult<()> {
-            // Note: PrinterOptions has `&mut SourceMap` and so isn't Copy; capture
-            // the lone field we re-read after moving `options` into Printer::new.
-            let project_root = options.project_root;
             let mut printer = Printer::new(
                 arena,
                 bun_alloc::ArenaVec::new_in(arena),
@@ -2475,7 +2472,7 @@ mod stylesheet_impl {
                 local_names,
                 symbols,
             );
-            match self.to_css_with_writer_impl(&mut printer, project_root) {
+            match self.to_css_with_writer_impl(&mut printer) {
                 Ok(result) => Ok(result),
                 Err(_) => {
                     debug_assert!(printer.error_kind.is_some());
@@ -2487,7 +2484,6 @@ mod stylesheet_impl {
         pub(crate) fn to_css_with_writer_impl<'a>(
             &'a self,
             printer: &mut Printer<'a>,
-            project_root: Option<&[u8]>,
         ) -> Result<(), PrintErr> {
             // #[cfg(feature = "sourcemap")] { printer.sources = Some(&self.sources); }
             // #[cfg(feature = "sourcemap")] if printer.source_map.is_some() { ... }
@@ -2514,7 +2510,6 @@ mod stylesheet_impl {
                     printer.arena,
                     config,
                     &self.sources,
-                    project_root,
                     references_mut,
                 ));
 
@@ -2542,7 +2537,7 @@ mod stylesheet_impl {
         pub fn to_css<'a>(
             &'a self,
             arena: &'a Bump,
-            options: &PrinterOptions<'a>,
+            options: &PrinterOptions,
             import_info: Option<ImportInfo<'a>>,
             local_names: Option<&'a LocalsResultsMap>,
             symbols: &'a bun_ast::symbol::Map,
@@ -2723,7 +2718,7 @@ mod stylesheet_impl {
         pub fn to_css<'a>(
             &'a self,
             arena: &'a Bump,
-            options: &PrinterOptions<'a>,
+            options: &PrinterOptions,
             import_info: Option<ImportInfo<'a>>,
         ) -> Result<ToCssResult, PrintErr> {
             // #[cfg(feature = "sourcemap")]

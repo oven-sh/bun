@@ -484,8 +484,6 @@ dependencies = [
  "paste",
  "rustc-hash",
  "smallvec",
- "strum",
- "thiserror",
 ]
 
 [[package]]
@@ -584,14 +582,9 @@ dependencies = [
  "bun_paths",
  "bun_ptr",
  "bun_wyhash",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
  "scopeguard",
  "strum",
  "thiserror",
- "typed-arena",
 ]
 
 [[package]]
@@ -746,17 +739,12 @@ dependencies = [
 name = "bun_glob"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_collections",
  "bun_core",
  "bun_paths",
  "bun_sys",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
  "scopeguard",
  "strum",
 ]
@@ -1020,15 +1008,11 @@ dependencies = [
  "bun_core",
  "bun_dispatch",
  "bun_errno",
- "bun_opaque",
- "bun_paths",
  "bun_ptr",
  "bun_spawn_sys",
  "bun_sys",
  "bun_threading",
  "bun_uws_sys",
- "const_format",
- "enum-map",
  "enumset",
  "libc",
  "scopeguard",
@@ -1405,18 +1389,13 @@ dependencies = [
 name = "bun_paths"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_core",
  "bun_errno",
  "bun_simdutf_sys",
- "bytemuck",
  "const_format",
- "enum-map",
- "enumset",
  "libc",
- "scopeguard",
  "strum",
  "thiserror",
 ]

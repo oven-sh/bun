@@ -1607,7 +1607,11 @@ session.post("Runtime.evaluate", { expression: "debugger; globalThis.x = 1; glob
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: JSON.stringify({ pauses: 2 }), exitCode: 0 });
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ pauses: 2 }),
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test("Debugger.paused from a pause nested inside a post() dispatch reaches listeners before execution continues", async () => {
@@ -1644,7 +1648,10 @@ session.post("Runtime.evaluate", { expression: "debugger; 42" }, function onDone
     env: inspectorChildEnv,
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(JSON.parse(stdout)).toEqual({ sawPausedDuringDispatch: true, evalOnFrame: 2, result: 42 });
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+    stdout: { sawPausedDuringDispatch: true, evalOnFrame: 2, result: 42 },
+    stderr: "",
+    exitCode: 0,
+  });
 });

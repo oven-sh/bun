@@ -8,11 +8,11 @@ const rss =
   process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
     ? Bun.unsafe.memoryFootprint
     : process.memoryUsage.rss;
-// 1 MiB body. The Request constructor copies the body before the throwing
-// `signal` coercion runs, and under ASAN that copy is O(size). 1 MiB * 1000
-// still produces ~1 GiB of leak if the body is retained, which clears the
-// threshold below while keeping the loop under ~2s on debug-ASAN.
-const buf = new Uint8Array(1024 * 1024);
+// 2 MiB body. The Request constructor copies the body before the throwing
+// `signal` coercion runs, and under ASAN that copy is O(size). 2 MiB * 1000
+// produces ~2 GiB of leak if the body is retained, ~2x the 1 GiB threshold
+// below, while keeping the loop under ~3s on debug-ASAN.
+const buf = new Uint8Array(2 * 1024 * 1024);
 // Buffer.alloc(n, fill).toString() instead of "...".repeat(n): repeat() is
 // very slow on debug JavaScriptCore builds (see test/CLAUDE.md).
 const longHost = Buffer.alloc(35 * 1024, "superduperlongurlwowsuchlengthicant").toString();

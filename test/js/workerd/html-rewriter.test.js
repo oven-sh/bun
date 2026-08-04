@@ -1708,6 +1708,93 @@ const request_types = ["/", "/gzip", "/chunked/gzip", "/chunked", "/file", "/fil
   });
 });
 
+// An async handler suspends mid-input; once resumed it emits more output than
+// RewriterPipe's high-water mark (16 KiB) into the already-realised ByteStream
+// and parks on output backpressure with `input_ended` set. Wiring a native sink
+// afterwards must re-signal the rewriter once the buffered bytes are in the
+// sink so `end_rewrite` runs.
+describe("output ByteStream backpressured when a native sink is wired", () => {
+  const prefix = "<p>" + Buffer.alloc(100, "A").toString() + "</p>";
+  const suffix = "<q>" + Buffer.alloc(30_000, "B").toString() + "</q>";
+  const html = prefix + "<x></x>" + suffix;
+  const out = prefix + "<x>!</x>" + suffix;
+
+  // Return a ReadableStream whose ByteStream buffer already holds the full
+  // rewritten output while the rewriter itself is still parked on
+  // `output_backpressured()` with `input_ended = true`.
+  async function makeParked() {
+    const gate = Promise.withResolvers();
+    const res = new HTMLRewriter()
+      .on("x", {
+        element: e => {
+          e.setInnerContent("!");
+          return gate.promise;
+        },
+      })
+      .transform(new Response(html));
+    const body = res.body;
+    gate.resolve();
+    // Let the handler-promise reaction run so `resume_rewrite` emits `suffix`
+    // into the ByteStream buffer.
+    await 0;
+    return { body, res };
+  }
+
+  it("completes when wired to a second HTMLRewriter", async () => {
+    const { body } = await makeParked();
+    const text = await new HTMLRewriter().transform(new Response(body)).text();
+    expect(text).toBe(out);
+  });
+
+  it("completes when wired to a second HTMLRewriter via the Response", async () => {
+    const { res } = await makeParked();
+    const text = await new HTMLRewriter().transform(res).text();
+    expect(text).toBe(out);
+  });
+
+  it("delivers bytes in order", async () => {
+    const { body } = await makeParked();
+    let seen = "";
+    await new HTMLRewriter()
+      .onDocument({ text: t => void (seen += t.text) })
+      .transform(new Response(body))
+      .text();
+    expect(seen).toBe(prefix.slice(3, -4) + "!" + suffix.slice(3, -4));
+  });
+
+  it("completes when returned from Bun.serve", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: async () => {
+        const { body } = await makeParked();
+        return new Response(body);
+      },
+    });
+    const text = await (await fetch(server.url)).text();
+    expect(text).toBe(out);
+  });
+
+  it("completes when the Response is returned from Bun.serve", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: async () => (await makeParked()).res,
+    });
+    const text = await (await fetch(server.url)).text();
+    expect(text).toBe(out);
+  });
+
+  it("completes when read via .arrayBuffer()", async () => {
+    const { body } = await makeParked();
+    const buf = await new Response(body).arrayBuffer();
+    expect(Buffer.from(buf).toString()).toBe(out);
+  });
+
+  it("completes when read via .text()", async () => {
+    const { body } = await makeParked();
+    expect(await new Response(body).text()).toBe(out);
+  });
+});
+
 const payloads = [
   {
     name: "direct",

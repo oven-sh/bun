@@ -337,10 +337,10 @@ impl ReadableStream {
                     return NativeWireResult::EndedInline(Some(err));
                 }
 
-                let buffered = byte_stream.drain();
-                let has_last = byte_stream.has_received_last_chunk.get();
+                let buffered = byte_stream.take_buffer();
+                let had_last = byte_stream.has_received_last_chunk.get();
                 if !buffered.is_empty() {
-                    let chunk = if has_last {
+                    let chunk = if had_last {
                         StreamResult::OwnedAndDone(buffered)
                     } else {
                         StreamResult::Owned(buffered)
@@ -354,9 +354,15 @@ impl ReadableStream {
                         _ => {}
                     }
                 }
-                if has_last {
+                if had_last {
                     byte_stream.sink.set(SinkHandle::None);
                     return NativeWireResult::EndedInline(None);
+                }
+                // Older bytes are in the sink; wake the producer. A synchronous
+                // producer may drive `on_data` (and `sink.end`) inline here,
+                // which is the normal `Wired` post-install path.
+                if !byte_stream.sink_paused.get() {
+                    byte_stream.signal_drained();
                 }
                 return NativeWireResult::Wired;
             }

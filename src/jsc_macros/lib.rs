@@ -698,6 +698,20 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
                     __create(global.as_mut_ptr(), ptr)
                 }
 
+                /// Safe sibling of [`to_js_ptr`] for `NonNull<Self>` handles.
+                /// The underlying `__create` extern is `safe fn`; `to_js_ptr`
+                /// is only marked `unsafe` to document the ownership-transfer
+                /// contract, which intrusive-refcounted callers uphold by
+                /// construction (the GC wrapper's `+1` is released in
+                /// `${T}Class__finalize`).
+                #[inline]
+                pub fn to_js_nonnull(
+                    ptr: ::core::ptr::NonNull<Self>,
+                    global: &::bun_jsc::JSGlobalObject,
+                ) -> ::bun_jsc::JSValue {
+                    __create(global.as_mut_ptr(), ptr.as_ptr())
+                }
+
                 /// Wrap an owned `Box<Self>` in a JS object. Typed sibling of
                 /// [`to_js_ptr`] — the boxed payload is leaked here and
                 /// reclaimed by `${T}Class__finalize`.

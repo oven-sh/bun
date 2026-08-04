@@ -822,7 +822,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 unsafe {
                     *body_value =
                         crate::webcore::body::Value::Locked(crate::webcore::body::PendingValue {
-                            task: Some(ctx.cast::<c_void>()),
+                            task: Some(core::ptr::NonNull::new(ctx).unwrap().cast::<c_void>()),
                             global: std::ptr::from_ref(global),
                             on_start_buffering: Some(
                                 ServerRequestContext::<SSL, DEBUG>::on_start_buffering_callback,

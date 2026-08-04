@@ -238,7 +238,7 @@ mod NativePromiseContext {
         global: &JSGlobalObject,
         ctx: *mut T,
     ) -> JSValue {
-        npc::create(global, ctx)
+        npc::create(global, ctx, JSValue::ZERO)
     }
     #[inline]
     pub(super) fn take<T>(cell: JSValue) -> Option<NonNull<T>> {
@@ -792,8 +792,13 @@ where
         if self.reject_unsendable_response(unsafe { (*response).status_code() }) {
             return;
         }
+        // An async error() Response may replace a still-protected streaming
+        // Response; release the original before overwriting.
+        if self.flags.response_protected() {
+            self.response_jsvalue.get().unprotect();
+            self.flags.set_response_protected(false);
+        }
         self.response_jsvalue.set(value);
-        debug_assert!(!self.flags.response_protected());
         self.flags.set_response_protected(true);
         value.protect();
 
@@ -1962,8 +1967,9 @@ where
         });
     }
 
-    fn do_render_with_body_locked(this: *mut c_void, value: &mut Body::Value) {
-        let pinned = RequestContextRef::pin(this.cast::<Self>());
+    fn do_render_with_body_locked(this: NonNull<c_void>, value: &mut Body::Value) {
+        // Consumes the +1 taken at the `on_receive_value` registration site.
+        let pinned = RequestContextRef::adopt(this.cast::<Self>().as_ptr());
         pinned
             .ctx()
             .do_render_with_body(std::ptr::from_mut(value), None);
@@ -2068,7 +2074,7 @@ where
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::assign_to_stream(
                 global_this,
                 stream.value,
-                &mut response_stream.sink,
+                NonNull::from(&mut response_stream.sink),
             );
 
         assignment_result.ensure_still_alive();
@@ -3288,6 +3294,13 @@ where
                                     Self::drain_response_buffer_and_metadata_corked,
                                     this.as_ctx_ptr(),
                                 );
+                            } else if matches!(
+                                byte_stream.parent_const().producer.get(),
+                                WebCore::streams::SourceHandle::HTMLRewriter(_)
+                            ) {
+                                // Defer status/headers to the first chunk/end
+                                // so a pre-first-byte handler failure can
+                                // still reach `error()`.
                             } else {
                                 // if we only have metadata to send, send it now
                                 resp.run_corked_with_type(
@@ -3310,10 +3323,14 @@ where
                     return;
                 }
 
-                // when there's no stream, we need to
+                // No stream and no other consumer: wait for `Value::resolve`.
+                // The registered callback owns a +1 on `this`, released by
+                // `do_render_with_body_locked`.
+                this.ref_();
+                this.flags.set_has_marked_pending(true);
                 lock.on_receive_value =
                     Some(|ctx, value| Self::do_render_with_body_locked(ctx, value));
-                lock.task = Some(this.as_ctx_ptr().cast::<c_void>());
+                lock.task = Some(NonNull::new(this.as_ctx_ptr().cast::<c_void>()).unwrap());
 
                 return;
             }
@@ -3334,6 +3351,13 @@ where
             return WebCore::streams::Writable::Done;
         }
         let resp = this.resp.get().expect("infallible: resp bound");
+
+        // A rewriter-produced `Source::Bytes` body defers metadata until the
+        // first chunk so a pre-first-byte failure can still reach the
+        // server's `error()` hook. Flush it now, corked.
+        if !this.flags.has_written_status() {
+            resp.run_corked_with_type(Self::render_metadata_corked, this.as_ctx_ptr());
+        }
 
         let chunk = stream.slice();
         // on failure, it will continue to allocate
@@ -3365,13 +3389,33 @@ where
         if this.is_aborted_or_ended() {
             return;
         }
-        if err.is_some()
-            && let Some(resp) = this.resp.get()
-        {
-            let state = resp.state();
-            if state.is_http_write_called() && state.is_response_pending() {
-                this.force_close();
+        if let Some(err) = err {
+            // No status committed yet: the upstream producer (e.g. a
+            // suspended `HTMLRewriter` transform whose async handler
+            // rejected) failed before any bytes were emitted. Detach the
+            // ByteStream state and hand the error to the server's
+            // `error()` hook so it can supply the response.
+            if !this.flags.has_written_status() {
+                let global_this = this.server().global_this();
+                let js_err = err.to_js(global_this);
+                this.byte_stream.set(None);
+                this.response_body_readable_stream_ref
+                    .with_mut(|s| s.deinit());
+                this.run_error_handler(js_err);
                 return;
+            }
+            if let Some(resp) = this.resp.get() {
+                let state = resp.state();
+                if state.is_http_write_called() && state.is_response_pending() {
+                    this.force_close();
+                    return;
+                }
+            }
+        } else if !this.flags.has_written_status() {
+            // Upstream ended cleanly before any chunk: flush the deferred
+            // status/headers so the client sees them before the terminator.
+            if let Some(resp) = this.resp.get() {
+                resp.run_corked_with_type(Self::render_metadata_corked, this.as_ctx_ptr());
             }
         }
         this.end_stream(this.should_close_connection());
@@ -3646,6 +3690,34 @@ where
                         // falls through to the default error page below.
                         // SAFETY: `response` is the live, rooted cell pointer.
                         if HTTPStatusText::is_sendable(unsafe { (*response).status_code() }) {
+                            // A file or streaming body defers `render_metadata`
+                            // past this frame, where `_keep` is the only root,
+                            // so root the Response the way the async error
+                            // path does or the deferred flush can read a
+                            // collected weakref.
+                            if self.flags.response_protected() {
+                                self.response_jsvalue.get().unprotect();
+                            }
+                            self.response_jsvalue.set(result);
+                            self.flags.set_response_protected(false);
+                            // SAFETY: sole `&mut Response` borrow for this
+                            // cell; it ends before `render` reborrows the
+                            // same pointer.
+                            let body_value = unsafe { (*response).get_body_value() };
+                            body_value.to_blob_if_possible();
+                            match body_value {
+                                Body::Value::Blob(blob) => {
+                                    if shim::blob_needs_to_read_file(blob) {
+                                        result.protect();
+                                        self.flags.set_response_protected(true);
+                                    }
+                                }
+                                Body::Value::Locked(_) => {
+                                    result.protect();
+                                    self.flags.set_response_protected(true);
+                                }
+                                _ => {}
+                            }
                             // SAFETY: as above.
                             unsafe { self.render(response) };
                             return;
@@ -3704,6 +3776,10 @@ where
                     return;
                 }
 
+                // Same as handle_resolve: release a still-protected original.
+                if ctx.flags.response_protected() {
+                    ctx.response_jsvalue.get().unprotect();
+                }
                 ctx.response_jsvalue.set(fulfilled_value);
                 fulfilled_value.ensure_still_alive();
                 ctx.flags.set_response_protected(false);
@@ -4366,27 +4442,27 @@ where
     }
 
     pub(crate) fn on_request_body_readable_stream_available(
-        ptr: *mut c_void,
+        ptr: NonNull<c_void>,
         global_this: &JSGlobalObject,
         readable: WebCore::ReadableStream,
     ) {
         // SAFETY: `ptr` is the registered live body-callback context.
-        let this = unsafe { &*ptr.cast::<Self>() };
+        let this = unsafe { ptr.cast::<Self>().as_ref() };
         debug_assert!(!this.request_body_readable_stream_ref.with_mut(|s| s.has()));
         this.request_body_readable_stream_ref
             .set(readable_stream::Strong::init(readable, global_this));
     }
 
-    pub(crate) fn on_start_buffering_callback(this: *mut c_void) {
+    pub(crate) fn on_start_buffering_callback(this: NonNull<c_void>) {
         // SAFETY: `this` is the registered live body-callback context.
-        unsafe { &*this.cast::<Self>() }.on_start_buffering();
+        unsafe { this.cast::<Self>().as_ref() }.on_start_buffering();
     }
 
     pub(crate) fn on_start_streaming_request_body_callback(
-        this: *mut c_void,
+        this: NonNull<c_void>,
     ) -> WebCore::DrainResult {
         // SAFETY: `this` is the registered live body-callback context.
-        unsafe { &*this.cast::<Self>() }.on_start_streaming_request_body()
+        unsafe { this.cast::<Self>().as_ref() }.on_start_streaming_request_body()
     }
 
     pub(crate) fn get_remote_socket_info(&self) -> Option<uws::SocketAddress> {

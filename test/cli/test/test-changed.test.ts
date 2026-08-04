@@ -537,6 +537,24 @@ describe.concurrent("bun test --changed-first", () => {
     }
   });
 
+  test("--timings: affected files are ordered slowest-first", async () => {
+    using dir = tempDir("changed-first-timings", {
+      ...fixture,
+      "timings.json": JSON.stringify({
+        version: 1,
+        files: { "y.test.ts": 100, "x.test.ts": 10, "a.test.ts": 50, "b.test.ts": 50 },
+      }),
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "shared.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await run(String(dir), ["--timings=timings.json"]);
+    expect(ranFiles(stderr, names)).toEqual(names);
+    // y before x (slower), then the unaffected tail.
+    expect(fileOrder(stderr, names)).toEqual(["y.test.ts", "x.test.ts", ...unaffected]);
+    expect(exitCode).toBe(0);
+  });
+
   test("--changed and --changed-first together is an error", async () => {
     using dir = tempDir("changed-first-conflict", fixture);
     initRepo(String(dir));

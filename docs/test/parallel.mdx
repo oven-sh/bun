@@ -166,9 +166,9 @@ bun test --changed-first          # uncommitted + untracked vs HEAD
 bun test --changed-first=main     # vs a branch or commit
 ```
 
-`--changed-first` uses the same git + module-graph detection as `--changed` to find which test files are affected by your edits, but instead of skipping the rest it moves the affected files to the front of the run. On a PR CI job that still wants full coverage, this surfaces failures in what you touched before the slow tail of the suite starts, and combined with `--bail` the run stops there.
+`--changed-first` uses the same git + module-graph detection as `--changed` to find which test files are affected by your edits, but instead of skipping the rest it moves the affected files to the front of the run. On a PR CI job that still wants full coverage, this surfaces failures in what you touched early; combined with `--bail` the run stops on the first such failure instead of working through the rest of the suite.
 
-Affected files are ordered slowest-first when `--timings` is available, otherwise by path; the remaining files keep the order they would otherwise have. Under `--parallel` every worker drains the affected set before starting on its own chunk. Under `--shard` each file stays in the shard it would normally belong to and is simply run first within that shard. `--changed` and `--changed-first` cannot be passed together.
+Affected files are ordered slowest-first when `--timings` is available, otherwise by path; the remaining files keep the order they would otherwise have. Under `--parallel` the affected files are dispatched from a shared queue first, so every affected file is handed out before any worker starts on its own chunk (an unaffected file may already be running when the last affected one finishes). Under `--shard` each file stays in the shard it would normally belong to and is simply run first within that shard. `--changed` and `--changed-first` cannot be passed together.
 
 ## How it compares
 

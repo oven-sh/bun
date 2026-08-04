@@ -1811,11 +1811,9 @@ pub mod formatter {
     }
 
     impl ZigFormatter<'_, '_> {
-        /// Format into a byte sink, propagating the real `JsError` (a throwing
-        /// `[util.inspect.custom]`, termination, OOM). The `Display` impl below
-        /// collapses that to `fmt::Error`, which `std::io::Write::write_fmt`
-        /// turns into a panic when the sink itself never errored; use this
-        /// wherever the caller can `?`-propagate instead.
+        /// Like the `Display` impl below, but propagates the real `JsError`
+        /// (e.g. a throwing `[util.inspect.custom]`) instead of collapsing it
+        /// to `fmt::Error`.
         pub fn write_to(&self, writer: &mut dyn bun_io::Write) -> JsResult<()> {
             let formatter: &mut Formatter<'_> = self
                 .formatter

@@ -709,9 +709,7 @@ pub(crate) fn format_label(
                         list.extend_from_slice(owned_slice.slice());
                     } else {
                         let mut formatter = crate::test_runner::expect::make_formatter(global_this);
-                        // formatter cleanup handled by Drop. `write_to` (not
-                        // `write!`) so a throwing custom formatter surfaces as
-                        // a JS error instead of a panic in `write_fmt`.
+                        // formatter cleanup handled by Drop.
                         value.to_fmt(&mut formatter).write_to(&mut list)?;
                     }
                     idx = var_end;

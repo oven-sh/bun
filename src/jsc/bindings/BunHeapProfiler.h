@@ -4,11 +4,11 @@
 
 namespace Bun {
 
-// node:v8 GCProfiler start/stop (v8.GCProfiler).
+// node:v8 GCProfiler start/stop (JSC HeapObserver-backed).
 JSC_DECLARE_HOST_FUNCTION(jsFunction_startGCProfile);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_stopGCProfile);
 
-// --heap-prof sampling heap profile in V8's JSON shape.
+// node:v8 sampling heap profile (--heap-prof / v8.writeHeapSnapshot helper).
 JSC_DECLARE_HOST_FUNCTION(jsFunction_takeSamplingHeapProfile);
 
 } // namespace Bun

@@ -4,6 +4,11 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { WebSocket } from "ws";
 
+// Runtime.evaluate goes through JSC's InjectedScript, which has missing
+// RELEASE_AND_RETURN wraps in the prebuilt WebKit that abort the inspectee
+// under validateExceptionChecks (see inspector.test.ts injectedScriptChildEnv).
+const { BUN_JSC_validateExceptionChecks, BUN_JSC_dumpSimulatedThrows, ...inspecteeEnv } = bunEnv;
+
 // JSGlobalObjectInspectorController::disconnectFrontend tears down every agent
 // (willDestroyFrontendAndBackend) before its last-frontend check, so without
 // Bun's per-connection routing a second client's close would silently disable
@@ -14,7 +19,7 @@ test("a second --inspect client disconnecting does not disable inspector agents 
   });
   await using proc = spawn({
     cmd: [bunExe(), "--inspect-wait=127.0.0.1:0", join(String(dir), "keepalive.js")],
-    env: bunEnv,
+    env: inspecteeEnv,
     stdout: "ignore",
     stderr: "pipe",
   });

@@ -643,10 +643,9 @@ function formatWhatwgURL(url: URL, fragment: boolean, unicode: boolean, search: 
     if (port !== "") ret += ":" + port;
   }
   ret += url.pathname;
-  // .search/.hash return "" for both a null and an empty-string component,
-  // but the href serializer emits the bare "?"/"#" for empty-but-present;
-  // derive presence from the href so `format(new URL("http://x/?"), {...})`
-  // keeps the marker like node does. href is always `...pathname[?q][#f]`.
+  // .search/.hash return "" for both null and empty-string components, but the href serializer
+  // emits the bare "?"/"#" for empty-but-present; derive presence from the href like node does.
+  // https://url.spec.whatwg.org/#url-serializing
   const hashAt = href.indexOf("#");
   const queryEnd = hashAt === -1 ? href.length : hashAt;
   if (search) ret += url.search || (href[queryEnd - 1] === "?" ? "?" : "");

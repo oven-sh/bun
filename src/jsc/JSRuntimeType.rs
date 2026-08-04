@@ -8,5 +8,4 @@ pub struct JSRuntimeType(pub u16);
 
 impl JSRuntimeType {
     pub const NOTHING: Self = Self(0x0);
-    pub const UNDEFINED: Self = Self(0x2);
 }

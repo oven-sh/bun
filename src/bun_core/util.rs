@@ -4380,23 +4380,13 @@ pub fn maybe_handle_panic_during_process_reload() {
     }
 }
 
-/// Port of `bun.reloadProcess`. Allocator param dropped (uses libc malloc via
-/// `dupe_z`). `may_return == true` → returns on failure; `false` → panics.
-/// macOS posix_spawn path is deferred to bun_spawn (tier-4); tier-0 falls
-/// back to plain `execve` on all POSIX. `on_before_reload_process_posix`
-/// clears CLOEXEC on stdio and the IPC fd and resets caught signal
-/// dispositions on every POSIX target; the close_range sweep is Linux/BSD
-/// only.
+/// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → panics.
+/// `on_before_reload_process_posix` clears CLOEXEC on stdio/IPC and resets caught signal
+/// dispositions on all POSIX; the close_range sweep is Linux/BSD only.
 pub fn reload_process(clear_terminal: bool, may_return: bool) {
-    // Exactly one thread may perform the reload. The JS thread (draining the
-    // WatchReloadTask after emitting kill-signal listeners) and the watcher's
-    // bounded grace-window fallback (hot_reloader.rs enqueue) can both reach
-    // here at the tail of the window; concurrent terminal resets, signal
-    // disposition restores and execve preparation crash on musl. The swap
-    // elects a winner; a losing thread parks (the winner's execve replaces
-    // the whole process momentarily) or returns per `may_return`. A thread
-    // that already owns the reload (thread-local set) may re-enter, keeping
-    // the prior crash-during-reload semantics.
+    // Exactly one thread may perform the reload: the JS thread and the watcher's grace-window
+    // fallback can both reach here, and concurrent execve prep crashes on musl. The swap elects a
+    // winner; a loser parks or returns. A thread that already owns the reload may re-enter.
     let owns_reload = RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.get());
     if !owns_reload && RELOAD_IN_PROGRESS.swap(true, AOrdering::SeqCst) {
         if may_return {
@@ -4449,10 +4439,8 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     }
 
     #[cfg(unix)]
-    // SAFETY: the FFI calls below (`on_before_reload_process_posix`, `execve`)
-    // receive only locally-built NUL-terminated argv/envp arrays terminated by
-    // a null pointer; on success `execve` never returns, on failure errno is
-    // read. No borrowed Rust state is observed after the exec.
+    // SAFETY: FFI calls receive only locally-built NUL-terminated argv/envp arrays; on success
+    // `execve` never returns, on failure errno is read. No borrowed Rust state observed after.
     unsafe {
         {
             unsafe extern "C" {

@@ -1,5 +1,6 @@
-// Shims for Node.js internals consumed by the ported node:repl / internal/readline stack.
-// Exports match the Node internal's name/signature; implementations delegate to Bun equivalents.
+// Shims for Node internals consumed by the ported node:repl/readline stack.
+// Each export matches the upstream name/calling convention.
+// https://github.com/nodejs/node/tree/main/lib/internal
 const util = require("node:util");
 const Module = require("node:module");
 const path = require("node:path");
@@ -22,9 +23,9 @@ const {
 
 const { kEmptyObject } = require("internal/shared");
 
-// Node reconstructs the regex in an internal realm; Bun lacks one, so load-time-captured
-// intrinsics close the `[Symbol.*]` override hole (tampered `.exec` still observable per spec).
-// https://github.com/nodejs/node/blob/main/lib/internal/util.js
+// Node rebuilds the regex in an internal realm; Bun has none, so load-time
+// primordials close the [Symbol.*] override hole (RegExp.prototype.exec is
+// still observable per spec's @@replace/@@split Get(rx,"exec")).
 function SideEffectFreeRegExpPrototypeSymbolReplace(regexp, str, replacement) {
   return RegExpPrototypeSymbolReplace(regexp, str, replacement);
 }
@@ -320,7 +321,8 @@ class CJSModuleShim {
 
 function startSigintWatchdog() {
   // breakOnSigint works via Bun's SigintWatcher (NodeVMScript.cpp). Only Node's
-  // `had_pending_signals` post-script race is unimplemented, so stopSigintWatchdog() returns false.
+  // `had_pending_signals` race (SIGINT between script exit and raw-mode restore)
+  // is unimplemented, so stopSigintWatchdog() always returns false.
   return true;
 }
 
@@ -367,39 +369,10 @@ function getOwnNonIndexProperties(obj, filter = ALL_PROPERTIES) {
 }
 
 // ---- process.addUncaughtExceptionCaptureCallback polyfill ----------------
-// Bun only implements the single-callback set/clear API; emulate Node's additive API with a
-// dispatcher list that occupies the exclusive slot once the first REPL starts.
+// node:domain needs the same stacking behaviour, so the dispatcher lives in
+// a shared module both can install into.
 
-let captureCallbacks = null;
-
-function addUncaughtExceptionCaptureCallback(cb) {
-  if (!captureCallbacks) {
-    captureCallbacks = [];
-    try {
-      process.setUncaughtExceptionCaptureCallback(err => {
-        // Indexed, not for..of: user code can delete Array.prototype[Symbol.iterator]
-        // and this runs while reporting that very error, so an unsafe iteration here
-        // replaces the user's exception with "{} is not iterable".
-        for (let i = 0; i < captureCallbacks.length; i++) {
-          if (captureCallbacks[i](err)) return;
-        }
-        // No callback claimed it: Node's aux API falls through to the
-        // regular 'uncaughtException' flow (with the origin arg), then to
-        // the native fatal handler.
-        if (process.emit("uncaughtException", err, "uncaughtException")) return;
-        try {
-          process.stderr.write(`Uncaught ${util.inspect(err)}\n`);
-        } catch {}
-        process.exit(1);
-      });
-    } catch {
-      // A user capture callback already occupies the exclusive slot; without native additive
-      // support, defer to it and don't push (the dispatcher isn't wired).
-      return;
-    }
-  }
-  captureCallbacks.push(cb);
-}
+const { addUncaughtExceptionCaptureCallback } = require("internal/uncaught_exception_capture");
 
 export default {
   addUncaughtExceptionCaptureCallback,

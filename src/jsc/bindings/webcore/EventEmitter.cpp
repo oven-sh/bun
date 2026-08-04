@@ -124,6 +124,14 @@ bool EventEmitter::emit(const Identifier& eventType, const MarkedArgumentBuffer&
     return fireEventListeners(eventType, arguments);
 }
 
+bool EventEmitter::emitPropagatingExceptions(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
+{
+    if (!scriptExecutionContext())
+        return false;
+
+    return fireEventListeners(eventType, arguments, true);
+}
+
 void EventEmitter::uncaughtExceptionInEventHandler()
 {
 }
@@ -175,7 +183,7 @@ Vector<JSObject*> EventEmitter::getListeners(const Identifier& eventType)
 }
 
 // https://dom.spec.whatwg.org/#concept-event-listener-invoke
-bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
+bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments, bool propagateExceptions)
 {
 
     auto* data = eventTargetData();
@@ -198,7 +206,7 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
 
     bool prevFiringEventListeners = data->isFiringEventListeners;
     data->isFiringEventListeners = true;
-    auto fired = innerInvokeEventListeners(eventType, *listenersVector, arguments);
+    auto fired = innerInvokeEventListeners(eventType, *listenersVector, arguments, propagateExceptions);
     data->isFiringEventListeners = prevFiringEventListeners;
     return fired;
 }
@@ -206,7 +214,7 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
 // Intentionally creates a copy of the listeners vector to avoid event listeners added after this point from being run.
 // Note that removal still has an effect due to the removed field in RegisteredEventListener.
 // https://dom.spec.whatwg.org/#concept-event-listener-inner-invoke
-bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, SimpleEventListenerVector listeners, const MarkedArgumentBuffer& arguments)
+bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, SimpleEventListenerVector listeners, const MarkedArgumentBuffer& arguments, bool propagateExceptions)
 {
     Ref<EventEmitter> protectedThis(*this);
     ASSERT(!listeners.isEmpty());
@@ -252,6 +260,11 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         auto* exception = exceptionPtr.get();
 
         if (exception) [[unlikely]] {
+            if (propagateExceptions) {
+                auto scope = DECLARE_THROW_SCOPE(vm);
+                JSC::throwException(lexicalGlobalObject, scope, exception);
+                return fired;
+            }
             auto errorIdentifier = vm.propertyNames->error;
             auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
             if (!hasErrorListener || eventType == errorIdentifier) {

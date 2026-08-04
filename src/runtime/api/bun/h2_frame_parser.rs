@@ -1181,8 +1181,12 @@ impl TxFrameTracker {
                 let header = FrameHeader::decode(&self.header);
                 self.header_len = 0;
                 self.remaining = header.length;
-                if matches!(header.type_, 0x01 | 0x05 | 0x09) {
-                    // HEADERS, PUSH_PROMISE, CONTINUATION
+                // PUSH_PROMISE is not a FrameType variant (the inbound path matches it raw too).
+                const PUSH_PROMISE: u8 = 0x05;
+                if header.type_ == FrameType::HTTP_FRAME_HEADERS as u8
+                    || header.type_ == PUSH_PROMISE
+                    || header.type_ == FrameType::HTTP_FRAME_CONTINUATION as u8
+                {
                     self.header_block_open =
                         header.flags & HeadersFrameFlags::END_HEADERS as u8 == 0;
                 }
@@ -7364,6 +7368,7 @@ impl H2FrameParser {
     fn get_session_memory_usage_bytes(&self) -> usize {
         let stream_count = self.streams.get().len();
         self.write_buffer.get().len_u32() as usize
+            + self.tx_spill.get().len()
             + self.queued_data_size.get() as usize
             + stream_count * core::mem::size_of::<Stream>()
     }

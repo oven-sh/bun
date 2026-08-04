@@ -4162,7 +4162,12 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
   // than one frame (HEADERS + CONTINUATION) is being handed to the transport.
   const cases = [];
   for (const kind of Object.keys(nested)) {
-    cases.push([kind, "data", false], [kind, "data", true], [kind, "continuation", false]);
+    cases.push(
+      [kind, "data", false],
+      [kind, "data", true],
+      [kind, "continuation", false],
+      [kind, "continuation", true],
+    );
   }
 
   it.each(cases)(

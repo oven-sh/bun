@@ -1831,9 +1831,7 @@ describe("output consumed by a native sink after output backpressure", () => {
   // then returns early on output_backpressured(), leaving end_rewrite() owed.
   async function makeParked() {
     const gate = Promise.withResolvers();
-    const out = new HTMLRewriter()
-      .on("x", { element: () => gate.promise })
-      .transform(new Response(html));
+    const out = new HTMLRewriter().on("x", { element: () => gate.promise }).transform(new Response(html));
     const body = out.body;
     gate.resolve();
     await 0;

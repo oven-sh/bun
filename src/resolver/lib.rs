@@ -1180,6 +1180,18 @@ pub mod fs {
             let dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
 
             crate::Resolver::assert_valid_cache_key(dir);
+
+            let had_handle = maybe_handle.is_some();
+            let close_even_if_published = !store_fd || self.need_to_close_files();
+            let owned_handle = core::cell::Cell::new(maybe_handle);
+            let handle_published = core::cell::Cell::new(false);
+            let _close_guard = scopeguard::guard((), |()| {
+                let Some(h) = owned_handle.get() else { return };
+                if !handle_published.get() || (!had_handle && close_even_if_published) {
+                    let _ = bun_sys::close(h);
+                }
+            });
+
             let mut cache_result: Option<bun_alloc::Result> = None;
             let _unlock_guard = if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
                 Some(self.entries_mutex.lock_guard())
@@ -1219,22 +1231,16 @@ pub mod fs {
                 }
             }
 
-            let had_handle = maybe_handle.is_some();
-            let handle: Fd = match maybe_handle {
+            let handle: Fd = match owned_handle.get() {
                 Some(h) => h,
                 None => match self.open_dir(dir) {
-                    Ok(h) => h,
+                    Ok(h) => {
+                        owned_handle.set(Some(h));
+                        h
+                    }
                     Err(err) => return self.read_directory_error(dir, err),
                 },
             };
-
-            let close_even_if_published = !store_fd || self.need_to_close_files();
-            let handle_published = core::cell::Cell::new(false);
-            let _close_guard = scopeguard::guard((), |()| {
-                if !handle_published.get() || (!had_handle && close_even_if_published) {
-                    let _ = bun_sys::close(handle);
-                }
-            });
 
             // if we get this far, it's a real directory, so we can just store the dir name.
             // An in-place refresh always keeps the slot's existing interned name: callers

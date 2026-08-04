@@ -167,18 +167,17 @@ test.skipIf(skip)("resolver closes a caller-supplied directory fd when readdir f
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const m = stdout.match(/LEAKED=(\d+)/);
   // unreachable-marker stays undiscovered iff the shim made the marker dirs
   // unreadable; if bun stops routing getdents64 through libc syscall() this trips.
   expect({
-    leaked: m?.[0],
-    shimFired: !stderr.includes("unreachable-marker"),
-    onePass: stderr.includes("1 pass"),
+    leaked: stdout.match(/LEAKED=\d+/)?.[0] ?? stdout,
+    passCount: stderr.match(/(\d+) pass/)?.[1] ?? stderr,
+    sawUnreachable: stderr.includes("unreachable-marker"),
     exitCode,
   }).toEqual({
     leaked: "LEAKED=0",
-    shimFired: true,
-    onePass: true,
+    passCount: "1",
+    sawUnreachable: false,
     exitCode: 0,
   });
 });

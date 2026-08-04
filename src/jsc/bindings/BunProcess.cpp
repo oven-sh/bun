@@ -462,11 +462,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #define StandaloneModuleGraph__base_path "/$bunfs/"_s
 #endif
     bool deleteAfter = false;
+    [[maybe_unused]] bool fromEmbedded = false;
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
         BunString bunStr = Bun::toString(filename);
         if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
             filename = bunStr.transferToWTFString();
             deleteAfter = !filename.startsWith("/proc/"_s);
+            fromEmbedded = true;
         }
     }
 
@@ -539,8 +541,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     // A glibc-linked addon loaded into a musl process segfaults inside the
     // loader (gcompat provides the soname but not the ABI). Inspect the ELF
     // DT_NEEDED list first so the user sees a catchable error instead of a
-    // crash report. See https://github.com/oven-sh/bun/issues/15753.
-    {
+    // crash report. Skipped for addons embedded via `bun build --compile`.
+    // See https://github.com/oven-sh/bun/issues/15753.
+    if (!fromEmbedded) {
         char soname[64] = { 0 };
         if (Bun__addonNeedsGlibcOnMusl(utf8.data(), utf8.length(), soname, sizeof(soname))) [[unlikely]] {
             tryToDeleteIfNecessary();

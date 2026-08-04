@@ -1225,8 +1225,8 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         return true;
 
     // Node exits with code 6 (InvalidFatalExceptionMonkeyPatching) when process._fatalException
-    // is replaced with a non-callable. Top exception scope: this extern "C" entry is called
-    // from Rust and no caller checks for a simulated re-throw from a ThrowScope.
+    // is replaced with a non-callable. Top exception scope: no caller declares a ThrowScope
+    // around this call (Rust FFI and Process_functionFatalException).
     {
         auto fatalScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         JSValue fatalException = process->get(globalObject, Identifier::fromString(vm, "_fatalException"_s));

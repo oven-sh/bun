@@ -571,8 +571,10 @@ describe("util.debuglog", () => {
       expect(exitCode).toBe(0);
     }
   }, 20_000);
+});
+
 // https://nodejs.org/docs/latest-v26.x/api/util.html#utildebuglogsection-callback
-describe("util.debuglog", () => {
+describe("util.debuglog section matching", () => {
   const script = `
     const assert = require("node:assert");
     const util = require("node:util");

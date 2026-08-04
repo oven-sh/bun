@@ -6,7 +6,7 @@ use super::throw;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
-    pub fn to_be_close_to(
+    pub(crate) fn to_be_close_to(
         &self,
         global: &JSGlobalObject,
         call_frame: &CallFrame,

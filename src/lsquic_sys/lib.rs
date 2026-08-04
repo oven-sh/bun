@@ -854,7 +854,7 @@ pub fn enable_logging(level: &core::ffi::CStr) {
 #[derive(Default)]
 pub struct ConnInfo {
     pub cwnd: u32,
-    pub pmtu: u32,
+    pub(crate) pmtu: u32,
     pub rtt: u32,
     pub rttvar: u32,
     pub rtt_min: u32,
@@ -864,9 +864,9 @@ pub struct ConnInfo {
     pub pkts_sent: u64,
     pub pkts_lost: u64,
     pub pkts_retx: u64,
-    pub bw_estimate: u64,
-    pub max_pacing_rate: u64,
-    pub pacing_rate: u64,
+    pub(crate) bw_estimate: u64,
+    pub(crate) max_pacing_rate: u64,
+    pub(crate) pacing_rate: u64,
 }
 
 impl Conn {

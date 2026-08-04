@@ -17,8 +17,7 @@ const ArrayPrototypeForEach = Array.prototype.forEach;
 const NumberIsNaN = Number.isNaN;
 const MathMax = Math.max;
 
-const ArrayBufferIsView = ArrayBuffer.isView;
-const isArrayBufferView = ArrayBufferIsView;
+const isArrayBufferView = ArrayBuffer.isView;
 const isAnyArrayBuffer = b => b instanceof ArrayBuffer || b instanceof SharedArrayBuffer;
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
@@ -688,7 +687,7 @@ function createConvenienceMethod(ctor, sync, methodName, isZstd) {
           bufferSize = 0;
         }
         // Set pledgedSrcSize if not already set
-        if (!opts.pledgedSrcSize && bufferSize > 0) {
+        if (!opts?.pledgedSrcSize && bufferSize > 0) {
           opts = { ...opts, pledgedSrcSize: bufferSize };
         }
       }

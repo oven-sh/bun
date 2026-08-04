@@ -23,7 +23,6 @@ use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 // Re-exports (thin re-exports of sibling/neighbor modules — do NOT inline
 // bodies). Kept so downstream `bun_jsc::event_loop::Foo` paths resolve.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_event_loop::AnyTask;
 pub use bun_event_loop::AnyTaskWithExtraContext;
 pub use bun_event_loop::ConcurrentTask::{
     self, ConcurrentTask as ConcurrentTaskItem, Queue as ConcurrentQueue,
@@ -513,8 +512,9 @@ impl EventLoop {
                 let _ = unsafe { bun_core::heap::take(dest) };
             }
 
-            // SAFETY: `task` is non-null (checked above) and owned by this batch.
-            let task_ref = unsafe { &mut *task };
+            // SAFETY: `task` is non-null (checked above) and owned by this
+            // batch; only shared reads follow (`auto_delete`, the `task` copy).
+            let task_ref = unsafe { &*task };
             if task_ref.auto_delete() {
                 to_destroy = Some(task);
             }
@@ -595,21 +595,6 @@ impl EventLoop {
                 "usockets_loop: event_loop_handle not initialized (call ensure_waker first)",
             )
         }
-    }
-
-    /// A finished HTTP transaction asks the GC heuristic to look at the heap -- but not yet:
-    /// the response's JS handling and microtasks have not run, so the garbage is not there to
-    /// see. Acted on at the next park (`drain_pending_gc_hint`). `&self`: callers run inside
-    /// `tick_queue_with_count`, which already holds the `&mut EventLoop`.
-    pub fn request_gc_hint(&self) {
-        self.vm_ref().as_mut().gc_controller.request_hint();
-    }
-
-    /// Acts on a hint left by `request_gc_hint`. Must run BEFORE the poll deadline is computed
-    /// (`timer::All::get_timeout`): the GC heuristic arms a one-shot timer, and a timer armed
-    /// after the deadline is not in it -- the loop would sleep straight past it.
-    pub fn drain_pending_gc_hint(&mut self) {
-        self.vm_ref().as_mut().gc_controller.drain_pending_hint();
     }
 
     #[inline]
@@ -744,7 +729,7 @@ impl EventLoop {
     /// re-queued so they remain reachable from the static-rooted VM box (the
     /// pre-`532a5411961b` state). Consuming them silently here unhooked that
     /// root and surfaced the boxes as direct leaks (e.g. `AnyTaskJob<_>`); the
-    /// definer can't safely dispatch every `AnyTask` callback at shutdown.
+    /// definer can't safely dispatch every erased callback at shutdown.
     pub fn release_queued_tasks_for_shutdown(&mut self) {
         self.drop_concurrent_cpp_tasks();
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
@@ -767,7 +752,7 @@ impl EventLoop {
         // Free (don't run — running could re-enter the dying VM) queued
         // ManagedTask boxes. Other tags are left in place: they were re-queued
         // by `release_queued_tasks_for_shutdown` because their callback can't
-        // be no-op-dispatched safely (`AnyTask` callbacks call into JS) and
+        // be no-op-dispatched safely (some callbacks call into JS) and
         // their box may be aliased by the originator. Keeping them in
         // `self.tasks` (a field of the static-rooted `VirtualMachine` box that
         // is never `dealloc`'d) leaves the chain reachable to LSan — the same
@@ -873,9 +858,9 @@ impl EventLoop {
             // this would only occur if we were recursively running tickImmediateTasks.
             bun_core::hint::cold();
             // SAFETY: as above.
-            let r = unsafe { &mut *this };
-            let next = core::mem::take(&mut r.next_immediate_tasks);
-            r.immediate_tasks.extend_from_slice(&next);
+            let next = core::mem::take(unsafe { &mut (*this).next_immediate_tasks });
+            // SAFETY: as above.
+            unsafe { (*this).immediate_tasks.extend_from_slice(&next) };
         }
 
         if to_run_now.capacity() > 1024 * 128 {
@@ -1117,31 +1102,35 @@ impl EventLoop {
 
     pub fn tick_possibly_forever(&mut self) {
         let loop_ptr = self.usockets_loop();
-        // SAFETY: usockets_loop() returns a live uws loop for the VM lifetime.
-        let loop_ = unsafe { &mut *loop_ptr };
 
         #[cfg(unix)]
         {
             let pending_unref = self.vm_ref().take_pending_unref();
             if pending_unref > 0 {
-                loop_.unref_count(pending_unref);
+                // SAFETY: usockets_loop() returns a live uws loop for the VM
+                // lifetime; borrow scoped to this call.
+                unsafe { (*loop_ptr).unref_count(pending_unref) };
             }
         }
 
-        if !loop_.is_active() {
-            self.hold_forever_poll(loop_);
+        // SAFETY: as above.
+        if !unsafe { (*loop_ptr).is_active() } {
+            // SAFETY: as above; `hold_forever_poll` does not re-enter the loop.
+            self.hold_forever_poll(unsafe { &mut *loop_ptr });
         }
 
-        self.drain_pending_gc_hint();
-        self.process_gc_timer();
         self.process_gc_timer();
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
         // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
-        loop_.tick_with_timeout(
-            Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
-            uws::NOW_NS_UNKNOWN,
-        );
+        // SAFETY: as above — the tick runs loop callbacks that reach the loop
+        // themselves, so the exclusive borrow is scoped to this call only.
+        unsafe {
+            (*loop_ptr).tick_with_timeout(
+                Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
+                uws::NOW_NS_UNKNOWN,
+            )
+        };
 
         self.vm_ref().as_mut().on_after_event_loop();
         self.tick_concurrent();
@@ -1306,7 +1295,7 @@ bun_event_loop::link_impl_JsEventLoop! {
                 .vm_ref()
                 .as_mut()
                 .rare_data()
-                .file_polls_
+                .file_polls
                 .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
                 .as_mut(),
         ),
@@ -1319,7 +1308,7 @@ bun_event_loop::link_impl_JsEventLoop! {
                     .vm_ref()
                     .as_mut()
                     .rare_data()
-                    .file_polls_
+                    .file_polls
                     .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
                     .as_mut(),
             );
@@ -1437,28 +1426,4 @@ pub(crate) fn __bun_spawn_sync_vm_set_event_loop(vm: *mut (), el: *mut ()) {
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_spawn_sync_vm_swap_suppress_microtask_drain(vm: *mut (), v: bool) -> bool {
     vm_from_ptr(vm).suppress_microtask_drain.replace(v)
-}
-
-/// C++ (webcore/streams) entries for the deferred task queue: register/unregister a task that
-/// runs right after the current microtask drain (see DeferredTaskQueue.rs). `ctx` identity is
-/// the key; the callee must unregister before `ctx` is freed.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__EventLoop__postDeferredTask(
-    vm: &VirtualMachine,
-    ctx: *mut core::ffi::c_void,
-    task: DeferredRepeatingTask,
-) -> bool {
-    vm.event_loop_ref()
-        .deferred_tasks
-        .post_task(core::ptr::NonNull::new(ctx), task)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__EventLoop__unregisterDeferredTask(
-    vm: &VirtualMachine,
-    ctx: *mut core::ffi::c_void,
-) -> bool {
-    vm.event_loop_ref()
-        .deferred_tasks
-        .unregister_task(core::ptr::NonNull::new(ctx))
 }

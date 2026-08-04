@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { isASAN, isWindows } from "harness";
+import { isASAN, isWindows, rss } from "harness";
 import * as net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -45,12 +45,12 @@ while (started < warmup_total) {
   await Promise.all(promises);
   await setTimeout(1);
   if (started % 10_000 === 0) {
-    console.log(`Completed ${started} connections. RSS: ${(process.memoryUsage.rss() / 1024 / 1024) | 0} MB`);
+    console.log(`Completed ${started} connections. RSS: ${(rss() / 1024 / 1024) | 0} MB`);
   }
 }
 
 Bun.gc(true);
-const warmup_rss = process.memoryUsage.rss();
+const warmup_rss = rss();
 
 started = 0;
 while (started < measured_total) {
@@ -73,14 +73,14 @@ while (started < measured_total) {
   await Promise.all(promises);
   await setTimeout(1);
   if (started % 10_000 === 0) {
-    console.log(`Completed ${started} connections. RSS: ${(process.memoryUsage.rss() / 1024 / 1024) | 0} MB`);
+    console.log(`Completed ${started} connections. RSS: ${(rss() / 1024 / 1024) | 0} MB`);
   }
 }
 
 // Mirror the warmup sample: collect before measuring so the assertion compares
 // like-for-like and isn't sensitive to garbage still in flight from the last batch.
 Bun.gc(true);
-const post_rss = process.memoryUsage.rss();
+const post_rss = rss();
 
 server.close();
 

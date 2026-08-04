@@ -70,6 +70,8 @@ struct SourceAlgorithmSlots {
     SourceKind kind { SourceKind::Nothing };
     // TeeBranch / ByteTeeBranch only: which branch this controller is (0 or 1).
     uint8_t teeBranchIndex { 0 };
+    // TextDecode kind only: the inline streaming-UTF-8 decode state.
+    StreamingUTF8DecodeState textDecodeState;
     // JavaScript kind only: the user underlyingSource object (the call `this`).
     JSC::WriteBarrier<JSC::Unknown> underlyingObject;
     // JavaScript kind only: the converted `pull` method ([[pullAlgorithm]]);

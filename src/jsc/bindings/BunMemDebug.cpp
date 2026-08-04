@@ -855,7 +855,8 @@ static void imageRestoreAndRun(const char* path)
     mi_scavenger_stop(); // this process's scavenger thread must not touch allocator state while/after we overlay it
     // No heap use from here until the overlay is done: with malloc routed to mimalloc, this process's heap sits at the same VA as the image's.
     if (hdr.nregions > 8192) { fprintf(stderr, "[image] too many regions\n"); _exit(2); }
-    static ImageRegion regionsBuf[8192]; pread(fd, regionsBuf, hdr.nregions * sizeof(ImageRegion), sizeof(ImageHeader));
+    ImageRegion* regionsBuf = (ImageRegion*)mmap(nullptr, (hdr.nregions * sizeof(ImageRegion) + 16383) & ~16383ull, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0); // not heap, not __DATA: both get overlaid below
+    pread(fd, regionsBuf, hdr.nregions * sizeof(ImageRegion), sizeof(ImageHeader));
     std::span<ImageRegion> regions(regionsBuf, hdr.nregions);
     size_t mapped = 0, copied = 0;
     bool verbose = !!getenv("BUN_IMAGE_VERBOSE");

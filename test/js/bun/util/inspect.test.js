@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -13,13 +13,16 @@ it("prototype", () => {
     ReadableStream.prototype,
     WritableStream.prototype,
     TransformStream.prototype,
-    // Event prototypes have a brand-checked [nodejs.util.inspect.custom]
-    // (like Node's own Event), so inspecting the bare prototype throws.
     WebSocket.prototype,
   ];
 
   for (let prototype of prototypes) {
     for (let i = 0; i < 10; i++) expect(Bun.inspect(prototype).length > 0).toBeTrue();
+  }
+  // Event subclasses install node's brand-checked [util.inspect.custom], so
+  // inspecting the bare prototype throws — same as node's util.inspect.
+  for (let prototype of [MessageEvent.prototype, CloseEvent.prototype]) {
+    expect(() => Bun.inspect(prototype)).toThrow();
   }
   Bun.gc(true);
 });
@@ -171,28 +174,26 @@ Request (0 KB) {
   );
 });
 
-// Event now has a Node-compatible [nodejs.util.inspect.custom] that prints
-// `<ctor> { type, defaultPrevented, cancelable, timeStamp }`.
 it("MessageEvent", () => {
-  expect(Bun.inspect(new MessageEvent("message", { data: 123 }))).toBe(
-    `MessageEvent {
-  type: 'message',
-  defaultPrevented: false,
-  cancelable: false,
-  timeStamp: 0
-}`,
-  );
+  expect(Bun.inspect(new MessageEvent("message", { data: 123 }))).toMatchInlineSnapshot(`
+    "MessageEvent {
+      type: 'message',
+      defaultPrevented: false,
+      cancelable: false,
+      timeStamp: 0
+    }"
+  `);
 });
 
 it("MessageEvent with no data set", () => {
-  expect(Bun.inspect(new MessageEvent("message"))).toBe(
-    `MessageEvent {
-  type: 'message',
-  defaultPrevented: false,
-  cancelable: false,
-  timeStamp: 0
-}`,
-  );
+  expect(Bun.inspect(new MessageEvent("message"))).toMatchInlineSnapshot(`
+    "MessageEvent {
+      type: 'message',
+      defaultPrevented: false,
+      cancelable: false,
+      timeStamp: 0
+    }"
+  `);
 });
 
 it("MessageEvent with deleted data", () => {
@@ -203,14 +204,14 @@ it("MessageEvent with deleted data", () => {
     configurable: true,
   });
   delete event.data;
-  expect(Bun.inspect(event)).toBe(
-    `MessageEvent {
-  type: 'message',
-  defaultPrevented: false,
-  cancelable: false,
-  timeStamp: 0
-}`,
-  );
+  expect(Bun.inspect(event)).toMatchInlineSnapshot(`
+    "MessageEvent {
+      type: 'message',
+      defaultPrevented: false,
+      cancelable: false,
+      timeStamp: 0
+    }"
+  `);
 });
 
 // https://github.com/oven-sh/bun/issues/561

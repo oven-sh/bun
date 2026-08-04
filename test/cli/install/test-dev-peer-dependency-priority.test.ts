@@ -2,11 +2,6 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { VerdaccioRegistry, bunEnv, bunExe, stderrForInstall, tempDir } from "harness";
 import { join } from "path";
 
-// These tests previously fetched jquery / typescript / next from registry.npmjs.org
-// (including all of next's transitive dependencies) which pushed the wall time past
-// ten seconds on some CI lanes. They now resolve the same scenarios against the
-// local verdaccio fixture using the `no-deps` package so nothing touches the public
-// internet.
 const registry = new VerdaccioRegistry();
 
 beforeAll(async () => {
@@ -68,7 +63,7 @@ test.concurrent("workspace devDependencies should take priority over peerDepende
   // The devDependency (workspace) must win: only the workspace entry is recorded.
   const lockfile = await Bun.file(join(String(dir), "bun.lock")).text();
   expect(lockfile).toContain("no-deps@workspace:packages/no-deps");
-  expect(lockfile).not.toContain("no-deps@1.0.0");
+  expect(lockfile).not.toContain(registry.registryUrl());
 
   // Re-install with the registry pointed at a server that fails every request. If
   // bun tried to re-resolve the peer dependency it would hit this server.
@@ -128,6 +123,7 @@ test.concurrent("devDependencies and peerDependencies with different versions sh
 
   const lockfile = await Bun.file(join(String(dir), "bun.lock")).text();
   expect(lockfile).toContain("utils@workspace:packages/utils");
+  expect(lockfile).not.toContain(registry.registryUrl());
 });
 
 test.concurrent("dependency behavior comparison prioritizes devDependencies", async () => {
@@ -182,13 +178,13 @@ test.concurrent("Next.js monorepo scenario should not make unnecessary network r
         "no-deps": "^1.0.0", // would resolve to 1.1.0 from the registry
       },
     }),
-    "packages/web/test.js": `console.log(require("no-deps/package.json").version);`,
+    "packages/web/test.js": `console.log(require("no-deps").version);`,
     "packages/no-deps/package.json": JSON.stringify({
       name: "no-deps",
       version: "2.0.0",
       main: "index.js",
     }),
-    "packages/no-deps/index.js": `module.exports = require("./package.json");`,
+    "packages/no-deps/index.js": `module.exports = { version: "2.0.0-workspace" };`,
   });
 
   // Initial install against the local registry.
@@ -198,9 +194,10 @@ test.concurrent("Next.js monorepo scenario should not make unnecessary network r
     expect(exitCode).toBe(0);
   }
 
+  // The devDependency (workspace) must win: no registry tarball is recorded.
   const lockfile = await Bun.file(join(String(dir), "bun.lock")).text();
   expect(lockfile).toContain("no-deps@workspace:packages/no-deps");
-  expect(lockfile).not.toContain("no-deps@1.");
+  expect(lockfile).not.toContain(registry.registryUrl());
 
   // Re-install with a registry that fails every request. devDependencies taking
   // priority means the workspace copy is already linked and no lookup is needed.
@@ -222,9 +219,9 @@ test.concurrent("Next.js monorepo scenario should not make unnecessary network r
   }
   expect(registryHits).toBe(0);
 
-  // The linked module is the workspace copy (devDependency), not the registry ^1.0.0.
+  // The linked module is the workspace copy (devDependency), not the registry copy.
   const { stdout, stderr, exitCode } = await spawnBun(["packages/web/test.js"], String(dir));
   expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("2.0.0");
+  expect(stdout.trim()).toBe("2.0.0-workspace");
   expect(exitCode).toBe(0);
 });

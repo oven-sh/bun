@@ -1482,9 +1482,8 @@ pub mod fs {
                     let symlink = bun_sys::get_fd_path(file, &mut outpath)?;
                     file_kind = kind_from_mode(file_stat.st_mode as bun_sys::Mode);
                     if !symlink.is_empty() {
-                        cache.symlink = Interned::from_static(
-                            FilenameStore::instance().append_slice(symlink)?,
-                        );
+                        cache.symlink =
+                            Interned::from_static(FilenameStore::instance().append_slice(symlink)?);
                     }
                     if bun_core::feature_flags::STORE_FILE_DESCRIPTORS
                         && !(we_opened_it && close_even_on_success)

@@ -1266,7 +1266,7 @@ pub mod fs {
             let mut entries = match self.readdir(store_fd, prev, dir, generation, handle, iterator)
             {
                 Ok(e) => {
-                    handle_published.set(true);
+                    handle_published.set(e.fd == handle);
                     e
                 }
                 Err(err) => {

@@ -717,9 +717,6 @@ impl ShellSubprocess {
 
         let stdin = match Writable::init(stdio0, event_loop, subprocess, spawn_stdin) {
             Ok(w) => w,
-            Err(WritableInitError::UnexpectedCreatingStdin) => {
-                panic!("unexpected error while creating stdin");
-            }
             Err(WritableInitError::Sys(e)) => {
                 // SAFETY: `out_subproc` points at the caller's child slot.
                 unsafe { *out_subproc = core::ptr::null_mut() };
@@ -727,6 +724,12 @@ impl ShellSubprocess {
                 {
                     let _ = spawn_stdout.map(bun_sys::Fd::close);
                     let _ = spawn_stderr.map(bun_sys::Fd::close);
+                }
+                #[cfg(windows)]
+                {
+                    // WindowsSpawnResult::drop routes Buffer slots through uv_close.
+                    spawn_result.stdout = spawn_stdout;
+                    spawn_result.stderr = spawn_stderr;
                 }
                 let proc = spawn_result.to_process(event_loop);
                 // SAFETY: `to_process` returns a live heap-allocated `Process`
@@ -983,8 +986,6 @@ impl ShellSubprocess {
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum WritableInitError {
-    #[error("UnexpectedCreatingStdin")]
-    UnexpectedCreatingStdin,
     #[error("{0}")]
     Sys(bun_sys::Error),
 }

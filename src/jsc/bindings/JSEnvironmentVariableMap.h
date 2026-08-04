@@ -60,8 +60,8 @@ JSC::JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
 // whose gregorian cache still matches, so walk the heap and invalidate those.
 void invalidateLiveDateInstanceCaches(JSC::VM&);
 
-// resetIfNecessarySlow() + invalidateLiveDateInstanceCaches(): every caller
-// that changes the time zone override must do both, so use this instead.
+// The shared DateCache reset and invalidateLiveDateInstanceCaches() must travel
+// together; every caller that changes the time zone override uses this instead.
 void resetDateCachesAfterTimeZoneChange(JSC::VM&);
 
 // worker_threads SHARE_ENV: a `process.env` whose reads/writes/enumeration go

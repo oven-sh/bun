@@ -444,11 +444,15 @@ describe.concurrent("--isolate experimental global reuse", () => {
       import { test, expect, jest } from "bun:test";
       import { counter } from "./state";
       import pkg from "pkg";
-      test("b", () => {
+      test("b", async () => {
         expect(counter.n).toBe(0);
         expect((globalThis as any).__leakedFromA).toBeUndefined();
         expect((globalThis as any)[Symbol.for("leakedSym")]).toBeUndefined();
         expect(jest.fn()()).toBeUndefined();
+        let ticked = false;
+        process.nextTick(() => { ticked = true });
+        await 0;
+        expect(ticked).toBe(true);
         ${assertB}
       });
     `,
@@ -544,6 +548,45 @@ describe.concurrent("--isolate experimental global reuse", () => {
     const { stderr, stats, exitCode } = await runIsolate(String(dir), REUSE_ENV);
     expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
     expect(stats).toEqual({ reuse: 1, swap: 1 });
+    expect(exitCode).toBe(0);
+  });
+
+  test("restores unrestored jest.spyOn targets and re-runs a node_modules --preload", async () => {
+    using dir = tempDir("isolate-reuse-spy-preload", {
+      "node_modules/setup-hooks/index.js": `
+        const { beforeEach } = require("bun:test");
+        beforeEach(() => { globalThis.__hookRan = (globalThis.__hookRan || 0) + 1; });
+      `,
+      "node_modules/setup-hooks/package.json": `{"name":"setup-hooks","main":"index.js"}`,
+      "a.test.ts": `
+        import { test, expect, jest } from "bun:test";
+        test("a", () => {
+          expect((globalThis as any).__hookRan).toBe(1);
+          jest.spyOn(console, "warn").mockImplementation(() => {});
+          process.nextTick(() => {});
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        import { testIsolationResetStats } from "bun:internal-for-testing";
+        test("b", () => {
+          expect((globalThis as any).__hookRan).toBe(1);
+          expect(String(console.warn)).toContain("native code");
+          console.log("RESET_STATS=" + JSON.stringify(testIsolationResetStats()));
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "--preload", "setup-hooks", "./a.test.ts", "./b.test.ts"],
+      env: { ...bunEnv, ...REUSE_ENV },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    const m = stdout.match(/RESET_STATS=(\{.*?\})/);
+    expect(m && JSON.parse(m[1])).toEqual({ reuse: 1, swap: 0 });
     expect(exitCode).toBe(0);
   });
 });

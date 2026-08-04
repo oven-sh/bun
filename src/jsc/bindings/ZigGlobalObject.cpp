@@ -692,6 +692,8 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     return globalObject;
 }
 
+extern "C" void JSMock__resetSpies(Zig::GlobalObject*);
+
 namespace Bun {
 
 // Snapshot of a fresh global (post --preload) for tryResetForTestIsolation.
@@ -700,10 +702,15 @@ struct TestIsolationBaseline {
 
 public:
     struct Entry {
-        JSC::EncodedJSValue value;
+        JSC::Strong<JSC::Unknown> value;
         uint8_t attributes;
     };
     WTF::UncheckedKeyHashMap<WTF::RefPtr<WTF::UniquedStringImpl>, Entry> ownProperties;
+    // Module keys present at capture time (i.e. loaded by --preload). Evicted
+    // on reset so preload re-evaluates and re-registers its hooks; the
+    // node_modules-keeping only applies to what the test file loaded on top.
+    WTF::UncheckedKeyHashSet<WTF::RefPtr<WTF::UniquedStringImpl>> preloadModuleKeys;
+    WTF::UncheckedKeyHashSet<WTF::String> preloadRequireKeys;
     unsigned lexicalSymbolTableSize { 0 };
     unsigned varSymbolTableSize { 0 };
     Zig::GlobalObject* capturedGlobal { nullptr };
@@ -745,10 +752,27 @@ extern "C" void Zig__GlobalObject__captureTestIsolationBaseline(Zig::GlobalObjec
     globalObject->structure()->forEachProperty(vm, [&](const auto& entry) -> bool {
         baseline.ownProperties.add(entry.key(),
             Bun::TestIsolationBaseline::Entry {
-                JSC::JSValue::encode(globalObject->getDirect(entry.offset())),
+                JSC::Strong<JSC::Unknown>(vm, globalObject->getDirect(entry.offset())),
                 entry.attributes() });
         return true;
     });
+
+    baseline.preloadModuleKeys.clear();
+    for (auto& [key, entry] : globalObject->moduleLoader()->moduleMap()) {
+        UNUSED_VARIABLE(entry);
+        baseline.preloadModuleKeys.add(key.first);
+    }
+    baseline.preloadRequireKeys.clear();
+    {
+        auto* iter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), globalObject->requireMap(), JSC::IterationKind::Keys);
+        scope.assertNoException();
+        JSC::JSValue value;
+        while (iter->next(globalObject, value)) {
+            if (auto* str = value.toStringOrNull(globalObject))
+                baseline.preloadRequireKeys.add(str->value(globalObject));
+            scope.assertNoException();
+        }
+    }
 }
 
 // Returns true if `globalObject` was scrubbed in place and can be reused for
@@ -802,7 +826,7 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
         }
         seen++;
         if (entry.attributes() != it->value.attributes
-            || JSC::JSValue::encode(globalObject->getDirect(entry.offset())) != it->value.value) {
+            || globalObject->getDirect(entry.offset()) != it->value.value.get()) {
             dirty = true;
             return false;
         }
@@ -820,8 +844,9 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
         }
     }
 
-    // Drop project modules (absolute path outside node_modules) so their state
-    // resets; keep node_modules/builtin records so their CodeBlocks survive.
+    // Drop project modules and everything preload loaded (so the preload chain
+    // re-evaluates and re-registers its hooks); keep node_modules the test file
+    // loaded on top so their CodeBlocks survive.
     auto isProjectPath = [](WTF::StringView key) {
         if (key.isEmpty())
             return false;
@@ -833,12 +858,15 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
         return key[0] == '/' && !key.contains("/node_modules/"_s);
 #endif
     };
+    auto shouldEvict = [&](WTF::UniquedStringImpl* key) {
+        return baseline->preloadModuleKeys.contains(key) || isProjectPath(WTF::StringView(key));
+    };
     {
         auto* moduleLoader = globalObject->moduleLoader();
         WTF::Vector<JSC::Identifier, 32> evict;
         for (auto& [key, entry] : moduleLoader->moduleMap()) {
             UNUSED_VARIABLE(entry);
-            if (isProjectPath(WTF::StringView(key.first)))
+            if (shouldEvict(key.first))
                 evict.append(JSC::Identifier::fromUid(vm, key.first));
         }
         WTF::Locker locker { moduleLoader->cellLock() };
@@ -852,8 +880,11 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
         scope.assertNoException();
         JSC::JSValue value;
         while (iter->next(globalObject, value)) {
-            if (auto* str = value.toStringOrNull(globalObject); str && isProjectPath(str->view(globalObject)))
-                evict.append(value);
+            if (auto* str = value.toStringOrNull(globalObject)) {
+                auto view = str->view(globalObject);
+                if (isProjectPath(view) || baseline->preloadRequireKeys.contains<WTF::StringViewHashTranslator>(view))
+                    evict.append(value);
+            }
             scope.assertNoException();
         }
         for (auto& key : evict) {
@@ -862,8 +893,8 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
         }
     }
 
-    globalObject->m_nextTickQueue.clear();
-    globalObject->mockModule.activeSpies.clear();
+    JSMock__resetSpies(globalObject);
+    scope.clearException();
     globalObject->mockModule.activeMocks.clear();
     globalObject->globalEventScope->removeAllEventListeners();
     // The Rust side already restored the OS cwd; drop the JS-side cache so the

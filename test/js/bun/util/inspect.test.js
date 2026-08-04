@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {

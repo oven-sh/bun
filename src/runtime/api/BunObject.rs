@@ -140,6 +140,15 @@ mod static_adapters {
         crate::api::js_bun_spawn_bindings::spawn_sync(g, a0, a1)
     }
 
+    pub(super) fn subprocess_spawn_and_wait(
+        g: &JSGlobalObject,
+        cf: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let [a0] = cf.arguments_as_array::<1>();
+        let a1 = cf.arguments().get(1).copied();
+        crate::api::js_bun_spawn_bindings::spawn_and_wait(g, a0, a1)
+    }
+
     pub(super) fn js_bundler_build(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         crate::api::js_bundler::JSBundler::build_fn(g, cf)
     }
@@ -302,6 +311,7 @@ pub mod bun_object {
         BunObject_callback_shrink => super::shrink,
         BunObject_callback_sleepSync => super::sleep_sync,
         BunObject_callback_spawn => super::static_adapters::subprocess_spawn,
+        BunObject_callback_spawnAndWait => super::static_adapters::subprocess_spawn_and_wait,
         BunObject_callback_spawnSync => super::static_adapters::subprocess_spawn_sync,
         BunObject_callback_udpSocket => super::static_adapters::udp_socket,
         BunObject_callback_which => super::which,

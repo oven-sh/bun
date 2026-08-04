@@ -163,6 +163,16 @@ pub struct Subprocess<'a> {
     pub(crate) stdout_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
     pub(crate) stderr_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
     pub(crate) exited_due_to_maxbuf: Cell<Option<MaxBuf::Kind>>,
+
+    /// Pending promise for `Bun.spawnAndWait()`. Resolved with the same result
+    /// shape as `Bun.spawnSync` once the process has exited and both
+    /// stdout/stderr pipes have closed.
+    pub(crate) spawn_and_wait_promise: JsCell<jsc::StrongOptional>,
+    /// Whether `timeout` / `maxBuffer` were passed to `Bun.spawnAndWait()`, so
+    /// the result includes `exitedDueToTimeout` / `exitedDueToMaxBuffer` only
+    /// when the caller asked for a bound (matches `Bun.spawnSync`).
+    pub(crate) spawn_and_wait_had_timeout: Cell<bool>,
+    pub(crate) spawn_and_wait_had_max_buffer: Cell<bool>,
 }
 
 bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);
@@ -417,6 +427,10 @@ impl Subprocess<'_> {
     }
 
     pub(crate) fn compute_has_pending_activity(&self) -> bool {
+        if self.spawn_and_wait_promise.get().has() {
+            return true;
+        }
+
         // `ipc_data` is never set back to `None` after init, so checking only
         // for `is_some()` would keep the JSSubprocess strongly referenced for the
         // lifetime of the VM. The IPC side contributes pending activity until
@@ -533,6 +547,108 @@ impl Subprocess<'_> {
         // later completes and reaches here, we must re-evaluate so the JsRef can
         // be downgraded and the JSSubprocess + buffered output become collectable.
         self.update_has_pending_activity();
+
+        if self.spawn_and_wait_promise.get().has() {
+            self.maybe_resolve_spawn_and_wait();
+        }
+    }
+
+    /// Resolve the pending `Bun.spawnAndWait()` promise once the process has
+    /// exited and neither stdout nor stderr is still an active pipe reader.
+    /// Balances the extra `ref_()` taken in `spawn_and_wait`.
+    pub(crate) fn maybe_resolve_spawn_and_wait(&self) {
+        if !self.process().has_exited() {
+            return;
+        }
+        if matches!(self.stdout.get(), Readable::Pipe(_)) {
+            return;
+        }
+        if matches!(self.stderr.get(), Readable::Pipe(_)) {
+            return;
+        }
+
+        let Some(promise_js) = self.spawn_and_wait_promise.with_mut(|p| p.try_swap()) else {
+            return;
+        };
+        let Some(promise) = promise_js.as_any_promise() else {
+            self.update_has_pending_activity();
+            self.deref();
+            return;
+        };
+
+        let global_this = self.global_this;
+        let global_this = global_this.get();
+        let event_loop = global_this.bun_vm().as_mut().event_loop();
+        // SAFETY: event_loop points into the live VM and outlives this scope.
+        let _guard = unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
+
+        match self.build_spawn_and_wait_result(global_this) {
+            Ok(result) => {
+                let _ = promise.resolve(global_this, result);
+            }
+            Err(_) => {
+                let err = global_this
+                    .try_take_exception()
+                    .unwrap_or(JSValue::UNDEFINED);
+                let _ = promise.reject(global_this, err);
+            }
+        }
+
+        self.update_has_pending_activity();
+        self.deref();
+    }
+
+    /// Build the `SyncSubprocess`-shaped result object for `Bun.spawnAndWait()`.
+    fn build_spawn_and_wait_result(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        let signal_code = self.get_signal_code(global_this);
+        let exit_code = self.get_exit_code(global_this);
+        let stdout = self
+            .stdout
+            .with_mut(|s| s.to_buffered_value(global_this))?;
+        let stderr = self
+            .stderr
+            .with_mut(|s| s.to_buffered_value(global_this))?;
+        let resource_usage = self.create_resource_usage_object(global_this)?;
+        let result_pid = JSValue::js_number_from_int32(self.pid());
+
+        let sync_value = JSValue::create_empty_object(global_this, 0);
+        sync_value.put(global_this, b"exitCode", exit_code);
+        if !signal_code.is_empty_or_undefined_or_null() {
+            sync_value.put(global_this, b"signalCode", signal_code);
+        }
+        sync_value.put(global_this, b"stdout", stdout);
+        sync_value.put(global_this, b"stderr", stderr);
+        sync_value.put(
+            global_this,
+            b"success",
+            JSValue::from(exit_code.is_int32() && exit_code.as_int32() == 0),
+        );
+        sync_value.put(global_this, b"resourceUsage", resource_usage);
+        if self.spawn_and_wait_had_timeout.get() {
+            sync_value.put(
+                global_this,
+                b"exitedDueToTimeout",
+                if self.event_loop_timer.get().state == EventLoopTimerState::FIRED {
+                    JSValue::TRUE
+                } else {
+                    JSValue::FALSE
+                },
+            );
+        }
+        if self.spawn_and_wait_had_max_buffer.get() {
+            sync_value.put(
+                global_this,
+                b"exitedDueToMaxBuffer",
+                if self.exited_due_to_maxbuf.get().is_some() {
+                    JSValue::TRUE
+                } else {
+                    JSValue::FALSE
+                },
+            );
+        }
+        sync_value.put(global_this, b"pid", result_pid);
+
+        Ok(sync_value)
     }
 
     pub(crate) fn js_ref(&self) {
@@ -1186,6 +1302,11 @@ impl Subprocess<'_> {
         if !did_update_has_pending_activity {
             self.update_has_pending_activity();
         }
+
+        if self.spawn_and_wait_promise.get().has() {
+            self.maybe_resolve_spawn_and_wait();
+        }
+
         self.disconnect_ipc(true);
         self.deref();
     }
@@ -1296,6 +1417,7 @@ impl Subprocess<'_> {
         // access it after it's been freed We cannot call any methods which
         // access GC'd values during the finalizer
         this.this_value.with_mut(|v| v.finalize());
+        this.spawn_and_wait_promise.with_mut(|p| p.deinit());
 
         this.clear_abort_signal();
 

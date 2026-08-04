@@ -289,7 +289,7 @@ pub(crate) fn spawn(
     args: JSValue,
     secondary_args_value: Option<JSValue>,
 ) -> JsResult<JSValue> {
-    spawn_maybe_sync::<false>(global_this, args, secondary_args_value)
+    spawn_maybe_sync::<false, false>(global_this, args, secondary_args_value)
 }
 
 /// Bun.spawnSync() calls this.
@@ -298,14 +298,26 @@ pub(crate) fn spawn_sync(
     args: JSValue,
     secondary_args_value: Option<JSValue>,
 ) -> JsResult<JSValue> {
-    spawn_maybe_sync::<true>(global_this, args, secondary_args_value)
+    spawn_maybe_sync::<true, false>(global_this, args, secondary_args_value)
 }
 
-fn spawn_maybe_sync<const IS_SYNC: bool>(
+/// Bun.spawnAndWait() calls this. Async spawn that resolves with the same
+/// result shape as `Bun.spawnSync` (buffered stdout/stderr, exitCode, etc.).
+pub(crate) fn spawn_and_wait(
+    global_this: &JSGlobalObject,
+    args: JSValue,
+    secondary_args_value: Option<JSValue>,
+) -> JsResult<JSValue> {
+    spawn_maybe_sync::<false, true>(global_this, args, secondary_args_value)
+}
+
+fn spawn_maybe_sync<const IS_SYNC: bool, const BUFFERED_ASYNC: bool>(
     global_this: &JSGlobalObject,
     args_: JSValue,
     secondary_args_value: Option<JSValue>,
 ) -> JsResult<JSValue> {
+    const { assert!(!(IS_SYNC && BUFFERED_ASYNC)) };
+
     if IS_SYNC {
         // We skip this on Windows due to test failures.
         #[cfg(not(windows))]
@@ -334,7 +346,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     let mut stdio: [Stdio; 3] = [Stdio::Ignore, Stdio::Pipe, Stdio::Inherit];
 
-    if IS_SYNC {
+    if IS_SYNC || BUFFERED_ASYNC {
         stdio[1] = Stdio::Pipe;
         stdio[2] = Stdio::Pipe;
     }
@@ -465,16 +477,21 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
 
         if !args.is_empty() && args.is_object() {
             // Reject terminal option on spawnSync
-            if IS_SYNC {
+            if IS_SYNC || BUFFERED_ASYNC {
                 if args.get_truthy(global_this, "terminal")?.is_some() {
                     return Err(global_this.throw_invalid_arguments(format_args!(
-                        "terminal option is only supported for Bun.spawn, not Bun.spawnSync",
+                        "terminal option is only supported for Bun.spawn, not Bun.{}",
+                        if BUFFERED_ASYNC {
+                            "spawnAndWait"
+                        } else {
+                            "spawnSync"
+                        },
                     )));
                 }
             }
 
             // This must run before the stdio parsing happens
-            if !IS_SYNC {
+            if !IS_SYNC && !BUFFERED_ASYNC {
                 if let Some(val) = args.get_truthy(global_this, "ipc")? {
                     if val.is_cell() && val.is_callable() {
                         maybe_ipc_mode = Some('ipc_mode: {
@@ -643,7 +660,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                 }
             }
 
-            if !IS_SYNC {
+            if !IS_SYNC && !BUFFERED_ASYNC {
                 if let Some(lazy_val) = args.get(global_this, "lazy")? {
                     if lazy_val.is_boolean() {
                         lazy = lazy_val.to_boolean();
@@ -1318,6 +1335,9 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             crate::timer::EventLoopTimerTag::SubprocessTimeout,
         )),
         exited_due_to_maxbuf: Cell::new(None),
+        spawn_and_wait_promise: JsCell::new(jsc::StrongOptional::empty()),
+        spawn_and_wait_had_timeout: Cell::new(BUFFERED_ASYNC && timeout.is_some()),
+        spawn_and_wait_had_max_buffer: Cell::new(BUFFERED_ASYNC && max_buffer.is_some()),
     }));
     // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
     let subprocess = unsafe { &mut *subprocess_ptr };
@@ -1795,6 +1815,26 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                     .on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()))
             };
         }
+
+        if BUFFERED_ASYNC {
+            // `out` keeps the JS Subprocess cell reachable for this frame; the
+            // returned promise is what the caller receives.
+            out.ensure_still_alive();
+            let promise = jsc::JSPromise::create(global_this).to_js();
+            subprocess
+                .spawn_and_wait_promise
+                .with_mut(|p| p.set(global_this, promise));
+            // Balanced by the `deref()` in `maybe_resolve_spawn_and_wait`.
+            subprocess.ref_();
+            subprocess.update_has_pending_activity();
+            // Process may already have exited and pipes closed before we got
+            // here; resolve immediately if so. Otherwise the `on_process_exit`
+            // / `on_close_io` hooks (including the `send_exit_notification`
+            // scopeguard above) resolve it.
+            subprocess.maybe_resolve_spawn_and_wait();
+            return Ok(promise);
+        }
+
         return Ok(out);
     }
 

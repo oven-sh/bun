@@ -940,6 +940,34 @@ impl TimerObjectInternals {
         Ok(this_value)
     }
 
+    /// Node's deadline is `_idleStart + _idleTimeout`; writing `_idleStart`
+    /// must move the heap entry so `t2._idleStart = t1._idleStart` works.
+    pub(crate) fn set_idle_start(&self, idle_start_ms: f64) {
+        if self.flags.get().kind() == Kind::SetImmediate
+            || self.flags.get().has_cleared_timer()
+            || self.event_loop_timer_state() != EventLoopTimerState::ACTIVE
+            || !idle_start_ms.is_finite()
+        {
+            return;
+        }
+
+        let state = crate::jsc_hooks::runtime_state();
+        debug_assert!(!state.is_null(), "RuntimeState not installed");
+
+        let ms = (idle_start_ms as i64)
+            .saturating_add(i64::from(self.interval.get()))
+            .max(0);
+        let scheduled_time = Timespec::EPOCH.add_ms(ms);
+        // SAFETY: `state` is the boxed per-thread `RuntimeState`; fresh
+        // `&mut` to `.timer` for this call only. The timer is ACTIVE so
+        // `update()` removes then re-inserts with no refcount change.
+        unsafe {
+            (*state)
+                .timer
+                .update(self.event_loop_timer(), &scheduled_time)
+        };
+    }
+
     pub(crate) fn do_refresh(
         &self,
         global_object: &JSGlobalObject,

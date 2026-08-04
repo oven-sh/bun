@@ -148,36 +148,6 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     if (!globalObject)
         return;
 
-    // if (scriptExecutionContext.isDocument()) {
-    //     JSDOMWindow* window = uncheckedDowncast<JSDOMWindow>(globalObject);
-    //     if (!window->wrapped().isCurrentlyDisplayedInFrame())
-    //         return;
-    //     if (wasCreatedFromMarkup()) {
-    //         Element* element = event.target()->isNode() && !downcast<Node>(*event.target()).isDocumentNode() ? dynamicDowncast<Element>(*event.target()) : nullptr;
-    //         if (!scriptExecutionContext.contentSecurityPolicy()->allowInlineEventHandlers(sourceURL().string(), sourcePosition().m_line, code(), element))
-    //             return;
-    //     }
-    //     // FIXME: Is this check needed for other contexts?
-    //     ScriptController& script = window->wrapped().frame()->script();
-    //     if (!script.canExecuteScripts(AboutToExecuteScript) || script.isPaused())
-    //         return;
-    // }
-
-    // RefPtr<Event> savedEvent;
-    // auto* jsFunctionWindow = dynamicDowncast<JSDOMWindow>(vm, jsFunction->globalObject(vm));
-    // if (jsFunctionWindow) {
-    //     savedEvent = jsFunctionWindow->currentEvent();
-
-    //     // window.event should not be set when the target is inside a shadow tree, as per the DOM specification.
-    //     if (!event.currentTargetIsInShadowTree())
-    //         jsFunctionWindow->setCurrentEvent(&event);
-    // }
-
-    // auto restoreCurrentEventOnExit = makeScopeExit([&] {
-    //     if (jsFunctionWindow)
-    //         jsFunctionWindow->setCurrentEvent(savedEvent.get());
-    // });
-
     JSGlobalObject* lexicalGlobalObject = jsFunction->globalObject();
 
     JSValue handleEventFunction = jsFunction;

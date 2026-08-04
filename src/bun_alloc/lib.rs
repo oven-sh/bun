@@ -214,7 +214,6 @@ pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 // ── Allocator-vtable modules: per-module disposition (PORTING.md §Allocators) ──
 //
 //   MimallocArena            → prefer `bun_alloc::Arena` (= bumpalo::Bump)
-//   NullableAllocator        → prefer `Option<&Arena>` or drop the param
 //   MaxHeapAllocator         → debug-only cap (single-allocation arena)
 //   heap_breakdown           → macOS malloc_zone_* per-tag heaps (debug builds)
 //   basic                    → `impl GlobalAlloc for Mimalloc` above is the canonical impl
@@ -226,8 +225,6 @@ pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 //
 #[path = "MaxHeapAllocator.rs"]
 pub mod max_heap_allocator;
-#[path = "NullableAllocator.rs"]
-pub mod nullable_allocator;
 pub mod stack_fallback;
 
 /// Raw alloc/free matching the `#[global_allocator]` (`mi_*` normally, libc under ASAN).
@@ -356,7 +353,6 @@ pub mod default_alloc {
 }
 
 pub use max_heap_allocator::MaxHeapAllocator;
-pub use nullable_allocator::NullableAllocator;
 pub use stack_fallback::ArenaPtr;
 
 #[path = "MimallocArena.rs"]

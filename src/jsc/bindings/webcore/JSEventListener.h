@@ -100,32 +100,6 @@ inline void setEventHandlerAttribute(EventTarget& eventTarget, const AtomString&
     eventTarget.setAttributeEventListener<JSMaybeErrorEventListener>(eventType, listener, jsEventTarget);
 }
 
-// // Like the functions above, but for attributes that forward event handlers to the window object rather than setting them on the target.
-// inline JSC::JSValue windowEventHandlerAttribute(DOMWindow& window, const AtomString& eventType, DOMWrapperWorld& isolatedWorld)
-// {
-//     return eventHandlerAttribute(window, eventType, isolatedWorld);
-// }
-
-// inline JSC::JSValue windowEventHandlerAttribute(HTMLElement& element, const AtomString& eventType, DOMWrapperWorld& isolatedWorld)
-// {
-//     if (auto* domWindow = element.document().domWindow())
-//         return eventHandlerAttribute(*domWindow, eventType, isolatedWorld);
-//     return JSC::jsNull();
-// }
-
-// template<typename JSMaybeErrorEventListener>
-// inline void setWindowEventHandlerAttribute(DOMWindow& window, const AtomString& eventType, JSC::JSValue listener, JSC::JSObject& jsEventTarget)
-// {
-//     window.setAttributeEventListener<JSMaybeErrorEventListener>(eventType, listener, *jsEventTarget.globalObject());
-// }
-
-// template<typename JSMaybeErrorEventListener>
-// inline void setWindowEventHandlerAttribute(HTMLElement& element, const AtomString& eventType, JSC::JSValue listener, JSC::JSObject& jsEventTarget)
-// {
-//     if (auto* domWindow = element.document().domWindow())
-//         domWindow->setAttributeEventListener<JSMaybeErrorEventListener>(eventType, listener, *jsEventTarget.globalObject());
-// }
-
 inline JSC::JSObject* JSEventListener::ensureJSFunction(ScriptExecutionContext& scriptExecutionContext) const
 {
     // initializeJSFunction can trigger code that deletes this event listener

@@ -1,9 +1,14 @@
 use core::cell::Cell;
+use core::ptr::NonNull;
 
 use bun_collections::VecExt as _;
 use bun_core::strings;
 use bun_jsc::{JSGlobalObject, JSUint8Array, JSValue};
+use bun_ptr::RawSlice;
 use bun_simdutf_sys::simdutf;
+
+use crate::webcore::sink::sink_handle_from_id;
+use crate::webcore::streams;
 
 bun_output::declare_scope!(TextEncoderStreamEncoder, visible);
 
@@ -254,16 +259,6 @@ pub extern "C" fn TextEncoderStreamEncoder__flushForStream(
     unsafe { &*this }.flush_body(global)
 }
 
-unsafe extern "C" {
-    fn Bun__JSSink__writeBytesById(
-        sink_id: u8,
-        sink_ptr: *mut core::ffi::c_void,
-        global: &JSGlobalObject,
-        ptr: *const u8,
-        len: usize,
-    ) -> JSValue;
-}
-
 /// Cap on the reusable scratch buffer so a single huge chunk doesn't pin
 /// that much memory for the life of the encoder.
 const SCRATCH_CAP: usize = 64 * 1024;
@@ -308,10 +303,16 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
         this.scratch.replace(buf);
         return JSValue::UNDEFINED;
     }
+    let Some(ptr) = NonNull::new(sink_ptr) else {
+        this.scratch.replace(buf);
+        return JSValue::UNDEFINED;
+    };
     // SAFETY: `sink_ptr` is a live JSSink of type `sink_id` (the C++ caller
     // null-checks it before attaching); the sink copies what it needs.
-    let wrote =
-        unsafe { Bun__JSSink__writeBytesById(sink_id, sink_ptr, global, buf.as_ptr(), buf.len()) };
+    let handle = unsafe { sink_handle_from_id(sink_id, ptr) };
+    let wrote = handle
+        .write(&streams::Result::Temporary(RawSlice::new(&buf)))
+        .to_js(global);
     if buf.capacity() <= SCRATCH_CAP {
         this.scratch.replace(buf);
     }
@@ -333,14 +334,12 @@ pub extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
         return JSValue::UNDEFINED;
     }
     const REPLACEMENT: [u8; 3] = [0xef, 0xbf, 0xbd];
+    let Some(ptr) = NonNull::new(sink_ptr) else {
+        return JSValue::UNDEFINED;
+    };
     // SAFETY: as in `__encodeIntoSink`.
-    unsafe {
-        Bun__JSSink__writeBytesById(
-            sink_id,
-            sink_ptr,
-            global,
-            REPLACEMENT.as_ptr(),
-            REPLACEMENT.len(),
-        )
-    }
+    let handle = unsafe { sink_handle_from_id(sink_id, ptr) };
+    handle
+        .write(&streams::Result::Temporary(RawSlice::new(&REPLACEMENT)))
+        .to_js(global)
 }

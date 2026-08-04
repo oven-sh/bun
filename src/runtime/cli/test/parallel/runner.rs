@@ -94,10 +94,8 @@ pub(crate) fn run_as_coordinator(
     // Sort lexicographically so adjacent indices share parent directories.
     // Each worker owns a contiguous chunk; co-located files share imports, so
     // this keeps each worker's isolation SourceProvider cache hot. --randomize
-    // explicitly opts out of locality (the caller already shuffled).
-    //
-    // With --changed-first the caller has already placed the affected files at
-    // [0..priority_count) and ordered them; only the tail is reordered here.
+    // explicitly opts out of locality (the caller already shuffled). The
+    // [0..priority_count) prefix is the --changed-first set, already ordered.
     let mut sorted: Vec<Interned> = files.to_vec();
     let prio = priority_count as usize;
     debug_assert!(prio <= sorted.len());

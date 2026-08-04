@@ -2746,12 +2746,9 @@ impl TestCommand {
                 }
             }
 
-            // --changed-first: move affected files to the front, preserving
-            // relative order within each half so the unaffected tail keeps the
-            // order it would otherwise have (discovery, shard-selected, or
-            // shuffled). Applied after --shard so shard membership is
-            // unchanged, and after --randomize so the shuffle still covers the
-            // whole list.
+            // --changed-first: stable-partition affected files to the front.
+            // After --shard (membership unchanged) and --randomize (shuffle
+            // still covers the whole list).
             let mut priority_count: u32 = 0;
             if let Some(affected) = &changed_first_affected
                 && affected.paths.count() > 0

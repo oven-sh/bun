@@ -508,7 +508,9 @@ impl FileReader {
                     // A from_pipe() reader may arrive with IS_PAUSED set (lazy
                     // subprocess stdio); clear it so read() does not no-op.
                     self.reader().unpause();
-                    self.reader().read();
+                    // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+                    // the raw re-entrancy-safe entry (its dispatch runs user JS).
+                    unsafe { IOReader::read(self.reader.get()) };
                 }
             }
         }
@@ -596,7 +598,9 @@ impl FileReader {
         }
         if !self.reader().has_pending_read() {
             self.reader().unpause();
-            self.reader().read();
+            // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+            // the raw re-entrancy-safe entry (its dispatch runs user JS).
+            unsafe { IOReader::read(self.reader.get()) };
         }
     }
 
@@ -1002,7 +1006,9 @@ impl FileReader {
             let buffer_len = buffer.len();
             self.read_inside_on_pull
                 .set(ReadDuringJSOnPullResult::Js(buffer));
-            self.reader().read();
+            // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+            // the raw re-entrancy-safe entry (its dispatch runs user JS).
+            unsafe { IOReader::read(self.reader.get()) };
 
             // `replace` resets the field before matching, covering all return paths.
             let pulled = self
@@ -1239,7 +1245,9 @@ impl FileReader {
             self.reader().unpause();
             if !self.reader().is_done() && !self.reader().has_pending_read() {
                 // Kick off a new read if needed
-                self.reader().read();
+                // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+                // the raw re-entrancy-safe entry (its dispatch runs user JS).
+                unsafe { IOReader::read(self.reader.get()) };
             }
         } else {
             self.reader().pause();

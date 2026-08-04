@@ -536,17 +536,21 @@ impl WebWorker {
         log!("[{}] create", this_context_id);
 
         let spec_slice = specifier_str.to_utf8();
-        // SAFETY: `parent` is the calling thread's live VM (BACKREF).
-        let parent_ref = unsafe { &mut *parent };
-        let prev_log = parent_ref.transpiler.log;
         let mut temp_log = bun_ast::Log::default();
-        parent_ref.transpiler.set_log(&raw mut temp_log);
+        // SAFETY: `parent` is the calling thread's live VM (BACKREF); borrows
+        // are scoped to each statement.
+        let prev_log = unsafe {
+            let prev = (*parent).transpiler.log;
+            (*parent).transpiler.set_log(&raw mut temp_log);
+            prev
+        };
         // RAII: log pointer restored and temp log dropped on every return path.
-        let mut restore = scopeguard::guard((parent_ref, temp_log), |(p, log)| {
-            p.transpiler.set_log(prev_log);
+        let mut restore = scopeguard::guard(temp_log, move |log| {
+            // SAFETY: `parent` outlives the guard (this call's frame).
+            unsafe { (*parent).transpiler.set_log(prev_log) };
             drop(log);
         });
-        let (parent_ref, temp_log) = &mut *restore;
+        let temp_log = &mut *restore;
 
         // SAFETY: caller passed valid (ptr,len) (or `(null,0)`); slice borrowed from C++.
         let preload_modules: &[BunString] =
@@ -562,15 +566,10 @@ impl WebWorker {
                 preloads.push(utf8_slice.slice().to_vec().into_boxed_slice());
                 continue;
             }
-            // SAFETY: `parent_ref` is the live VM on the calling (parent)
-            // thread — its `transpiler` is uniquely owned here.
+            // SAFETY: `parent` is the live VM on the calling (parent) thread;
+            // `resolve_entry_point_specifier` takes the raw pointer.
             if let Some(preload) = unsafe {
-                resolve_entry_point_specifier(
-                    *parent_ref,
-                    utf8_slice.slice(),
-                    error_message,
-                    temp_log,
-                )
+                resolve_entry_point_specifier(parent, utf8_slice.slice(), error_message, temp_log)
             } {
                 preloads.push(preload.to_vec().into_boxed_slice());
             }
@@ -581,7 +580,8 @@ impl WebWorker {
             }
         }
 
-        let store_fd = parent_ref.transpiler.resolver.store_fd;
+        // SAFETY: `parent` is live (see above); borrow ends at `;`.
+        let store_fd = unsafe { (*parent).transpiler.resolver.store_fd };
 
         let worker = bun_core::heap::into_raw(Box::new(WebWorker {
             cpp_worker,
@@ -628,7 +628,8 @@ impl WebWorker {
         // worker keeping the process alive. Exception: a nested worker (parent is
         // itself a worker, not joined on exit) must hold the parent-loop keepalive
         // regardless, because the child holds a non-owning `BackRef` to the parent VM.
-        if !default_unref || parent_ref.worker_ref().is_some() {
+        // SAFETY: `parent` is live (see above); borrow scoped to the call.
+        if !default_unref || unsafe { (*parent).worker_ref().is_some() } {
             // `worker` is a fresh heap allocation; not yet shared.
             // `bun_io::js_vm_ctx()` resolves to this (parent) thread's loop.
             worker_ref.with_parent_poll_ref(|p| p.ref_(bun_io::js_vm_ctx()));

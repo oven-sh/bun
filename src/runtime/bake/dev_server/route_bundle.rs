@@ -48,7 +48,7 @@ pub struct Html {
     /// ref (bumped at store time, released in `invalidate_client_bundle`/drop),
     /// so while `Some` the pointee strictly outlives the field; readers go
     /// through safe `Option::as_deref` (no raw `NonNull::as_ref`).
-    pub(crate) cached_response: Option<bun_ptr::BackRef<StaticRoute>>,
+    pub(crate) cached_response: Option<bun_ptr::BackRef<StaticRoute, bun_ptr::Mut>>,
 }
 
 pub enum Data {
@@ -131,7 +131,7 @@ pub struct RouteBundle {
     /// ref (bumped at store time, released in `invalidate_client_bundle`/drop),
     /// so while `Some` the pointee strictly outlives the field; readers go
     /// through safe `Option::as_deref` (no raw `NonNull::as_ref`).
-    pub(crate) client_bundle: Option<bun_ptr::BackRef<StaticRoute>>,
+    pub(crate) client_bundle: Option<bun_ptr::BackRef<StaticRoute, bun_ptr::Mut>>,
     pub(crate) client_script_generation: u32,
     pub(crate) active_viewers: u32,
 }

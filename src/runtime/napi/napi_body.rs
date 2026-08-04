@@ -2044,6 +2044,10 @@ extern "C" fn napi_get_buffer_info(
     let Some(array_buf) = value.as_array_buffer(env.to_js()) else {
         return NapiEnv::set_last_error(Some(env), NapiStatus::invalid_arg);
     };
+    // node::Buffer::HasInstance is IsArrayBufferView: reject a bare ArrayBuffer.
+    if array_buf.typed_array_type == jsc::JSType::ArrayBuffer {
+        return NapiEnv::set_last_error(Some(env), NapiStatus::invalid_arg);
+    }
 
     write_out(data, array_buf.ptr);
     write_out(length, array_buf.byte_len);

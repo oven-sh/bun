@@ -1,6 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import zlib from "node:zlib";
 
+// CompressionStream et al are C++ subclasses of JSTransformStream so that
+// $inheritsTransformStream() returns true (node:stream utils). The JS-visible
+// prototype chain is unchanged, and TransformStream.prototype's own brand-
+// checked getters still reject them (Web IDL: separate interfaces).
+test.each([
+  () => new CompressionStream("gzip"),
+  () => new DecompressionStream("gzip"),
+  () => new TextEncoderStream(),
+  () => new TextDecoderStream(),
+])("TransformStream.prototype getters reject native transform subclasses (%#)", ctor => {
+  const x = ctor();
+  expect(x instanceof TransformStream).toBe(false);
+  const get = Object.getOwnPropertyDescriptor(TransformStream.prototype, "readable")!.get!;
+  expect(() => get.call(x)).toThrow();
+});
+
 describe("CompressionStream and DecompressionStream", () => {
   describe("brotli", () => {
     test("compresses data with brotli", async () => {

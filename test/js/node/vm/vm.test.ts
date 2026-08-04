@@ -1016,21 +1016,21 @@ describe("context options with throwing getters", () => {
   // Without the fix, reading these options with a pending exception aborted
   // the process, so run the matrix in a subprocess.
   test.concurrent("the getter's exception propagates to the caller", async () => {
-    // Each entry point tests the context-option keys it actually reads
-    // (the Script path takes contextCodeGeneration, not codeGeneration).
+    // Each entry point tests the context-option keys it actually reads:
+    // createContext takes codeGeneration, Script#runInNewContext takes
+    // contextCodeGeneration, and vm.runInNewContext goes through both.
     // A dotted key puts the throwing getter on the nested object.
-    const contextKeys = (codeGenerationKey: string) => [
+    const codeGenerationKeys = (key: string) => [key, `${key}.strings`, `${key}.wasm`];
+    const contextKeys = (...codeGenerationKeyNames: string[]) => [
       "name",
       "origin",
-      codeGenerationKey,
-      `${codeGenerationKey}.strings`,
-      `${codeGenerationKey}.wasm`,
+      ...codeGenerationKeyNames.flatMap(codeGenerationKeys),
       "importModuleDynamically",
       "microtaskMode",
     ];
     const matrix = {
       createContext: contextKeys("codeGeneration"),
-      runInNewContext: contextKeys("codeGeneration"),
+      runInNewContext: contextKeys("codeGeneration", "contextCodeGeneration"),
       scriptRunInNewContext: contextKeys("contextCodeGeneration"),
     };
     const code = `

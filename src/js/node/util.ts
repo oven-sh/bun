@@ -40,11 +40,9 @@ function isFunction(value) {
   return typeof value === "function";
 }
 
-// Node semantics (includes the [[Prototype]] identity check that
-// Bun.deepEquals(a, b, true) intentionally omits) plus the skipPrototype
-// third argument, which IS public API in node v26.3.0: fn.length === 3 and
-// isDeepStrictEqual(a, b, true) skips prototype identity (asserted by
-// upstream test-util-isDeepStrictEqual.js).
+// Node semantics (includes the [[Prototype]] identity check Bun.deepEquals omits) plus the
+// skipPrototype third argument, which is public API in node v26.3.0 (fn.length === 3).
+// https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
 const { isDeepStrictEqual } = require("internal/util/comparisons");
 
 const parseArgs = $newRustFunction("parse_args.rs", "parseArgs", 1);

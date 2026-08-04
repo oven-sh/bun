@@ -423,6 +423,41 @@ describe("node:http server channels", () => {
 
     expect(counts).toEqual({ created: 1, start: 1, finish: 1 });
   });
+
+  test("http.Server.listen() publishes on net.server.listen", async () => {
+    // In Node http.Server inherits listen() from net.Server, so it publishes on
+    // the net.server.listen tracing channel. Bun's http.Server has its own
+    // Bun.serve-backed listen(), which mirrors the publish.
+    const events: string[] = [];
+    let startMessage: any, endMessage: any;
+    const onStart = (m: any) => {
+      events.push("asyncStart");
+      startMessage = m;
+    };
+    const onEnd = (m: any) => {
+      events.push("asyncEnd");
+      endMessage = m;
+    };
+    subscribe("tracing:net.server.listen:asyncStart", onStart);
+    subscribe("tracing:net.server.listen:asyncEnd", onEnd);
+
+    const server = createServer((req, res) => res.end("ok"));
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      server.on("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+      await promise;
+    } finally {
+      unsubscribe("tracing:net.server.listen:asyncStart", onStart);
+      unsubscribe("tracing:net.server.listen:asyncEnd", onEnd);
+      server.close();
+    }
+
+    expect(events).toEqual(["asyncStart", "asyncEnd"]);
+    expect(startMessage.server).toBe(server);
+    expect(startMessage.options).toEqual({ port: 0, host: "127.0.0.1" });
+    expect(endMessage.server).toBe(server);
+  });
 });
 
 const mocks = new Map();

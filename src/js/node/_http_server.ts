@@ -21,11 +21,16 @@ const { ConnResetException, hasObserver, startPerf, stopPerf } = require("intern
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 let onServerRequestStartChannel, onServerResponseCreatedChannel, onServerResponseFinishChannel;
+// In Node http.Server inherits listen() from net.Server, so http servers
+// publish on the net.server.listen tracing channel too; Bun's http.Server is
+// backed by Bun.serve and has its own listen(), so it publishes here directly.
+let netServerListenChannel;
 function initHttpServerChannels() {
   const dc = require("node:diagnostics_channel");
   onServerRequestStartChannel = dc.channel("http.server.request.start");
   onServerResponseCreatedChannel = dc.channel("http.server.response.created");
   onServerResponseFinishChannel = dc.channel("http.server.response.finish");
+  netServerListenChannel = dc.tracingChannel("net.server.listen");
 }
 
 const { isPrimary } = require("internal/cluster/isPrimary");
@@ -616,6 +621,18 @@ Server.prototype.listen = function () {
     onListen = lastArg;
   }
 
+  if (!netServerListenChannel) initHttpServerChannels();
+  if (netServerListenChannel.hasSubscribers) {
+    const arg0 = arguments[0];
+    const options =
+      typeof arg0 === "object" && arg0 !== null
+        ? arg0
+        : socketPath != null
+          ? { path: socketPath }
+          : { port, host };
+    netServerListenChannel.asyncStart.publish({ server: this, options });
+  }
+
   try {
     // listenInCluster
 
@@ -662,6 +679,9 @@ Server.prototype.listen = function () {
 
     server[kRealListen](tls, port, host, socketPath, true, onListen);
   } catch (err) {
+    if (netServerListenChannel.hasSubscribers) {
+      netServerListenChannel.error.publish({ server: this, error: err });
+    }
     setTimeout(() => server.emit("error", err), 1);
   }
 
@@ -1131,6 +1151,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
     isHTTPS = this[serverSymbol].protocol === "https";
     applyServerCustomOptions(this);
+
+    if (netServerListenChannel.hasSubscribers) {
+      netServerListenChannel.asyncEnd.publish({ server: this });
+    }
 
     if (this?._unref) {
       this[serverSymbol]?.unref?.();

@@ -31,6 +31,8 @@ pub struct Coordinator<'a> {
     pub(crate) event_loop_handle: bun_jsc::EventLoopHandle,
     pub(crate) reporter: &'a mut CommandLineReporter,
     pub(crate) files: Vec<Interned>,
+    /// `--timings`: recorded cost per `files` index; stealing then goes by remaining time and takes the victim's slowest file.
+    pub(crate) costs: Option<Vec<u64>>,
     pub(crate) cwd: &'a [u8],
     // [:null]?[*:0]const u8 — null-sentinel-terminated slice of C strings;
     // backing storage has a null at [len] for execve-style consumers.
@@ -87,7 +89,7 @@ impl<'a> Coordinator<'a> {
         // regardless of what the loop body does. Iterate via raw pointers
         // instead.
         let mut victim: Option<*mut Worker> = None;
-        let mut most: u32 = 0;
+        let mut most: u64 = 0;
         let base: *mut Worker = self.workers.as_mut_ptr();
         let len = self.workers.len();
         for i in 0..len {
@@ -96,7 +98,6 @@ impl<'a> Coordinator<'a> {
             // SAFETY: `v = base.add(i)` with `i < len` is in-bounds for
             // `self.workers`; field read through *mut so no `&mut Worker` is
             // formed that could alias the caller's live `w`.
-            //
             // Skip workers that are spawned but have not yet sent their Ready
             // frame (alive=true, inflight=None). On OHOS, fork is slow (~200ms),
             // so a fast worker can finish its first file and call this function
@@ -108,7 +109,11 @@ impl<'a> Coordinator<'a> {
             if unsafe { (*v).alive && (*v).inflight.is_none() } {
                 continue;
             }
-            let n = unsafe { (*v).range.len() };
+            let r = unsafe { (*v).range };
+            let n: u64 = match &self.costs {
+                Some(c) => c[r.lo as usize..r.hi as usize].iter().sum(),
+                None => u64::from(r.len()),
+            };
             if n > most {
                 most = n;
                 victim = Some(v);
@@ -296,7 +301,11 @@ impl<'a> Coordinator<'a> {
             // two `&mut Worker` are disjoint. find_steal_victim itself iterates
             // via raw pointers and never forms a `&mut Worker` for `w`'s slot.
             let v = unsafe { &mut *v_ptr };
-            if let Some(stolen) = v.range.steal_back_half() {
+            if self.costs.is_some() {
+                if let Some(idx) = v.range.pop_front() {
+                    return w.dispatch(idx, self.files[idx as usize].as_bytes());
+                }
+            } else if let Some(stolen) = v.range.steal_back_half() {
                 w.range = stolen;
                 if let Some(idx) = w.range.pop_front() {
                     return w.dispatch(idx, self.files[idx as usize].as_bytes());
@@ -333,6 +342,12 @@ impl<'a> Coordinator<'a> {
                     (*other).shutdown();
                 }
             }
+        }
+    }
+
+    fn record_timing(&mut self, file_idx: u32, dispatched_at: i64) {
+        if let Some(t) = self.reporter.timings.as_mut() {
+            t.record_since(self.files[file_idx as usize].as_bytes(), dispatched_at);
         }
     }
 
@@ -464,6 +479,7 @@ impl<'a> Coordinator<'a> {
                     summary.files += files;
                 }
                 self.reporter.jest.unhandled_errors_between_tests += unhandled;
+                self.record_timing(idx, w.dispatched_at);
 
                 w.inflight = None;
                 self.files_done += 1;
@@ -573,6 +589,7 @@ impl<'a> Coordinator<'a> {
             if was_bailed && !panicked {
                 self.account_unfinished(idx, b"aborted: sibling worker panicked");
             } else {
+                self.record_timing(idx, w.dispatched_at);
                 self.account_crash(idx, status);
             }
             Output::flush();

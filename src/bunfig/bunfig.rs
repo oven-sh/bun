@@ -950,15 +950,28 @@ impl<'a> Parser<'a> {
                             let items = array.items.slice();
                             let mut internals: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
                             for item in items {
-                                self.expect_string(item)?;
-                                let ExprData::EString(s) = &item.data else {
-                                    unreachable!("expect_string returned Ok for non-EString")
-                                };
-                                internals.push(estring_to_owned(s, self.bump));
+                                match &item.data {
+                                    ExprData::EString(s) => {
+                                        internals.push(estring_to_owned(s, self.bump));
+                                    }
+                                    _ => self.add_error_format(
+                                        item.loc,
+                                        format_args!(
+                                            "bundle.internal must be a string or an array of strings, but received {}",
+                                            item.data.tag_name()
+                                        ),
+                                    )?,
+                                }
                             }
                             self.ctx.args.internal = internals;
                         }
-                        _ => self.add_error(expr.loc, b"Expected string or array")?,
+                        _ => self.add_error_format(
+                            expr.loc,
+                            format_args!(
+                                "bundle.internal must be a string or an array of strings, but received {}",
+                                expr.data.tag_name()
+                            ),
+                        )?,
                     }
                 }
             }

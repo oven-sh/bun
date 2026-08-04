@@ -30,6 +30,12 @@ pub struct ExternalModules {
     pub excludes: Vec<WildcardPattern>,
     /// Never-external package names (subpath-aware, like `node_modules`).
     pub excludes_node_modules: StringSet,
+    /// Never-external normalized filesystem paths (from `--internal` with
+    /// absolute/relative specifiers). Matched at path-component boundaries:
+    /// only the exact path or a descendant beginning at a path separator,
+    /// never an arbitrary string prefix (so `internal: ["/project/foo"]`
+    /// does not match `/project/foobar`).
+    pub excludes_abs_paths: Vec<Box<[u8]>>,
 }
 impl Clone for ExternalModules {
     fn clone(&self) -> Self {
@@ -41,6 +47,7 @@ impl Clone for ExternalModules {
             node_modules: self.node_modules.clone().expect("oom"),
             excludes: self.excludes.clone(),
             excludes_node_modules: self.excludes_node_modules.clone().expect("oom"),
+            excludes_abs_paths: self.excludes_abs_paths.clone(),
         }
     }
 }

@@ -123,6 +123,7 @@ pub(crate) fn init_external_modules(
         abs_paths: StringSet::default(),
         excludes: Vec::new(),
         excludes_node_modules: StringSet::default(),
+        excludes_abs_paths: Vec::new(),
         patterns: default_wildcard_patterns(),
     };
 
@@ -181,15 +182,14 @@ pub(crate) fn init_external_modules(
             } else {
                 // Filesystem specifiers (absolute or relative): normalize
                 // against cwd exactly like positive `--external` paths, so the
-                // stored prefix matches the normalized `abs_path` the resolver
-                // compares against. Prefix match covers the path itself and
-                // anything beneath it.
+                // stored path matches the normalized `abs_path` the resolver
+                // compares against. Kept separate from wildcard `excludes` so
+                // matching happens at path-component boundaries (exact path or
+                // a descendant beginning at a path separator), never an
+                // arbitrary string prefix.
                 let normalized = validate_path(log, fs, cwd, rest, b"internal path");
                 if !normalized.is_empty() {
-                    result.excludes.push(WildcardPattern {
-                        prefix: normalized,
-                        suffix: Box::default(),
-                    });
+                    result.excludes_abs_paths.push(normalized);
                 }
             }
             continue;

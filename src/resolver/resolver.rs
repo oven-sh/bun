@@ -963,6 +963,22 @@ impl<'a> Resolver<'a> {
                 return true;
             }
         }
+        // Normalized filesystem paths match at path-component boundaries:
+        // the exact path or a descendant beginning at a path separator. This
+        // keeps `internal: ["/project/foo"]` from matching `/project/foobar`
+        // while still covering `/project/foo/bar`.
+        let platform = bun_paths::Platform::AUTO;
+        for path in self.opts.external.excludes_abs_paths.iter() {
+            if import_path.len() == path.len() && import_path.starts_with(path.as_ref()) {
+                return true;
+            }
+            if import_path.len() > path.len()
+                && import_path.starts_with(path.as_ref())
+                && platform.is_separator(import_path[path.len()])
+            {
+                return true;
+            }
+        }
         if self.opts.external.excludes_node_modules.count() == 0 || import_path.ends_with(b"/") {
             return false;
         }

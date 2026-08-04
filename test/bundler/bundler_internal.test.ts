@@ -198,6 +198,50 @@ describe("bundler", () => {
     },
   });
 
+  // Filesystem exclusions match at path-component boundaries: `internal:
+  // ["/project/foo"]` must NOT match a sibling like `/project/foobar` — a
+  // positive `external` for the sibling still externalizes it.
+  itBundled("internal/ExactPathNotSibling", {
+    backend: "cli",
+    entryPoints: ["/entry.js"],
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "{{root}}/foobar.js";
+        console.log(a);
+      `,
+      "/foobar.js": /* js */ `
+        export const a = "Hello Sibling";
+      `,
+    },
+    external: ["{{root}}/foobar.js"],
+    internal: ["{{root}}/foo"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("Hello Sibling");
+    },
+  });
+
+  // Sanity control: `internal: ["/project/foo"]` DOES cover a descendant
+  // like `/project/foo/bar.js` (path-component boundary), so the positive
+  // `external` for that exact descendant is overridden.
+  itBundled("internal/ExactPathCoversDescendant", {
+    backend: "cli",
+    entryPoints: ["/entry.js"],
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "{{root}}/foo/bar.js";
+        console.log(a);
+      `,
+      "/foo/bar.js": /* js */ `
+        export const a = "Hello Descendant";
+      `,
+    },
+    external: ["{{root}}/foo/bar.js"],
+    internal: ["{{root}}/foo"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("Hello Descendant");
+    },
+  });
+
   // `internal` is read from the `[bundle]` table in bunfig.toml (CLI
   // regression: it must NOT be read from the config root).
   itBundled("internal/BunfigBundleTable", {

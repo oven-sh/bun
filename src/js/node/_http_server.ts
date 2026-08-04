@@ -319,6 +319,11 @@ function Server(options, callback): void {
   } else {
     validateObject(options, "options");
     options = { ...options };
+    if (options[isTlsSymbol]) {
+      // Set by `node:https`; an https server is TLS even without key/cert.
+      this[isTlsSymbol] = true;
+      delete options[isTlsSymbol];
+    }
 
     // Node's https.Server accepts PKCS#12 bundles (pfx [+ passphrase]); fold
     // them into plain key/cert/ca so the native TLS config sees PEM material.

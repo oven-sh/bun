@@ -1392,14 +1392,27 @@ impl ServerConfig {
             }
         }
 
+        // node:https keeps Node's cert-less fail-closed listener; direct Bun.serve throws.
+        let is_node_http = !args.on_node_http_request.is_empty();
+        let require_identity = |global: &JSGlobalObject, cfg: Option<&SSLConfig>| -> JsResult<()> {
+            if is_node_http || cfg.is_some_and(SSLConfig::has_identity_material) {
+                return Ok(());
+            }
+            Err(global.throw_invalid_arguments(format_args!(
+                "tls option requires both \"key\" and \"cert\" (or \"keyFile\" and \"certFile\")",
+            )))
+        };
+
+        let mut saw_tls_key = false;
         if let Some(tls) = arg.get_truthy(global, "tls")? {
             if tls.is_falsey() {
-                args.ssl_config = None;
+                // `get_truthy` passes `false`/`0`/`NaN` through; treat as no TLS (like `[]`).
             } else if tls.js_type().is_array() {
                 let mut value_iter = tls.array_iterator(global)?;
                 if value_iter.len == 0 {
-                    // Empty TLS array means no TLS - this is valid
+                    // `[]` = zero SNI configs (plain HTTP, #21792), unlike `{}` which throws.
                 } else {
+                    saw_tls_key = true;
                     while let Some(item) = value_iter.next()? {
                         let ssl_config = match SSLConfig::from_js(vm, global, item)? {
                             Some(c) => c,
@@ -1407,10 +1420,10 @@ impl ServerConfig {
                                 if global.has_exception() {
                                     return Err(JsError::Thrown);
                                 }
-                                // Backwards-compatibility; we ignored empty tls objects.
                                 continue;
                             }
                         };
+                        require_identity(global, Some(&ssl_config))?;
 
                         if args.ssl_config.is_none() {
                             args.ssl_config = Some(ssl_config);
@@ -1428,14 +1441,19 @@ impl ServerConfig {
                             args.sni.as_mut().unwrap().push(ssl_config);
                         }
                     }
+                    if args.ssl_config.is_none() {
+                        require_identity(global, None)?;
+                    }
                 }
             } else {
-                if let Some(ssl_config) = SSLConfig::from_js(vm, global, tls)? {
-                    args.ssl_config = Some(ssl_config);
-                }
+                saw_tls_key = true;
+                let parsed = SSLConfig::from_js(vm, global, tls)?;
                 if global.has_exception() {
                     return Err(JsError::Thrown);
                 }
+                require_identity(global, parsed.as_ref())?;
+                // Only node:https reaches here without identity; arm cert-less.
+                args.ssl_config = Some(parsed.unwrap_or_else(SSLConfig::zero));
             }
         }
         if global.has_exception() {
@@ -1444,9 +1462,13 @@ impl ServerConfig {
 
         // @compatibility Bun v0.x - v0.2.1
         // this used to be top-level, now it's "tls" object
-        if args.ssl_config.is_none() {
+        if args.ssl_config.is_none() && !saw_tls_key {
             if let Some(ssl_config) = SSLConfig::from_js(vm, global, arg)? {
-                args.ssl_config = Some(ssl_config);
+                if ssl_config.has_identity_material() {
+                    args.ssl_config = Some(ssl_config);
+                } else if ssl_config.has_any_key() || ssl_config.has_any_cert() {
+                    require_identity(global, Some(&ssl_config))?;
+                }
             }
             if global.has_exception() {
                 return Err(JsError::Thrown);

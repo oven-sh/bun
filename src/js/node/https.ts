@@ -8,7 +8,7 @@ const net = require("node:net");
 const { urlToHttpOptions } = require("internal/url");
 const { kEmptyObject, once } = require("internal/shared");
 const { validateObject } = require("internal/validators");
-const { kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
+const { kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel, isTlsSymbol } = require("internal/http");
 const { validateHeaderValue } = require("node:_http_common");
 
 const ArrayPrototypeShift = Array.prototype.shift;
@@ -501,7 +501,8 @@ const { shouldUseEnvProxy } = require("node:_http_agent");
 // normalized protocol list / callback on the server instance the way
 // tls.Server does (test-https-argument-of-creating.js).
 // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L82-L97
-function createServer(options, requestListener) {
+function Server(options, requestListener) {
+  if (!(this instanceof Server)) return new Server(options, requestListener);
   if (typeof options === "function") {
     requestListener = options;
     options = {};
@@ -516,13 +517,19 @@ function createServer(options, requestListener) {
     // ALPN requests are always answered with http/1.1.
     options.ALPNProtocols = ["http/1.1"];
   }
-  const server = http.createServer(options, requestListener);
+  // https is always TLS even without key/cert (handshakes fail closed, like Node).
+  options[isTlsSymbol] = true;
+  http.Server.$call(this, options, requestListener);
   const optionsALPNProtocols = options.ALPNProtocols;
   if (optionsALPNProtocols) {
-    tls.convertALPNProtocols(optionsALPNProtocols, server);
+    tls.convertALPNProtocols(optionsALPNProtocols, this);
   }
-  server.ALPNCallback = options.ALPNCallback;
-  return server;
+  this.ALPNCallback = options.ALPNCallback;
+}
+$toClass(Server, "Server", http.Server);
+
+function createServer(options, requestListener) {
+  return new Server(options, requestListener);
 }
 
 var https = {
@@ -533,7 +540,7 @@ var https = {
     timeout: 5000,
     proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
   }),
-  Server: http.Server,
+  Server,
   createServer,
   get,
   request,

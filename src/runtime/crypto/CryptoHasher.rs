@@ -264,23 +264,14 @@ impl CryptoHasher {
         };
 
         // Node.BlobOrStringOrBuffer
-        let input = {
-            let Some(arg) = next_eat() else {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
-                );
-            };
-            match BlobOrStringOrBuffer::from_js(global, arg)? {
-                Some(b) => b,
-                None => {
-                    return Err(global
-                        .throw_invalid_arguments(format_args!("expected blob, string or buffer")));
-                }
-            }
+        let Some(input_arg) = next_eat() else {
+            return Err(
+                global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
+            );
         };
 
         // ?Node.StringOrBuffer (static-method arm: only `undefined` → None)
-        let output: Option<StringOrBuffer> = match next_eat() {
+        let mut output: Option<StringOrBuffer> = match next_eat() {
             Some(arg) => match StringOrBuffer::from_js(global, arg)? {
                 Some(v) => Some(v),
                 None => {
@@ -294,6 +285,18 @@ impl CryptoHasher {
             },
             None => None,
         };
+
+        let input = match BlobOrStringOrBuffer::from_js(global, input_arg)? {
+            Some(b) => b,
+            None => {
+                return Err(
+                    global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
+                );
+            }
+        };
+        if let Some(StringOrBuffer::Buffer(buffer)) = &mut output {
+            buffer.buffer = ArrayBuffer::from_typed_array(global, buffer.buffer.value);
+        }
 
         Self::hash_(global, algorithm, &input, output)
     }
@@ -1193,15 +1196,6 @@ pub struct StaticCryptoHasher<H: StaticHasher> {
     pub(crate) digested: Cell<bool>,
 }
 
-impl<H: StaticHasher> Default for StaticCryptoHasher<H> {
-    fn default() -> Self {
-        Self {
-            hashing: JsCell::new(H::init()),
-            digested: Cell::new(false),
-        }
-    }
-}
-
 impl<H: StaticHasher> StaticCryptoHasher<H> {
     /// `pub const digest = host_fn.wrapInstanceMethod(ThisHasher, "digest_", false);`
     ///
@@ -1250,23 +1244,14 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         };
 
         // Node.BlobOrStringOrBuffer
-        let input = {
-            let Some(arg) = next_eat() else {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
-                );
-            };
-            match BlobOrStringOrBuffer::from_js(global, arg)? {
-                Some(b) => b,
-                None => {
-                    return Err(global
-                        .throw_invalid_arguments(format_args!("expected blob, string or buffer")));
-                }
-            }
+        let Some(input_arg) = next_eat() else {
+            return Err(
+                global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
+            );
         };
 
         // ?Node.StringOrBuffer (static-method arm: only `undefined` → None)
-        let output: Option<StringOrBuffer> = match next_eat() {
+        let mut output: Option<StringOrBuffer> = match next_eat() {
             Some(arg) => match StringOrBuffer::from_js(global, arg)? {
                 Some(v) => Some(v),
                 None => {
@@ -1280,6 +1265,18 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             },
             None => None,
         };
+
+        let input = match BlobOrStringOrBuffer::from_js(global, input_arg)? {
+            Some(b) => b,
+            None => {
+                return Err(
+                    global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
+                );
+            }
+        };
+        if let Some(StringOrBuffer::Buffer(buffer)) = &mut output {
+            buffer.buffer = ArrayBuffer::from_typed_array(global, buffer.buffer.value);
+        }
 
         Self::hash_(global, &input, output)
     }

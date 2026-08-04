@@ -450,12 +450,10 @@ impl PEFile {
             sum += data[data.len() - 1] as u64;
         }
 
-        // Final folds + add length
+        // Fold to 16 bits, then add file length (no fold after: result is 32-bit).
         sum = (sum & 0xffff) + (sum >> 16);
         sum = (sum & 0xffff) + (sum >> 16);
-        sum += u64::try_from(data.len()).expect("int cast");
-        sum = (sum & 0xffff) + (sum >> 16);
-        let final_sum: u32 = u32::try_from((sum & 0xffff) + (sum >> 16)).expect("int cast");
+        let final_sum: u32 = (sum as u32).wrapping_add(data.len() as u32);
 
         let opt = self.get_optional_header_mut()?;
         // SAFETY: opt points into self.data at validated offset
@@ -631,6 +629,10 @@ impl PEFile {
     pub fn write(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
         writer.write_all(&self.data)?;
         Ok(())
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
     }
 }
 

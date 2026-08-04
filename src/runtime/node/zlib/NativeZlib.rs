@@ -478,6 +478,10 @@ impl Context {
         };
     }
 
+    pub fn flush_value_is_valid(flush: u32) -> bool {
+        flush <= 6
+    }
+
     pub fn set_flush(&mut self, flush: c_int) {
         // Checked conversion;
         // transmuting an arbitrary c_int into a Rust enum is UB.

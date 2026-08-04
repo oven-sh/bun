@@ -185,7 +185,7 @@ impl FSWatchTaskPosix {
             match &entry.event {
                 Event::Rename(file_path) => self.ctx().emit::<{ EventType::Rename }>(file_path),
                 Event::Change(file_path) => self.ctx().emit::<{ EventType::Change }>(file_path),
-                Event::Error(err) => self.ctx().emit_error(err),
+                Event::Error { err, close } => self.ctx().emit_error(err, *close),
                 Event::NoFilename(event_type) => self.ctx().emit_null_filename(*event_type),
                 Event::Abort => self.ctx().emit_if_aborted(),
                 Event::Close => self.ctx().emit::<{ EventType::Close }>(b""),
@@ -261,16 +261,14 @@ impl FSWatchTaskPosix {
     /// `this` must be the unique `heap::alloc` pointer produced by
     /// `enqueue()`; called from the JS-thread task dispatcher only.
     pub(crate) unsafe fn deinit(this: *mut Self) {
-        // SAFETY: caller contract — `this` is the live heap clone.
-        let this_ref = unsafe { &mut *this };
-        this_ref.clean_entries();
+        // SAFETY: caller contract — `this` is the unique live heap clone from
+        // `enqueue()`; reclaim ownership (paired with its `heap::alloc`).
+        let mut task = unsafe { bun_core::heap::take(this) };
+        task.clean_entries();
         #[cfg(debug_assertions)]
         {
-            // SAFETY: ctx is valid for the lifetime of any task (ParentRef).
-            debug_assert!(!core::ptr::eq(this_ref.ctx().current_task.as_ptr(), this));
+            debug_assert!(!core::ptr::eq(task.ctx().current_task.as_ptr(), this));
         }
-        // SAFETY: paired with `heap::alloc` in `enqueue()`.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -302,7 +300,10 @@ impl WatchEventKind {
 pub enum Event {
     Rename(EventPathString),
     Change(EventPathString),
-    Error(bun_sys::Error),
+    Error {
+        err: bun_sys::Error,
+        close: bool,
+    },
     /// An event with no filename, surfaced to JS with `null`, matching node:
     /// `Change` when the OS event queue overflowed and changes were lost,
     /// `Rename` when libuv could not convert a name to UTF-8 (Windows).
@@ -346,11 +347,14 @@ impl Taskable for FSWatchTaskWindows {
 impl Default for FSWatchTaskWindows {
     fn default() -> Self {
         Self {
-            event: Event::Error(bun_sys::Error {
-                errno: SystemErrno::EINVAL as _,
-                syscall: bun_sys::Tag::watch,
-                ..Default::default()
-            }),
+            event: Event::Error {
+                err: bun_sys::Error {
+                    errno: SystemErrno::EINVAL as _,
+                    syscall: bun_sys::Tag::watch,
+                    ..Default::default()
+                },
+                close: true,
+            },
             ctx: None,
         }
     }
@@ -432,7 +436,7 @@ impl FSWatchTaskWindows {
         match &mut self.event {
             Event::Rename(path) => Self::run_path::<{ EventType::Rename }>(ctx, path),
             Event::Change(path) => Self::run_path::<{ EventType::Change }>(ctx, path),
-            Event::Error(err) => ctx.emit_error(err),
+            Event::Error { err, close } => ctx.emit_error(err, *close),
             Event::NoFilename(event_type) => ctx.emit_null_filename(*event_type),
             Event::Abort => ctx.emit_if_aborted(),
             Event::Close => ctx.emit::<{ EventType::Close }>(b""),
@@ -549,7 +553,7 @@ impl FSWatcher {
         let task = bun_core::heap::into_raw(Box::new(FSWatchTaskWindows {
             // SAFETY: `this` is the live owning `&FSWatcher` (BACKREF) recovered
             // from the registered userdata; outlives every task it enqueues.
-            ctx: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(this.as_ctx_ptr()) }),
+            ctx: Some(unsafe { bun_ptr::ParentRef::from_raw(this.as_ctx_ptr()) }),
             event,
         }));
         // `vm()` is the BACKREF accessor; `event_loop_mut()` is the audited
@@ -745,8 +749,8 @@ impl FSWatcher {
             if s.aborted() {
                 // safely abort next tick
                 this_ref.current_task.set(FSWatchTask {
-                    // SAFETY: `this` is the live boxed FSWatcher; write provenance.
-                    ctx: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(this) }),
+                    // SAFETY: `this` is the live boxed FSWatcher (shared; the task only reads).
+                    ctx: Some(unsafe { bun_ptr::ParentRef::from_raw(this) }),
                     ..Default::default()
                 });
                 this_ref.current_task.with_mut(|t| t.append_abort());
@@ -759,7 +763,7 @@ impl FSWatcher {
 
     pub(crate) fn emit_if_aborted(&self) {
         let reason = match self.signal.get() {
-            Some(s) if s.aborted() => Some(s.abort_reason()),
+            Some(s) if s.aborted() => Some(s.js_reason(&self.global_this)),
             _ => None,
         };
         if let Some(err) = reason {
@@ -809,7 +813,7 @@ impl FSWatcher {
 
     /// R-2: see `emit_abort` — `&self` + `Cell` so the trailing `close()`
     /// observes a re-entrant `watcher.close()` from inside the listener.
-    pub(crate) fn emit_error(&self, err: &bun_sys::Error) {
+    pub(crate) fn emit_error(&self, err: &bun_sys::Error, close: bool) {
         if self.closed.get() {
             return;
         }
@@ -829,7 +833,9 @@ impl FSWatcher {
             }
         }
 
-        self.close();
+        if close {
+            self.close();
+        }
     }
 
     pub(crate) fn emit_with_filename<const EVENT_TYPE: EventType>(&self, file_name: JSValue) {
@@ -1121,8 +1127,8 @@ impl FSWatcher {
         // SAFETY: `ctx` is the freshly-boxed payload; uniquely owned here.
         // R-2: deref as shared; mutation goes through `JsCell`.
         let ctx_ref = unsafe { &*ctx };
-        // SAFETY: `ctx` is the heap-stable Box address; write provenance.
-        let parent = unsafe { bun_ptr::ParentRef::from_raw_mut(ctx) };
+        // SAFETY: `ctx` is the heap-stable Box address (shared; the task only reads).
+        let parent = unsafe { bun_ptr::ParentRef::from_raw(ctx) };
         ctx_ref.current_task.with_mut(|t| t.ctx = Some(parent));
 
         ctx_ref

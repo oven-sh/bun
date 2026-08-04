@@ -30,7 +30,6 @@ pub struct S3HttpDownloadStreamingTask {
     pub(crate) signals: Signals,
     pub poll_ref: KeepAlive,
 
-    pub(crate) response_buffer: MutableString,
     pub(crate) mutex: Mutex,
     pub(crate) reported_response_buffer: MutableString,
     /// The HTTP-level failure, if any. Guarded by `mutex`; the `request_error`
@@ -70,7 +69,6 @@ impl Default for S3HttpDownloadStreamingTask {
             signal_store: bun_http::signals::Store::default(),
             signals: Signals::default(),
             poll_ref: KeepAlive::default(),
-            response_buffer: MutableString::default(),
             mutex: Mutex::default(),
             reported_response_buffer: MutableString::default(),
             request_error: None,
@@ -188,11 +186,12 @@ impl S3HttpDownloadStreamingTask {
     pub(crate) fn on_response(this: *mut Self) {
         // SAFETY: `this` is a live heap allocation created via `Self::new`; the event loop
         // guarantees exclusive access on the main thread for the duration of this callback.
-        let self_ = unsafe { &mut *this };
-        // lets lock and unlock the reported response buffer
-        self_.mutex.lock();
+        // Each access below is scoped so no borrow spans `report_progress` (which invokes
+        // the chunk callback).
+        unsafe { (*this).mutex.lock() };
         // the state is atomic let's load it once
-        let state = self_.get_state();
+        // SAFETY: as above.
+        let state = unsafe { (*this).get_state() };
         let has_more = state.has_more();
         // Use a scopeguard so any future early-exit / unwind through
         // `report_progress` still unlocks + deinits.
@@ -210,9 +209,15 @@ impl S3HttpDownloadStreamingTask {
 
         // there is no reason to set has_schedule_callback to true if we dont have more data to read
         if has_more {
-            self_.has_schedule_callback.store(false, Ordering::Relaxed);
+            // SAFETY: as above.
+            unsafe {
+                (*this)
+                    .has_schedule_callback
+                    .store(false, Ordering::Relaxed)
+            };
         }
-        self_.report_progress(state);
+        // SAFETY: as above; exclusive borrow scoped to the call.
+        unsafe { (*this).report_progress(state) };
     }
 
     /// this function is only called from the http callback in the HTTPThread and returns true if we
@@ -262,7 +267,7 @@ impl S3HttpDownloadStreamingTask {
     fn process_http_callback(
         &mut self,
         async_http: &mut AsyncHTTP<'static>,
-        result: HTTPClientResult,
+        mut result: HTTPClientResult,
     ) -> bool {
         // lets lock and unlock to be safe we know the state is not in the middle of a callback when locked
         // The RAII guard unlocks on every
@@ -288,22 +293,9 @@ impl S3HttpDownloadStreamingTask {
             should_enqueue
         );
 
+        result.body_into(&mut self.reported_response_buffer.list);
         if should_enqueue {
-            if let Some(body) = result.body {
-                // `body` is `&this.response_buffer`, so a `ptr::read` + assign here would
-                // run Drop on the old `self.response_buffer`, freeing the Vec allocation
-                // that `body` (and the freshly-stored value) still point at — a
-                // use-after-free / double-free. Instead, append `body`'s bytes to
-                // `reported_response_buffer`, then reset the buffer, operating on `body`
-                // directly.
-                if !body.list.as_slice().is_empty() {
-                    let _ = self.reported_response_buffer.write(body.list.as_slice());
-                }
-                body.reset();
-                if self.reported_response_buffer.list.as_slice().is_empty() && !is_done {
-                    return false;
-                }
-            } else if !is_done {
+            if self.reported_response_buffer.list.is_empty() && !is_done {
                 return false;
             }
             if let Err(has_schedule_callback) = self.has_schedule_callback.compare_exchange(
@@ -333,24 +325,21 @@ impl S3HttpDownloadStreamingTask {
         result: HTTPClientResult,
     ) {
         // SAFETY: `this` is live for the duration of the HTTP request; HTTPThread holds the only
-        // concurrent reference and `mutex` serializes against `on_response`.
-        let self_ = unsafe { &mut *this };
-        // SAFETY: `async_http` is the live HTTP-thread copy; non-null for the callback's duration.
-        let async_http = unsafe { &mut *async_http };
-        if self_.process_http_callback(async_http, result) {
+        // concurrent reference and `mutex` serializes against `on_response`. `async_http` is the
+        // live HTTP-thread copy, non-null for the callback's duration. Borrows scoped to the call.
+        if unsafe { (*this).process_http_callback(&mut *async_http, result) } {
             // we are always unlocked here and its safe to enqueue
-            let task = core::ptr::NonNull::from(
-                self_.concurrent_task.from(this, AutoDeinit::ManualDeinit),
-            );
+            // SAFETY: same exclusivity as above; `task` is the inline `concurrent_task` field of
+            // this heap request and the queue takes ownership of its `next` link.
+            let (vm, task) = unsafe {
+                let task = core::ptr::NonNull::from(
+                    (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
+                );
+                ((*this).vm.expect("vm set at task creation"), task)
+            };
             // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
             // is initialized for the request's lifetime and enqueue is thread-safe (`&self`).
-            // `task` is the inline `concurrent_task` field of this heap request;
-            // the queue takes ownership of its `next` link.
-            self_
-                .vm
-                .expect("vm set at task creation")
-                .event_loop_shared()
-                .enqueue_task_concurrent(task);
+            vm.event_loop_shared().enqueue_task_concurrent(task);
         }
     }
 }
@@ -363,7 +352,7 @@ impl Drop for S3HttpDownloadStreamingTask {
         self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));
-        // response_buffer, reported_response_buffer, headers, sign_result, range, proxy_url:
+        // reported_response_buffer, headers, sign_result, range, proxy_url:
         // dropped automatically (Box/Vec-backed fields).
         // SAFETY: `http` is always initialised before the task is scheduled / dropped.
         let http = unsafe { self.http.assume_init_mut() };

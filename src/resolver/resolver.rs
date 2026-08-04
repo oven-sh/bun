@@ -269,8 +269,9 @@ pub use ::bun_options_types::global_cache::GlobalCache;
 // inside `impl Resolver` resolve unchanged.
 use crate::options;
 use crate::result::{
-    DebugLogs, DirEntryResolveQueueItem, FlushMode, LoadResult, MatchResult, MatchStatus, PathPair,
-    PendingResolution, PendingResolutionTag, Result, ResultFlags, ResultUnion,
+    DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
+    MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
+    ResultUnion,
 };
 use crate::standalone_module_graph::StandaloneModuleGraph;
 use bun_alloc as allocators;
@@ -1193,7 +1194,6 @@ impl<'a> Resolver<'a> {
                 return ResultUnion::Success(Result {
                     import_kind: kind,
                     path_pair: res.path_pair,
-                    diff_case: res.diff_case,
                     package_json: res.package_json,
                     dirname_fd: res.dirname_fd,
                     file_fd: res.file_fd,
@@ -1649,6 +1649,9 @@ impl<'a> Resolver<'a> {
                 result.flags.set_experimental_decorators(
                     result.flags.experimental_decorators() || tsconfig.experimental_decorators,
                 );
+                if let Some(v) = tsconfig.use_define_for_class_fields {
+                    result.flags.set_use_define_for_class_fields(v);
+                }
             }
 
             // If you use mjs or mts, then you're using esm
@@ -1842,7 +1845,6 @@ impl<'a> Resolver<'a> {
                             // We don't set the directory fd here because it might remap an entirely different directory
                             return ResultUnion::Success(Result {
                                 path_pair: res.path_pair,
-                                diff_case: res.diff_case,
                                 package_json: res.package_json,
                                 dirname_fd: res.dirname_fd,
                                 file_fd: res.file_fd,
@@ -1892,7 +1894,6 @@ impl<'a> Resolver<'a> {
                 return ResultUnion::Success(Result {
                     dirname_fd: entry.dirname_fd,
                     path_pair: entry.path_pair,
-                    diff_case: entry.diff_case,
                     package_json: entry.package_json,
                     file_fd: entry.file_fd,
                     jsx: self.opts.jsx.clone(),
@@ -1942,59 +1943,80 @@ impl<'a> Resolver<'a> {
 
         if check_package {
             if self.opts.polyfill_node_globals {
-                result.jsx = self.opts.jsx.clone();
                 let had_node_prefix = import_path.starts_with(b"node:");
-                let import_path_without_node_prefix = if had_node_prefix {
+                let import_path_without_node_prefix: &'static [u8] = if had_node_prefix {
                     &import_path[b"node:".len()..]
                 } else {
                     import_path
                 };
 
-                if let Some(fallback_module) =
-                    NodeFallbackModules::map().get(import_path_without_node_prefix)
-                {
-                    result.path_pair.primary = fallback_module.path;
-                    result.module_type = options::ModuleType::Cjs;
-                    // @ptrFromInt(@intFromPtr(...)) — cast away constness
-                    result.package_json = Some(std::ptr::from_ref::<PackageJSON>(
-                        fallback_module.package_json,
-                    ));
-                    result.flags.set_is_from_node_modules(true);
-                    return ResultUnion::Success(result);
-                }
+                // The importer's package.json "browser" map wins over the builtin
+                // polyfill. The lookup uses the bare name so it matches the same
+                // spellings the polyfill table below does.
+                let browser_map_overrides_builtin = self.care_about_browser_field
+                    && matches!(self.dir_info_cached(source_dir), Ok(Some(info))
+                    if info
+                        .get_enclosing_browser_scope()
+                        .is_some_and(|scope| {
+                            self.check_browser_map::<{ BrowserMapPathKind::PackagePath }>(
+                                &scope,
+                                import_path_without_node_prefix,
+                            )
+                            .is_some()
+                        }));
 
-                if had_node_prefix {
-                    // Module resolution fails automatically for unknown node builtins
-                    if !HardcodedAlias::has(
-                        import_path_without_node_prefix,
-                        options::Target::Node,
-                        HardcodedAliasCfg::default(),
-                    ) {
-                        return ResultUnion::NotFound;
+                if browser_map_overrides_builtin {
+                    // check_package_path re-runs this lookup; give it the bare name.
+                    import_path = import_path_without_node_prefix;
+                } else {
+                    result.jsx = self.opts.jsx.clone();
+
+                    if let Some(fallback_module) =
+                        NodeFallbackModules::map().get(import_path_without_node_prefix)
+                    {
+                        result.path_pair.primary = fallback_module.path;
+                        result.module_type = options::ModuleType::Cjs;
+                        // @ptrFromInt(@intFromPtr(...)) — cast away constness
+                        result.package_json = Some(std::ptr::from_ref::<PackageJSON>(
+                            fallback_module.package_json,
+                        ));
+                        result.flags.set_is_from_node_modules(true);
+                        return ResultUnion::Success(result);
                     }
 
-                    // Valid node:* modules becomes {} in the output
-                    result.path_pair.primary.namespace = b"node";
-                    result.path_pair.primary.text = import_path_without_node_prefix;
-                    result.module_type = options::ModuleType::Cjs;
-                    result.path_pair.primary.is_disabled = true;
-                    result.flags.set_is_from_node_modules(true);
-                    result.primary_side_effects_data = SideEffects::NoSideEffectsPureData;
-                    return ResultUnion::Success(result);
-                }
+                    if had_node_prefix {
+                        // Module resolution fails automatically for unknown node builtins
+                        if !HardcodedAlias::has(
+                            import_path_without_node_prefix,
+                            options::Target::Node,
+                            HardcodedAliasCfg::default(),
+                        ) {
+                            return ResultUnion::NotFound;
+                        }
 
-                // Always mark "fs" as disabled, matching Webpack v4 behavior
-                if import_path_without_node_prefix.starts_with(b"fs")
-                    && (import_path_without_node_prefix.len() == 2
-                        || import_path_without_node_prefix[2] == b'/')
-                {
-                    result.path_pair.primary.namespace = b"node";
-                    result.path_pair.primary.text = import_path_without_node_prefix;
-                    result.module_type = options::ModuleType::Cjs;
-                    result.path_pair.primary.is_disabled = true;
-                    result.flags.set_is_from_node_modules(true);
-                    result.primary_side_effects_data = SideEffects::NoSideEffectsPureData;
-                    return ResultUnion::Success(result);
+                        // Valid node:* modules becomes {} in the output
+                        result.path_pair.primary.namespace = b"node";
+                        result.path_pair.primary.text = import_path_without_node_prefix;
+                        result.module_type = options::ModuleType::Cjs;
+                        result.path_pair.primary.is_disabled = true;
+                        result.flags.set_is_from_node_modules(true);
+                        result.primary_side_effects_data = SideEffects::NoSideEffectsPureData;
+                        return ResultUnion::Success(result);
+                    }
+
+                    // Always mark "fs" as disabled, matching Webpack v4 behavior
+                    if import_path_without_node_prefix.starts_with(b"fs")
+                        && (import_path_without_node_prefix.len() == 2
+                            || import_path_without_node_prefix[2] == b'/')
+                    {
+                        result.path_pair.primary.namespace = b"node";
+                        result.path_pair.primary.text = import_path_without_node_prefix;
+                        result.module_type = options::ModuleType::Cjs;
+                        result.path_pair.primary.is_disabled = true;
+                        result.flags.set_is_from_node_modules(true);
+                        result.primary_side_effects_data = SideEffects::NoSideEffectsPureData;
+                        return ResultUnion::Success(result);
+                    }
                 }
             }
 
@@ -2145,11 +2167,13 @@ impl<'a> Resolver<'a> {
                             .is_success()
                         {
                             let mut flags = ResultFlags::default();
-                            flags.set_is_external(match_result.is_external);
-                            flags.set_is_external_and_rewrite_import_path(match_result.is_external);
+                            flags.set_external_kind(if match_result.is_external {
+                                ExternalKind::ExternalRewritePath
+                            } else {
+                                ExternalKind::NotExternal
+                            });
                             return ResultUnion::Success(Result {
                                 path_pair: match_result.path_pair,
-                                diff_case: match_result.diff_case,
                                 dirname_fd: match_result.dirname_fd,
                                 package_json: Some(std::ptr::from_ref(pkg)),
                                 jsx: self.opts.jsx.clone(),
@@ -2175,7 +2199,6 @@ impl<'a> Resolver<'a> {
         {
             ResultUnion::Success(Result {
                 path_pair: res.path_pair,
-                diff_case: res.diff_case,
                 dirname_fd: res.dirname_fd,
                 package_json: res.package_json,
                 jsx: self.opts.jsx.clone(),
@@ -2273,7 +2296,6 @@ impl<'a> Resolver<'a> {
                                 return ResultUnion::Success(Result {
                                     path_pair: pair,
                                     dirname_fd: node_module.dirname_fd,
-                                    diff_case: node_module.diff_case,
                                     package_json: Some(std::ptr::from_ref(package_json)),
                                     jsx: self.opts.jsx.clone(),
                                     ..Default::default()
@@ -2289,7 +2311,6 @@ impl<'a> Resolver<'a> {
                                         primary,
                                         secondary: None,
                                     },
-                                    diff_case: None,
                                     jsx: self.opts.jsx.clone(),
                                     ..Default::default()
                                 });
@@ -2324,17 +2345,17 @@ impl<'a> Resolver<'a> {
                 result.dirname_fd = res.dirname_fd;
                 result.file_fd = res.file_fd;
                 result.package_json = res.package_json;
-                result.diff_case = res.diff_case;
                 result.flags.set_is_from_node_modules(
                     result.flags.is_from_node_modules() || res.is_node_module,
                 );
                 result.module_type = res.module_type;
-                result.flags.set_is_external(res.is_external);
                 // Potentially rewrite the import path if it's external that
                 // was remapped to a different path
-                result
-                    .flags
-                    .set_is_external_and_rewrite_import_path(result.flags.is_external());
+                result.flags.set_external_kind(if res.is_external {
+                    ExternalKind::ExternalRewritePath
+                } else {
+                    ExternalKind::NotExternal
+                });
 
                 if result.path_pair.primary.is_disabled && result.path_pair.secondary.is_none() {
                     return ResultUnion::Success(result);
@@ -2375,15 +2396,15 @@ impl<'a> Resolver<'a> {
                                     result.dirname_fd = remapped.dirname_fd;
                                     result.file_fd = remapped.file_fd;
                                     result.package_json = remapped.package_json;
-                                    result.diff_case = remapped.diff_case;
                                     result.module_type = remapped.module_type;
-                                    result.flags.set_is_external(remapped.is_external);
 
                                     // Potentially rewrite the import path if it's external that
                                     // was remapped to a different path
-                                    result.flags.set_is_external_and_rewrite_import_path(
-                                        result.flags.is_external(),
-                                    );
+                                    result.flags.set_external_kind(if remapped.is_external {
+                                        ExternalKind::ExternalRewritePath
+                                    } else {
+                                        ExternalKind::NotExternal
+                                    });
 
                                     result.flags.set_is_from_node_modules(
                                         result.flags.is_from_node_modules()
@@ -3589,7 +3610,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        if self.opts.prefer_offline_install {
+        if self.opts.install_preference == bun_options_types::offline_mode::OfflineMode::Offline {
             if let Some(package_id) = pm!().resolve_from_disk_cache(esm.name, &version) {
                 *input_package_id_ = package_id;
                 return DependencyToResolve::Resolution(
@@ -3813,7 +3834,6 @@ impl<'a> Resolver<'a> {
                     dirname_fd: entries.fd,
                     file_fd: entry_query.entry().cache().fd,
                     dir_info: Some(resolved_dir_info),
-                    diff_case: entry_query.diff_case,
                     is_node_module: true,
                     package_json: Some(
                         resolved_dir_info
@@ -4038,7 +4058,7 @@ impl<'a> Resolver<'a> {
         // A path longer than MAX_PATH_BYTES cannot name a real directory.
         // Bailing here also prevents overflowing `dir_info_uncached_path`
         // below when called with user-controlled absolute import paths.
-        if input_path.len() > MAX_PATH_BYTES {
+        if input_path.len() >= MAX_PATH_BYTES {
             return Ok(None);
         }
 
@@ -4127,9 +4147,9 @@ impl<'a> Resolver<'a> {
         dir_info_uncached_path_buf[..input_path_len].copy_from_slice(input_path);
         // The slice spans one byte past the copied path so the NUL-splice/restore at
         // `input_path_len` (queue index 0, processed last in the open-dir loop below)
-        // writes through `path`'s own provenance. `input_path_len + 1 ≤ MAX_PATH_BYTES + 1`
-        // (checked above) and `PathBuffer` always carries the +1 sentinel slot, so the
-        // safe slice is in-bounds and the threadlocal buffer outlives this fn.
+        // writes through `path`'s own provenance. `input_path_len < MAX_PATH_BYTES`
+        // (checked in `dir_info_cached_maybe_log`), so `input_path_len + 1` is
+        // in-bounds of the `MAX_PATH_BYTES` buffer, which outlives this fn.
         let path: &mut [u8] = &mut dir_info_uncached_path_buf[..input_path_len + 1];
 
         queue[0].write(DirEntryResolveQueueItem {
@@ -4222,6 +4242,9 @@ impl<'a> Resolver<'a> {
             if result.status != allocators::ItemStatus::Unknown {
                 top_parent = result;
             } else {
+                if i >= queue.len() {
+                    return Ok(None);
+                }
                 queue[i].write(DirEntryResolveQueueItem {
                     unsafe_path: bun_ptr::RawSlice::new(root_path),
                     result,
@@ -5023,7 +5046,7 @@ impl<'a> Resolver<'a> {
         extension_order: options::ExtOrder,
         out: &mut MatchResult,
     ) -> MatchStatus {
-        let mut field_rel_path = _field_rel_path;
+        let field_rel_path = _field_rel_path;
         // Is this a directory?
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
@@ -5044,6 +5067,10 @@ impl<'a> Resolver<'a> {
             }};
         }
 
+        let mut field_abs_path: &[u8] = self
+            .fs_ref()
+            .abs_buf(&[path, field_rel_path], bufs!(field_abs_path));
+
         if self.care_about_browser_field {
             // Potentially remap using the "browser" field
             if let Some(browser_scope) = dir_info.get_enclosing_browser_scope() {
@@ -5051,7 +5078,7 @@ impl<'a> Resolver<'a> {
                     if let Some(remap) = self
                         .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
                             &browser_scope,
-                            field_rel_path,
+                            field_abs_path,
                         )
                     {
                         // Is the path disabled?
@@ -5071,13 +5098,14 @@ impl<'a> Resolver<'a> {
                             dec_ret!(MatchStatus::Success);
                         }
 
-                        field_rel_path = remap;
+                        // `remap` is relative to the package that owns the browser map.
+                        field_abs_path = self
+                            .fs_ref()
+                            .abs_buf(&[browser_scope.abs_path, remap], bufs!(field_abs_path));
                     }
                 }
             }
         }
-        let _paths = [path, field_rel_path];
-        let field_abs_path = self.fs_ref().abs_buf(&_paths, bufs!(field_abs_path));
 
         // Is this a file?
         if let Some(result) = self.load_as_file(field_abs_path, extension_order) {
@@ -5100,7 +5128,6 @@ impl<'a> Resolver<'a> {
                     secondary: None,
                 },
                 dirname_fd: result.dirname_fd,
-                diff_case: result.diff_case,
                 ..Default::default()
             };
             dec_ret!(MatchStatus::Success);
@@ -5222,7 +5249,6 @@ impl<'a> Resolver<'a> {
                                 primary: Path::init(out_buf),
                                 secondary: None,
                             },
-                            diff_case: lookup.diff_case,
                             package_json: Some(std::ptr::from_ref(package_json)),
                             dirname_fd: dir_info.get_file_descriptor(),
                             ..Default::default()
@@ -5235,7 +5261,6 @@ impl<'a> Resolver<'a> {
                             primary: Path::init(out_buf),
                             secondary: None,
                         },
-                        diff_case: lookup.diff_case,
                         dirname_fd: dir_info.get_file_descriptor(),
                         ..Default::default()
                     };
@@ -5283,16 +5308,18 @@ impl<'a> Resolver<'a> {
                 const FIELD_REL_PATH: &[u8] = b"index";
 
                 if let Some(browser_json) = browser_scope.package_json() {
+                    let index_paths = [path, FIELD_REL_PATH];
+                    let index_abs_path = self.fs_ref().abs_buf(&index_paths, bufs!(remap_path));
                     if let Some(remap) = self
                         .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
                             &browser_scope,
-                            FIELD_REL_PATH,
+                            index_abs_path,
                         )
                     {
                         // Is the path disabled?
                         if remap.is_empty() {
-                            let paths = [path, FIELD_REL_PATH];
-                            let new_path = self.fs_ref().abs_buf(&paths, bufs!(remap_path));
+                            let new_path =
+                                self.fs_ref().abs_alloc(&index_paths).expect("unreachable");
                             let mut _path = Path::init(new_path);
                             _path.is_disabled = true;
                             *out = MatchResult {
@@ -5306,7 +5333,8 @@ impl<'a> Resolver<'a> {
                             return MatchStatus::Success;
                         }
 
-                        let new_paths = [path, remap];
+                        // `remap` is relative to the browser scope, which may be an ancestor of `path`.
+                        let new_paths = [browser_scope.abs_path, remap];
                         let remapped_abs = self.fs_ref().abs_buf(&new_paths, bufs!(remap_path));
 
                         // Is this a file
@@ -5318,7 +5346,6 @@ impl<'a> Resolver<'a> {
                                     primary: Path::init(file_result.path),
                                     secondary: None,
                                 },
-                                diff_case: file_result.diff_case,
                                 ..Default::default()
                             };
                             return MatchStatus::Success;
@@ -5370,7 +5397,6 @@ impl<'a> Resolver<'a> {
                                     primary: Path::init(file.path),
                                     secondary: None,
                                 },
-                                diff_case: file.diff_case,
                                 dirname_fd: file.dirname_fd,
                                 package_json: Some(std::ptr::from_ref(package_json)),
                                 file_fd: file.file_fd,
@@ -5389,7 +5415,6 @@ impl<'a> Resolver<'a> {
                     primary: Path::init(file.path),
                     secondary: None,
                 },
-                diff_case: file.diff_case,
                 dirname_fd: file.dirname_fd,
                 file_fd: file.file_fd,
                 ..Default::default()
@@ -5493,7 +5518,13 @@ impl<'a> Resolver<'a> {
                     // use a special per-module automatic algorithm to decide whether to
                     // use "module" or "main" based on whether the package is imported
                     // using "import" or "require".
-                    if auto_main && key == b"module" {
+                    //
+                    // "jsnext:main" is the historical name for "module" (same semantics:
+                    // an ESM entry point) and is in the browser default main-field list,
+                    // so it needs the same fallback or `require("pkg")` on a package
+                    // that only has `jsnext:main` + `main` (e.g. moment) resolves to the
+                    // ESM file and hands back `{ default }` instead of the CJS export.
+                    if auto_main && (key == b"module" || key == b"jsnext:main") {
                         let mut auto_main_result = MatchResult::default();
                         let mut auto_main_found = false;
 
@@ -5538,8 +5569,9 @@ impl<'a> Resolver<'a> {
                             if self.prefer_module_field && kind != ast::ImportKind::Require {
                                 if let Some(debug) = self.debug_logs.as_mut() {
                                     debug.add_note_fmt(format_args!(
-                                        "Resolved to \"{}\" using the \"module\" field in \"{}\"",
-                                        bstr::BStr::new(auto_main_result.path_pair.primary.text()),
+                                        "Resolved to \"{}\" using the \"{}\" field in \"{}\"",
+                                        bstr::BStr::new(out.path_pair.primary.text()),
+                                        bstr::BStr::new(key),
                                         bstr::BStr::new(pkg_json.source.path.text)
                                     ));
                                     debug.add_note_fmt(format_args!(
@@ -5555,7 +5587,6 @@ impl<'a> Resolver<'a> {
                                         primary,
                                         secondary: Some(auto_main_result.path_pair.primary),
                                     },
-                                    diff_case: out.diff_case,
                                     dirname_fd: out.dirname_fd,
                                     package_json,
                                     file_fd: auto_main_result.file_fd,
@@ -5565,9 +5596,8 @@ impl<'a> Resolver<'a> {
                             } else {
                                 if let Some(debug) = self.debug_logs.as_mut() {
                                     debug.add_note_fmt(format_args!(
-                                        "Resolved to \"{}\" using the \"{}\" field in \"{}\"",
+                                        "Resolved to \"{}\" using the \"main\" field in \"{}\"",
                                         bstr::BStr::new(auto_main_result.path_pair.primary.text()),
-                                        bstr::BStr::new(key),
                                         bstr::BStr::new(pkg_json.source.path.text)
                                     ));
                                 }
@@ -5638,7 +5668,7 @@ impl<'a> Resolver<'a> {
                 self.generation,
                 self.store_fd,
             ) {
-                Ok(e) => bun_ptr::BackRef::new_mut(e),
+                Ok(e) => bun_ptr::BackRef::new(&*e),
                 Err(_) => dec_ret!(None),
             };
 
@@ -5706,7 +5736,6 @@ impl<'a> Resolver<'a> {
 
                 dec_ret!(Some(LoadResult {
                     path: abs_path,
-                    diff_case: query.diff_case,
                     dirname_fd: entries!().fd,
                     file_fd: query.entry().cache().fd,
                 }));
@@ -5826,7 +5855,6 @@ impl<'a> Resolver<'a> {
                                     }
                                     query.entry().abs_path.as_bytes()
                                 },
-                                diff_case: query.diff_case,
                                 dirname_fd: entries!().fd,
                                 file_fd: query.entry().cache().fd,
                             }));
@@ -5916,7 +5944,6 @@ impl<'a> Resolver<'a> {
                         };
                         query.entry().abs_path.as_bytes()
                     },
-                    diff_case: query.diff_case,
                     dirname_fd: entries.fd,
                     file_fd: query.entry().cache().fd,
                 });
@@ -6417,6 +6444,9 @@ impl<'a> Resolver<'a> {
                         let mc = unsafe { &mut *merged_config };
                         mc.emit_decorator_metadata =
                             mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
+                        if let Some(v) = parent_config.use_define_for_class_fields {
+                            mc.use_define_for_class_fields = Some(v);
+                        }
                         if !parent_config.base_url.is_empty() {
                             mc.base_url = core::mem::take(&mut parent_config.base_url);
                         }

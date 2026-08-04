@@ -787,6 +787,9 @@ pub enum SubscriptionPushMessage {
     Message,
     Subscribe,
     Unsubscribe,
+    /// `pmessage` / `smessage` — delivered without a promise pair; no listener
+    /// API is exposed for pattern subscriptions, so the payload is dropped.
+    PatternMessage,
 }
 
 bun_core::comptime_string_map! {
@@ -800,12 +803,21 @@ bun_core::comptime_string_map! {
 impl SubscriptionPushMessage {
     #[inline]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        SUBSCRIPTION_PUSH_MESSAGES.get(bytes).copied()
+        if let Some(kind) = SUBSCRIPTION_PUSH_MESSAGES.get(bytes).copied() {
+            return Some(kind);
+        }
+        match bytes.split_first() {
+            Some((b'p' | b's', base)) => match SUBSCRIPTION_PUSH_MESSAGES.get(base).copied() {
+                Some(kind @ (Self::Subscribe | Self::Unsubscribe)) => Some(kind),
+                Some(Self::Message) => Some(Self::PatternMessage),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     /// Pattern (`p`-prefixed) and sharded (`s`-prefixed) variants of the
-    /// `Subscribe`/`Unsubscribe` push kinds; the unprefixed kinds are matched by
-    /// `from_bytes` before this is consulted.
+    /// `Subscribe`/`Unsubscribe` push kinds.
     #[inline]
     pub fn is_reply_kind(kind: &[u8]) -> bool {
         match kind.split_first() {

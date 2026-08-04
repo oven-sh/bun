@@ -23,7 +23,6 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiClass;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiPrototype;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSQLStatement;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSQLStatementConstructor;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeSqliteDatabaseSync;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeSqliteStatementSync;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeSqliteStatementSyncIterator;
@@ -65,6 +64,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSECDH;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTTYWrapObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiHandleScopeImpl;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForStrongRootBlock;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiTypeTag;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNativePromiseContext;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForObjectTemplate;
@@ -116,6 +116,8 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCountQueuingStrategyConstructor;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEncoderStreamConstructor;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoderStreamConstructor;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCompressionStreamConstructor;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDecompressionStreamConstructor;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForStreamPipeToOperation;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadRequest;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadIntoRequest;
@@ -128,7 +130,6 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDirectSinkCloseState;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAsyncIteratorSourceOperation;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadStreamIntoSinkOperation;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResumableSinkPumpOperation;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunStandaloneTextSink;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForOneShotDirectSink;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamIntoArrayOperation;

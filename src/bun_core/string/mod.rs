@@ -9,10 +9,7 @@
 //! Merged into `bun_core` to break the `bun_core ↔ bun_string` dep edge;
 //! the `bun_string` crate is now a thin re-export shim over this module.
 
-// `#[macro_export]` macros defined in submodules (`w!`, `literal!`) land at
-// the *crate* root (`bun_core::`).
-// Re-export them here so `crate::string::w` / `bun_core::w` paths resolve.
-pub use crate::{literal, w};
+pub use crate::w;
 
 #[path = "escapeRegExp.rs"]
 pub mod escape_reg_exp;
@@ -757,15 +754,6 @@ impl String {
         bytes.len() == lit.len() && strings::eql_comptime_ignore_len(bytes, lit)
     }
 
-    /// `bun.String.githubAction` — returns a `Display`
-    /// formatter that escapes the string for GitHub Actions annotation output
-    /// (`%0A` for newlines, ANSI stripped). Encoding-aware: materialises a
-    /// UTF-8 view inside `fmt` so 16-bit / WTF-backed strings are handled.
-    #[inline]
-    pub fn github_action(&self) -> StringGithubActionFormatter<'_> {
-        StringGithubActionFormatter { text: self }
-    }
-
     /// `bun.String.hasPrefixComptime` — ASCII prefix check. Dispatches on
     /// encoding so only `prefix.len()` units are touched; never scans or
     /// transcodes `self`.
@@ -1266,19 +1254,6 @@ impl core::fmt::Display for String {
         // SAFETY: `to_utf8_without_ref` always yields valid UTF-8 — it
         // transcodes Latin-1/UTF-16 and borrows already-UTF-8 inputs.
         f.write_str(unsafe { core::str::from_utf8_unchecked(s.slice()) })
-    }
-}
-
-/// `Display` adapter for [`String::github_action`]. Converts to UTF-8 on the
-/// fly (handles 16-bit / WTF-backed strings) and delegates to
-/// `crate::fmt::github_action_writer`.
-pub struct StringGithubActionFormatter<'a> {
-    text: &'a String,
-}
-impl core::fmt::Display for StringGithubActionFormatter<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let utf8 = self.text.to_utf8_without_ref();
-        crate::fmt::github_action_writer(f, utf8.slice())
     }
 }
 
@@ -2263,7 +2238,7 @@ pub mod printer {
 
             match c {
                 0x07 => {
-                    writer.write_all(b"\\x07")?;
+                    writer.write_all(if json { b"\\u0007" } else { b"\\x07" })?;
                     i += 1;
                 }
                 0x08 => {
@@ -2283,7 +2258,7 @@ pub mod printer {
                     i += 1;
                 }
                 0x0B => {
-                    writer.write_all(b"\\v")?;
+                    writer.write_all(if json { b"\\u000B" } else { b"\\v" })?;
                     i += 1;
                 }
                 0x5C => {

@@ -463,6 +463,15 @@ impl Cmd {
         // SAFETY: `shell_ptr` is the live env owned by this Cmd's scope chain.
         spawn_args.cwd = unsafe { &*shell_ptr }.cwd();
 
+        // Fill env from export_env + cmd_local_env.
+        {
+            let env = interp.as_cmd_mut(this).base.shell_mut();
+            let mut iter = env.export_env.iterator();
+            spawn_args.fill_env::<false>(&mut iter);
+            let mut iter = env.cmd_local_env.iterator();
+            spawn_args.fill_env::<false>(&mut iter);
+        }
+
         // Resolve argv[0] via PATH (`bun_which::which`).
         let resolved: Option<Vec<u8>> = {
             let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -514,15 +523,6 @@ impl Cmd {
         // `execve`).
         resolved.push(0);
         interp.as_cmd_mut(this).args[0] = resolved;
-
-        // Fill env from export_env + cmd_local_env.
-        {
-            let env = interp.as_cmd_mut(this).base.shell_mut();
-            let mut iter = env.export_env.iterator();
-            spawn_args.fill_env::<false>(&mut iter);
-            let mut iter = env.cmd_local_env.iterator();
-            spawn_args.fill_env::<false>(&mut iter);
-        }
 
         // Convert shell IO → subprocess stdio.
         let mut shellio = ShellIO::default();
@@ -761,8 +761,9 @@ impl Cmd {
                 } else if crate::webcore::ReadableStream::from_js(jsval, global)?.is_some() {
                     panic!("TODO SHELL READABLE STREAM");
                 } else if let Some(req) = jsval.as_::<crate::webcore::Response>() {
-                    // SAFETY: `as_` returns a live JSC-owned `*mut Response`.
-                    let req = unsafe { &mut *req };
+                    // SAFETY: `as_` returns a live JSC-owned `*mut Response`;
+                    // `get_body_value` is `&self`.
+                    let req = unsafe { &*req };
                     req.get_body_value().to_blob_if_possible();
                     if flags.stdin() {
                         let b = req.get_body_value().use_as_any_blob();

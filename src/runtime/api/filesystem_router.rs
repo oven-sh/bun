@@ -832,31 +832,30 @@ impl MatchedRoute {
 
     // Note: `deinit` is called only from `finalize`; not exposed as `Drop` because
     // `MatchedRoute` is a JsClass m_ctx payload (finalize owns teardown per PORTING.md).
-    fn deinit(this: *mut MatchedRoute) {
-        // SAFETY: called from finalize on mutator thread.
-        let this_ref = unsafe { &mut *this };
-        this_ref.query_string_map.set(None);
-        this_ref.param_map.set(None);
-        if this_ref.needs_deinit {
+    #[allow(
+        clippy::boxed_local,
+        reason = "reclaim point for the allocation `finalize` owns"
+    )]
+    fn deinit(mut this: Box<MatchedRoute>) {
+        this.query_string_map.set(None);
+        this.param_map.set(None);
+        if this.needs_deinit {
             // We own the `path` allocation from `match` as
             // `pathname_backing`; dropping it (and `params_list_holder`) here releases the
             // borrowed bytes BEFORE `route_holder`'s slices would dangle on Box drop.
-            this_ref.pathname_backing = ZigStringSlice::EMPTY;
-            *this_ref.params_list_holder.get_mut() = route_param::List::default();
+            this.pathname_backing = ZigStringSlice::EMPTY;
+            *this.params_list_holder.get_mut() = route_param::List::default();
         }
 
-        if let Some(p) = this_ref.origin.take() {
+        if let Some(p) = this.origin.take() {
             p.get().deref();
         }
-        if let Some(p) = this_ref.asset_prefix.take() {
+        if let Some(p) = this.asset_prefix.take() {
             p.get().deref();
         }
-        if let Some(p) = this_ref.base_dir.take() {
+        if let Some(p) = this.base_dir.take() {
             p.get().deref();
         }
-
-        // SAFETY: `this` was heap-allocated by codegen at construction.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -865,9 +864,7 @@ impl MatchedRoute {
     }
 
     pub fn finalize(self: Box<Self>) {
-        // `deinit` frees the allocation itself; hand ownership back so its
-        // existing raw-ptr teardown path stays intact.
-        Self::deinit(Box::into_raw(self));
+        Self::deinit(self);
     }
 
     #[bun_jsc::host_fn(getter)]

@@ -21,17 +21,32 @@ mod scope {
 }
 use scope::which as which_log;
 
+/// Writes `[cwd/]segment/bin\0` into `buf` and stats it as an executable.
 #[cfg(not(windows))]
-fn is_valid(buf: &mut PathBuffer, segment: &[u8], bin: &[u8]) -> Option<u16> {
-    let prefix_len = segment.len() + 1; // includes trailing path separator
+fn is_valid(buf: &mut PathBuffer, cwd: &[u8], segment: &[u8], bin: &[u8]) -> Option<u16> {
+    fn len_with_sep(part: &[u8]) -> usize {
+        match part.last() {
+            None => 0,
+            Some(&SEP) => part.len(),
+            Some(_) => part.len() + 1,
+        }
+    }
+    let cwd_prefix_len = len_with_sep(cwd);
+    let prefix_len = cwd_prefix_len + len_with_sep(segment);
     let len = prefix_len + bin.len();
     let len_z = len + 1; // includes null terminator
     if len_z > MAX_PATH_BYTES {
         return None;
     }
 
-    buf[..segment.len()].copy_from_slice(segment);
-    buf[segment.len()] = SEP;
+    buf[..cwd.len()].copy_from_slice(cwd);
+    if cwd_prefix_len > cwd.len() {
+        buf[cwd.len()] = SEP;
+    }
+    buf[cwd_prefix_len..cwd_prefix_len + segment.len()].copy_from_slice(segment);
+    if prefix_len > cwd_prefix_len + segment.len() {
+        buf[cwd_prefix_len + segment.len()] = SEP;
+    }
     buf[prefix_len..prefix_len + bin.len()].copy_from_slice(bin);
     buf[len] = 0;
     // SAFETY: buf[len] == 0 written above
@@ -83,7 +98,7 @@ pub fn which_for_spawn<'a>(
 // Like /usr/bin/which but without needing to exec a child process
 // Remember to resolve the symlink if necessary
 pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -> Option<&'a ZStr> {
-    if bin.len() > MAX_PATH_BYTES {
+    if bin.len() >= MAX_PATH_BYTES {
         return None;
     }
     bun_core::scoped_log!(
@@ -128,15 +143,17 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
             return None;
         }
 
+        // Strip trailing SEP bytes from cwd, keeping a bare "/".
+        let mut cwd_trimmed = cwd;
+        while cwd_trimmed.len() > 1 && cwd_trimmed.last() == Some(&SEP) {
+            cwd_trimmed = &cwd_trimmed[..cwd_trimmed.len() - 1];
+        }
+
         if strings::index_of_char(bin, b'/').is_some() {
             if !cwd.is_empty() {
-                // Strip trailing SEP bytes from cwd.
-                let mut cwd_trimmed = cwd;
-                while cwd_trimmed.last() == Some(&SEP) {
-                    cwd_trimmed = &cwd_trimmed[..cwd_trimmed.len() - 1];
-                }
                 if let Some(len) = is_valid(
                     buf,
+                    b"",
                     cwd_trimmed,
                     strings::without_prefix_comptime(bin, b"./"),
                 ) {
@@ -148,8 +165,15 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
             return None;
         }
 
+        let cwd_for_relative_segment: &[u8] = if is_absolute(cwd) { cwd_trimmed } else { b"" };
         for segment in path.split(|b| *b == DELIMITER).filter(|s| !s.is_empty()) {
-            if let Some(len) = is_valid(buf, segment, bin) {
+            // execvp resolves relative $PATH entries after the child's chdir.
+            let cwd_prefix: &[u8] = if is_absolute(segment) {
+                b""
+            } else {
+                cwd_for_relative_segment
+            };
+            if let Some(len) = is_valid(buf, cwd_prefix, segment, bin) {
                 // SAFETY: is_valid wrote NUL at buf[len]
                 return Some(ZStr::from_buf(&buf[..], len as usize));
             }

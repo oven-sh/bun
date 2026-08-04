@@ -297,7 +297,7 @@ pub struct PackageManager {
     // Set once in `init()`/`init_with_runtime()` to the process-singleton
     // `DotEnv.Loader` (leaked allocation; outlives the manager). `BackRef`
     // encapsulates the liveness invariant so `env()` is a safe accessor.
-    pub env: Option<bun_ptr::BackRef<dot_env::Loader>>,
+    pub env: Option<bun_ptr::BackRef<dot_env::Loader, bun_ptr::Mut>>,
     pub progress: Progress,
     pub(crate) downloads_node: Option<*mut ProgressNode>, // BORROW_FIELD — points into self.progress
     pub scripts_node: Option<NonNull<ProgressNode>>, // points to a caller stack-local Progress node; only valid while that caller frame is live
@@ -1100,7 +1100,8 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
 
     let tempdir = get_temporary_directory(manager);
     let mut path_buf = PathBuffer::uninit();
-    let node_gyp_tempdir_name = fs::FileSystem::tmpname(b"node-gyp", &mut path_buf.0, 12345)?;
+    let node_gyp_tempdir_name =
+        fs::FileSystem::tmpname(b"node-gyp", &mut path_buf.0, bun_core::fast_random())?;
 
     // used later for adding to path for scripts
     manager.node_gyp_tempdir_name = Box::<[u8]>::from(node_gyp_tempdir_name.as_ref());

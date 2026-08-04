@@ -65,8 +65,8 @@ impl Raw {
     }
 }
 
-/// Match WebKit's parseRange (HTTPParsers.cpp): case-insensitive "bytes",
-/// optional whitespace before "=". https://fetch.spec.whatwg.org/#simple-range-header-value
+/// https://fetch.spec.whatwg.org/#simple-range-header-value: case-insensitive
+/// "bytes", optional whitespace before "=".
 pub(crate) fn parse_raw(header: &[u8]) -> Raw {
     let mut rest = header;
     if !strings::starts_with_case_insensitive_ascii(rest, b"bytes") {

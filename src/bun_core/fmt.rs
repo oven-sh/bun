@@ -233,7 +233,16 @@ pub struct RedactedNpmUrlFormatter<'a> {
 impl Display for RedactedNpmUrlFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut i: usize = 0;
+        let password = strings::find_url_password(self.url);
         while i < self.url.len() {
+            if let Some((offset, len)) = password
+                && i == offset
+            {
+                splat_byte_all(f, b'*', len)?;
+                i += len;
+                continue;
+            }
+
             if strings::starts_with_uuid(&self.url[i..]) {
                 f.write_str("***")?;
                 i += 36;
@@ -247,15 +256,17 @@ impl Display for RedactedNpmUrlFormatter<'_> {
                 continue;
             }
 
-            // TODO: redact password from `https://username:password@registry.com/`
-
             // Emit the run of bytes up to the next position where a uuid/npm
             // secret could possibly start, so multi-byte UTF-8 sequences are
             // written intact (raw bytes, not Latin-1→UTF-8 chars).
             let mut next = i + 1;
             while next < self.url.len() {
                 let b = self.url[next];
-                if b.is_ascii_hexdigit() || b == b'n' || b == b'N' {
+                if b.is_ascii_hexdigit()
+                    || b == b'n'
+                    || b == b'N'
+                    || password.is_some_and(|(offset, _)| next == offset)
+                {
                     break;
                 }
                 next += 1;
@@ -1113,7 +1124,8 @@ impl Display for URLFormatter<'_> {
         )?;
 
         if let Some(hostname) = self.hostname {
-            let needs_brackets = hostname[0] != b'[' && strings::is_ipv6_address(hostname);
+            let needs_brackets =
+                hostname[0] != b'[' && crate::ip_address::is_ipv6_address(hostname);
             if needs_brackets {
                 write!(f, "[{}]", bstr::BStr::new(hostname))?;
             } else {
@@ -1316,25 +1328,44 @@ pub(crate) fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -
 /// [`github_action`] (which only escapes the message-class metacharacters), this
 /// escapes the property-class metacharacters per the actions/toolkit spec:
 /// `%`->`%25`, `\r`->`%0D`, `\n`->`%0A`, `:`->`%3A`, `,`->`%2C`.
+/// ANSI colour sequences are dropped, matching [`github_action`].
 pub(crate) fn github_action_property_writer(
     writer: &mut impl fmt::Write,
     self_: &[u8],
 ) -> fmt::Result {
     let mut start: usize = 0;
-    for (i, &byte) in self_.iter().enumerate() {
+    let mut i: usize = 0;
+    while i < self_.len() {
+        let byte = self_[i];
+        let mut skip: usize = 1;
         let replacement: &str = match byte {
             b'%' => "%25",
             b'\r' => "%0D",
             b'\n' => "%0A",
             b':' => "%3A",
             b',' => "%2C",
-            _ => continue,
+            0x1b if self_.get(i + 1) == Some(&b'[') => {
+                skip = 2;
+                if i + 2 < self_.len() {
+                    let upper = (i + 5).min(self_.len());
+                    let remain = &self_[(i + 2)..upper];
+                    if let Some(j) = crate::strings::index_of_char_usize(remain, b'm') {
+                        skip += j + 1;
+                    }
+                }
+                ""
+            }
+            _ => {
+                i += 1;
+                continue;
+            }
         };
         if i > start {
             write_bytes(writer, &self_[start..i])?;
         }
         writer.write_str(replacement)?;
-        start = i + 1;
+        i += skip;
+        start = i;
     }
     if start < self_.len() {
         write_bytes(writer, &self_[start..])?;
@@ -3262,7 +3293,7 @@ impl Display for EscapePowershell<'_> {
 
 fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Result {
     let mut remain = str;
-    while let Some(i) = crate::strings::index_of_any(remain, b"\"`") {
+    while let Some(i) = crate::strings::index_of_any(remain, b"\"`$") {
         write_bytes(writer, &remain[..i])?;
         writer.write_str("`")?;
         writer.write_char(remain[i] as char)?;

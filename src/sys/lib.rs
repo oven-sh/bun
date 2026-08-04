@@ -1070,13 +1070,23 @@ impl error::IntoErrnoInt for bun_windows_sys::NTSTATUS {
     }
 }
 
+/// `Exchange` and `NoReplace` are mutually exclusive at the kernel level.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum RenameMode {
+    #[default]
+    Normal,
+    /// Linux `RENAME_EXCHANGE` / macOS `RENAME_SWAP`.
+    Exchange,
+    /// Linux `RENAME_NOREPLACE` / macOS `RENAME_EXCL`.
+    NoReplace,
+}
+
 /// Flags for [`renameat2`].
 /// On Linux maps to `RENAME_EXCHANGE`/`RENAME_NOREPLACE`; on macOS maps to
 /// `RENAME_SWAP`/`RENAME_EXCL`/`RENAME_NOFOLLOW_ANY`.
 #[derive(Clone, Copy, Default)]
 pub struct Renameat2Flags {
-    pub exchange: bool,
-    pub exclude: bool,
+    pub mode: RenameMode,
     pub nofollow: bool,
 }
 
@@ -1088,11 +1098,10 @@ impl Renameat2Flags {
         #[cfg(target_os = "macos")]
         {
             // <sys/stdio.h>: RENAME_SWAP=2, RENAME_EXCL=4, RENAME_NOFOLLOW_ANY=0x10
-            if self.exchange {
-                flags |= 2;
-            }
-            if self.exclude {
-                flags |= 4;
+            match self.mode {
+                RenameMode::Normal => {}
+                RenameMode::Exchange => flags |= 2,
+                RenameMode::NoReplace => flags |= 4,
             }
             if self.nofollow {
                 flags |= 0x10;
@@ -1100,20 +1109,19 @@ impl Renameat2Flags {
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            if self.exchange {
-                flags |= libc::RENAME_EXCHANGE as u32;
+            match self.mode {
+                RenameMode::Normal => {}
+                RenameMode::Exchange => flags |= libc::RENAME_EXCHANGE as u32,
+                RenameMode::NoReplace => flags |= libc::RENAME_NOREPLACE as u32,
             }
-            if self.exclude {
-                flags |= libc::RENAME_NOREPLACE as u32;
-            }
+            let _ = self.nofollow;
         }
         #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
         {
-            if self.exchange {
-                flags |= 1;
-            }
-            if self.exclude {
-                flags |= 2;
+            match self.mode {
+                RenameMode::Normal => {}
+                RenameMode::Exchange => flags |= 1,
+                RenameMode::NoReplace => flags |= 2,
             }
             let _ = self.nofollow;
         }
@@ -1325,7 +1333,7 @@ impl Tag {
     pub(crate) const pread: Tag = Tag(36);
     pub(crate) const pwrite: Tag = Tag(37);
     pub const read: Tag = Tag(38);
-    pub(crate) const readlink: Tag = Tag(39);
+    pub const readlink: Tag = Tag(39);
     pub const rename: Tag = Tag(40);
     pub(crate) const stat: Tag = Tag(41);
     pub(crate) const statfs: Tag = Tag(42);
@@ -4202,7 +4210,7 @@ mod windows_impl {
     pub(crate) fn linkat_tmpfile(_tmpfd: Fd, _dirfd: Fd, _name: &ZStr) -> Maybe<()> {
         Err(Error::new(E::ENOTSUP, Tag::link))
     }
-    pub(crate) fn symlinkat(target: &ZStr, dirfd: impl AsFd, dest: &ZStr) -> Maybe<()> {
+    pub fn symlinkat(target: &ZStr, dirfd: impl AsFd, dest: &ZStr) -> Maybe<()> {
         let dirfd = dirfd.as_fd();
         // Resolve `dest` against `dirfd`, then symlink via libuv.
         let mut db = bun_core::PathBuffer::default();
@@ -5710,8 +5718,6 @@ pub mod darwin {
         pub fn as_ptr(&self) -> *const OSLog {
             core::ptr::from_ref(self)
         }
-        /// Full signpost API lives in `bun_platform::darwin`; this stub lets
-        /// `bun_perf` compile its Darwin arm without pulling that crate up-tier.
         pub fn signpost(&self, name: i32) -> os_log::Signpost<'_> {
             os_log::Signpost { log: self, name }
         }
@@ -6093,12 +6099,13 @@ pub mod macho {
         }
 
         pub fn next(&mut self) -> Option<LoadCommand> {
-            if self.index >= self.ncmds {
+            if self.index >= self.ncmds || self.buf_len < core::mem::size_of::<load_command>() {
+                self.index = self.ncmds;
                 return None;
             }
             // SAFETY: `buf_ptr` was derived from a slice of `buf_len` bytes
-            // which the caller promised stays live; a well-formed Mach-O has
-            // `ncmds` load_command headers fitting within `sizeofcmds`.
+            // which the caller promised stays live, and at least
+            // `size_of::<load_command>()` bytes remain (checked above).
             let hdr: load_command =
                 unsafe { core::ptr::read_unaligned(self.buf_ptr.cast::<load_command>()) };
             let cmdsize = hdr.cmdsize as usize;
@@ -7155,7 +7162,7 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
     let opts: u32 = if follow {
         blocking_flag
     } else {
-        w::FILE_OPEN_REPARSE_POINT
+        blocking_flag | w::FILE_OPEN_REPARSE_POINT
     };
 
     let mut attributes: u32 = w::FILE_ATTRIBUTE_NORMAL;
@@ -7917,7 +7924,7 @@ pub fn copy_file(in_: Fd, out: Fd) -> Maybe<()> {
     copy_file::copy_file(in_, out)
 }
 #[cfg(windows)]
-pub(crate) fn copy_file(in_: Fd, out: Fd) -> Maybe<()> {
+pub fn copy_file(in_: Fd, out: Fd) -> Maybe<()> {
     // Windows `bun.copyFile` takes paths, not fds; fd-based callers (e.g.
     // `move_file_z_with_handle`'s EXDEV fallback) get the read/write loop.
     let mut buf = [0u8; 64 * 1024];
@@ -8503,6 +8510,69 @@ pub mod net {
         #[inline]
         pub fn as_sockaddr(&self) -> *const sockaddr {
             (&raw const self.any).cast()
+        }
+
+        /// Lay out `ip`:`port` as a sockaddr — the one place an in/in6 struct is written over the storage, so callers never cast.
+        pub fn from_ip(ip: core::net::IpAddr, port: u16) -> Self {
+            // SAFETY: `sockaddr_storage` is a POD C struct; all-zeros is valid.
+            let mut any: sockaddr_storage = unsafe { bun_core::ffi::zeroed_unchecked() };
+            match ip {
+                core::net::IpAddr::V4(v4) => {
+                    let inner = sockaddr_in {
+                        family: AF_INET as sa_family_t,
+                        port: port.to_be(),
+                        addr: u32::from_ne_bytes(v4.octets()),
+                        ..sockaddr_in::ZEROED
+                    };
+                    // SAFETY: `sockaddr_storage` holds a POD `sockaddr_in`; they cannot overlap.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            (&raw const inner).cast::<u8>(),
+                            (&raw mut any).cast::<u8>(),
+                            core::mem::size_of::<sockaddr_in>(),
+                        );
+                    }
+                }
+                core::net::IpAddr::V6(v6) => {
+                    let inner = sockaddr_in6 {
+                        family: AF_INET6 as sa_family_t,
+                        port: port.to_be(),
+                        addr: v6.octets(),
+                        ..sockaddr_in6::ZEROED
+                    };
+                    // SAFETY: as above, for `sockaddr_in6`.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            (&raw const inner).cast::<u8>(),
+                            (&raw mut any).cast::<u8>(),
+                            core::mem::size_of::<sockaddr_in6>(),
+                        );
+                    }
+                }
+            }
+            Self { any }
+        }
+
+        /// The IPv6 zone index (`fe80::1%en0`); ignored for IPv4.
+        pub fn set_scope_id(&mut self, scope_id: u32) {
+            if self.family() == AF_INET6 {
+                // SAFETY: `family() == AF_INET6` ⇒ the storage holds a `sockaddr_in6`.
+                unsafe { (*(&raw mut self.any).cast::<sockaddr_in6>()).scope_id = scope_id };
+            }
+        }
+
+        /// Bytes of `sockaddr_storage` this address actually occupies.
+        pub fn socklen(&self) -> u32 {
+            (if self.family() == AF_INET6 {
+                core::mem::size_of::<sockaddr_in6>()
+            } else {
+                core::mem::size_of::<sockaddr_in>()
+            }) as u32
+        }
+
+        /// The raw storage, for FFI that takes `sockaddr_storage` by value.
+        pub fn into_storage(self) -> sockaddr_storage {
+            self.any
         }
         /// Tag-checked borrow of the IPv4 payload. `None` unless
         /// `family() == AF_INET`.
@@ -9238,7 +9308,7 @@ pub(crate) fn renameat_concurrently_without_fallback(
                 to_dir_fd,
                 to,
                 Renameat2Flags {
-                    exclude: true,
+                    mode: RenameMode::NoReplace,
                     ..Default::default()
                 },
             ) {
@@ -9264,7 +9334,7 @@ pub(crate) fn renameat_concurrently_without_fallback(
                         to_dir_fd,
                         to,
                         Renameat2Flags {
-                            exchange: true,
+                            mode: RenameMode::Exchange,
                             ..Default::default()
                         },
                     ) {

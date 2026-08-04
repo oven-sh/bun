@@ -56,6 +56,11 @@ impl Expr {
             // https://github.com/oven-sh/bun/issues/2594
             Data::ESpread(_) => false,
             Data::EMissing(_) => false,
+            // `[[a?.b]][0]?.[0].c` must not become `a?.b.c`: inlining would
+            // splice this chain onto the parent's `?.` continuation.
+            Data::EDot(e) => e.optional_chain.is_none(),
+            Data::EIndex(e) => e.optional_chain.is_none(),
+            Data::ECall(e) => e.optional_chain.is_none(),
             _ => true,
         }
     }
@@ -2667,36 +2672,26 @@ impl Data {
 // Equality
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, Default)]
-pub struct Equality {
-    pub equal: bool,
-    pub ok: bool,
-
-    /// This extra flag is unfortunately required for the case of visiting the expression
-    /// `require.main === module` (and any combination of !==, ==, !=, either ordering)
-    ///
-    /// We want to replace this with the dedicated import_meta_main node, which:
-    /// - Stops this module from having p.require_ref, allowing conversion to ESM
-    /// - Allows us to inline `import.meta.main`'s value, if it is known (bun build --compile)
-    pub is_require_main_and_module: bool,
+#[derive(Clone, Copy)]
+pub enum Equality {
+    /// Nothing is known about the equality of the two operands.
+    Unknown,
+    Equal,
+    NotEqual,
+    /// `require.main === module` (or `!==`/`==`/`!=`, in either order); the
+    /// caller rewrites this to an import_meta_main node.
+    RequireMainAndModule,
 }
 
-impl Equality {
-    pub(crate) const TRUE: Equality = Equality {
-        ok: true,
-        equal: true,
-        is_require_main_and_module: false,
-    };
-    pub(crate) const FALSE: Equality = Equality {
-        ok: true,
-        equal: false,
-        is_require_main_and_module: false,
-    };
-    pub(crate) const UNKNOWN: Equality = Equality {
-        ok: false,
-        equal: false,
-        is_require_main_and_module: false,
-    };
+impl From<bool> for Equality {
+    #[inline]
+    fn from(equal: bool) -> Self {
+        if equal {
+            Equality::Equal
+        } else {
+            Equality::NotEqual
+        }
+    }
 }
 
 // `adt_const_params` (enum const-generic) is nightly-only. Lower to a sealed
@@ -2727,9 +2722,6 @@ pub trait EqlParser {
 // `impl EqlParser for P<...>` lives in `bun_js_parser` (next to `P`).
 
 impl Data {
-    // Returns "equal, ok". If "ok" is false, then nothing is known about the two
-    // values. If "ok" is true, the equality or inequality of the two values is
-    // stored in "equal".
     pub fn eql<P: EqlParser, K: EqlKindT>(left: &Data, right: &Data, p: &mut P) -> Equality {
         // https://dorey.github.io/JavaScript-Equality-Table/
         match left {
@@ -2739,113 +2731,76 @@ impl Data {
 
             Data::ENull(_) | Data::EUndefined(_) => {
                 let right_tag = right.tag();
-                let ok = matches!(right_tag, Tag::ENull | Tag::EUndefined)
-                    || right_tag.is_primitive_literal();
-
-                if !K::STRICT {
-                    return Equality {
-                        equal: matches!(right_tag, Tag::ENull | Tag::EUndefined),
-                        ok,
-                        ..Default::default()
-                    };
+                if !matches!(right_tag, Tag::ENull | Tag::EUndefined)
+                    && !right_tag.is_primitive_literal()
+                {
+                    return Equality::Unknown;
                 }
-
-                return Equality {
-                    equal: right_tag == left.tag(),
-                    ok,
-                    ..Default::default()
-                };
+                return Equality::from(if K::STRICT {
+                    right_tag == left.tag()
+                } else {
+                    matches!(right_tag, Tag::ENull | Tag::EUndefined)
+                });
             }
             Data::EBoolean(l) | Data::EBranchBoolean(l) => match right {
                 Data::EBoolean(r) | Data::EBranchBoolean(r) => {
-                    return Equality {
-                        ok: true,
-                        equal: l.value == r.value,
-                        ..Default::default()
-                    };
+                    return Equality::from(l.value == r.value);
                 }
                 Data::ENumber(num) => {
                     if K::STRICT {
                         // "true === 1" is false
                         // "false === 0" is false
-                        return Equality::FALSE;
+                        return Equality::NotEqual;
                     }
-                    return Equality {
-                        ok: true,
-                        equal: if l.value {
-                            num.value() == 1.0
-                        } else {
-                            num.value() == 0.0
-                        },
-                        ..Default::default()
-                    };
+                    return Equality::from(if l.value {
+                        num.value() == 1.0
+                    } else {
+                        num.value() == 0.0
+                    });
                 }
                 Data::ENull(_) | Data::EUndefined(_) => {
-                    return Equality::FALSE;
+                    return Equality::NotEqual;
                 }
                 _ => {}
             },
             Data::ENumber(l) => match right {
                 Data::ENumber(r) => {
-                    return Equality {
-                        ok: true,
-                        equal: l.value() == r.value(),
-                        ..Default::default()
-                    };
+                    return Equality::from(l.value() == r.value());
                 }
                 Data::EInlinedEnum(r) => {
                     if let Data::ENumber(rn) = &r.value.data {
-                        return Equality {
-                            ok: true,
-                            equal: l.value() == rn.value(),
-                            ..Default::default()
-                        };
+                        return Equality::from(l.value() == rn.value());
                     }
                 }
                 Data::EBoolean(r) | Data::EBranchBoolean(r) => {
                     if !K::STRICT {
-                        return Equality {
-                            ok: true,
-                            // "1 == true" is true
-                            // "0 == false" is true
-                            equal: if r.value {
-                                l.value() == 1.0
-                            } else {
-                                l.value() == 0.0
-                            },
-                            ..Default::default()
-                        };
+                        // "1 == true" is true
+                        // "0 == false" is true
+                        return Equality::from(if r.value {
+                            l.value() == 1.0
+                        } else {
+                            l.value() == 0.0
+                        });
                     }
                     // "1 === true" is false
                     // "0 === false" is false
-                    return Equality::FALSE;
+                    return Equality::NotEqual;
                 }
                 Data::ENull(_) | Data::EUndefined(_) => {
                     // "(not null or undefined) == undefined" is false
-                    return Equality::FALSE;
+                    return Equality::NotEqual;
                 }
                 _ => {}
             },
             Data::EBigInt(l) => {
-                if let Data::EBigInt(r) = right {
-                    return match E::BigInt::check_equality(&l.value, &r.value) {
-                        Some(equal) => Equality {
-                            ok: true,
-                            equal,
-                            ..Default::default()
-                        },
-                        None => Equality {
-                            ok: false,
-                            ..Default::default()
-                        },
-                    };
-                } else {
-                    return Equality {
-                        ok: matches!(right, Data::ENull(_) | Data::EUndefined(_)),
-                        equal: false,
-                        ..Default::default()
-                    };
-                }
+                return match right {
+                    Data::EBigInt(r) => match E::BigInt::check_equality(&l.value, &r.value) {
+                        Some(equal) => Equality::from(equal),
+                        None => Equality::Unknown,
+                    },
+                    Data::ENull(_) | Data::EUndefined(_) => Equality::NotEqual,
+                    _ => Equality::Unknown,
+                };
             }
             Data::EString(l) => {
                 // `StoreRef<EString>` is a Copy pointer; rebind mutably so
@@ -2856,40 +2811,32 @@ impl Data {
                         let mut r = *r;
                         r.resolve_rope_if_needed(p.arena());
                         l.resolve_rope_if_needed(p.arena());
-                        return Equality {
-                            ok: true,
-                            equal: r.eql_string(&l),
-                            ..Default::default()
-                        };
+                        return Equality::from(r.eql_string(&l));
                     }
                     Data::EInlinedEnum(inlined) => {
                         if let Data::EString(r) = inlined.value.data {
                             let mut r = r;
                             r.resolve_rope_if_needed(p.arena());
                             l.resolve_rope_if_needed(p.arena());
-                            return Equality {
-                                ok: true,
-                                equal: r.eql_string(&l),
-                                ..Default::default()
-                            };
+                            return Equality::from(r.eql_string(&l));
                         }
                     }
                     Data::ENull(_) | Data::EUndefined(_) => {
-                        return Equality::FALSE;
+                        return Equality::NotEqual;
                     }
                     Data::ENumber(r) => {
                         if !K::STRICT {
                             l.resolve_rope_if_needed(p.arena());
                             if r.value() == 0.0 && (l.is_blank() || l.eql_comptime(b"0")) {
-                                return Equality::TRUE;
+                                return Equality::Equal;
                             }
                             if r.value() == 1.0 && l.eql_comptime(b"1") {
-                                return Equality::TRUE;
+                                return Equality::Equal;
                             }
                             // the string could still equal 0 or 1 but it could be hex, binary, octal, ...
-                            return Equality::UNKNOWN;
+                            return Equality::Unknown;
                         } else {
-                            return Equality::FALSE;
+                            return Equality::NotEqual;
                         }
                     }
                     _ => {}
@@ -2902,18 +2849,14 @@ impl Data {
                 if matches!(right, Data::ERequireMain) {
                     if let Some(id) = left.as_e_identifier() {
                         if id.ref_.eql(p.module_ref()) {
-                            return Equality {
-                                ok: true,
-                                equal: true,
-                                is_require_main_and_module: true,
-                            };
+                            return Equality::RequireMainAndModule;
                         }
                     }
                 }
             }
         }
 
-        Equality::UNKNOWN
+        Equality::Unknown
     }
 }
 

@@ -278,51 +278,12 @@ impl Entry {
     }
 }
 
-// `BSSList::append` requires `ValueType: Clone` (its overflow path
-// retries with a copy). `Mutex`/`StringOrTinyString` aren't `Clone`, but for a
-// freshly-constructed `Entry` (the only thing ever appended) a field-wise copy
-// with a fresh `Mutex` is semantically equivalent to a by-value move.
-impl Clone for Entry {
-    fn clone(&self) -> Self {
-        Self {
-            cache: core::cell::Cell::new(self.cache.get()),
-            dir: self.dir,
-            base_: strings::StringOrTinyString::init(self.base_.slice()),
-            base_lowercase_: strings::StringOrTinyString::init(self.base_lowercase_.slice()),
-            mutex: Mutex::default(),
-            need_stat: core::cell::Cell::new(self.need_stat.get()),
-            abs_path: self.abs_path,
-        }
-    }
-}
-
-impl Default for Entry {
-    fn default() -> Self {
-        Self {
-            cache: core::cell::Cell::new(EntryCache::default()),
-            dir: b"",
-            base_: strings::StringOrTinyString::init(b""),
-            base_lowercase_: strings::StringOrTinyString::init(b""),
-            mutex: Mutex::default(),
-            need_stat: core::cell::Cell::new(true),
-            abs_path: Interned::EMPTY,
-        }
-    }
-}
-
-// lifetime-generic, but resolver storage requires `'static`; in practice all
-// three slices borrow process-lifetime interned data (`dir` → DirnameStore,
-// `query` → FilenameStore copy made in `DirEntry::get`, `actual` → EntryStore).
-#[derive(Clone, Copy)]
-pub struct DifferentCase;
-
 // `entry` is a RAW `*mut Entry`. A safe
 // `&self → &mut Entry` accessor would let two `get()` calls produce coexisting
 // aliased `&mut Entry` (PORTING.md §Forbidden). Callers `unsafe { &mut *entry }`
 // at each write site under the per-entry `Entry.mutex`.
 pub struct EntryLookup<'a> {
     pub(crate) entry: *mut Entry,
-    pub(crate) diff_case: Option<DifferentCase>,
     // tie the lookup's nominal lifetime to the DirEntry it came from
     _marker: core::marker::PhantomData<&'a Entry>,
 }
@@ -624,16 +585,10 @@ impl DirEntry {
         Ok(())
     }
 
-    // `query_` borrow detached from the returned Entry lifetime so
-    // callers can pass a slice into the same threadlocal buffer they then
-    // mutate; on a case mismatch the query bytes are interned into the
-    // process-lifetime `FilenameStore` so `DifferentCase<'static>` holds a
-    // genuinely `'static` slice. The store does not dedup, so
-    // repeated lookups of the same case-mismatched specifier (e.g. watch-mode
-    // rebuilds with a busted resolution cache) each intern a fresh copy that
-    // is never freed; accepted because the mismatch arm is a warning/error
-    // path and each copy is small. The intern goes through `handle_oom`
-    // (abort).
+    // `query_` borrow is detached from the returned `Entry` lifetime so callers
+    // can pass a slice into the same threadlocal buffer they then mutate. The
+    // lookup key is the lowercased basename; a case-mismatched query still
+    // returns the stored entry.
     pub fn get<'a>(&'a self, query_: &[u8]) -> Option<EntryLookup<'a>> {
         if query_.is_empty() || query_.len() > MAX_PATH_BYTES {
             return None;
@@ -642,20 +597,8 @@ impl DirEntry {
 
         let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
         let &result_ptr = self.data.get(query)?;
-        // SAFETY: EntryStore-owned pointer, valid for lifetime of store; read-only
-        // borrow here only to compare basename — never overlaps a writer.
-        let basename = unsafe { &*result_ptr }.base();
-        if !strings::eql_long(basename, query_, true) {
-            return Some(EntryLookup {
-                entry: result_ptr,
-                diff_case: Some(DifferentCase),
-                _marker: core::marker::PhantomData,
-            });
-        }
-
         Some(EntryLookup {
             entry: result_ptr,
-            diff_case: None,
             _marker: core::marker::PhantomData,
         })
     }
@@ -667,20 +610,8 @@ impl DirEntry {
         query_lower: &'static [u8],
     ) -> Option<EntryLookup<'a>> {
         let &result_ptr = self.data.get(query_lower)?;
-        // SAFETY: EntryStore-owned pointer; read-only basename compare.
-        let basename = unsafe { &*result_ptr }.base();
-
-        if basename != query_lower {
-            return Some(EntryLookup {
-                entry: result_ptr,
-                diff_case: Some(DifferentCase),
-                _marker: core::marker::PhantomData,
-            });
-        }
-
         Some(EntryLookup {
             entry: result_ptr,
-            diff_case: None,
             _marker: core::marker::PhantomData,
         })
     }
@@ -700,15 +631,6 @@ impl bun_dotenv::DirEntryProbe for DirEntry {
         DirEntry::has_comptime_query(self, query_lower)
     }
 }
-
-// pub fn statBatch(fs: *FileSystemEntry, paths: []string) ![]?Stat {
-// }
-// pub fn stat(fs: *FileSystemEntry, path: string) !Stat {
-// }
-// pub fn readFile(fs: *FileSystemEntry, path: string) ?string {
-// }
-// pub fn readDir(fs: *FileSystemEntry, path: string) ?[]string {
-// }
 
 #[derive(Default, Clone, Copy)]
 pub struct ModKey {
@@ -999,7 +921,7 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
                 }
 
                 if (bytes_read as usize) < new_size {
-                    shared_buffer.grow_by(new_size - size)?;
+                    shared_buffer.grow_by(new_size.saturating_sub(size))?;
                     // SAFETY: u8; `read_all` overwrites the exposed tail before any read.
                     unsafe { shared_buffer.list.expand_to_capacity() };
                     size = new_size;
@@ -1073,7 +995,8 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
         // Allocate UNINITIALIZED (no zero-fill):
         // `extend_from_slice` writes the prefix, `read_all` writes
         // the tail, then `set_len` exposes only the initialized `..total`.
-        let mut buf: Vec<u8> = Vec::with_capacity(size + 1);
+        let cap = size.max(initial_read.len());
+        let mut buf: Vec<u8> = Vec::with_capacity(cap + 1);
         buf.extend_from_slice(initial_read);
 
         if size == 0 {
@@ -1082,7 +1005,7 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
             });
         }
 
-        let tail_len = size + 1 - initial_read.len();
+        let tail_len = cap + 1 - initial_read.len();
         let tail = &mut buf.spare_capacity_mut()[..tail_len];
         // stick a zero at the end
         tail[tail_len - 1].write(0);
@@ -1094,7 +1017,7 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
         })?;
         let total = read_count + initial_read.len();
         debug!("read({}, {}) = {}", file.handle(), size, read_count);
-        // SAFETY: capacity ≥ `size + 1` ≥ `total`; bytes `..initial_read.len()`
+        // SAFETY: capacity ≥ `cap + 1` ≥ `total`; bytes `..initial_read.len()`
         // were written by `extend_from_slice` and `initial_read.len()..total` by
         // `read_all` above.
         unsafe { buf.set_len(total) };

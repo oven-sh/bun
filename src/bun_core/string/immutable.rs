@@ -2,6 +2,7 @@
 //! SIMD-accelerated immutable string utilities operating on `&[u8]` (NOT `&str`).
 
 use core::cmp::Ordering;
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use core::ffi::c_int;
 
 use crate::BoundedArray;
@@ -1010,7 +1011,7 @@ pub fn eql_case_insensitive_asciii_check_length(a: &[u8], b: &[u8]) -> bool {
 // call shape across the tree (`eql_case_insensitive_ascii(a, b, true)`);
 // callers wanting the length-agnostic forms have the `_check_length` /
 // `_ignore_length` wrappers above.
-pub use crate::strings_impl::eql_case_insensitive_ascii;
+pub use crate::strings_impl::{contains_case_insensitive_ascii, eql_case_insensitive_ascii};
 
 pub fn eql_case_insensitive_t<T: crate::NoUninit + Into<u32>>(a: &[T], b: &[u8]) -> bool {
     if a.len() != b.len() || a.is_empty() {
@@ -1843,56 +1844,6 @@ pub use exact_size_matcher::ExactSizeMatcher;
 
 pub const UNICODE_REPLACEMENT: u32 = 0xFFFD;
 
-// Uses `ares_inet_pton`, the vendored
-// c-ares implementation. Do NOT call the system `inet_pton` here: on Windows that
-// resolves into ws2_32.dll and fails with WSANOTINITIALISED whenever it runs before
-// `WSAStartup()`, which URL/host parsing can. c-ares' impl is pure C, no preconditions.
-unsafe extern "C" {
-    pub fn ares_inet_pton(
-        af: c_int,
-        src: *const core::ffi::c_char,
-        dst: *mut core::ffi::c_void,
-    ) -> c_int;
-}
-// dep-graph: bun_string < bun_sys, so cannot import the canonical
-// `bun_sys::posix::AF`. Keep a thin libc/ws2def passthrough instead. The
-// previous hand-rolled cfg ladder hardcoded `10` for the BSD fallback, which
-// is wrong (FreeBSD AF_INET6 == 28); routing through `libc` fixes that.
-const AF_INET: c_int = 2;
-#[cfg(not(windows))]
-const AF_INET6: c_int = libc::AF_INET6 as c_int;
-#[cfg(windows)]
-const AF_INET6: c_int = 23; // ws2def.h
-
-pub fn is_ip_address(input: &[u8]) -> bool {
-    let mut buf = [0u8; 512];
-    if input.len() >= buf.len() {
-        return false;
-    }
-    buf[..input.len()].copy_from_slice(input);
-    let mut dst = [0u8; 28];
-    // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
-    unsafe {
-        ares_inet_pton(AF_INET, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0
-            || ares_inet_pton(AF_INET6, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0
-    }
-}
-
-/// `ares_inet_pton(AF_INET6, …) > 0`.
-/// Must be a strict parse, not a `contains(':')` heuristic: on Windows a
-/// unix-socket path like `C:/Windows/Temp/…` contains a colon and the old
-/// heuristic mis-bracketed it as `unix://[C:/…]`, which fails URL parsing.
-pub fn is_ipv6_address(input: &[u8]) -> bool {
-    let mut buf = [0u8; 512];
-    if input.len() >= buf.len() {
-        return false;
-    }
-    buf[..input.len()].copy_from_slice(input);
-    let mut dst = [0u8; 28];
-    // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
-    unsafe { ares_inet_pton(AF_INET6, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0 }
-}
-
 pub fn left_has_any_in_right(to_check: &[&[u8]], against: &[&[u8]]) -> bool {
     for check in to_check {
         for item in against {
@@ -2422,32 +2373,22 @@ pub fn try_convert_utf8_to_utf16_in_buffer<'a>(
 /// Decode one WTF-8 sequence at the head of `s`; invalid lead/truncated → (U+FFFD, 1).
 /// Lone surrogates pass through (WTF-8). Helper for [`convert_utf8_to_utf16_in_buffer`].
 fn decode_wtf8_one(s: &[u8]) -> (u32, usize) {
-    let b0 = s[0] as u32;
+    let b0 = s[0];
     if b0 < 0x80 {
-        return (b0, 1);
+        return (b0 as u32, 1);
     }
-    if b0 < 0xC0 || s.len() < 2 {
+    let width = wtf8_byte_sequence_length_with_invalid(b0);
+    if width == 1 {
         return (0xFFFD, 1);
     }
-    let b1 = s[1] as u32;
-    if b0 < 0xE0 {
-        return (((b0 & 0x1F) << 6) | (b1 & 0x3F), 2);
-    }
-    if s.len() < 3 {
+    let take = (width as usize).min(s.len());
+    let mut buf = [0u8; 4];
+    buf[..take].copy_from_slice(&s[..take]);
+    let cp = decode_wtf8_rune_t::<i32>(buf, width, -1);
+    if cp < 0 {
         return (0xFFFD, 1);
     }
-    let b2 = s[2] as u32;
-    if b0 < 0xF0 {
-        return (((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F), 3);
-    }
-    if s.len() < 4 {
-        return (0xFFFD, 1);
-    }
-    let b3 = s[3] as u32;
-    (
-        ((b0 & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F),
-        4,
-    )
+    (cp as u32, take)
 }
 
 /// `strings.toUTF8ListWithType` — append UTF-8 transcoding of `utf16` onto
@@ -2651,5 +2592,21 @@ mod tests {
         assert_eq!(super::first_non_ascii(b"ab\xC3"), Some(2));
         assert!(super::eql_case_insensitive_ascii(b"A", b"a", true));
         assert!(!super::eql_case_insensitive_ascii(b"Ab", b"a", true));
+    }
+
+    #[test]
+    fn convert_utf8_to_utf16_in_buffer_fallback_rejects_malformed_sequences() {
+        let mut buf = [0u16; 16];
+        let out =
+            super::convert_utf8_to_utf16_in_buffer(&mut buf, b"\xC0\xAE\xC0\xAF\xC1\x9C\xC0\x80");
+        assert_eq!(out, &[0xFFFD; 8][..]);
+        let out = super::convert_utf8_to_utf16_in_buffer(&mut buf, b"\xE0\x80\x80");
+        assert_eq!(out, &[0xFFFD, 0xFFFD, 0xFFFD][..]);
+        let out = super::convert_utf8_to_utf16_in_buffer(&mut buf, b"a\xC2\x41");
+        assert_eq!(out, &[b'a' as u16, 0xFFFD, b'A' as u16][..]);
+        let out = super::convert_utf8_to_utf16_in_buffer(&mut buf, b"\xED\xA0\x80");
+        assert_eq!(out, &[0xD800][..]);
+        let out = super::convert_utf8_to_utf16_in_buffer(&mut buf, b"\xC3\xA9\xF0\x9F\x98\x80");
+        assert_eq!(out, &[0x00E9, 0xD83D, 0xDE00][..]);
     }
 }

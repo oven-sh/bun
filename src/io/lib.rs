@@ -132,7 +132,7 @@ pub mod parent_death_watchdog {
             if !job.is_null() {
                 let mut jeli: windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
                     bun_core::ffi::zeroed();
-                jeli.BasicLimitInformation.LimitFlags = windows::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                jeli.BasicLimitInformation.LimitFlags = windows::JOB_LIMIT_FLAGS_KILL_TREE_ON_CLOSE;
                 if windows::SetInformationJobObject(
                     job,
                     windows::JobObjectExtendedLimitInformation,
@@ -2159,7 +2159,7 @@ pub mod waker {
             // ever formed.
             // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton,
             // non-null after `init()`.
-            unsafe { bun_uws_sys::loop_::us_loop_run(self.loop_ref().as_ptr()) };
+            unsafe { bun_uws_sys::loop_::us_loop_run(self.loop_ref().as_const_ptr().cast_mut()) };
         }
 
         pub fn wake(&self) {
@@ -2169,7 +2169,9 @@ pub mod waker {
             // thread-safe C wake (`uv_async_send`) instead.
             // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton;
             // `us_wakeup_loop` → `uv_async_send` is documented thread-safe.
-            unsafe { bun_uws_sys::loop_::us_wakeup_loop(self.loop_ref().as_ptr()) };
+            unsafe {
+                bun_uws_sys::loop_::us_wakeup_loop(self.loop_ref().as_const_ptr().cast_mut())
+            };
         }
 
         /// Raw libuv `uv_loop_t*` underlying this waker's `WindowsLoop`.

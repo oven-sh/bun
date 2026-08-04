@@ -177,14 +177,14 @@ impl Watcher {
             changed_files: &[ChangedFilePath],
             watchlist: &WatchList,
         ) {
-            // SAFETY: ctx_opaque was stored from *mut T in init()
-            let ctx = unsafe { &mut *ctx_opaque.cast::<T>() };
-            ctx.on_file_update(events, changed_files, watchlist);
+            // SAFETY: ctx_opaque was stored from *mut T in init(); the `&mut T`
+            // is scoped to this call.
+            unsafe { (*ctx_opaque.cast::<T>()).on_file_update(events, changed_files, watchlist) }
         }
         fn on_error_wrapped<T: WatcherContext>(ctx_opaque: *mut (), err: sys::Error) {
-            // SAFETY: ctx_opaque was stored from *mut T in init()
-            let ctx = unsafe { &mut *ctx_opaque.cast::<T>() };
-            ctx.on_watch_error(err);
+            // SAFETY: ctx_opaque was stored from *mut T in init(); the `&mut T`
+            // is scoped to this call.
+            unsafe { (*ctx_opaque.cast::<T>()).on_watch_error(err) }
         }
 
         let this = Box::new(Watcher {
@@ -233,6 +233,7 @@ impl Watcher {
 
     pub fn start(&mut self) -> Result<(), crate::Error> {
         debug_assert!(!self.watchloop_handle.load());
+        self.watchloop_handle.store(true);
         // Watcher must be Send across the spawned thread boundary; we pass a
         // raw pointer (as usize) and uphold the safety contract manually.
         let this = std::ptr::from_mut::<Watcher>(self) as usize;
@@ -245,6 +246,7 @@ impl Watcher {
                     let _ = Watcher::thread_main(this as *mut Watcher);
                 })
                 .map_err(|e| {
+                    self.watchloop_handle.store(false);
                     // Windows: raw_os_error() is a Win32 GetLastError() code, so
                     // route it through the u32 (Win32Error) mapper rather than
                     // from_errno's i64 discriminant-cast path.
@@ -274,22 +276,31 @@ impl Watcher {
     /// `this` must be the unique heap pointer returned from `init()`; ownership
     /// transfers here on the no-thread path (the Box is reclaimed).
     pub unsafe fn shutdown(this: *mut Self, close_descriptors: bool) {
-        // SAFETY: caller passes the unique heap pointer returned from init()
-        let me = unsafe { &mut *this };
-        if me.watchloop_handle.load() {
-            me.mutex.lock();
-            me.close_descriptors.store(close_descriptors);
-            me.running.store(false);
-            me.mutex.unlock();
-        } else {
-            if close_descriptors && me.running.load() {
-                let fds = me.watchlist.items_fd();
-                for &fd in fds {
-                    let _ = bun_sys::close(fd);
+        let free = {
+            // SAFETY: caller passes the unique heap pointer returned from init().
+            // Shared access suffices (atomics + mutex + column reads); the borrow
+            // ends before the free below.
+            let me = unsafe { &*this };
+            if me.watchloop_handle.load() {
+                me.mutex.lock();
+                me.close_descriptors.store(close_descriptors);
+                me.running.store(false);
+                me.mutex.unlock();
+                false
+            } else {
+                if close_descriptors && me.running.load() {
+                    let fds = me.watchlist.items_fd();
+                    for &fd in fds {
+                        let _ = bun_sys::close(fd);
+                    }
                 }
+                true
             }
+        };
+        if free {
             // watchlist freed by Drop on Box
-            // SAFETY: this was heap-allocated by caller of init()
+            // SAFETY: this was heap-allocated by caller of init(); no borrow of it
+            // is live here.
             drop(unsafe { bun_core::heap::take(this) });
         }
     }
@@ -307,52 +318,54 @@ impl Watcher {
     /// allocation is protected — which is why this takes `*mut Self`, not
     /// `&mut self`).
     unsafe fn thread_main(this: *mut Self) -> Result<(), crate::Error> {
-        // Scope all `&mut *this` access so the borrow ends *before* we
-        // reclaim the Box. Deallocating while a `&mut self` argument is still
-        // protected is UB under Stacked Borrows / Tree Borrows.
-        {
-            // SAFETY: caller contract — `this` is a valid, exclusively-accessed
-            // heap allocation for the duration of this scope.
-            let me = unsafe { &mut *this };
-            me.watchloop_handle.store(true);
-            me.thread_lock.lock();
-            Output::Source::configure_named_thread(zstr!("File Watcher"));
-
-            // defer Output.flush() — handled at end
-            log!("Watcher started");
-
-            match me.watch_loop() {
-                Err(err) => {
-                    me.watchloop_handle.store(false);
-                    me.platform.stop();
-                    if me.running.load() {
-                        (me.on_error)(me.ctx, err);
-                    }
-                }
-                Ok(()) => {}
-            }
-
-            // deinit and close descriptors if needed
-            if me.close_descriptors.load() {
-                let fds = me.watchlist.items_fd();
-                for &fd in fds {
-                    let _ = bun_sys::close(fd);
-                }
-            }
-            // watchlist freed by Drop below
-        }
+        // SAFETY: caller contract — `this` is a valid, exclusively-accessed heap
+        // allocation. The `&mut self` reborrow is scoped to this call and ends
+        // *before* we reclaim the Box below; deallocating while a `&mut self`
+        // argument is still protected is UB under Stacked Borrows / Tree Borrows.
+        let owner_still_alive = unsafe { (*this).thread_body() };
 
         // Close trace file if open
         WatcherTrace::deinit();
 
         Output::flush();
 
-        // SAFETY: `this` is the heap allocation from init(); the watcher thread
-        // owns it now and no `&`/`&mut` borrow of it remains live (the scoped
-        // `me` above has ended).
-        // TODO: ownership model — see shutdown()
-        drop(unsafe { bun_core::heap::take(this) });
+        if !owner_still_alive {
+            // SAFETY: `this` is the heap allocation from init(); the watcher thread
+            // owns it now and no `&`/`&mut` borrow of it remains live (the scoped
+            // reborrow above has ended).
+            drop(unsafe { bun_core::heap::take(this) });
+        }
         Ok(())
+    }
+
+    fn thread_body(&mut self) -> bool {
+        self.watchloop_handle.store(true);
+        self.thread_lock.lock();
+        Output::Source::configure_named_thread(zstr!("File Watcher"));
+
+        log!("Watcher started");
+
+        let owner_still_alive = match self.watch_loop() {
+            Err(err) => {
+                self.watchloop_handle.store(false);
+                self.platform.stop();
+                let running = self.running.load();
+                if running {
+                    (self.on_error)(self.ctx, err);
+                }
+                running
+            }
+            Ok(()) => false,
+        };
+
+        // deinit and close descriptors if needed
+        if self.close_descriptors.load() {
+            let fds = self.watchlist.items_fd();
+            for &fd in fds {
+                let _ = bun_sys::close(fd);
+            }
+        }
+        owner_still_alive
     }
 
     pub fn flush_evictions(&mut self) {
@@ -902,13 +915,15 @@ impl Watcher {
     // Const-generic
     // enum params need `adt_const_params` (nightly); the value is only
     // compared to `.Directory`, so a plain runtime parameter is fine.
-    pub fn remove_at_index(
+    pub fn remove_at_index<const LOCK: bool>(
         &mut self,
         kind: WatchItemKind,
         index: WatchItemIndex,
         hash: HashType,
         parents: &[HashType],
     ) {
+        let _guard = LOCK.then(|| self.mutex.lock_guard());
+
         debug_assert!(index != NO_WATCH_ITEM);
 
         self.evict_list[self.evict_list_i as usize] = index;
@@ -928,9 +943,9 @@ impl Watcher {
         fn wrap(ctx: *mut (), dir_path: &[u8], dir_fd: Fd) {
             // SAFETY: ctx was stored from *mut Watcher in get_resolve_watcher()
             // and `AnyResolveWatcher::watch` only ever feeds back the paired
-            // `context`; the resolver holds it for the Watcher's lifetime.
-            let this = unsafe { &mut *ctx.cast::<Watcher>() };
-            Watcher::on_maybe_watch_directory(this, dir_path, dir_fd);
+            // `context`; the resolver holds it for the Watcher's lifetime. The
+            // `&mut Watcher` is scoped to this call.
+            unsafe { (*ctx.cast::<Watcher>()).on_maybe_watch_directory(dir_path, dir_fd) }
         }
         AnyResolveWatcher {
             context: std::ptr::from_mut::<Self>(self).cast::<()>(),
@@ -938,14 +953,14 @@ impl Watcher {
         }
     }
 
-    pub(crate) fn on_maybe_watch_directory(watch: &mut Self, file_path: &[u8], dir_fd: Fd) {
+    pub(crate) fn on_maybe_watch_directory(&mut self, file_path: &[u8], dir_fd: Fd) {
         // We don't want to watch:
         // - Directories outside the root directory
         // - Directories inside node_modules
         if !strings::contains(file_path, b"node_modules")
-            && strings::contains(file_path, watch.top_level_dir())
+            && strings::contains(file_path, self.top_level_dir())
         {
-            let _ = watch.add_directory::<false>(dir_fd, file_path, Self::get_hash(file_path));
+            let _ = self.add_directory::<false>(dir_fd, file_path, Self::get_hash(file_path));
         }
     }
 }

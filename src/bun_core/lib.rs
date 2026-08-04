@@ -48,6 +48,7 @@ pub mod wtf;
 // `bun_core ↔ bun_string` dep cycle. The `bun_string` crate is now a
 // one-line re-export shim over this module.
 // ──────────────────────────────────────────────────────────────────────────
+pub mod ip_address;
 pub mod string;
 pub use ::bstr::{BStr, BString, ByteSlice};
 pub use string::string_joiner::StringJoiner;
@@ -662,13 +663,6 @@ pub const unsafe fn container_of<P, F>(field: *const F, offset: usize) -> *mut P
     unsafe { field.byte_sub(offset).cast::<P>().cast_mut() }
 }
 
-/// `*const`-out variant of [`container_of`]. Same safety contract.
-#[inline(always)]
-pub const unsafe fn container_of_const<P, F>(field: *const F, offset: usize) -> *const P {
-    // SAFETY: per fn contract.
-    unsafe { field.byte_sub(offset).cast::<P>() }
-}
-
 /// Recover a typed `&mut T` from a C-callback's opaque user-data pointer.
 ///
 /// This is the canonical spelling for the ubiquitous trampoline pattern where
@@ -894,12 +888,8 @@ pub type OOM = AllocError;
 
 /// `bun.JSError` — the canonical JS error union. Tier-0 so every layer of
 /// the runtime can name it directly; `bun_jsc` re-exports
-/// it as `bun_jsc::JsError` and `bun_event_loop` re-exports it as `ErasedJsError` for
+/// it as `bun_jsc::JsError` and `bun_event_loop` exposes it (tier-0) for
 /// historical call sites.
-///
-/// `#[repr(u8)]` with explicit discriminants: `AnyTask` stores
-/// `fn(*mut c_void) -> Result<(), JsError>` and the dispatcher relies on the 1-byte layout
-/// surviving the type-erased round-trip.
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum JsError {
@@ -1161,8 +1151,8 @@ pub use crate::string::immutable::{
     ends_with_char_or_is_zero_length, eql_any_comptime, eql_comptime, eql_comptime_utf16,
     format_escapes, has_prefix, has_prefix_case_insensitive, has_prefix_comptime,
     has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar, index_of_t,
-    is_all_whitespace, is_ip_address, is_npm_package_name, is_npm_package_name_ignore_length,
-    is_on_char_boundary, is_utf8_char_boundary, is_valid_utf8, last_index_of, last_index_of_t,
+    is_all_whitespace, is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
+    is_utf8_char_boundary, is_valid_utf8, last_index_of, last_index_of_t,
     length_of_leading_whitespace_ascii, memmem, order, order_t, percent_encode_write, sort_asc,
     sort_desc, split, starts_with_case_insensitive_ascii, starts_with_char, str_utf8,
     to_ascii_hex_value, to_utf16_alloc, trim_leading_char, trim_prefix, trim_prefix_comptime,
@@ -1318,7 +1308,7 @@ pub(crate) mod strings_impl {
     /// case-insensitive ASCII substring search (callers are cold path-lookup
     /// on macOS/Windows where the FS is case-insensitive).
     #[inline]
-    pub(crate) fn contains_case_insensitive_ascii(haystack: &[u8], needle: &[u8]) -> bool {
+    pub fn contains_case_insensitive_ascii(haystack: &[u8], needle: &[u8]) -> bool {
         if needle.len() > haystack.len() {
             return false;
         }
@@ -2090,7 +2080,7 @@ pub(crate) mod strings_impl {
     /// Only matches http:// and https:// schemes and rejects empty pw.
     pub(crate) fn find_url_password(s: &[u8]) -> Option<(usize, usize)> {
         // Case-sensitive prefix match; the search region is truncated at the
-        // first '\n' before scanning for '@'/':'.
+        // first '\n' and at the end of the authority before scanning for '@'/':'.
         let scheme_end = if s.starts_with(b"http://") {
             7
         } else if s.starts_with(b"https://") {
@@ -2101,6 +2091,9 @@ pub(crate) mod strings_impl {
         let mut rest = &s[scheme_end..];
         if let Some(nl) = rest.iter().position(|&b| b == b'\n') {
             rest = &rest[..nl];
+        }
+        if let Some(end) = rest.iter().position(|&b| matches!(b, b'/' | b'?' | b'#')) {
+            rest = &rest[..end];
         }
         let at = rest.iter().position(|&b| b == b'@')?;
         let userinfo = &rest[..at];

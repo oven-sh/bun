@@ -7,6 +7,10 @@
 //      WARMUP_REQUESTS - warmup iterations to stabilize the RSS baseline (default 20000)
 //      MODE - "same" (same TLS config) or "distinct" (unique configs)
 
+const rss =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
 const cert = process.env.TLS_CERT;
 const key = process.env.TLS_KEY;
 const numRequests = parseInt(process.env.NUM_REQUESTS || "50000", 10);
@@ -36,7 +40,7 @@ for (let i = 0; i < warmupRequests; i++) {
   }).then(r => r.text());
 }
 Bun.gc(true);
-const baselineRss = process.memoryUsage.rss();
+const baselineRss = rss();
 
 const requests = [];
 if (mode === "same") {
@@ -61,7 +65,7 @@ await Bun.sleep(100);
 Bun.gc(true);
 await Bun.sleep(100);
 Bun.gc(true);
-const finalRss = process.memoryUsage.rss();
+const finalRss = rss();
 const growthMB = (finalRss - baselineRss) / (1024 * 1024);
 
 // Output as JSON for the parent test to parse

@@ -81,7 +81,7 @@ use bun_jsc::{
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
 use bun_core::{String as BunString, ZigString, strings};
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
 #[cfg(not(windows))]
 use bun_paths::PathBuffer;
@@ -170,16 +170,19 @@ mod static_adapters {
         // re-enters the VM).
         let _a0_guard = a0.protected();
         let _a1_guard = a1.protected();
+        let mut output = if a1.is_undefined_or_null() {
+            None
+        } else {
+            StringOrBuffer::from_js(g, a1)?
+        };
         let Some(input) = BlobOrStringOrBuffer::from_js(g, a0)? else {
             return Err(g.throw_invalid_arguments(format_args!(
                 "expected string, buffer, TypedArray, or Blob",
             )));
         };
-        let output = if a1.is_undefined_or_null() {
-            None
-        } else {
-            StringOrBuffer::from_js(g, a1)?
-        };
+        if let Some(StringOrBuffer::Buffer(buffer)) = &mut output {
+            buffer.buffer = ArrayBuffer::from_typed_array(g, buffer.buffer.value);
+        }
         Crypto::SHA512_256::hash_(g, &input, output)
     }
 }
@@ -1113,10 +1116,14 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
         return Err(global_this.throw_invalid_arguments(format_args!("from must be a string")));
     }
 
-    let mut is_esm = true;
+    let mut mode = ResolveMode::Esm;
     if let Some(next) = args.next_eat() {
         if next.is_boolean() {
-            is_esm = next.to_boolean();
+            mode = if next.to_boolean() {
+                ResolveMode::Esm
+            } else {
+                ResolveMode::Require
+            };
         } else {
             return Err(global_this.throw_invalid_arguments(format_args!("esm must be a boolean")));
         }
@@ -1126,7 +1133,7 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
     let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
     let from_str = from.to_bun_string(global_this)?;
     let from_str = scopeguard::guard(from_str, |s| s.deref());
-    do_resolve_with_args::<false>(global_this, *specifier_str, *from_str, is_esm, false)
+    do_resolve_with_args::<false>(global_this, *specifier_str, *from_str, mode)
 }
 
 /// Single Drop point for the three `BunString`s `do_resolve_with_args` may own.
@@ -1156,8 +1163,7 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     ctx: &JSGlobalObject,
     specifier: BunString,
     from: BunString,
-    is_esm: bool,
-    is_user_require_resolve: bool,
+    mode: ResolveMode,
 ) -> JsResult<JSValue> {
     let mut errorable: ErrorableString = ErrorableString::ok(BunString::empty());
     let mut owned = ResolveDerefOnDrop {
@@ -1182,8 +1188,7 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
         specifier_for_resolve,
         from,
         Some(&mut owned.query_string),
-        is_esm,
-        is_user_require_resolve,
+        mode,
     )?;
 
     if !errorable.success {
@@ -1247,16 +1252,20 @@ pub fn bun_resolve(
     };
     let source_str = scopeguard::guard(source_str, |s| s.deref());
 
-    let value =
-        match do_resolve_with_args::<true>(global, *specifier_str, *source_str, is_esm, false) {
-            Ok(v) => v,
-            Err(_) => {
-                let err = global.try_take_exception().unwrap();
-                return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global, err,
-                );
-            }
-        };
+    let value = match do_resolve_with_args::<true>(
+        global,
+        *specifier_str,
+        *source_str,
+        ResolveMode::from_ffi_bools(is_esm, false),
+    ) {
+        Ok(v) => v,
+        Err(_) => {
+            let err = global.try_take_exception().unwrap();
+            return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                global, err,
+            );
+        }
+    };
 
     JSPromise::resolved_promise_value(global, value)
 }
@@ -1294,8 +1303,7 @@ pub fn bun_resolve_sync(
             global,
             *specifier_str,
             *source_str,
-            is_esm,
-            is_user_require_resolve,
+            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
         )
     })
 }
@@ -1362,8 +1370,7 @@ pub fn bun_resolve_sync_with_paths(
             global,
             *specifier_str,
             *source_str,
-            is_esm,
-            is_user_require_resolve,
+            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
         )
     })
 }
@@ -1384,7 +1391,12 @@ pub fn bun_resolve_sync_with_strings(
         specifier
     );
     jsc::to_js_host_call(global, || {
-        do_resolve_with_args::<true>(global, *specifier, *source, is_esm, false)
+        do_resolve_with_args::<true>(
+            global,
+            *specifier,
+            *source,
+            ResolveMode::from_ffi_bools(is_esm, false),
+        )
     })
 }
 
@@ -1414,8 +1426,7 @@ pub fn bun_resolve_sync_with_source(
             global,
             *specifier_str,
             *source,
-            is_esm,
-            is_user_require_resolve,
+            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
         )
     })
 }
@@ -1427,15 +1438,15 @@ fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
         return Ok(JSValue::js_number_from_int32(-1));
     }
 
-    let Some(buffer) = arguments[0].as_array_buffer(global_this) else {
-        return Ok(JSValue::js_number_from_int32(-1));
-    };
-
     let mut offset: usize = 0;
     if arguments.len() > 1 {
         let offset_value = arguments[1].coerce_to_int64(global_this)?;
         offset = offset_value.max(0) as usize;
     }
+
+    let Some(buffer) = arguments[0].as_array_buffer(global_this) else {
+        return Ok(JSValue::js_number_from_int32(-1));
+    };
 
     let bytes = buffer.byte_slice();
     let mut current_offset = offset;
@@ -1704,13 +1715,19 @@ fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
                         );
                     }
                     let paths = &[path_str.slice()];
-                    break 'brk bun_paths::resolve_path::join_abs_string_buf::<
+                    let buf_len = buf.len();
+                    let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
                         bun_paths::resolve_path::platform::Auto,
                     >(
                         bun_paths::fs::FileSystem::instance().top_level_dir(),
-                        &mut buf,
+                        &mut buf[..buf_len - 1],
                         paths,
-                    );
+                    ) else {
+                        return Err(
+                            global_this.throw_invalid_arguments(format_args!("Path too long"))
+                        );
+                    };
+                    break 'brk joined;
                 }
             }
             return Err(global_this.throw_invalid_arguments(format_args!("Expected a path")));
@@ -2461,7 +2478,7 @@ pub mod JSZlib {
                 //  +---+---+---+---+---+---+---+---+
                 //  |     CRC32     |     ISIZE     |
                 //  +---+---+---+---+---+---+---+---+
-                let estimated_size: u32 = u32::from_ne_bytes(
+                let estimated_size: u32 = u32::from_le_bytes(
                     compressed[compressed.len() - 4..][..4]
                         .try_into()
                         .expect("infallible: size matches"),

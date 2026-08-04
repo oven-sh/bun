@@ -357,6 +357,9 @@ macro_rules! cmd_key_value_value2 {
 
 macro_rules! cmd_strings_varargs {
     ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
+        cmd_strings_varargs!($fn_name, $name, $command, $state, CommandMeta::default());
+    };
+    ($fn_name:ident, $name:literal, $command:literal, $state:ident, $meta:expr) => {
         #[bun_jsc::host_fn(method)]
         pub fn $fn_name(
             this: &Self,
@@ -385,7 +388,7 @@ macro_rules! cmd_strings_varargs {
                 frame.this(),
                 $command.as_bytes(),
                 CommandArgs::Args(&args),
-                CommandMeta::default(),
+                $meta,
                 concat!("Failed to send ", $command),
             )
         }
@@ -654,8 +657,24 @@ impl JSValkeyClient {
             return Err(global.throw_invalid_argument_type("expire", "key", "string or buffer"));
         };
 
+        let seconds_value = frame.argument(1);
+        if seconds_value.is_undefined() {
+            return Err(global.throw_invalid_property_type_value(
+                b"seconds",
+                b"number",
+                seconds_value,
+            ));
+        }
+        if seconds_value.is_number() && seconds_value.as_number().is_nan() {
+            return Err(global.throw_invalid_property_type_value(
+                b"seconds",
+                b"integer",
+                seconds_value,
+            ));
+        }
+
         let seconds = global.validate_integer_range::<i32>(
-            frame.argument(1),
+            seconds_value,
             0,
             jsc::IntegerRange {
                 min: 0,
@@ -1674,8 +1693,20 @@ impl JSValkeyClient {
         NotSubscriber
     );
     cmd_key_varargs!(zrevrank, b"zrevrank", "ZREVRANK", "key", NotSubscriber);
-    cmd_strings_varargs!(psubscribe, b"psubscribe", "PSUBSCRIBE", DontCare);
-    cmd_strings_varargs!(punsubscribe, b"punsubscribe", "PUNSUBSCRIBE", DontCare);
+    cmd_strings_varargs!(
+        psubscribe,
+        b"psubscribe",
+        "PSUBSCRIBE",
+        DontCare,
+        CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST
+    );
+    cmd_strings_varargs!(
+        punsubscribe,
+        b"punsubscribe",
+        "PUNSUBSCRIBE",
+        DontCare,
+        CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST
+    );
     cmd_strings_varargs!(pubsub, b"pubsub", "PUBSUB", DontCare);
     cmd_strings_varargs!(copy, b"copy", "COPY", NotSubscriber);
     cmd_key_varargs!(unlink, b"unlink", "UNLINK", "key", NotSubscriber);
@@ -1830,7 +1861,7 @@ impl JSValkeyClient {
             this_js,
             b"UNSUBSCRIBE",
             CommandArgs::Args(redis_channels),
-            CommandMeta::default(),
+            CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST,
             "Failed to send UNSUBSCRIBE command",
         )
     }

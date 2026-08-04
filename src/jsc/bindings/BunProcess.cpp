@@ -389,6 +389,7 @@ extern "C" void Bun__unlink(const char*, size_t);
 
 extern "C" void CrashHandler__setDlOpenAction(const char* action);
 extern "C" bool Bun__VM__allowAddons(void* vm);
+extern "C" int32_t Bun__addonNeedsGlibcOnMusl(const char* path, size_t len, char* soname_out, size_t soname_cap);
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
@@ -461,11 +462,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #define StandaloneModuleGraph__base_path "/$bunfs/"_s
 #endif
     bool deleteAfter = false;
+    [[maybe_unused]] bool fromEmbedded = false;
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
         BunString bunStr = Bun::toString(filename);
         if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
             filename = bunStr.transferToWTFString();
             deleteAfter = !filename.startsWith("/proc/"_s);
+            fromEmbedded = true;
         }
     }
 
@@ -534,6 +537,24 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
 // On Windows, we use GetLastError() for error messages, so we can only delete after checking for errors
 #else
+#if OS(LINUX)
+    // A glibc-linked addon loaded into a musl process segfaults inside the
+    // loader (gcompat provides the soname but not the ABI). Inspect the ELF
+    // DT_NEEDED list first so the user sees a catchable error instead of a
+    // crash report. Skipped for addons embedded via `bun build --compile`.
+    // See https://github.com/oven-sh/bun/issues/15753.
+    if (!fromEmbedded) {
+        char soname[64] = { 0 };
+        if (Bun__addonNeedsGlibcOnMusl(utf8.data(), utf8.length(), soname, sizeof(soname))) [[unlikely]] {
+            WTF::StringBuilder msg;
+            msg.append(filename);
+            msg.append(" is linked against glibc (DT_NEEDED "_s);
+            msg.append(WTF::StringView::fromLatin1(soname));
+            msg.append("), but this Bun build uses musl. glibc-targeted native addons cannot be loaded on Alpine/musl even with gcompat. Use a glibc-based image (e.g. oven/bun:debian) or install a musl build of this addon."_s);
+            return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, msg.toString());
+        }
+    }
+#endif
     CrashHandler__setDlOpenAction(utf8.data());
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
     CrashHandler__setDlOpenAction(nullptr);
@@ -1215,6 +1236,8 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     auto* process = globalObject->processObject();
     auto& wrapped = process->wrapped();
     auto& vm = JSC::getVM(globalObject);
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return true;
 
     // node parity (exitWithUndefinedFatalException): the internal fatal-exception
     // handler is monkey-patchable as process._fatalException. If user code
@@ -1225,6 +1248,8 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         JSValue fatalException = process->get(globalObject, Identifier::fromString(vm, "_fatalException"_s));
         if (fatalScope.exception()) {
             (void)fatalScope.tryClearException();
+            if (vm.hasPendingTerminationException()) [[unlikely]]
+                return true;
         } else if (!fatalException.isCallable()) {
             Bun__Process__exit(globalObject, 6);
             return true;
@@ -1242,6 +1267,8 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     auto uncaughtExceptionMonitor = Identifier::fromString(JSC::getVM(globalObject), "uncaughtExceptionMonitor"_s);
     if (wrapped.listenerCount(uncaughtExceptionMonitor) > 0) {
         wrapped.emit(uncaughtExceptionMonitor, args);
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return true;
     }
 
     auto uncaughtExceptionIdent = Identifier::fromString(JSC::getVM(globalObject), "uncaughtException"_s);
@@ -1253,6 +1280,8 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
         if (auto ex = scope.exception()) {
             (void)scope.tryClearException();
+            if (vm.hasPendingTerminationException()) [[unlikely]]
+                return true;
             // if an exception is thrown in the uncaughtException handler, we abort
             Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
             Bun__Process__exit(lexicalGlobalObject, 1);
@@ -1314,6 +1343,8 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return;
     auto warning = JSC::createError(globalObject, "Unhandled promise rejection. This error originated either by "
                                                   "throwing inside of an async function without a catch block, "
                                                   "or by rejecting a promise which was not handled with .catch(). "
@@ -1324,19 +1355,27 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
     JSValue reasonStack {};
     auto is_errorlike = Bun__promises__isErrorLike(globalObject, JSValue::decode(reason));
     CLEAR_IF_EXCEPTION(scope);
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return;
     if (is_errorlike) {
         reasonStack = JSValue::decode(reason).get(globalObject, vm.propertyNames->stack);
         CLEAR_IF_EXCEPTION(scope);
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return;
         warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
     }
     if (!reasonStack) {
         reasonStack = JSValue::decode(Bun__noSideEffectsToString(vm, globalObject, reason));
         CLEAR_IF_EXCEPTION(scope);
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return;
     }
     if (!reasonStack) reasonStack = jsUndefined();
 
     Process::emitWarning(globalObject, reasonStack, jsString(globalObject->vm(), "UnhandledPromiseRejectionWarning"_str), jsUndefined(), jsUndefined());
     CLEAR_IF_EXCEPTION(scope);
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return;
     Process::emitWarningErrorInstance(globalObject, warning);
     CLEAR_IF_EXCEPTION(scope);
 }
@@ -1346,9 +1385,12 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
         return false;
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return true;
     auto* process = globalObject->processObject();
 
-    auto eventType = Identifier::fromString(JSC::getVM(globalObject), "unhandledRejection"_s);
+    auto eventType = Identifier::fromString(vm, "unhandledRejection"_s);
     auto& wrapped = process->wrapped();
     if (wrapped.listenerCount(eventType) > 0) {
         MarkedArgumentBuffer args;
@@ -1365,17 +1407,22 @@ extern "C" bool Bun__VM__allowRejectionHandledWarning(void* vm);
 
 extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue promise)
 {
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(lexicalGlobalObject));
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
         return false;
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return true;
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto* process = globalObject->processObject();
 
-    auto eventType = Identifier::fromString(JSC::getVM(globalObject), "rejectionHandled"_s);
+    auto eventType = Identifier::fromString(vm, "rejectionHandled"_s);
 
     if (Bun__VM__allowRejectionHandledWarning(globalObject->bunVM())) {
-        Process::emitWarning(globalObject, jsString(globalObject->vm(), String("Promise rejection was handled asynchronously"_s)), jsString(globalObject->vm(), String("PromiseRejectionHandledWarning"_s)), jsUndefined(), jsUndefined());
+        Process::emitWarning(globalObject, jsString(vm, String("Promise rejection was handled asynchronously"_s)), jsString(vm, String("PromiseRejectionHandledWarning"_s)), jsUndefined(), jsUndefined());
         CLEAR_IF_EXCEPTION(scope);
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return true;
     }
     auto& wrapped = process->wrapped();
     if (wrapped.listenerCount(eventType) > 0) {
@@ -3509,7 +3556,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * g
 
     result->putDirectOffset(vm, 0, jsNumber(std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec));
     result->putDirectOffset(vm, 1, jsNumber(std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec));
+#if OS(DARWIN)
+    // ru_maxrss is bytes on darwin; Node reports kilobytes everywhere.
+    result->putDirectOffset(vm, 2, jsNumber(rusage.ru_maxrss / 1024));
+#else
     result->putDirectOffset(vm, 2, jsNumber(rusage.ru_maxrss));
+#endif
     result->putDirectOffset(vm, 3, jsNumber(rusage.ru_ixrss));
     result->putDirectOffset(vm, 4, jsNumber(rusage.ru_idrss));
     result->putDirectOffset(vm, 5, jsNumber(rusage.ru_isrss));

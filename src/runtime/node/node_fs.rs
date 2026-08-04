@@ -339,16 +339,9 @@ fn os_path_literal_empty() -> &'static OSPathSliceZ {
     }
 }
 
-/// `bun.StandaloneModuleGraph::get()` — singleton accessor. Short-circuits
-/// `stat`/`exists`/`readFile` for files embedded in `bun build --compile`
-/// binaries (under `/$bunfs/` / `B:\~BUN\`). Returns `None` outside a
-/// standalone executable. The graph stores per-`File` lazy fields under
-/// interior mutability, so `get()` hands out a raw `*mut`; we re-borrow it
-/// `&mut` for the duration of each lookup (single-threaded JS / workpool
-/// callers never overlap on the same `File`).
 #[inline]
-fn standalone_module_graph_get() -> Option<*mut bun_standalone_graph::Graph> {
-    bun_standalone_graph::Graph::get()
+fn standalone_module_graph() -> Option<&'static bun_standalone_graph::Graph> {
+    bun_standalone_graph::Graph::get_ref()
 }
 
 /// Local shim for `Maybe(void)::aborted` (node.rs:302). `bun_sys::Maybe` is
@@ -1016,14 +1009,11 @@ mod _async_tasks {
 
         /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
         pub(crate) unsafe fn destroy(this: *mut Self) {
-            // SAFETY: caller guarantees `this` is a live Box-leaked allocation
-            let this_ref = unsafe { &mut *this };
+            // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
+            // reclaim ownership (paired with the Box::leak in create()).
+            let mut task = unsafe { bun_core::heap::take(this) };
             // `bun_sys::Error` frees its path on Drop.
-            this_ref.r#ref.unref(bun_io::js_vm_ctx());
-            // `args: ThreadSafe<A>` unprotects + drops via `heap::take` below.
-            this_ref.promise = JSPromiseStrong::default();
-            // SAFETY: paired with Box::leak in create()
-            drop(unsafe { bun_core::heap::take(this) });
+            task.r#ref.unref(bun_io::js_vm_ctx());
         }
     }
 
@@ -1142,6 +1132,22 @@ mod _async_tasks {
         #[inline]
         fn signal(&self) -> Option<&AbortSignal> {
             self.signal.as_deref()
+        }
+    }
+    impl FsArgument for args::AppendFile {
+        const HAVE_ABORT_SIGNAL: bool = true;
+        #[inline]
+        fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+            args::WriteFile::from_js_with_default_flag(ctx, arguments, FileSystemFlags::A)
+                .map(args::AppendFile)
+        }
+        #[inline]
+        fn to_thread_safe(&mut self) {
+            self.0.to_thread_safe();
+        }
+        #[inline]
+        fn signal(&self) -> Option<&AbortSignal> {
+            self.0.signal.as_deref()
         }
     }
 
@@ -1311,24 +1317,30 @@ mod _async_tasks {
         }
 
         fn work_pool_callback(task: *mut WorkPoolTask) {
-            // SAFETY: task points to Self.task
-            let this = unsafe { &mut *Self::from_task_ptr(task) };
+            // SAFETY: `task` points to `Self.task` (container-of).
+            let this = unsafe { Self::from_task_ptr(task) };
 
             let mut node_fs = NodeFS::default();
-            this.result = NodeFS::dispatch::<R, A, F>(&mut node_fs, &this.args, Flavor::Async);
+            // SAFETY: `this` is the live Box-leaked task; the work-pool thread owns
+            // it exclusively until the enqueue below hands it to the JS thread.
+            // `args` and `result` are disjoint fields.
+            unsafe {
+                (*this).result =
+                    NodeFS::dispatch::<R, A, F>(&mut node_fs, &(*this).args, Flavor::Async);
+            }
             // `sys::Error::path` is `Box<[u8]>` boxed at the
             // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
 
             // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
             // documented accessor for off-thread (work-pool) callers; the
             // event-loop's concurrent queue is MPSC-safe.
-            let vm = this.global_object().bun_vm_concurrently();
+            // SAFETY: `this` is still exclusively owned here (see above).
+            let vm = unsafe { (*this).global_object().bun_vm_concurrently() };
             // SAFETY: VirtualMachine and its event loop are process-static
-            // (LIFETIMES.tsv); the concurrent queue is MPSC-safe.
+            // (LIFETIMES.tsv); the concurrent queue is MPSC-safe. Ownership of
+            // `this` transfers to the JS thread here — no use after this call.
             unsafe {
-                (*(*vm).event_loop()).enqueue_task_concurrent(ConcurrentTask::create_from(
-                    std::ptr::from_mut::<Self>(this),
-                ));
+                (*(*vm).event_loop()).enqueue_task_concurrent(ConcurrentTask::create_from(this));
             }
         }
 
@@ -1381,15 +1393,11 @@ mod _async_tasks {
 
         /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
         pub(crate) unsafe fn destroy(this: *mut Self) {
-            // SAFETY: caller guarantees `this` is a live Box-leaked allocation
-            let this_ref = unsafe { &mut *this };
+            // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
+            // reclaim ownership (paired with the Box::leak in create()).
+            let mut task = unsafe { bun_core::heap::take(this) };
             // `bun_sys::Error` frees its path on Drop.
-            // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
-            this_ref.r#ref.unref(bun_io::js_vm_ctx());
-            // `args: ThreadSafe<A>` unprotects + drops via `heap::take` below.
-            this_ref.promise = JSPromiseStrong::default();
-            // SAFETY: paired with Box::leak in create()
-            drop(unsafe { bun_core::heap::take(this) });
+            task.r#ref.unref(bun_io::js_vm_ctx());
         }
     }
 
@@ -1437,7 +1445,7 @@ mod _async_tasks {
         /// BACKREF — `Some` iff `IS_SHELL`. The shell `ShellCpTask` owns and
         /// outlives this task; `ParentRef` gives a safe `&ShellCpTask` projection
         /// for `cp_on_copy` and round-trips the `*mut` for `cp_on_finish`.
-        pub(crate) shelltask: Option<bun_ptr::ParentRef<ShellCpTask>>,
+        pub(crate) shelltask: Option<bun_ptr::ParentRef<ShellCpTask, bun_ptr::Mut>>,
     }
 
     bun_threading::intrusive_work_task!([const IS_SHELL: bool] NewAsyncCpTask<IS_SHELL>, task);
@@ -1450,7 +1458,7 @@ mod _async_tasks {
         /// as `ParentRef` (constructed from the `*mut` with `Box::leak` provenance)
         /// so shared reads are safe-projected and `as_mut_ptr()` round-trips the
         /// original write provenance for `on_subtask_done`'s `&mut` promotion.
-        pub(crate) cp_task: bun_ptr::ParentRef<NewAsyncCpTask<IS_SHELL>>,
+        pub(crate) cp_task: bun_ptr::ParentRef<NewAsyncCpTask<IS_SHELL>, bun_ptr::Mut>,
         /// Single owned allocation laid out as `<src>\0<dest>\0`. Ownership is
         /// encoded directly as `Box<[OSPathChar]>` and
         /// the two NUL-terminated views are reconstructed via `src()` / `dest()`.
@@ -1476,9 +1484,9 @@ mod _async_tasks {
             WorkPool::schedule_new(CpSingleTask {
                 // `parent` is the `Box::leak`'d task — never null; `NonNull → ParentRef`
                 // preserves the mutable provenance for `on_subtask_done`.
-                cp_task: bun_ptr::ParentRef::from(
-                    core::ptr::NonNull::new(parent).expect("cp parent"),
-                ),
+                // SAFETY: `parent` is the live `Box::leak`'d task (write provenance), never null.
+                cp_task: unsafe { bun_ptr::ParentRef::from_nullable_mut(parent) }
+                    .expect("cp parent"),
                 path_buf,
                 src_len,
                 dest_len,
@@ -1605,7 +1613,9 @@ mod _async_tasks {
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
                 subtask_count: AtomicUsize::new(1),
-                shelltask: core::ptr::NonNull::new(shelltask).map(bun_ptr::ParentRef::from),
+                // SAFETY: `shelltask` (when non-null) is the live heap-alloc'd `ShellCpTask`
+                // that owns and outlives this task; pointer carries write provenance.
+                shelltask: unsafe { bun_ptr::ParentRef::from_nullable_mut(shelltask) },
             });
             if !IS_SHELL {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
@@ -1638,7 +1648,9 @@ mod _async_tasks {
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker { id: 0 },
                 subtask_count: AtomicUsize::new(1),
-                shelltask: core::ptr::NonNull::new(shelltask).map(bun_ptr::ParentRef::from),
+                // SAFETY: `shelltask` (when non-null) is the live heap-alloc'd `ShellCpTask`
+                // that owns and outlives this task; pointer carries write provenance.
+                shelltask: unsafe { bun_ptr::ParentRef::from_nullable_mut(shelltask) },
             });
             if !IS_SHELL {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
@@ -1789,13 +1801,10 @@ mod _async_tasks {
 
             // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
             unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
-            // SAFETY: `promise` points at a GC-rooted JS heap cell (see above), still
-            // valid after `destroy` dropped only the `Strong` wrapper.
-            let promise = unsafe { &mut *promise };
             if success {
-                promise.resolve(global_object, result)?;
+                bun_jsc::JSPromise::opaque_mut(promise).resolve(global_object, result)?;
             } else {
-                promise.reject(global_object, Ok(result))?;
+                bun_jsc::JSPromise::opaque_mut(promise).reject(global_object, Ok(result))?;
             }
             Ok(())
         }
@@ -1803,21 +1812,16 @@ mod _async_tasks {
         /// SAFETY: `this` must be the pointer returned by Box::leak in
         /// `create_with_shell_task()`/`create_mini()`; called exactly once.
         pub(crate) unsafe fn destroy(this: *mut Self) {
-            // SAFETY: caller guarantees `this` is a live Box-leaked allocation
-            let this_ref = unsafe { &mut *this };
-            // `bun_sys::Error` owns its path slice (`Box<[u8]>`) and frees it on
-            // Drop (in `heap::take` below).
+            // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
+            // reclaim ownership (paired with the Box::leak in
+            // create_with_shell_task()/create_mini()).
+            let mut task = unsafe { bun_core::heap::take(this) };
             if !IS_SHELL {
-                this_ref
-                    .r#ref
-                    .unref(event_loop_handle_to_ctx(this_ref.evtloop));
+                let ctx = event_loop_handle_to_ctx(task.evtloop);
+                task.r#ref.unref(ctx);
             }
-            // `args.deinit()` → `Drop` on `args::Cp` (via `heap::take` below).
             // `Drop for ThreadSafe<args::Cp>` releases the `protect()` taken by
             // `to_thread_safe()` when `src`/`dest` are Buffers, so nothing leaks here.
-            this_ref.promise = JSPromiseStrong::default();
-            // SAFETY: paired with Box::leak in create_with_shell_task()/create_mini()
-            drop(unsafe { bun_core::heap::take(this) });
         }
 
         /// Directory scanning + clonefile will block this thread, then each individual file copy (what the sync version
@@ -2267,7 +2271,7 @@ mod _async_tasks {
     }
 
     pub(super) struct ReaddirSubtask {
-        pub readdir_task: bun_ptr::ParentRef<AsyncReaddirRecursiveTask>,
+        pub readdir_task: bun_ptr::ParentRef<AsyncReaddirRecursiveTask, bun_ptr::Mut>,
         /// Heap-owned, NUL-terminated (`[basename.., 0]`); freed on drop.
         pub basename: Box<[u8]>,
         pub task: WorkPoolTask,
@@ -2462,8 +2466,8 @@ mod _async_tasks {
         }
 
         fn work_pool_callback(task: *mut WorkPoolTask) {
-            // SAFETY: task points to Self.task
-            let this = unsafe { &mut *Self::from_task_ptr(task) };
+            // SAFETY: `task` points to `Self.task` (container-of).
+            let this = unsafe { Self::from_task_ptr(task) };
             let mut buf = PathBuffer::uninit();
             // `root_path` backing is fixed for the task's lifetime and only
             // `perform_work`'s callee reads it (it mutates other fields), so
@@ -2471,11 +2475,17 @@ mod _async_tasks {
             // `perform_work` body's own `args_ptr` erase, and line ~6623).
             let root_path_z = {
                 // SAFETY: `root_path` is a NUL-terminated `Box<[u8]>` set in
-                // `create()` and not reallocated for the task's lifetime.
-                let bytes: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&this.root_path[..]) };
+                // `create()` and not reallocated for the task's lifetime; shared
+                // field borrow only.
+                let root_path: &[u8] = unsafe { &(*this).root_path };
+                // SAFETY: see above — the backing bytes outlive this call.
+                let bytes: &'static [u8] = unsafe { bun_ptr::detach_lifetime(root_path) };
                 ZStr::from_buf(bytes, bytes.len() - 1)
             };
-            this.perform_work(root_path_z, &mut buf, true);
+            // SAFETY: `this` is the live Box-leaked task; this scan task holds one
+            // `subtask_count` reference, so the JS thread cannot free it during
+            // the call. The `&mut` is scoped to the call.
+            unsafe { (*this).perform_work(root_path_z, &mut buf, true) };
         }
 
         pub(crate) fn write_results<T: IntoResultListEntry>(&mut self, result: &mut Vec<T>) {
@@ -2559,14 +2569,16 @@ mod _async_tasks {
 
             // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
             // documented accessor for off-thread (work-pool) callers.
-            // SAFETY: `bun_vm_concurrently()` returns the process-singleton VM;
-            // sole `&mut` borrow at this point on the work-pool thread.
-            let vm = unsafe { &mut *self.global_object().bun_vm_concurrently() };
+            let vm = self.global_object().bun_vm_concurrently();
             // `ConcurrentTask::create` heap-allocates a fresh task; the
             // queue takes ownership of it.
-            vm.enqueue_task_concurrent(ConcurrentTask::create(Task::init(std::ptr::from_mut::<
-                Self,
-            >(self))));
+            // SAFETY: `vm` is the process-singleton VM (LIFETIMES.tsv); the
+            // concurrent queue is MPSC-safe and the borrow is scoped to the call.
+            unsafe {
+                (*vm).enqueue_task_concurrent(ConcurrentTask::create(Task::init(
+                    std::ptr::from_mut::<Self>(self),
+                )));
+            }
         }
 
         fn clear_result_list(&mut self) {
@@ -2645,32 +2657,27 @@ mod _async_tasks {
 
             // SAFETY: self was Box::leak'd in create(); destroyed exactly once here
             unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
-            // SAFETY: GC-rooted JS heap cell, valid past `destroy` (see above).
-            let promise = unsafe { &mut *promise };
             if success {
-                promise.resolve(global_object, result)?;
+                bun_jsc::JSPromise::opaque_mut(promise).resolve(global_object, result)?;
             } else {
-                promise.reject(global_object, Ok(result))?;
+                bun_jsc::JSPromise::opaque_mut(promise).reject(global_object, Ok(result))?;
             }
             Ok(())
         }
 
         /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
         pub(crate) unsafe fn destroy(this: *mut Self) {
-            // SAFETY: caller guarantees `this` is a live Box-leaked allocation
-            let this_ref = unsafe { &mut *this };
-            debug_assert!(this_ref.root_fd == FD::INVALID); // should already have closed it
+            // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
+            // reclaim ownership (paired with the Box::leak in create()).
+            let mut task = unsafe { bun_core::heap::take(this) };
+            debug_assert!(task.root_fd == FD::INVALID); // should already have closed it
             // `bun_sys::Error` frees on Drop; nothing to do.
-            let _ = this_ref.pending_err.take();
+            let _ = task.pending_err.take();
             // `KeepAlive::unref` takes the type-erased
             // `EventLoopCtx`. Resolve via the global JS-loop hook (single JS thread).
-            this_ref.r#ref.unref(bun_io::js_vm_ctx());
-            // `args.deinit()` → `Drop` on `args::Readdir` (via `heap::take` below).
-            this_ref.free_root_path();
-            this_ref.clear_result_list();
-            // `JSPromiseStrong` releases on Drop (via heap::take below).
-            // SAFETY: paired with Box::leak in create()
-            drop(unsafe { bun_core::heap::take(this) });
+            task.r#ref.unref(bun_io::js_vm_ctx());
+            task.free_root_path();
+            task.clear_result_list();
         }
     }
 
@@ -4279,6 +4286,13 @@ pub mod args {
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
         ) -> JsResult<WriteFile> {
+            Self::from_js_with_default_flag(ctx, arguments, FileSystemFlags::W)
+        }
+        pub(crate) fn from_js_with_default_flag(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+            default_flag: FileSystemFlags,
+        ) -> JsResult<WriteFile> {
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
             let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
@@ -4290,7 +4304,7 @@ pub mod args {
                 .next_eat()
                 .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("data is required")))?;
             let mut encoding = Encoding::Buffer;
-            let mut flag = FileSystemFlags::W;
+            let mut flag = default_flag;
             let mut mode: Mode = DEFAULT_PERMISSION;
             let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
                 if let Some(signal) = s {
@@ -4361,7 +4375,16 @@ pub mod args {
         }
     }
 
-    pub(crate) type AppendFile = WriteFile;
+    /// Same fields as `WriteFile`; distinct type so `FsArgument::from_js` can
+    /// default `flag` to `a` (Node: `if (!options.flag) options.flag = 'a'`)
+    /// while still honoring an explicit `flag` the caller passed.
+    pub struct AppendFile(pub(crate) WriteFile);
+    impl Unprotect for AppendFile {
+        #[inline]
+        fn unprotect(&mut self) {
+            self.0.unprotect();
+        }
+    }
 
     pub struct Exists {
         pub path: Option<PathLike>,
@@ -4527,12 +4550,6 @@ pub enum StatOrNotFound {
     NotFound,
 }
 impl StatOrNotFound {
-    pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        match self {
-            StatOrNotFound::Stats(s) => s.to_js_newly_created(global_object),
-            StatOrNotFound::NotFound => Ok(JSValue::UNDEFINED),
-        }
-    }
     pub(crate) fn to_js_newly_created(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             StatOrNotFound::Stats(s) => s.to_js_newly_created(global_object),
@@ -4742,12 +4759,10 @@ fn encode_path_result(bytes: &[u8], encoding: Encoding) -> StringOrBuffer {
 
 impl NodeFS {
     pub(crate) fn access(&mut self, args: &args::Access, _: Flavor) -> Maybe<ret::Access> {
-        if let Some(graph) = standalone_module_graph_get() {
-            // SAFETY: see `standalone_module_graph_get`.
-            let graph = unsafe { &mut *graph };
+        if let Some(graph) = standalone_module_graph() {
             let p = args.path.slice();
             let is_dir = graph.find_dir(p);
-            if is_dir || graph.find(p).is_some() {
+            if is_dir || graph.contains_file(p) {
                 let mode = args.mode.as_int();
                 if (mode & sys::posix::W_OK) != 0 || ((mode & sys::posix::X_OK) != 0 && !is_dir) {
                     return Err(sys::Error::from_code(E::EACCES, sys::Tag::access).with_path(p));
@@ -4775,6 +4790,7 @@ impl NodeFS {
         args: &args::AppendFile,
         _: Flavor,
     ) -> Maybe<ret::AppendFile> {
+        let args = &args.0;
         let mut data = args.data.slice();
         match &args.file {
             PathOrFileDescriptor::Fd(fd) => {
@@ -4786,7 +4802,7 @@ impl NodeFS {
             }
             PathOrFileDescriptor::Path(path_) => {
                 let path = path_.slice_z(&mut self.sync_error_buf);
-                let fd = Syscall::open(path, FileSystemFlags::A.as_int(), args.mode)?;
+                let fd = Syscall::open(path, args.flag.as_int(), args.mode)?;
                 let _close = scopeguard::guard(fd, |fd| fd.close());
                 while !data.is_empty() {
                     let written = Syscall::write(fd, data)?;
@@ -5441,12 +5457,8 @@ impl NodeFS {
             return Ok(false);
         };
 
-        if let Some(graph) = standalone_module_graph_get() {
-            // SAFETY: see `standalone_module_graph_get` — exclusive lookup on
-            // the per-process singleton; `find` only mutates lazy per-`File`
-            // fields.
-            let graph = unsafe { &mut *graph };
-            if graph.find(path.slice()).is_some() || graph.find_dir(path.slice()) {
+        if let Some(graph) = standalone_module_graph() {
+            if graph.contains_file(path.slice()) || graph.find_dir(path.slice()) {
                 return Ok(true);
             }
         }
@@ -5667,9 +5679,8 @@ impl NodeFS {
 
     pub(crate) fn lstat(&mut self, args: &args::Lstat, _: Flavor) -> Maybe<ret::Lstat> {
         let path = args.path.slice_z(&mut self.sync_error_buf);
-        if let Some(graph) = standalone_module_graph_get() {
-            // SAFETY: see `standalone_module_graph_get`.
-            if let Some(result) = unsafe { &mut *graph }.stat(path.as_bytes()) {
+        if let Some(graph) = standalone_module_graph() {
+            if let Some(result) = graph.stat(path.as_bytes()) {
                 return Ok(StatOrNotFound::Stats(Box::new(Stats::init(
                     &PosixStat::init(&result),
                     args.big_int,
@@ -5884,14 +5895,13 @@ impl NodeFS {
                                     {
                                         // is a directory. break.
                                         if !res {
-                                            // SAFETY: `working_mem` is not used after this return; re-derive
-                                            // the &mut PathBuffer from the stored raw ptr instead of `&mut self`.
-                                            let buf = unsafe { &mut *sync_error_buf_ptr };
+                                            // SAFETY: `working_mem` is not used after this return; the
+                                            // re-derived &mut PathBuffer is scoped to the call.
                                             return Err(sys::Error {
                                                 errno: E::ENOTDIR as _,
                                                 syscall: sys::Tag::mkdir,
                                                 path: Self::os_path_into_buf(
-                                                    buf,
+                                                    unsafe { &mut *sync_error_buf_ptr },
                                                     without_nt_prefix(&(&path[..])[..len as usize]),
                                                 )
                                                 .into(),
@@ -5958,10 +5968,10 @@ impl NodeFS {
                             E::EEXIST => {}
                             // NOENT shouldn't happen here
                             _ => {
-                                // SAFETY: `working_mem` is not used after this return.
-                                let buf = unsafe { &mut *sync_error_buf_ptr };
+                                // SAFETY: `working_mem` is not used after this return;
+                                // the re-derived &mut PathBuffer is scoped to the call.
                                 return Err(err.with_path(Self::os_path_into_buf(
-                                    buf,
+                                    unsafe { &mut *sync_error_buf_ptr },
                                     without_nt_prefix(&path[..]),
                                 )));
                             }
@@ -5987,11 +5997,12 @@ impl NodeFS {
             Err(err) => match err.get_errno() {
                 E::EEXIST => {}
                 _ => {
-                    // SAFETY: `working_mem` is not used after this return.
-                    let buf = unsafe { &mut *sync_error_buf_ptr };
-                    return Err(
-                        err.with_path(Self::os_path_into_buf(buf, without_nt_prefix(&path[..])))
-                    );
+                    // SAFETY: `working_mem` is not used after this return; the
+                    // re-derived &mut PathBuffer is scoped to the call.
+                    return Err(err.with_path(Self::os_path_into_buf(
+                        unsafe { &mut *sync_error_buf_ptr },
+                        without_nt_prefix(&path[..]),
+                    )));
                 }
             },
             Ok(_) => {}
@@ -6407,7 +6418,7 @@ impl NodeFS {
     pub(crate) fn readdir(&mut self, args: &args::Readdir, flavor: Flavor) -> Maybe<ret::Readdir> {
         if flavor != Flavor::Sync && args.recursive {
             debug_assert!(
-                standalone_module_graph_get().is_some()
+                standalone_module_graph().is_some()
                     && bun_standalone_graph::is_bun_standalone_file_path(args.path.slice()),
                 "async recursive readdir must go through AsyncReaddirRecursiveTask"
             );
@@ -6962,72 +6973,15 @@ impl NodeFS {
     ) -> Maybe<ret::Readdir> {
         let path = args.path.slice_z(buf);
 
-        if let Some(graph) = standalone_module_graph_get() {
+        if let Some(graph) = standalone_module_graph() {
             if bun_standalone_graph::is_bun_standalone_file_path(path.as_bytes()) {
-                // SAFETY: see `standalone_module_graph_get`.
-                let graph = unsafe { &mut *graph };
-                let Some(list) = graph.readdir(path.as_bytes(), recursive) else {
-                    let code = if graph.find_assume_standalone_path(path.as_bytes()).is_some() {
-                        E::ENOTDIR
-                    } else {
-                        E::ENOENT
-                    };
-                    return Err(
-                        sys::Error::from_code(code, sys::Tag::scandir).with_path(args.path.slice())
-                    );
-                };
-                let mut entries: Vec<T> = Vec::with_capacity(list.len());
-                let root_path = if T::IS_DIRENT {
-                    BunString::clone_utf8(args.path.slice())
-                } else {
-                    BunString::empty()
-                };
-                let mut joined: Vec<u8> = Vec::new();
-                #[allow(unused_mut)]
-                for (mut name, is_dir) in list {
-                    let kind = if is_dir {
-                        sys::FileKind::Directory
-                    } else {
-                        sys::FileKind::File
-                    };
-                    if recursive {
-                        #[cfg(windows)]
-                        for b in name.iter_mut() {
-                            if *b == b'/' {
-                                *b = paths::SEP;
-                            }
-                        }
-                        let (base, parent) = match strings::last_index_of_char(&name, paths::SEP) {
-                            Some(i) => (&name[i + 1..], &name[..i]),
-                            None => (&name[..], b"".as_slice()),
-                        };
-                        let dirent_path = if T::IS_DIRENT && !parent.is_empty() {
-                            joined.clear();
-                            joined.extend_from_slice(args.path.slice());
-                            if !matches!(joined.last(), Some(&b'/') | Some(&b'\\')) {
-                                joined.push(paths::SEP);
-                            }
-                            joined.extend_from_slice(parent);
-                            BunString::clone_utf8(&joined)
-                        } else {
-                            root_path.dupe_ref()
-                        };
-                        T::append_entry_recursive(
-                            &mut entries,
-                            base,
-                            &name,
-                            &dirent_path,
-                            kind,
-                            args.encoding,
-                            flavor == Flavor::Sync,
-                        );
-                        dirent_path.deref();
-                    } else {
-                        T::append_entry(&mut entries, &name, &root_path, kind, args.encoding);
-                    }
-                }
-                root_path.deref();
-                return Ok(T::into_readdir(entries));
+                return Self::readdir_standalone::<T>(
+                    graph,
+                    path.as_bytes(),
+                    args,
+                    recursive,
+                    flavor,
+                );
             }
         }
 
@@ -7080,6 +7034,77 @@ impl NodeFS {
             Err(err) => Err(err),
             Ok(()) => Ok(T::into_readdir(entries)),
         }
+    }
+
+    /// Caller has already checked `is_bun_standalone_file_path(path)`.
+    fn readdir_standalone<T: ReaddirEntry>(
+        graph: &bun_standalone_graph::Graph,
+        path: &[u8],
+        args: &args::Readdir,
+        recursive: bool,
+        flavor: Flavor,
+    ) -> Maybe<ret::Readdir> {
+        let Some(list) = graph.readdir(path, recursive) else {
+            let code = if graph.contains_file(path) {
+                E::ENOTDIR
+            } else {
+                E::ENOENT
+            };
+            return Err(sys::Error::from_code(code, sys::Tag::scandir).with_path(args.path.slice()));
+        };
+
+        let mut entries: Vec<T> = Vec::with_capacity(list.len());
+        let root_path = if T::IS_DIRENT {
+            BunString::clone_utf8(args.path.slice())
+        } else {
+            BunString::empty()
+        };
+        let mut joined: Vec<u8> = Vec::new();
+        #[allow(unused_mut)]
+        for (mut name, is_dir) in list {
+            let kind = if is_dir {
+                sys::FileKind::Directory
+            } else {
+                sys::FileKind::File
+            };
+            if recursive {
+                #[cfg(windows)]
+                for b in name.iter_mut() {
+                    if *b == b'/' {
+                        *b = paths::SEP;
+                    }
+                }
+                let (base, parent) = match strings::last_index_of_char(&name, paths::SEP) {
+                    Some(i) => (&name[i + 1..], &name[..i]),
+                    None => (&name[..], b"".as_slice()),
+                };
+                let dirent_path = if T::IS_DIRENT && !parent.is_empty() {
+                    joined.clear();
+                    joined.extend_from_slice(args.path.slice());
+                    if !matches!(joined.last(), Some(&b'/') | Some(&b'\\')) {
+                        joined.push(paths::SEP);
+                    }
+                    joined.extend_from_slice(parent);
+                    BunString::clone_utf8(&joined)
+                } else {
+                    root_path.dupe_ref()
+                };
+                T::append_entry_recursive(
+                    &mut entries,
+                    base,
+                    &name,
+                    &dirent_path,
+                    kind,
+                    args.encoding,
+                    flavor == Flavor::Sync,
+                );
+                dirent_path.deref();
+            } else {
+                T::append_entry(&mut entries, &name, &root_path, kind, args.encoding);
+            }
+        }
+        root_path.deref();
+        Ok(T::into_readdir(entries))
     }
 
     pub(crate) fn read_file(
@@ -7143,10 +7168,8 @@ impl NodeFS {
             PathOrFileDescriptor::Path(p) => {
                 let path = p.slice_z(&mut self.sync_error_buf);
 
-                if let Some(graph) = standalone_module_graph_get() {
-                    // SAFETY: see `standalone_module_graph_get`.
-                    let graph = unsafe { &mut *graph };
-                    if let Some(file) = graph.find(path.as_bytes()) {
+                if let Some(graph) = standalone_module_graph() {
+                    if let Some(file) = graph.find_ref(path.as_bytes()) {
                         let contents: &[u8] = file.contents.as_bytes();
                         return if args.encoding == Encoding::Buffer {
                             // PORTING.md §Forbidden bans `Vec::leak()`; round-trip through
@@ -7946,9 +7969,8 @@ impl NodeFS {
 
     pub(crate) fn stat(&mut self, args: &args::Stat, _: Flavor) -> Maybe<ret::Stat> {
         let path = args.path.slice_z(&mut self.sync_error_buf);
-        if let Some(graph) = standalone_module_graph_get() {
-            // SAFETY: see `standalone_module_graph_get`.
-            if let Some(result) = unsafe { &mut *graph }.stat(path.as_bytes()) {
+        if let Some(graph) = standalone_module_graph() {
+            if let Some(result) = graph.stat(path.as_bytes()) {
                 return Ok(StatOrNotFound::Stats(Box::new(Stats::init(
                     &PosixStat::init(&result),
                     args.big_int,

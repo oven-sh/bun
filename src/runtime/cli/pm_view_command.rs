@@ -118,7 +118,6 @@ pub(crate) fn view(
         url,
         headers.entries,
         header_buf,
-        &raw mut response_buf,
         b"",
         http_proxy,
         None,
@@ -126,7 +125,7 @@ pub(crate) fn view(
     );
     req.client.flags.reject_unauthorized = manager.tls_reject_unauthorized();
 
-    let res = match req.send_sync() {
+    let res = match req.send_sync(&mut response_buf) {
         Ok(r) => r,
         Err(err) => {
             Output::err(err, "view request failed to send", ());

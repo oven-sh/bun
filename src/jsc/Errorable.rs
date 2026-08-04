@@ -25,13 +25,6 @@ impl<T: Copy> Errorable<T> {
         }
     }
 
-    pub fn value(val: T) -> Self {
-        Self {
-            result: Result { value: val },
-            success: true,
-        }
-    }
-
     pub fn ok(val: T) -> Self {
         Self {
             result: Result { value: val },

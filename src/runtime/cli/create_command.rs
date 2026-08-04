@@ -1953,7 +1953,6 @@ impl Example {
             api_url,
             header_entries,
             headers_buf,
-            mutable,
             b"",
             http_proxy,
             None,
@@ -1962,7 +1961,7 @@ impl Example {
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
-        let response = async_http.send_sync()?;
+        let response = async_http.send_sync(mutable)?;
 
         match response.status_code() {
             404 => return Err(crate::Error::GitHubRepositoryNotFound),
@@ -2057,7 +2056,6 @@ impl Example {
                 unsafe { (*URL_.get()).clone() }.unwrap(),
                 Default::default(),
                 b"",
-                mutable,
                 b"",
                 http_proxy,
                 None,
@@ -2066,7 +2064,7 @@ impl Example {
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
-        let mut response = async_http.send_sync()?;
+        let mut response = async_http.send_sync(mutable)?;
 
         match response.status_code() {
             404 => return Err(crate::Error::ExampleNotFound),
@@ -2151,7 +2149,6 @@ impl Example {
             parsed_tarball_url,
             Default::default(),
             b"",
-            mutable,
             b"",
             http_proxy,
             None,
@@ -2162,7 +2159,7 @@ impl Example {
 
         refresher.maybe_refresh();
 
-        response = async_http.send_sync()?;
+        response = async_http.send_sync(mutable)?;
 
         refresher.maybe_refresh();
 
@@ -2197,7 +2194,6 @@ impl Example {
             url,
             Default::default(),
             b"",
-            mutable,
             b"",
             http_proxy,
             None,
@@ -2209,7 +2205,7 @@ impl Example {
             async_http.client.progress_node = progress_node.map(core::ptr::NonNull::from);
         }
 
-        let response = match async_http.send_sync() {
+        let response = match async_http.send_sync(mutable) {
             Ok(r) => r,
             Err(err) => {
                 if err.name() == "EAGAIN" {

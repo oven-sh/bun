@@ -8,10 +8,10 @@ pub use resolver_hooks::{
     DependencySlice, DependencyVersion, DependencyVersionTag, DependencyVersionValue,
     EnqueueResult, ExternalPackageNameHashList, ExternalSlice, ExternalStringList,
     ExternalStringMap, Features, INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID, Libc, Negatable,
-    NegatableEnum, NegatableExt, NpmInfo, OldV2VersionedURL, OperatingSystem, PackageID,
-    PackageJsonView, PackageNameHash, PreinstallState, Repository, Resolution, ResolutionSlice,
-    ResolutionTag, ResolutionValue, TagInfo, TarballInfo, TaskCallbackContext,
-    TruncatedPackageNameHash, URI, VersionSlice, VersionedURL, VersionedURLType, WakeHandler,
+    NegatableEnum, NegatableExt, NpmInfo, OperatingSystem, PackageID, PackageJsonView,
+    PackageNameHash, PreinstallState, Repository, Resolution, ResolutionSlice, ResolutionTag,
+    ResolutionValue, TagInfo, TarballInfo, TaskCallbackContext, TruncatedPackageNameHash, URI,
+    VersionSlice, VersionedURL, VersionedURLType, WakeHandler,
 };
 
 // The canonical ExternalString / SlicedString / SemverString definitions live

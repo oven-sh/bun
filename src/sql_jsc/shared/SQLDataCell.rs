@@ -264,6 +264,25 @@ impl SQLDataCell {
         SQLDataCell::default()
     }
 
+    /// A `Null`-tagged cell pre-classified for `column` at ordinal `position`,
+    /// seeding the row buffer so cells a short DataRow never fills still carry
+    /// the right named/indexed/duplicate flag into `toJS`.
+    #[inline]
+    pub(crate) fn null_for_column(position: u32, column: &ColumnIdentifier) -> SQLDataCell {
+        SQLDataCell {
+            is_indexed_column: match column {
+                ColumnIdentifier::Duplicate => 2,
+                ColumnIdentifier::Index(_) => 1,
+                ColumnIdentifier::Name(_) => 0,
+            },
+            index: match column {
+                ColumnIdentifier::Index(i) => *i,
+                _ => position,
+            },
+            ..SQLDataCell::default()
+        }
+    }
+
     #[inline]
     pub(crate) fn int4(value: i32) -> SQLDataCell {
         SQLDataCell {

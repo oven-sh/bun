@@ -27,8 +27,6 @@ use bun_options_types::schema::api;
 use bun_options_types::command_tag::Tag as CommandTag;
 use bun_options_types::context::ContextData;
 
-pub use bun_options_types::offline_mode::OfflineMode;
-
 // TODO: replace api.TransformOptions with Bunfig
 pub(crate) struct Bunfig;
 

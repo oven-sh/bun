@@ -1680,11 +1680,7 @@ fn enqueue_git_clone(
     let value = Task::Task {
         // `this` is a live `&mut PackageManager`; the task is owned by
         // `this.preallocated_resolve_tasks` and never outlives the manager.
-        // Safe `From<NonNull>` construction preserves the `&mut`-derived write
-        // provenance for `assume_mut()` in `Task::callback`.
-        package_manager: Some(bun_ptr::ParentRef::from(core::ptr::NonNull::from(
-            &mut *this,
-        ))),
+        package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
         log: bun_ast::Log::init(),
         tag: crate::package_manager_task::Tag::GitClone,
         request: crate::package_manager_task::Request {
@@ -1864,11 +1860,7 @@ fn enqueue_local_tarball(
     let value = Task::Task {
         // `this` is a live `&mut PackageManager`; the task is owned by
         // `this.preallocated_resolve_tasks` and never outlives the manager.
-        // Safe `From<NonNull>` construction preserves the `&mut`-derived write
-        // provenance for `assume_mut()` in `Task::callback`.
-        package_manager: Some(bun_ptr::ParentRef::from(core::ptr::NonNull::from(
-            &mut *this,
-        ))),
+        package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
         log: bun_ast::Log::init(),
         tag: crate::package_manager_task::Tag::LocalTarball,
         request: crate::package_manager_task::Request {
@@ -1976,9 +1968,10 @@ fn get_or_put_resolved_package_with_find_result(
         // `manager.workspace_package_json_cache` only — disjoint from
         // `manager.lockfile`.
         this.to_update
-            // If updating, only update packages in the current workspace
-            && unsafe { &*(*this_ptr).lockfile }
-                .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
+            // Update direct deps of the current workspace; catalogs are root-scoped.
+            && (dependency.version.tag == dependency::version::Tag::Catalog
+                || unsafe { &*(*this_ptr).lockfile }
+                    .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id))
             // no need to do a look up if update requests are empty (`bun update` with no args)
             && (this.update_requests.is_empty()
                 || this.updating_packages.contains(

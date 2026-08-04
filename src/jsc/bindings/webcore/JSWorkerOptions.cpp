@@ -23,8 +23,6 @@
 
 #include "JSDOMConvertEnumeration.h"
 #include "JSDOMConvertStrings.h"
-// #include "JSFetchRequestCredentials.h"
-// #include "JSWorkerType.h"
 #include <JavaScriptCore/JSCInlines.h>
 
 namespace WebCore {
@@ -41,18 +39,6 @@ template<> WorkerOptions convertDictionary<WorkerOptions>(JSGlobalObject& lexica
         return {};
     }
     WorkerOptions result;
-    // JSValue credentialsValue;
-    // if (isNullOrUndefined)
-    //     credentialsValue = jsUndefined();
-    // else {
-    //     credentialsValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "credentials"_s));
-    //     RETURN_IF_EXCEPTION(throwScope, {});
-    // }
-    // if (!credentialsValue.isUndefined()) {
-    //     result.credentials = convert<IDLEnumeration<FetchRequestCredentials>>(lexicalGlobalObject, credentialsValue);
-    //     RETURN_IF_EXCEPTION(throwScope, {});
-    // } else
-    //     result.credentials = FetchRequestCredentials::SameOrigin;
     JSValue nameValue;
     if (isNullOrUndefined)
         nameValue = jsUndefined();
@@ -65,18 +51,6 @@ template<> WorkerOptions convertDictionary<WorkerOptions>(JSGlobalObject& lexica
         RETURN_IF_EXCEPTION(throwScope, {});
     } else
         result.name = emptyString();
-    // JSValue typeValue;
-    // if (isNullOrUndefined)
-    //     typeValue = jsUndefined();
-    // else {
-    //     typeValue = object->get(&lexicalGlobalObject, vm.propertyNames->type);
-    //     RETURN_IF_EXCEPTION(throwScope, { });
-    // }
-    // if (!typeValue.isUndefined()) {
-    //     result.type = convert<IDLEnumeration<WorkerType>>(lexicalGlobalObject, typeValue);
-    //     RETURN_IF_EXCEPTION(throwScope, { });
-    // } else
-    //     result.type = WorkerType::Classic;
     return result;
 }
 

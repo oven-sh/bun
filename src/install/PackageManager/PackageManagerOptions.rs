@@ -30,7 +30,7 @@ pub struct Options {
     pub enable: Enable,
     pub do_: Do,
     pub positionals: &'static [&'static [u8]],
-    pub(crate) update: Update,
+    pub(crate) update: DependencyGroup,
     pub dry_run: bool,
     pub(crate) link_workspace_packages: bool,
     pub(crate) remote_package_features: Features,
@@ -108,7 +108,7 @@ impl Default for Options {
             enable: Enable::default(),
             do_: Do::default(),
             positionals: &[],
-            update: Update::default(),
+            update: DependencyGroup::default(),
             dry_run: false,
             link_workspace_packages: true,
             remote_package_features: Features {
@@ -268,20 +268,26 @@ impl LogLevel {
         matches!(self, LogLevel::VerboseNoProgress | LogLevel::Verbose)
     }
     #[inline]
+    pub fn is_silent(self) -> bool {
+        matches!(self, LogLevel::Silent)
+    }
+    #[inline]
     pub fn show_progress(self) -> bool {
         matches!(self, LogLevel::Default | LogLevel::Verbose)
+    }
+    #[inline]
+    pub fn without_progress(self) -> Self {
+        match self {
+            LogLevel::Default => LogLevel::DefaultNoProgress,
+            LogLevel::Verbose => LogLevel::VerboseNoProgress,
+            other => other,
+        }
     }
 }
 
 pub use crate::config_version::ConfigVersion;
+pub use bun_install_types::DependencyGroup;
 pub use bun_install_types::NodeLinker::NodeLinker;
-
-#[derive(Default, Copy, Clone)]
-pub struct Update {
-    pub(crate) development: bool,
-    pub(crate) optional: bool,
-    pub(crate) peer: bool,
-}
 
 // mkdir -p + open the dir. Callers store the raw `Fd` (`options.global_bin_dir: Fd`).
 pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
@@ -669,7 +675,22 @@ impl Options {
                 .set(Enable::ONLY_MISSING, cli.only_missing || cli.analyze);
 
             if !cli.registry.is_empty() {
-                self.scope.url = bun_url::OwnedURL::from_href(cli.registry.into());
+                let new_url = bun_url::URL::parse(cli.registry);
+                let same_origin = {
+                    let prev_url = self.scope.url.url();
+                    bun_core::without_trailing_slash(new_url.host)
+                        == bun_core::without_trailing_slash(prev_url.host)
+                        && (new_url.is_https() || !prev_url.is_https())
+                };
+                if !same_origin {
+                    self.scope.token = Box::default();
+                    self.scope.auth = Box::default();
+                    self.scope.user = Box::default();
+                }
+                let href: Box<[u8]> = cli.registry.into();
+                self.scope.url_hash =
+                    Npm::registry::Scope::hash(bun_core::without_trailing_slash(&href));
+                self.scope.url = bun_url::OwnedURL::from_href(href);
             }
 
             if let Some(cache_dir) = cli.cache_dir {
@@ -696,7 +717,7 @@ impl Options {
                 self.do_.set(Do::SAVE_LOCKFILE, false);
             }
 
-            if cli.no_summary || cli.silent {
+            if cli.no_summary || cli.log_level.is_silent() {
                 self.do_.set(Do::SUMMARY, false);
             }
 
@@ -755,30 +776,13 @@ impl Options {
                 self.node_linker = node_linker;
             }
 
-            let disable_progress_bar = default_disable_progress_bar || cli.no_progress;
-
-            if cli.verbose {
-                self.log_level = if disable_progress_bar {
-                    LogLevel::VerboseNoProgress
-                } else {
-                    LogLevel::Verbose
-                };
-                // SAFETY: main-thread CLI option load — single writer.
-                super::PackageManager::set_verbose_install(true);
-            } else if cli.silent {
-                self.log_level = LogLevel::Silent;
-                super::PackageManager::set_verbose_install(false);
-            } else if cli.quiet {
-                self.log_level = LogLevel::Quiet;
-                super::PackageManager::set_verbose_install(false);
+            self.log_level = if default_disable_progress_bar || cli.no_progress {
+                cli.log_level.without_progress()
             } else {
-                self.log_level = if disable_progress_bar {
-                    LogLevel::DefaultNoProgress
-                } else {
-                    LogLevel::Default
-                };
-                super::PackageManager::set_verbose_install(false);
-            }
+                cli.log_level
+            };
+            // SAFETY: main-thread CLI option load — single writer.
+            super::PackageManager::set_verbose_install(cli.log_level.is_verbose());
 
             if cli.no_verify {
                 self.do_.set(Do::VERIFY_INTEGRITY, false);
@@ -822,13 +826,7 @@ impl Options {
                 self.enable.set(Enable::FORCE_SAVE_LOCKFILE, true);
             }
 
-            if cli.development {
-                self.update.development = cli.development;
-            } else if cli.optional {
-                self.update.optional = cli.optional;
-            } else if cli.peer {
-                self.update.peer = cli.peer;
-            }
+            self.update = cli.dependency_group;
 
             match &cli.patch {
                 command_line_arguments::PatchOpts::Nothing => {}

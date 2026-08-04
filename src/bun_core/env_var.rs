@@ -67,6 +67,8 @@ new!(pub BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: boolean, "BUN_DEBUG_ENA
 // to return true without mutating `/etc/NIXOS` on the shared rootfs. Used by
 // `test/regression/issue/29290.test.ts` to exercise the Nix-host branch.
 new!(pub BUN_DEBUG_FORCE_NIX_HOST: boolean, "BUN_DEBUG_FORCE_NIX_HOST", { default: false });
+// Testing hook for #15753: enable the glibc-addon pre-dlopen check on glibc hosts.
+new!(pub BUN_INTERNAL_NAPI_FORCE_MUSL_CHECK: boolean, "BUN_INTERNAL_NAPI_FORCE_MUSL_CHECK", { default: false });
 new!(pub BUN_DEBUG_HASH_RANDOM_SEED: unsigned, "BUN_DEBUG_HASH_RANDOM_SEED", { deser: { error_handling: NotSet } });
 new!(pub BUN_DEBUG_QUIET_LOGS: boolean, "BUN_DEBUG_QUIET_LOGS", {});
 new!(pub BUN_DEBUG_TEST_TEXT_LOCKFILE: boolean, "BUN_DEBUG_TEST_TEXT_LOCKFILE", { default: false });
@@ -81,6 +83,10 @@ new!(pub BUN_ENABLE_CRASH_REPORTING: boolean, "BUN_ENABLE_CRASH_REPORTING", {});
 // so nothing it spawned outlives it. See `src/io/ParentDeathWatchdog.rs`.
 new!(pub BUN_FEATURE_FLAG_NO_ORPHANS: boolean, "BUN_FEATURE_FLAG_NO_ORPHANS", { default: false });
 new!(pub BUN_FEATURE_FLAG_DUMP_CODE: string, "BUN_FEATURE_FLAG_DUMP_CODE", {});
+// Counted down on each idle event-loop poll; while >0 the poll runs `heap.stopIfNecessary()` so pending finalizers get a turn (see `Bun__JSC_onBeforeWait`).
+new!(pub BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: unsigned, "BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS", {});
+new!(pub BUN_GC_TIMER_DISABLE: boolean, "BUN_GC_TIMER_DISABLE", {});
+new!(pub BUN_GC_TIMER_INTERVAL: unsigned, "BUN_GC_TIMER_INTERVAL", {});
 // TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior
 // so we'll keep it for now.
 new!(pub BUN_INOTIFY_COALESCE_INTERVAL: unsigned, "BUN_INOTIFY_COALESCE_INTERVAL", { default: 100_000 });

@@ -4,6 +4,7 @@ import { chmodSync, rmSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
+  emptyProcessMaxRSS,
   exampleSite,
   exampleHtml as fixture,
   gc,
@@ -13,6 +14,8 @@ import {
   isFlaky,
   isMacOS,
   isWindows,
+  rss,
+  runFixtureMaxRSS,
   tls,
   tmpdirSync,
   withoutAggressiveGC,
@@ -25,6 +28,7 @@ import net from "net";
 import { join } from "path";
 import { Readable } from "stream";
 import { gzipSync } from "zlib";
+
 const tmp_dir = tmpdirSync();
 const fetchFixture3 = join(import.meta.dir, "fetch-leak-test-fixture-3.js");
 const fetchFixture4 = join(import.meta.dir, "fetch-leak-test-fixture-4.js");
@@ -2495,6 +2499,48 @@ describe("fetch should allow duplex", () => {
     expect(await response.text()).toBe("Hello World!");
   });
 
+  // A node Readable whose _read() pushes synchronously produces an async iterator whose
+  // .next() fulfills synchronously; the request-body sink must report backpressure so the
+  // pump suspends on flush(true) instead of spinning.
+  it("does not wedge on Readable.destroy() when _read pushes synchronously", async () => {
+    const fixture = `
+      const net = require("node:net");
+      const { Readable } = require("node:stream");
+      const srv = net.createServer(s => s.on("data", () => {}));
+      await new Promise(r => srv.listen(0, "127.0.0.1", r));
+      const chunk = Buffer.alloc(16 * 1024, 0x47);
+      const rd = new Readable({ read() { this.push(chunk); } });
+      setTimeout(() => rd.destroy(new Error("upstream went away")), 50);
+      let ticks = 0;
+      const iv = setInterval(() => { ticks++ }, 25);
+      try {
+        await fetch("http://127.0.0.1:" + srv.address().port + "/", { method: "POST", body: rd, duplex: "half" });
+        console.log("BUG: fetch resolved");
+      } catch (e) {
+        console.log("rejected:" + String(e?.message || e) + " ticks:" + ticks);
+      }
+      clearInterval(iv);
+      srv.close();
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const stdoutP = proc.stdout.text();
+    // The failure mode is a 100%-CPU spin that never yields, so proc.exited alone cannot
+    // resolve on an unfixed build; the race is the condition, not a timing crutch.
+    const exited = await Promise.race([proc.exited, sleep(isDebug ? 4000 : 2000).then(() => "timeout" as const)]);
+    if (exited === "timeout") proc.kill(9);
+    const stdout = await stdoutP;
+    expect({ exited, stdout: stdout.trim() }).toEqual({
+      exited: 0,
+      stdout: expect.stringMatching(/^rejected:upstream went away ticks:[1-9]/),
+    });
+  });
+
   it("should allow duplex using async iterator (async)", async () => {
     using server = Bun.serve({
       port: 0,
@@ -2573,6 +2619,201 @@ describe("fetch should allow duplex", () => {
 
       await response.text();
     }).not.toThrow();
+  });
+
+  // When the download source is faster than the upload target, the response-
+  // body ByteStream must pause the source socket instead of buffering the
+  // rate difference in-process. Before the fix, a chunk arriving before the
+  // upload sink attached flipped the source to BufferAll and RSS grew at the
+  // line rate (several GB in seconds on localhost).
+  it("bounds memory when the upload target is slower than the download source", async () => {
+    const fixture = `
+      const net = require("node:net");
+      const chunk = Buffer.alloc(64 * 1024, 0x47);
+      const source = net.createServer(sock => {
+        sock.write("HTTP/1.1 200 OK\\r\\ntransfer-encoding: chunked\\r\\nconnection: close\\r\\n\\r\\n");
+        const framed = Buffer.concat([Buffer.from("10000\\r\\n"), chunk, Buffer.from("\\r\\n")]);
+        const pump = () => { while (sock.write(framed)); sock.once("drain", pump); }; pump();
+      });
+      // Sink reads ~1 MB/s so the source (line rate on loopback) outpaces it.
+      const sink = net.createServer(sock => {
+        let seen = 0; const start = Date.now(); const RATE = 1024 * 1024;
+        sock.on("data", d => {
+          seen += d.length;
+          const ahead = (seen / RATE) * 1000 - (Date.now() - start);
+          if (ahead > 0) { sock.pause(); setTimeout(() => sock.resume(), ahead); }
+        });
+      });
+      await Promise.all([source, sink].map(s => new Promise(r => s.listen(0, "127.0.0.1", r))));
+
+      Bun.gc(true);
+      const rssBefore = process.memoryUsage.rss();
+      const up = await fetch(\`http://127.0.0.1:\${source.address().port}/\`);
+      fetch(\`http://127.0.0.1:\${sink.address().port}/\`, { method: "POST", body: up.body, duplex: "half" }).catch(() => {});
+
+      let peak = rssBefore;
+      for (let i = 0; i < 20; i++) {
+        await Bun.sleep(100);
+        peak = Math.max(peak, process.memoryUsage.rss());
+      }
+      console.log(JSON.stringify({ deltaMB: (peak - rssBefore) / 1024 / 1024 }));
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { deltaMB } = JSON.parse(stdout.trim());
+    // Without the fix RSS grows by hundreds of MB per second; with it, the
+    // in-flight bytes are bounded by kernel socket buffers plus one chunk.
+    expect(deltaMB).toBeLessThan(isASAN || isDebug ? 160 : 64);
+    expect(exitCode).toBe(0);
+  });
+
+  // A type:"direct" stream body where pull does `await controller.write(chunk)`
+  // in a loop must suspend when the sink is backpressured: write() returns a
+  // pending Promise once the stream buffer is over the high-water mark.
+  it("suspends a type:'direct' body's controller.write() when the upload target is backpressured", async () => {
+    const fixture = `
+      const net = require("node:net");
+      const sink = net.createServer(sock => sock.pause());
+      await new Promise(r => sink.listen(0, "127.0.0.1", r));
+
+      Bun.gc(true);
+      const rssBefore = process.memoryUsage.rss();
+      let writes = 0, suspended = false;
+      const body = new ReadableStream({
+        type: "direct",
+        async pull(controller) {
+          const chunk = new Uint8Array(64 * 1024).fill(0x47);
+          while (writes < 4096) {
+            const wrote = controller.write(chunk);
+            writes++;
+            if (wrote instanceof Promise) { suspended = true; await wrote; }
+            else await 1;
+          }
+        },
+      });
+      fetch(\`http://127.0.0.1:\${sink.address().port}/\`, { method: "POST", body, duplex: "half" }).catch(() => {});
+
+      let peak = rssBefore;
+      for (let i = 0; i < 15; i++) {
+        await Bun.sleep(100);
+        peak = Math.max(peak, process.memoryUsage.rss());
+      }
+      console.log(JSON.stringify({ deltaMB: (peak - rssBefore) / 1024 / 1024, writes, suspended }));
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { deltaMB, writes, suspended } = JSON.parse(stdout.trim());
+    expect(suspended).toBe(true);
+    // Without the fix the loop is unbounded (tens of GB before harness kill);
+    // with it, writes stop once the kernel send buffer fills.
+    expect(deltaMB).toBeLessThan(isASAN || isDebug ? 96 : 32);
+    expect(writes).toBeLessThan(256);
+    expect(exitCode).toBe(0);
+  });
+
+  // Passing a response body as a request body attaches it to a native sink;
+  // the source stream must be marked locked + disturbed so a second consumer
+  // errors instead of hanging on data that will never be delivered to it.
+  it("locks the response body when it is used as a request body", async () => {
+    await using source = Bun.serve({
+      port: 0,
+      fetch: () => new Response(new ReadableStream({ pull: c => c.enqueue(new Uint8Array(64 * 1024)) })),
+    });
+    const streaming = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    await using sink = Bun.serve({
+      port: 0,
+      fetch: async req => {
+        // Body bytes arriving here proves the client has attached the
+        // source stream to its request-body sink (headers alone do not).
+        await req.body!.getReader().read();
+        streaming.resolve();
+        await gate.promise;
+        return new Response("ok");
+      },
+    });
+
+    const up = await fetch(source.url);
+    const controller = new AbortController();
+    const upload = fetch(sink.url, {
+      method: "POST",
+      body: up.body,
+      duplex: "half",
+      signal: controller.signal,
+    } as RequestInit).catch(() => {});
+
+    await streaming.promise;
+    expect(up.body!.locked).toBe(true);
+    expect(up.bodyUsed).toBe(true);
+    expect(() => up.body!.getReader()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+
+    gate.resolve();
+    controller.abort();
+    await upload;
+  });
+
+  // A Bun.serve handler forwarding req.body to a slower upload target must
+  // back-pressure the uploading client rather than buffering the difference:
+  // the request-body ByteStream stops reading from the inbound socket while
+  // the outbound sink is over its high-water mark.
+  it("bounds memory when a handler forwards req.body to a stalled target", async () => {
+    const fixture = `
+      const net = require("node:net");
+      const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = 2048; // 128 MB
+      // Upload target stalls before reading, then drains and reports the total.
+      const { promise: drained, resolve: onDrained } = Promise.withResolvers();
+      const sink = net.createServer(sock => {
+        let got = 0;
+        sock.pause();
+        setTimeout(() => sock.resume(), 500);
+        sock.on("data", d => { got += d.length; if (got >= CHUNK.length * COUNT) onDrained(got); });
+      });
+      await new Promise(r => sink.listen(0, "127.0.0.1", r));
+
+      const proxy = Bun.serve({
+        port: 0,
+        idleTimeout: 0,
+        maxRequestBodySize: 512 * 1024 * 1024,
+        async fetch(req) {
+          await fetch(\`http://127.0.0.1:\${sink.address().port}/\`, { method: "POST", body: req.body, duplex: "half" }).catch(() => {});
+          return new Response("ok");
+        },
+      });
+
+      // Client uploads exactly COUNT chunks as fast as its socket accepts.
+      const client = net.connect(proxy.port, "127.0.0.1", () => {
+        client.write("POST / HTTP/1.1\\r\\nHost: x\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n");
+        const framed = Buffer.concat([Buffer.from("10000\\r\\n"), CHUNK, Buffer.from("\\r\\n")]);
+        let n = 0;
+        const pump = () => { while (n < COUNT) { n++; if (!client.write(framed)) return client.once("drain", pump); } client.write("0\\r\\n\\r\\n"); };
+        pump();
+      });
+      client.on("error", () => {});
+
+      console.log(JSON.stringify({ drained: (await drained) >= CHUNK.length * COUNT }));
+      process.exit(0);
+    `;
+    const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
+      runFixtureMaxRSS(fixture, { drained: true }),
+      emptyProcessMaxRSS(),
+    ]);
+    // Without inbound back-pressure the proxy absorbs the whole payload while
+    // the target stalls; with it the uploader's socket fills instead.
+    expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 96);
   });
 });
 
@@ -2925,11 +3166,11 @@ it("releases interim 1xx response bytes as they are parsed while waiting for the
 
   try {
     Bun.gc(true);
-    const rssBefore = process.memoryUsage.rss();
+    const rssBefore = rss();
     const responsePromise = fetch(`http://localhost:${port}/`);
     await floodDone;
     Bun.gc(true);
-    const rssDuringFlood = process.memoryUsage.rss();
+    const rssDuringFlood = rss();
 
     // Complete the partially written interim response, then send the real response.
     const socket = sockets[0];

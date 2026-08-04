@@ -280,7 +280,7 @@ pub struct PosixBufferedWriter<Parent: PosixBufferedWriterParent> {
     pub handle: PollOrFd,
     /// `None` only between `Default` and `set_parent`; every dispatch path
     /// assumes it is set (see SAFETY comments at the call sites).
-    pub parent: Option<bun_ptr::ParentRef<Parent>>,
+    pub parent: Option<bun_ptr::ParentRef<Parent, bun_ptr::Mut>>,
     pub(crate) is_done: bool,
     pub(crate) pollable: bool,
     pub(crate) closed_without_reporting: bool,
@@ -503,9 +503,9 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     pub fn set_parent(&mut self, parent: *mut Parent) {
         // Reject null up front: every dispatch path past this point assumes
         // `self.parent` is set (see the type-invariant doc on `parent_event_loop`).
-        self.parent = Some(bun_ptr::ParentRef::from(
-            core::ptr::NonNull::new(parent).expect("set_parent: parent must not be null"),
-        ));
+        let parent = core::ptr::NonNull::new(parent).expect("set_parent: parent must not be null");
+        // SAFETY: caller passes the live owning `Parent` (write provenance).
+        self.parent = Some(unsafe { bun_ptr::ParentRef::from_raw_mut(parent.as_ptr()) });
         // reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle
@@ -600,6 +600,8 @@ pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
     pub is_done: bool,
     pub(crate) closed_without_reporting: bool,
     pub force_sync: bool,
+    /// Last reported `WriteStatus == Pending` (i.e. write(2) returned EAGAIN).
+    backed_up: core::cell::Cell<bool>,
 }
 
 impl<Parent: PosixStreamingWriterParent> Default for PosixStreamingWriter<Parent> {
@@ -611,6 +613,7 @@ impl<Parent: PosixStreamingWriterParent> Default for PosixStreamingWriter<Parent
             is_done: false,
             closed_without_reporting: false,
             force_sync: false,
+            backed_up: core::cell::Cell::new(false),
         }
     }
 }
@@ -680,6 +683,8 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     /// through this accessor.
     #[inline]
     fn parent_on_write(&self, amount: usize, status: WriteStatus) {
+        // on_write may re-enter write(); record first so re-entry leaves the newer value.
+        self.backed_up.set(status == WriteStatus::Pending);
         // SAFETY: type invariant — set-once parent backref outlives writer.
         unsafe { Parent::on_write(self.parent(), amount, status) }
     }
@@ -705,6 +710,11 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
     pub fn has_pending_data(&self) -> bool {
         self.outgoing.is_not_empty()
+    }
+
+    /// write(2) returned EAGAIN (distinct from has_pending_data()'s coalesce buffer).
+    pub fn is_backed_up(&self) -> bool {
+        self.backed_up.get()
     }
 
     /// Bytes accepted from callers that have not reached the fd yet.
@@ -979,6 +989,8 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                 self.outgoing.reset();
             }
         }
+        // drain_buffered_data skips parent_on_write; leftover bytes = kernel refused them.
+        self.backed_up.set(self.outgoing.is_not_empty());
         rc
     }
 
@@ -2018,6 +2030,11 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 
     pub fn has_pending_data(&self) -> bool {
         self.outgoing.is_not_empty() || self.current_payload.is_not_empty()
+    }
+
+    /// process_send found a uv_write already in flight (current_payload alone is not backpressure).
+    pub fn is_backed_up(&self) -> bool {
+        self.outgoing.is_not_empty()
     }
 
     /// Bytes accepted from callers that have not reached the fd yet: queued in

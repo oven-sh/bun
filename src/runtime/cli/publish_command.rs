@@ -542,7 +542,7 @@ impl PublishCommand {
             match PackageManager::init(&mut *ctx, cli.clone(), Subcommand::Publish) {
                 Ok(v) => v,
                 Err(err) => {
-                    if !cli.silent {
+                    if !cli.log_level.is_silent() {
                         if err == bun_install::Error::MissingPackageJSON {
                             Output::err_generic("missing package.json, nothing to publish", ());
                         }
@@ -838,14 +838,13 @@ impl PublishCommand {
             package_url,
             headers.entries,
             headers.content.written_slice(),
-            &raw mut response_buf,
             b"",
             None,
             None,
             http::FetchRedirect::Follow,
         );
 
-        let Ok(res) = req.send_sync() else {
+        let Ok(res) = req.send_sync(&mut response_buf) else {
             return false;
         };
         if res.status_code() != 200 {
@@ -901,8 +900,9 @@ impl PublishCommand {
         }
 
         // continues from `printSummary`
+        let registry_href = registry_url.href_without_auth();
         bun_core::pretty!(
-            "<b><blue>Tag<r>: {}\n<b><blue>Access<r>: {}\n<b><blue>Registry<r>: {}\n",
+            "<b><blue>Tag<r>: {}\n<b><blue>Access<r>: {}\n<b><blue>Registry<r>: {}/\n",
             bstr::BStr::new(if !ctx.manager.options.publish_config.tag.is_empty() {
                 ctx.manager.options.publish_config.tag
             } else {
@@ -913,7 +913,7 @@ impl PublishCommand {
             } else {
                 "default"
             },
-            bstr::BStr::new(registry.url.href()),
+            bstr::BStr::new(strings::without_trailing_slash(&registry_href)),
         );
 
         // dry-run stops here
@@ -963,14 +963,13 @@ impl PublishCommand {
             publish_url.clone(),
             publish_headers.entries,
             publish_headers.content.written_slice(),
-            &raw mut response_buf,
             publish_req_body,
             None,
             None,
             http::FetchRedirect::Follow,
         );
 
-        let res = match req.send_sync() {
+        let res = match req.send_sync(&mut response_buf) {
             Ok(r) => r,
             Err(e) => {
                 if e == bun_http::Error::Alloc(bun_alloc::AllocError) {
@@ -1058,14 +1057,13 @@ impl PublishCommand {
                     publish_url,
                     otp_headers.entries,
                     otp_headers.content.written_slice(),
-                    &raw mut response_buf,
                     publish_req_body,
                     None,
                     None,
                     http::FetchRedirect::Follow,
                 );
 
-                let otp_res = match otp_req.send_sync() {
+                let otp_res = match otp_req.send_sync(&mut response_buf) {
                     Ok(r) => r,
                     Err(e) => {
                         if e == bun_http::Error::Alloc(bun_alloc::AllocError) {
@@ -1172,6 +1170,10 @@ impl PublishCommand {
                     // SAFETY: `buf[len] == 0`; arena-backed `'static`.
                     ZStr::from_buf(&buf[..], len)
                 };
+                let auth_url_is_web = {
+                    let auth_url = URL::parse(auth_url_str.as_bytes());
+                    auth_url.is_http() || auth_url.is_https()
+                };
 
                 // important to clone because it belongs to `response_buf`, and `response_buf` will be
                 // reused with the following requests
@@ -1179,10 +1181,24 @@ impl PublishCommand {
                     break 'try_web;
                 };
                 let done_url = URL::parse(crate::cli::cli_dupe(done_url_str));
+                {
+                    let registry_url = registry.url.url();
+                    if !(done_url.is_http() || done_url.is_https())
+                        || done_url.protocol != registry_url.protocol
+                        || done_url.hostname != registry_url.hostname
+                        || done_url.get_port_auto() != registry_url.get_port_auto()
+                    {
+                        break 'try_web;
+                    }
+                }
 
-                bun_core::prettyln!(
-                    "\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n",
-                );
+                if auth_url_is_web {
+                    bun_core::prettyln!(
+                        "\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n",
+                    );
+                } else {
+                    bun_core::prettyln!("\nAuthenticate your account at:\n");
+                }
 
                 const PADDING: usize = 1;
 
@@ -1242,18 +1258,20 @@ impl PublishCommand {
                 Output::print(format_args!("{}\n", bottom_right));
                 Output::flush();
 
-                // on another thread because pressing enter is not required
-                match std::thread::Builder::new()
-                    .spawn(move || Self::press_enter_to_open_in_browser(auth_url_str))
-                {
-                    Ok(_t) => { /* JoinHandle dropped → detached */ }
-                    Err(_e) => {
-                        Output::err(
-                            "ThreadSpawn",
-                            "failed to spawn thread for opening auth url",
-                            (),
-                        );
-                        Global::crash();
+                if auth_url_is_web {
+                    // on another thread because pressing enter is not required
+                    match std::thread::Builder::new()
+                        .spawn(move || Self::press_enter_to_open_in_browser(auth_url_str))
+                    {
+                        Ok(_t) => { /* JoinHandle dropped → detached */ }
+                        Err(_e) => {
+                            Output::err(
+                                "ThreadSpawn",
+                                "failed to spawn thread for opening auth url",
+                                (),
+                            );
+                            Global::crash();
+                        }
                     }
                 }
 
@@ -1276,14 +1294,13 @@ impl PublishCommand {
                         done_url.clone(),
                         auth_headers.entries.clone()?,
                         auth_headers.content.written_slice(),
-                        response_buf,
                         b"",
                         None,
                         None,
                         http::FetchRedirect::Follow,
                     );
 
-                    let res = match req.send_sync() {
+                    let res = match req.send_sync(response_buf) {
                         Ok(r) => r,
                         Err(e) => {
                             if e == bun_http::Error::Alloc(bun_alloc::AllocError) {
@@ -1494,9 +1511,12 @@ impl PublishCommand {
                         // always use replace https with http
                         // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
                         bstr::BStr::new(strings::without_trailing_slash(strings::without_prefix(
-                            registry.url.href(),
-                            b"https://"
-                        ),)),
+                            strings::without_prefix(
+                                &registry.url.url().href_without_auth(),
+                                b"https://"
+                            ),
+                            b"http://",
+                        ))),
                         bstr::BStr::new(package_name),
                         pack::fmt_tarball_filename(
                             package_name,

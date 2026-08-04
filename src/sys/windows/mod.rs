@@ -1325,6 +1325,14 @@ pub(crate) const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION: DWORD = 0x400;
 pub(crate) const JOB_OBJECT_LIMIT_BREAKAWAY_OK: DWORD = 0x800;
 pub(crate) const JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK: DWORD = 0x00001000;
 
+/// `LimitFlags` for a kill-on-close Job whose members are added by
+/// inheritance (`--no-orphans`, the parallel-test coordinator). Omits
+/// `SILENT_BREAKAWAY_OK` on purpose: that would make every child escape the
+/// Job. libuv's global job sets it because libuv assigns each child itself.
+pub const JOB_LIMIT_FLAGS_KILL_TREE_ON_CLOSE: DWORD = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION
+    | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+
 pub mod rescle {
     use super::*;
 

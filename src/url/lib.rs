@@ -121,7 +121,7 @@ pub mod whatwg {
         pub fn from_utf8(input: &[u8]) -> Option<core::ptr::NonNull<URL>> {
             Self::from_string(&String::borrow_utf8(input))
         }
-        /// Exactly the same as `hash`, excluding the leading '#'.
+        /// The URL fragment (the part after `#`), excluding the leading '#'.
         pub fn fragment_identifier(&self) -> String {
             URL__fragmentIdentifier(self)
         }
@@ -133,8 +133,8 @@ pub mod whatwg {
         }
         /// Returns the host WITH the port.
         ///
-        /// Note that this does NOT match JS behavior which returns the host without the port. See
-        /// `host` for the JS equivalent of `hostname`.
+        /// Note that this does NOT match JS `hostname`, which excludes the port (that
+        /// port-less form is `bun_jsc::URL::host`).
         ///
         /// ```text
         /// URL("http://example.com:8080").hostname() => "example.com:8080"
@@ -429,7 +429,7 @@ impl<'a> URL<'a> {
     }
 
     pub fn is_ip_address(&self) -> bool {
-        strings::is_ip_address(self.hostname)
+        bun_core::ip_address::is_ip_address(self.hostname)
     }
 
     pub fn has_valid_port(&self) -> bool {
@@ -461,8 +461,6 @@ impl<'a> URL<'a> {
         basename: &[u8],
         extname: &[u8],
     ) -> &'b [u8] {
-        let mut buf = Self::join_buf_uninit();
-
         let mut path_parts: [&[u8]; 10] = [b""; 10];
         let mut path_end: usize = 0;
 
@@ -494,6 +492,18 @@ impl<'a> URL<'a> {
             path_end += 1;
         }
 
+        let mut total: usize = 0;
+        for part in &path_parts[0..path_end] {
+            total += part.len();
+        }
+        let mut buf_stack = Self::join_buf_uninit();
+        let mut buf_heap: Vec<u8>;
+        let buf: &mut [u8] = if total <= buf_stack.len() {
+            &mut buf_stack
+        } else {
+            buf_heap = vec![0u8; total];
+            &mut buf_heap
+        };
         let mut buf_i: usize = 0;
         for part in &path_parts[0..path_end] {
             buf[buf_i..buf_i + part.len()].copy_from_slice(part);
@@ -510,8 +520,16 @@ impl<'a> URL<'a> {
         basename: &[u8],
         extname: &[u8],
     ) -> crate::Result<()> {
-        let mut out = Self::join_buf_uninit();
-        let normalized_path = Self::join_normalize(&mut out, prefix, dirname, basename, extname);
+        let needed = 2 + prefix.len() + dirname.len() + basename.len() + extname.len();
+        let mut out_stack = Self::join_buf_uninit();
+        let mut out_heap: Vec<u8>;
+        let out: &mut [u8] = if needed <= out_stack.len() {
+            &mut out_stack
+        } else {
+            out_heap = vec![0u8; needed];
+            &mut out_heap
+        };
+        let normalized_path = Self::join_normalize(out, prefix, dirname, basename, extname);
 
         writer.write_all(self.origin)?;
         writer.write_all(b"/")?;
@@ -536,9 +554,16 @@ impl<'a> URL<'a> {
             v.extend_from_slice(absolute_path);
             Ok(v.into_boxed_slice())
         } else {
-            let mut out = Self::join_buf_uninit();
-            let normalized_path =
-                Self::join_normalize(&mut out, prefix, dirname, basename, extname);
+            let needed = 2 + prefix.len() + dirname.len() + basename.len() + extname.len();
+            let mut out_stack = Self::join_buf_uninit();
+            let mut out_heap: Vec<u8>;
+            let out: &mut [u8] = if needed <= out_stack.len() {
+                &mut out_stack
+            } else {
+                out_heap = vec![0u8; needed];
+                &mut out_heap
+            };
+            let normalized_path = Self::join_normalize(out, prefix, dirname, basename, extname);
             let mut v = Vec::with_capacity(self.origin.len() + 1 + normalized_path.len());
             v.extend_from_slice(self.origin);
             v.extend_from_slice(b"/");
@@ -999,11 +1024,21 @@ impl QueryStringMap {
                     &scanner.query.query_string[name.offset as usize..][..name.length as usize],
                 ) {
                     Ok(n) => n,
-                    Err(_) => continue,
+                    Err(_) => {
+                        buf.truncate(buf_writer_pos as usize);
+                        continue;
+                    }
                 };
                 name.offset = buf_writer_pos;
                 buf_writer_pos += name.length;
                 name_hash = wyhash(&buf[name.offset as usize..][..name.length as usize]);
+                if let Some(index) = list.iter().position(|p| p.name_hash == name_hash) {
+                    if index < route_parameter_begin {
+                        continue;
+                    }
+
+                    name = list[index].name;
+                }
             } else {
                 name_hash = wyhash(result.raw_name(scanner.query.query_string));
                 if let Some(index) = list.iter().position(|p| p.name_hash == name_hash) {
@@ -1020,7 +1055,10 @@ impl QueryStringMap {
                         &scanner.query.query_string[name.offset as usize..][..name.length as usize],
                     ) {
                         Ok(n) => n,
-                        Err(_) => continue,
+                        Err(_) => {
+                            buf.truncate(buf_writer_pos as usize);
+                            continue;
+                        }
                     };
                     name.offset = buf_writer_pos;
                     buf_writer_pos += name.length;
@@ -1032,7 +1070,10 @@ impl QueryStringMap {
                 &scanner.query.query_string[value.offset as usize..][..value.length as usize],
             ) {
                 Ok(n) => n,
-                Err(_) => continue,
+                Err(_) => {
+                    buf.truncate(buf_writer_pos as usize);
+                    continue;
+                }
             };
             value.offset = buf_writer_pos;
             buf_writer_pos += value.length;
@@ -1126,7 +1167,10 @@ impl QueryStringMap {
                     &query_string[name.offset as usize..][..name.length as usize],
                 ) {
                     Ok(n) => n,
-                    Err(_) => continue,
+                    Err(_) => {
+                        buf.truncate(buf_writer_pos as usize);
+                        continue;
+                    }
                 };
                 name.offset = buf_writer_pos;
                 buf_writer_pos += name.length;
@@ -1141,7 +1185,10 @@ impl QueryStringMap {
                         &query_string[name.offset as usize..][..name.length as usize],
                     ) {
                         Ok(n) => n,
-                        Err(_) => continue,
+                        Err(_) => {
+                            buf.truncate(buf_writer_pos as usize);
+                            continue;
+                        }
                     };
                     name.offset = buf_writer_pos;
                     buf_writer_pos += name.length;
@@ -1153,7 +1200,10 @@ impl QueryStringMap {
                 &query_string[value.offset as usize..][..value.length as usize],
             ) {
                 Ok(n) => n,
-                Err(_) => continue,
+                Err(_) => {
+                    buf.truncate(buf_writer_pos as usize);
+                    continue;
+                }
             };
             value.offset = buf_writer_pos;
             buf_writer_pos += value.length;

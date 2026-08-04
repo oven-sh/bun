@@ -636,10 +636,6 @@ export function installOnWarningListener(process, redirectPath, disabledArr) {
   // Port of https://github.com/nodejs/node/blob/main/lib/internal/process/warning.js onWarning,
   // registered as a real 'warning' listener so removeAllListeners('warning') silences it.
   const appendFileSync = redirectPath ? require("node:fs").appendFileSync : undefined;
-  // process.stderr.write, not console.error: under an inspector Session console.* emits
-  // Runtime.consoleAPICalled, and a throwing listener there is surfaced via emitWarning —
-  // console.error would re-enter and loop. stderr.write keeps hijackStderr observable.
-  const stderr = process.stderr;
   // --disable-warning names/codes as a Set: matches Node's SafeSet lookup
   // and avoids an FFI + utf8() encode per emit.
   const disabled = disabledArr && disabledArr.length ? new Set(disabledArr) : null;
@@ -655,7 +651,11 @@ export function installOnWarningListener(process, redirectPath, disabledArr) {
         // fall back to stderr per-warning; open failures retry on the next warning.
       }
     }
-    stderr.write(message + "\n");
+    // process.stderr.write, not console.error: under an inspector Session console.* emits
+    // Runtime.consoleAPICalled, and a throwing listener there is surfaced via emitWarning,
+    // so console.error would re-enter and loop. Read process.stderr per call (like Node) so
+    // a reassigned process.stderr is honored and stderr is not materialized when redirected.
+    process.stderr.write(message + "\n");
   }
 
   function onWarning(warning) {

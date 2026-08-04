@@ -6353,13 +6353,21 @@ pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
     {
         fn ensure_signed(path: &ZStr) {
             let path_str = core::str::from_utf8(path.as_bytes()).unwrap_or("");
+            // Only native addons (.node/.so) need signing before dlopen.
+            // Host executables (bun itself, /bin/sh, node, bash) are already
+            // signed or live on a read-only filesystem — re-signing them
+            // fails with ETXTBSY/EROFS and the error line ("I/O error")
+            // leaks into stderr, tripping test assertions like
+            // `stderr.not.toContain("error:")`.
+            if !path_str.ends_with(".node") && !path_str.ends_with(".so") {
+                return;
+            }
             let p = std::path::Path::new(path_str);
             // Unconditional re-sign: a stale .codesign section defeats
             // has_codesign() while the signature no longer covers the file,
-            // and the kernel then rejects the dlopen with EPERM.
-            if let Err(err) = ohos_sign::sign_selfsign_inplace_with_strip(p) {
-                eprintln!("ohos-selfsign: sign {}: {err}", p.display());
-            }
+            // and the kernel then rejects the dlopen with EPERM. Failures
+            // are silent — dlopen below reports the real error.
+            let _ = ohos_sign::sign_selfsign_inplace_with_strip(p);
         }
         ensure_signed(filename);
         // SAFETY: filename is NUL-terminated.

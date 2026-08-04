@@ -1086,9 +1086,12 @@ pub unsafe fn spawn_process_posix(
                     // Unconditional re-sign: a stale .codesign section
                     // defeats has_codesign() while the signature no longer
                     // covers the file, and exec then fails with EACCES.
-                    if let Err(err) = ohos_sign::sign_selfsign_inplace_with_strip(p) {
-                        eprintln!("ohos-selfsign: sign {}: {err}", p.display());
-                    }
+                    // Failures are silent — re-signing a running host
+                    // executable (bun itself, /bin/sh, bash) fails with
+                    // ETXTBSY/EROFS and the error line would pollute stderr,
+                    // tripping `stderr.not.toContain("error:")` assertions;
+                    // posix_spawn below reports the real error.
+                    let _ = ohos_sign::sign_selfsign_inplace_with_strip(p);
                 }
             }
         }

@@ -152,6 +152,31 @@ describe("util", () => {
       let err8 = new Error3();
       strictEqual(util.isError(err8), true);
     });
+
+    it("throws on a revoked proxy instead of crashing", () => {
+      const { proxy, revoke } = Proxy.revocable({}, {});
+      revoke();
+      expect(() => util.isError(proxy)).toThrow(TypeError);
+    });
+
+    it("propagates an exception from a getPrototypeOf trap", () => {
+      const trapError = new Error("from trap");
+      const proxy = new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            throw trapError;
+          },
+        },
+      );
+      expect(() => util.isError(proxy)).toThrow(trapError);
+    });
+
+    it("invokes a getPrototypeOf trap instead of crashing", () => {
+      strictEqual(util.isError(new Proxy({}, { getPrototypeOf: () => null })), false);
+      strictEqual(util.isError(new Proxy({}, { getPrototypeOf: () => Error.prototype })), true);
+      strictEqual(util.isError(new Proxy(new Error("x"), {})), true);
+    });
   });
 
   describe("isObject", () => {

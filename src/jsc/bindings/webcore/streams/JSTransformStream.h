@@ -65,8 +65,9 @@ public:
 
     // Native byte-producing subclasses only: when `readStreamIntoSink` attaches a
     // native JSSink controller to this transform, the transform arms write coder
-    // output straight to `m_nativeSinkPtr` via `JSSink__writeBytes` instead of
-    // wrapping it in a JSUint8Array and enqueueing on the readable.
+    // output straight to `m_nativeSinkPtr` via the Rust SinkHandle dispatcher
+    // (Bun__NativeTransformSink__writeBytes) instead of wrapping it in a
+    // JSUint8Array and enqueueing on the readable.
     // `m_nativeSinkReadyPromise` is the transform-algorithm result returned on
     // sink backpressure; the sink's onReady resolves it.
     JSC::WriteBarrier<JSC::JSObject> m_nativeSinkCell;

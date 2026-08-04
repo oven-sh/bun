@@ -67,29 +67,32 @@ test.skipIf(isWindows || !nodeExe())(
 );
 
 test.skipIf(isWindows || !nodeExe())(
-  "releases the descriptor of a received handle whose type it does not accept",
+  "receives a dgram.Socket handle from a node child and adopts its descriptor",
   async () => {
     const parentSource = [
-      `let reported = false;`,
-      `const handleFailed = Promise.withResolvers();`,
-      `process.on("uncaughtException", err => {`,
-      `  if (!reported) {`,
-      `    reported = true;`,
-      `    console.log("handle-error:", err.message);`,
-      `    handleFailed.resolve();`,
-      `  }`,
-      `});`,
-      `const childSource = 'const dgram = require("dgram"); const s = dgram.createSocket("udp4"); s.bind(0, () => { process.send("x", s); });';`,
+      `const dgram = require("node:dgram");`,
+      `const gotHandle = Promise.withResolvers();`,
+      `const gotDatagram = Promise.withResolvers();`,
+      `const childSource = 'const dgram = require("dgram"); const s = dgram.createSocket("udp4"); s.bind(0, "127.0.0.1", () => { process.send({ port: s.address().port }, s); });';`,
       `const child = Bun.spawn({`,
       `  cmd: [process.env.NODE_BIN, "-e", childSource],`,
       `  stdio: ["ignore", "inherit", "inherit"],`,
       `  serialization: "json",`,
-      `  ipc(_message, _subprocess, handle) { console.log("unexpected handle:", String(handle)); },`,
+      `  ipc(message, _subprocess, handle) { gotHandle.resolve({ message, handle }); },`,
       `  env: { ...process.env },`,
       `});`,
-      `await handleFailed.promise;`,
+      `const { message, handle } = await gotHandle.promise;`,
+      `console.log("message port:", typeof message.port === "number" && message.port > 0);`,
+      `console.log("handle is a dgram.Socket:", handle instanceof dgram.Socket);`,
+      `console.log("adopted port matches:", handle.address().port === message.port);`,
       `child.kill();`,
       `await child.exited;`,
+      `handle.on("message", buf => gotDatagram.resolve(buf.toString()));`,
+      `const sender = dgram.createSocket("udp4");`,
+      `sender.send("ping", message.port, "127.0.0.1");`,
+      `console.log("datagram:", await gotDatagram.promise);`,
+      `sender.close();`,
+      `handle.close();`,
       `console.log("done");`,
     ].join("\n");
 
@@ -102,8 +105,15 @@ test.skipIf(isWindows || !nodeExe())(
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ stdout: normalizeBunSnapshot(stdout), exitCode }).toEqual({
-      stdout: "handle-error: dgram.Socket handles are not supported over IPC\ndone",
+    expect({ stdout: normalizeBunSnapshot(stdout), stderr, exitCode }).toEqual({
+      stdout: [
+        "message port: true",
+        "handle is a dgram.Socket: true",
+        "adopted port matches: true",
+        "datagram: ping",
+        "done",
+      ].join("\n"),
+      stderr: "",
       exitCode: 0,
     });
   },

@@ -31,7 +31,6 @@ class GlobalObject;
 namespace Bun {
 class StrongRootBlock;
 struct TestIsolationBaseline;
-struct InternalModuleExecutableCache;
 }
 
 namespace WebCore {
@@ -148,12 +147,6 @@ public:
         void operator()(Bun::TestIsolationBaseline*) const;
     };
     std::unique_ptr<Bun::TestIsolationBaseline, TestIsolationBaselineDeleter> testIsolationBaseline;
-
-    // See InternalModuleExecutableCache (InternalModuleRegistry.cpp).
-    struct InternalModuleExecutableCacheDeleter {
-        void operator()(Bun::InternalModuleExecutableCache*) const;
-    };
-    std::unique_ptr<Bun::InternalModuleExecutableCache, InternalModuleExecutableCacheDeleter> internalModuleExecutableCache;
 
 private:
     bool isWebCoreJSClientData() const final { return true; }

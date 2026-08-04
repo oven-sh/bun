@@ -413,11 +413,14 @@ describe.concurrent("bun test --isolate", () => {
   });
 });
 
-// When a file leaves globalThis in its post-preload shape, --isolate reuses the
-// global (scrubbing leaked own properties and dropping only project-path module
+// Opt-in via BUN_FEATURE_FLAG_EXPERIMENTAL_ISOLATION_GLOBAL_REUSE=1: when a
+// file leaves globalThis in its post-preload shape, --isolate reuses the global
+// (scrubbing leaked own properties and dropping only project-path module
 // records) instead of allocating a fresh one. A file that overwrites a built-in
 // global forces a full swap.
-describe.concurrent("--isolate global reuse", () => {
+describe.concurrent("--isolate experimental global reuse", () => {
+  const REUSE_ENV = { BUN_FEATURE_FLAG_EXPERIMENTAL_ISOLATION_GLOBAL_REUSE: "1" };
+
   // Fixture shared by the reuse/swap/disable tests: the last file reports
   // {reuse, swap} so the child assertion is in one place and can't drift.
   const reuseFixtures = (dirtyA: string, assertB: string) => ({
@@ -431,18 +434,21 @@ describe.concurrent("--isolate global reuse", () => {
       test("a", () => {
         counter.n++;
         (globalThis as any).__leakedFromA = counter;
+        (globalThis as any)[Symbol.for("leakedSym")] = counter;
         pkg.slot = "set-by-a";
         ${dirtyA}
         expect(counter.n).toBe(1);
       });
     `,
     "b.test.ts": `
-      import { test, expect } from "bun:test";
+      import { test, expect, jest } from "bun:test";
       import { counter } from "./state";
       import pkg from "pkg";
       test("b", () => {
         expect(counter.n).toBe(0);
         expect((globalThis as any).__leakedFromA).toBeUndefined();
+        expect((globalThis as any)[Symbol.for("leakedSym")]).toBeUndefined();
+        expect(jest.fn()()).toBeUndefined();
         ${assertB}
       });
     `,
@@ -470,15 +476,23 @@ describe.concurrent("--isolate global reuse", () => {
     return { stdout, stderr, exitCode, stats };
   }
 
+  test("is off by default: every file gets a full swap", async () => {
+    using dir = tempDir("isolate-reuse-default", reuseFixtures("", `expect(pkg.slot).toBe(null);`));
+    const { stderr, stats, exitCode } = await runIsolate(String(dir));
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+    expect(stats).toEqual({ reuse: 0, swap: 0 });
+    expect(exitCode).toBe(0);
+  });
+
   test("reuses the global and keeps node_modules records when nothing on globalThis was overwritten", async () => {
     using dir = tempDir(
       "isolate-reuse-clean",
       // b observes the node_modules record survived (pkg.slot still "set-by-a")
       // while the project-path ./state module was dropped (counter.n is 0) and
-      // the leaked own property was scrubbed.
+      // the leaked own properties (string- and symbol-keyed) were scrubbed.
       reuseFixtures("", `expect(pkg.slot).toBe("set-by-a");`),
     );
-    const { stderr, stats, exitCode } = await runIsolate(String(dir));
+    const { stderr, stats, exitCode } = await runIsolate(String(dir), REUSE_ENV);
     expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
     expect(stats).toEqual({ reuse: 2, swap: 0 });
     expect(exitCode).toBe(0);
@@ -496,7 +510,7 @@ describe.concurrent("--isolate global reuse", () => {
          expect(pkg.slot).toBe(null);`,
       ),
     );
-    const { stderr, stats, exitCode } = await runIsolate(String(dir));
+    const { stderr, stats, exitCode } = await runIsolate(String(dir), REUSE_ENV);
     expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
     // a→b is the swap; b→c is clean again.
     expect(stats).toEqual({ reuse: 1, swap: 1 });
@@ -512,19 +526,24 @@ describe.concurrent("--isolate global reuse", () => {
          expect(pkg.slot).toBe(null);`,
       ),
     );
-    const { stderr, stats, exitCode } = await runIsolate(String(dir));
+    const { stderr, stats, exitCode } = await runIsolate(String(dir), REUSE_ENV);
     expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
     expect(stats?.swap).toBeGreaterThanOrEqual(1);
     expect(exitCode).toBe(0);
   });
 
-  test("BUN_FEATURE_FLAG_DISABLE_ISOLATION_GLOBAL_REUSE=1 forces a full swap every file", async () => {
-    using dir = tempDir("isolate-reuse-disabled", reuseFixtures("", `expect(pkg.slot).toBe(null);`));
-    const { stderr, stats, exitCode } = await runIsolate(String(dir), {
-      BUN_FEATURE_FLAG_DISABLE_ISOLATION_GLOBAL_REUSE: "1",
-    });
+  test("falls back to a full swap when a leaked own property is non-configurable", async () => {
+    using dir = tempDir(
+      "isolate-reuse-nonconfig",
+      reuseFixtures(
+        `Object.defineProperty(globalThis, "__nonConfig", { value: 1, configurable: false });`,
+        `expect((globalThis as any).__nonConfig).toBeUndefined();
+         expect(pkg.slot).toBe(null);`,
+      ),
+    );
+    const { stderr, stats, exitCode } = await runIsolate(String(dir), REUSE_ENV);
     expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
-    expect(stats).toEqual({ reuse: 0, swap: 0 });
+    expect(stats).toEqual({ reuse: 1, swap: 1 });
     expect(exitCode).toBe(0);
   });
 });

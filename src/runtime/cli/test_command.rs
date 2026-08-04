@@ -2339,8 +2339,8 @@ impl TestCommand {
         if ctx.test_options.isolate {
             vm.test_isolation_enabled = true;
             vm.auto_killer.enabled = true;
-            vm.test_isolation_state.force_full_swap =
-                bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_GLOBAL_REUSE::get()
+            vm.test_isolation_state.global_reuse =
+                bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_ISOLATION_GLOBAL_REUSE::get()
                     .unwrap_or(false);
         }
 

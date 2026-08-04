@@ -6,7 +6,6 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/JSModuleLoader.h>
-#include <JavaScriptCore/StrongInlines.h>
 #include <JavaScriptCore/Debugger.h>
 #include <utility>
 
@@ -14,25 +13,7 @@
 #include "wtf/Forward.h"
 
 #include "NativeModuleImpl.h"
-
-extern "C" bool isBunTest;
-extern "C" bool Bun__VM__useIsolationSourceProviderCache(void* bunVM);
-
 namespace Bun {
-
-// createBuiltinExecutable bypasses CodeCache, so without this per-VM cache
-// every --isolate global re-parses + re-bytecodegens each internal module body.
-// Strong: a Weak would clear once the outgoing global's JSFunction is collected.
-struct InternalModuleExecutableCache {
-    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(InternalModuleExecutableCache);
-
-public:
-    struct Entry {
-        JSC::SourceCode source;
-        JSC::Strong<JSC::UnlinkedFunctionExecutable> executable;
-    };
-    std::array<Entry, BUN_INTERNAL_MODULE_COUNT> entries {};
-};
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);
 extern "C" void ByteRangeMapping__generate(BunString sourceURL, BunString code, int sourceID);
@@ -52,44 +33,24 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 // JS builtin that acts as a module. In debug mode, we use a different implementation that reads
 // from the developer's filesystem. This allows reloading code without recompiling bindings.
 
-JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, InternalModuleRegistry::Field id, const String& SOURCE, const String& moduleName, const String& urlString)
+JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, const String& SOURCE, const String& moduleName, const String& urlString)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* clientData = WebCore::clientData(vm);
-
-    JSC::UnlinkedFunctionExecutable* unlinked = nullptr;
-    JSC::SourceCode source;
-    if (auto* cache = clientData->internalModuleExecutableCache.get()) {
-        auto& entry = cache->entries[static_cast<unsigned>(id)];
-        if (entry.executable) {
-            unlinked = entry.executable.get();
-            source = entry.source;
-        }
-    }
-    if (!unlinked) {
-        auto&& origin = SourceOrigin(WTF::URL(urlString));
-        source = JSC::makeSource(SOURCE, origin, JSC::SourceTaintedOrigin::Untainted, moduleName);
-        maybeAddCodeCoverage(vm, source);
-        unlinked = createBuiltinExecutable(
-            vm, source,
-            Identifier::fromString(vm, moduleName),
-            ImplementationVisibility::Public,
-            ConstructorKind::None,
-            ConstructAbility::CannotConstruct,
-            InlineAttribute::None);
-        if (isBunTest && Bun__VM__useIsolationSourceProviderCache(clientData->bunVM)) {
-            if (!clientData->internalModuleExecutableCache)
-                clientData->internalModuleExecutableCache.reset(new InternalModuleExecutableCache);
-            auto& entry = clientData->internalModuleExecutableCache->entries[static_cast<unsigned>(id)];
-            entry.source = source;
-            entry.executable.set(vm, unlinked);
-        }
-    }
-
-    JSFunction* func = JSFunction::create(
-        vm, globalObject,
-        unlinked->link(vm, nullptr, source),
-        static_cast<JSC::JSGlobalObject*>(globalObject));
+    auto&& origin = SourceOrigin(WTF::URL(urlString));
+    SourceCode source = JSC::makeSource(SOURCE, origin, JSC::SourceTaintedOrigin::Untainted, moduleName);
+    maybeAddCodeCoverage(vm, source);
+    JSFunction* func
+        = JSFunction::create(
+            vm, globalObject,
+            createBuiltinExecutable(
+                vm, source,
+                Identifier::fromString(vm, moduleName),
+                ImplementationVisibility::Public,
+                ConstructorKind::None,
+                ConstructAbility::CannotConstruct,
+                InlineAttribute::None)
+                ->link(vm, nullptr, source),
+            static_cast<JSC::JSGlobalObject*>(globalObject));
 
     RETURN_IF_EXCEPTION(throwScope, {});
     if (globalObject->hasDebugger() && globalObject->debugger()->isInteractivelyDebugging()) [[unlikely]] {
@@ -137,12 +98,12 @@ ALWAYS_INLINE JSC::JSValue generateNativeModule(
 }
 
 #ifdef BUN_DYNAMIC_JS_LOAD_PATH
-JSValue initializeInternalModuleFromDisk(JSGlobalObject* globalObject, VM& vm, InternalModuleRegistry::Field id, const WTF::String& moduleName, WTF::String fileBase, const WTF::String& urlString)
+JSValue initializeInternalModuleFromDisk(JSGlobalObject* globalObject, VM& vm, const WTF::String& moduleName, WTF::String fileBase, const WTF::String& urlString)
 {
     WTF::String file = makeString(ASCIILiteral::fromLiteralUnsafe(BUN_DYNAMIC_JS_LOAD_PATH), "/"_s, WTF::move(fileBase));
     if (auto contents = WTF::FileSystemImpl::readEntireFile(file)) {
         auto string = WTF::String::fromUTF8(contents.value());
-        return generateModule(globalObject, vm, id, string, moduleName, urlString);
+        return generateModule(globalObject, vm, string, moduleName, urlString);
     } else {
         printf("\nFATAL: bun-debug failed to load bundled version of \"%s\" at \"%s\" (was it deleted?)\n"
                "Please re-compile Bun to continue.\n\n",
@@ -151,7 +112,7 @@ JSValue initializeInternalModuleFromDisk(JSGlobalObject* globalObject, VM& vm, I
     }
 }
 #define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, OFFSET, LENGTH, urlString) \
-    return initializeInternalModuleFromDisk(globalObject, vm, id, moduleId, filename, urlString)
+    return initializeInternalModuleFromDisk(globalObject, vm, moduleId, filename, urlString)
 #else
 
 // The module sources are linked as one read-only blob (bun_internal_modules_data,
@@ -159,7 +120,7 @@ JSValue initializeInternalModuleFromDisk(JSGlobalObject* globalObject, VM& vm, I
 // a known offset/length. createWithoutCopying is the same path the old
 // ASCIILiteral → String conversion took.
 #define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, OFFSET, LENGTH, urlString)                         \
-    return generateModule(globalObject, vm, id,                                                                                    \
+    return generateModule(globalObject, vm,                                                                                        \
         WTF::String(WTF::StringImpl::createWithoutCopying(std::span<const char>(bun_internal_modules_data + (OFFSET), (LENGTH)))), \
         moduleId, urlString)
 #endif
@@ -235,10 +196,5 @@ JSC_DEFINE_HOST_FUNCTION(InternalModuleRegistry::jsCreateInternalModuleById, (JS
 }
 
 } // namespace Bun
-
-void WebCore::JSVMClientData::InternalModuleExecutableCacheDeleter::operator()(Bun::InternalModuleExecutableCache* p) const
-{
-    delete p;
-}
 
 #undef INTERNAL_MODULE_REGISTRY_GENERATE

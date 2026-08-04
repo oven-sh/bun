@@ -720,6 +720,7 @@ extern "C" void Zig__GlobalObject__captureTestIsolationBaseline(Zig::GlobalObjec
 {
     JSC::VM& vm = globalObject->vm();
     JSC::JSLockHolder locker(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* clientData = WebCore::clientData(vm);
     if (!clientData->testIsolationBaseline)
         clientData->testIsolationBaseline.reset(new Bun::TestIsolationBaseline);
@@ -733,6 +734,11 @@ extern "C" void Zig__GlobalObject__captureTestIsolationBaseline(Zig::GlobalObjec
     // scrub never mistakes a lazy reification for a user leak.
     if (!globalObject->staticPropertiesReified())
         globalObject->reifyAllStaticProperties(globalObject);
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        baseline.capturedGlobal = nullptr;
+        return;
+    }
 
     baseline.varSymbolTableSize = globalObject->symbolTable()->size();
 
@@ -752,6 +758,7 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
 {
     JSC::VM& vm = globalObject->vm();
     JSC::JSLockHolder locker(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* clientData = WebCore::clientData(vm);
     auto* baseline = clientData->testIsolationBaseline.get();
     if (!baseline || baseline->capturedGlobal != globalObject)
@@ -806,7 +813,11 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
 
     for (auto& id : toDelete) {
         JSC::DeletePropertySlot slot;
-        JSC::JSCell::deleteProperty(globalObject, globalObject, id, slot);
+        bool deleted = JSC::JSCell::deleteProperty(globalObject, globalObject, id, slot);
+        if (scope.exception() || !deleted) [[unlikely]] {
+            scope.clearException();
+            return swap();
+        }
     }
 
     // Drop project modules (absolute path outside node_modules) so their state
@@ -838,17 +849,22 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
         auto* requireMap = globalObject->requireMap();
         WTF::Vector<JSC::JSValue, 32> evict;
         auto* iter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), requireMap, JSC::IterationKind::Keys);
+        scope.assertNoException();
         JSC::JSValue value;
         while (iter->next(globalObject, value)) {
             if (auto* str = value.toStringOrNull(globalObject); str && isProjectPath(str->view(globalObject)))
                 evict.append(value);
+            scope.assertNoException();
         }
-        for (auto& key : evict)
+        for (auto& key : evict) {
             requireMap->remove(globalObject, key);
+            scope.assertNoException();
+        }
     }
 
     globalObject->m_nextTickQueue.clear();
-    globalObject->mockModule = {};
+    globalObject->mockModule.activeSpies.clear();
+    globalObject->mockModule.activeMocks.clear();
     globalObject->globalEventScope->removeAllEventListeners();
     // The Rust side already restored the OS cwd; drop the JS-side cache so the
     // next `process.cwd()` re-reads it.

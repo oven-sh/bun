@@ -346,7 +346,7 @@ pub struct TestIsolationState {
     pub saved_cwd: Option<Box<[u8]>>,
     /// Cleared on every full swap so the next file re-captures its baseline.
     pub baseline_captured: bool,
-    pub force_full_swap: bool,
+    pub global_reuse: bool,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -4457,7 +4457,7 @@ impl VirtualMachine {
             }
         }
 
-        if self.test_isolation_enabled && !self.test_isolation_state.baseline_captured {
+        if self.test_isolation_state.global_reuse && !self.test_isolation_state.baseline_captured {
             JSGlobalObject::capture_test_isolation_baseline(self.global());
             self.test_isolation_state.baseline_captured = true;
         }
@@ -4702,7 +4702,7 @@ impl VirtualMachine {
 
         // Scrub and reuse the global if the file left it in its post-preload
         // shape; node_modules CodeBlocks and JIT'd code then survive.
-        if !self.test_isolation_state.force_full_swap
+        if self.test_isolation_state.global_reuse
             && JSGlobalObject::try_reset_for_test_isolation(old_global_ref)
         {
             return;

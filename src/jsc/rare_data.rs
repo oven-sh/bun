@@ -268,8 +268,7 @@ pub struct RareData {
 
     pub(crate) temp_pipe_read_buffer: Option<Box<PipeReadBuffer>>,
 
-    /// `node:http2` PADDED DATA scratch; handed out by value because the write it feeds
-    /// can re-enter JS and take again (see [`Self::take_h2_padded_frame_buffer`]).
+    /// `node:http2` PADDED DATA scratch; see [`Self::take_h2_padded_frame_buffer`].
     h2_padded_frame_buffer: Option<Box<H2PaddedFrameBuffer>>,
 
     // There is intentionally no `aws_signature_cache` field — storage lives in
@@ -669,8 +668,9 @@ impl RareData {
             .get_or_insert_with(bun_core::boxed_zeroed::<PipeReadBuffer>)
     }
 
-    /// Take the padded-frame scratch out of its slot (lazily allocated); a nested
-    /// caller finds the slot empty and allocates its own.
+    /// Take the padded-frame scratch out of its slot (lazily allocated). By value rather
+    /// than borrowed: the socket write it feeds can re-enter JS and reach this path
+    /// again, and that nested caller then finds the slot empty and allocates its own.
     pub fn take_h2_padded_frame_buffer(&mut self) -> Box<H2PaddedFrameBuffer> {
         self.h2_padded_frame_buffer
             .take()

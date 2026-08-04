@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { computeAllowlist } from "../../scripts/update-parallel-allowlist.mjs";
 
 const testDir = join(import.meta.dir, "..");
+const scriptPath = join(testDir, "..", "scripts", "update-parallel-allowlist.mjs");
 const table = JSON.parse(readFileSync(join(testDir, "parallel-allowlist.json"), "utf8"));
 
 test("test/parallel-allowlist.json has the shape the runner reads", () => {
@@ -86,7 +88,14 @@ describe("scripts/update-parallel-allowlist.mjs", () => {
     expect(dirs).not.toContain("js/sql");
   });
 
-  test("importing the script does not run its CLI (no token check, no network)", () => {
-    expect(typeof computeAllowlist).toBe("function");
+  test("importing the script does not run its CLI (no token check, no network)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `await import(${JSON.stringify(scriptPath)})`],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });

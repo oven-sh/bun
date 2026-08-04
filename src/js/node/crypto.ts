@@ -55,6 +55,7 @@ const {
   timingSafeEqual,
   randomInt,
   randomUUID,
+  randomUUIDv7,
   randomBytes,
   randomFillSync,
   randomFill,
@@ -70,6 +71,7 @@ const {
 const normalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
 
 const { validateString } = require("internal/validators");
+const { deprecate } = require("internal/util/deprecate");
 
 const kHandle = Symbol("kHandle");
 
@@ -284,7 +286,7 @@ Object.assign(Hash.prototype, {
   },
 });
 
-crypto_exports.Hash = Hash;
+crypto_exports.Hash = deprecate(Hash, "crypto.Hash constructor is deprecated.", "DEP0179");
 crypto_exports.createHash = function createHash(algorithm, options) {
   return new Hash(algorithm, options);
 };
@@ -318,7 +320,7 @@ Object.assign(Hmac.prototype, {
   },
 });
 
-crypto_exports.Hmac = Hmac;
+crypto_exports.Hmac = deprecate(Hmac, "crypto.Hmac constructor is deprecated.", "DEP0181");
 crypto_exports.createHmac = function createHmac(hmac, key, options) {
   return new Hmac(hmac, key, options);
 };
@@ -330,6 +332,17 @@ crypto_exports.randomFill = randomFill;
 crypto_exports.randomFillSync = randomFillSync;
 crypto_exports.randomBytes = randomBytes;
 crypto_exports.randomUUID = randomUUID;
+crypto_exports.randomUUIDv7 = randomUUIDv7;
+
+// Node only provides Argon2 when built against OpenSSL >= 3.2; BoringSSL has no
+// Argon2, so these throw the same error an unsupported Node build throws.
+// The unused parameters are declared to keep `.length` equal to Node's (3 and 2).
+crypto_exports.argon2 = function argon2(_algorithm, _parameters, _callback) {
+  throw $ERR_CRYPTO_ARGON2_NOT_SUPPORTED("Argon2 algorithm not supported");
+};
+crypto_exports.argon2Sync = function argon2Sync(_algorithm, _parameters) {
+  throw $ERR_CRYPTO_ARGON2_NOT_SUPPORTED("Argon2 algorithm not supported");
+};
 
 crypto_exports.checkPrime = checkPrime;
 crypto_exports.checkPrimeSync = checkPrimeSync;
@@ -348,7 +361,7 @@ Object.defineProperty(crypto_exports, "fips", {
 
 for (const rng of ["pseudoRandomBytes", "prng", "rng"]) {
   Object.defineProperty(crypto_exports, rng, {
-    value: randomBytes,
+    value: deprecate(randomBytes, `crypto.${rng} is deprecated.`, "DEP0115"),
     enumerable: false,
     configurable: true,
   });
@@ -364,6 +377,7 @@ crypto_exports.DiffieHellman = DiffieHellman;
 
 crypto_exports.diffieHellman = diffieHellman;
 
+ECDH.prototype.setPublicKey = deprecate(ECDH.prototype.setPublicKey, "ecdh.setPublicKey() is deprecated.", "DEP0031");
 crypto_exports.ECDH = ECDH;
 crypto_exports.createECDH = function createECDH(curve) {
   return new ECDH(curve);

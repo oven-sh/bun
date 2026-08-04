@@ -30,11 +30,6 @@ impl StringBuilder {
         unsafe { StringBuilder__appendLatin1(self, value.as_ptr(), value.len()) }
     }
 
-    pub fn append_utf16(&mut self, value: &[u16]) {
-        // SAFETY: forwards a valid (ptr,len) slice to C++.
-        unsafe { StringBuilder__appendUtf16(self, value.as_ptr(), value.len()) }
-    }
-
     pub fn append_double(&mut self, value: f64) {
         StringBuilder__appendDouble(self, value)
     }
@@ -57,10 +52,6 @@ impl StringBuilder {
 
     pub fn append_uchar(&mut self, value: u16) {
         StringBuilder__appendUChar(self, value)
-    }
-
-    pub fn append_quoted_json_string(&mut self, value: String) {
-        StringBuilder__appendQuotedJsonString(self, value)
     }
 
     pub fn to_string(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
@@ -91,14 +82,12 @@ unsafe extern "C" {
     fn StringBuilder__init(this: *mut c_void);
     safe fn StringBuilder__deinit(this: &mut StringBuilder);
     fn StringBuilder__appendLatin1(this: &mut StringBuilder, str: *const u8, len: usize);
-    fn StringBuilder__appendUtf16(this: &mut StringBuilder, str: *const u16, len: usize);
     safe fn StringBuilder__appendDouble(this: &mut StringBuilder, num: f64);
     safe fn StringBuilder__appendInt(this: &mut StringBuilder, num: i32);
     safe fn StringBuilder__appendUsize(this: &mut StringBuilder, num: usize);
     safe fn StringBuilder__appendString(this: &mut StringBuilder, str: String);
     safe fn StringBuilder__appendLChar(this: &mut StringBuilder, c: u8);
     safe fn StringBuilder__appendUChar(this: &mut StringBuilder, c: u16);
-    safe fn StringBuilder__appendQuotedJsonString(this: &mut StringBuilder, str: String);
     safe fn StringBuilder__toString(this: &mut StringBuilder, global: &JSGlobalObject) -> JSValue;
     safe fn StringBuilder__ensureUnusedCapacity(this: &mut StringBuilder, additional: usize);
 }

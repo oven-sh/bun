@@ -34,60 +34,18 @@ pub struct LifecycleScriptTimeLog {
     list: Vec<LifecycleScriptTimeLogEntry>,
 }
 
-pub struct LifecycleScriptTimeLogEntry {
-    // `LifecycleScriptSubprocess.package_name` is owned (`Box<[u8]>`) and freed
-    // on `destroy`, so the log entry must own its copy to avoid a dangling
-    // borrow. The list is at most a few dozen entries per install.
-    pub package_name: Box<[u8]>,
-    pub script_id: u8,
-    /// nanosecond duration
-    pub duration: u64,
-}
+pub struct LifecycleScriptTimeLogEntry {}
 
 impl LifecycleScriptTimeLog {
-    pub fn append_concurrent(&mut self, entry: LifecycleScriptTimeLogEntry) {
+    pub(crate) fn append_concurrent(&mut self, entry: LifecycleScriptTimeLogEntry) {
         self.mutex.lock();
         self.list.push(entry);
         self.mutex.unlock();
     }
-
-    /// this can be called if .start was never called
-    pub fn print_and_deinit(self) {
-        if cfg!(debug_assertions) {
-            if !self.mutex.try_lock() {
-                panic!("LifecycleScriptTimeLog.print is not intended to be thread-safe");
-            }
-            self.mutex.unlock();
-        }
-
-        if !self.list.is_empty() {
-            let longest: &LifecycleScriptTimeLogEntry = 'longest: {
-                let mut i: usize = 0;
-                let mut longest: u64 = self.list[0].duration;
-                for (j, item) in self.list.iter().enumerate().skip(1) {
-                    if item.duration > longest {
-                        i = j;
-                        longest = item.duration;
-                    }
-                }
-                break 'longest &self.list[i];
-            };
-
-            // extra \n will print a blank line after this one
-            bun_core::warn!(
-                "{}'s {} script took {}\n\n",
-                BStr::new(&longest.package_name),
-                lockfile::Scripts::NAMES[longest.script_id as usize],
-                bun_fmt::fmt_duration_one_decimal(longest.duration),
-            );
-            Output::flush();
-        }
-        // self.list dropped here (was `log.list.deinit(allocator)`)
-    }
 }
 
 impl PackageManager {
-    pub fn ensure_preinstall_state_list_capacity(&mut self, count: usize) {
+    pub(crate) fn ensure_preinstall_state_list_capacity(&mut self, count: usize) {
         if self.preinstall_state.len() >= count {
             return;
         }
@@ -106,13 +64,13 @@ impl PackageManager {
     /// `self.lockfile` (or an alias of it), which would alias `&mut self`;
     /// `self.lockfile` is read directly instead to keep
     /// borrowck happy.
-    pub fn set_preinstall_state(&mut self, package_id: PackageID, value: PreinstallState) {
+    pub(crate) fn set_preinstall_state(&mut self, package_id: PackageID, value: PreinstallState) {
         let count = self.lockfile.packages.len();
         self.ensure_preinstall_state_list_capacity(count);
         self.preinstall_state[package_id as usize] = value;
     }
 
-    pub fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState {
+    pub(crate) fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState {
         if (package_id as usize) >= self.preinstall_state.len() {
             return PreinstallState::Unknown;
         }
@@ -259,12 +217,12 @@ impl PackageManager {
         }
     }
 
-    pub fn has_no_more_pending_lifecycle_scripts(&mut self) -> bool {
+    pub(crate) fn has_no_more_pending_lifecycle_scripts(&mut self) -> bool {
         self.report_slow_lifecycle_scripts();
         self.pending_lifecycle_script_tasks.load(Ordering::Relaxed) == 0
     }
 
-    pub fn tick_lifecycle_scripts(&mut self) {
+    pub(crate) fn tick_lifecycle_scripts(&mut self) {
         // reshaped for borrowck — `self.event_loop.tick_once(self)`
         // would borrow `self` twice. Erase `self` to a raw context pointer
         // first; `tick_once` only forwards it opaquely to task callbacks.
@@ -293,7 +251,7 @@ impl PackageManager {
         }
     }
 
-    pub fn report_slow_lifecycle_scripts(&mut self) {
+    pub(crate) fn report_slow_lifecycle_scripts(&mut self) {
         let log_level = self.options.log_level;
         if log_level == LogLevel::Silent {
             return;
@@ -349,7 +307,7 @@ impl PackageManager {
         }
     }
 
-    pub fn load_root_lifecycle_scripts(&mut self, root_package: &Package) {
+    pub(crate) fn load_root_lifecycle_scripts(&mut self, root_package: &Package) {
         let binding_dot_gyp_path = join_abs_string_z::<platform::Auto>(
             FileSystem::instance().top_level_dir(),
             &[b"binding.gyp"],
@@ -398,7 +356,7 @@ impl PackageManager {
         optional: bool,
         foreground: bool,
         install_ctx: Option<InstallCtx<'_>>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let log_level = self.options.log_level;
         let mut any_scripts = false;
         for maybe_item in list.items.iter() {
@@ -490,7 +448,7 @@ impl PackageManager {
         Ok(())
     }
 
-    pub fn find_trusted_dependencies_from_update_requests(
+    pub(crate) fn find_trusted_dependencies_from_update_requests(
         &mut self,
     ) -> ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>> {
         // find all deps originating from --trust packages from cli
@@ -571,11 +529,6 @@ use bun_install::LogLevel;
 // ──────────────────────────────────────────────────────────────────────────
 
 #[inline]
-pub fn ensure_preinstall_state_list_capacity(this: &mut PackageManager, count: usize) {
-    this.ensure_preinstall_state_list_capacity(count)
-}
-
-#[inline]
 pub fn set_preinstall_state(
     this: &mut PackageManager,
     package_id: PackageID,
@@ -597,48 +550,4 @@ pub fn determine_preinstall_state(
     out_patchfile_hash: &mut Option<u64>,
 ) -> PreinstallState {
     this.determine_preinstall_state(pkg, out_name_and_version_hash, out_patchfile_hash)
-}
-
-#[inline]
-pub fn has_no_more_pending_lifecycle_scripts(this: &mut PackageManager) -> bool {
-    this.has_no_more_pending_lifecycle_scripts()
-}
-
-#[inline]
-pub fn tick_lifecycle_scripts(this: &mut PackageManager) {
-    this.tick_lifecycle_scripts()
-}
-
-#[inline]
-pub fn sleep(this: &mut PackageManager) {
-    this.sleep()
-}
-
-#[inline]
-pub fn report_slow_lifecycle_scripts(this: &mut PackageManager) {
-    this.report_slow_lifecycle_scripts()
-}
-
-#[inline]
-pub fn load_root_lifecycle_scripts(this: &mut PackageManager, root_package: &Package) {
-    this.load_root_lifecycle_scripts(root_package)
-}
-
-#[inline]
-pub fn spawn_package_lifecycle_scripts(
-    this: &mut PackageManager,
-    ctx: Command::Context<'_>,
-    list: ScriptsList,
-    optional: bool,
-    foreground: bool,
-    install_ctx: Option<InstallCtx<'_>>,
-) -> Result<(), bun_core::Error> {
-    this.spawn_package_lifecycle_scripts(ctx, list, optional, foreground, install_ctx)
-}
-
-#[inline]
-pub fn find_trusted_dependencies_from_update_requests(
-    this: &mut PackageManager,
-) -> ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>> {
-    this.find_trusted_dependencies_from_update_requests()
 }

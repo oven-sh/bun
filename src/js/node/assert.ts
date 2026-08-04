@@ -381,8 +381,6 @@ const SafeSetPrototypeIterator = SafeSet.prototype[SymbolIterator];
 const SafeMapPrototypeIterator = SafeMap.prototype[SymbolIterator];
 const SafeMapPrototypeHas = SafeMap.prototype.has;
 const SafeMapPrototypeGet = SafeMap.prototype.get;
-const SafeMapPrototypeSet = SafeMap.prototype.set;
-const SafeMapPrototypeDelete = SafeMap.prototype.delete;
 
 /**
  * Compares two objects or values recursively to check if they are equal.
@@ -394,33 +392,17 @@ const SafeMapPrototypeDelete = SafeMap.prototype.delete;
  * compareBranch({a: 1, b: 2, c: 3}, {a: 1, b: 2}); // true
  */
 function compareBranch(actual, expected, comparedObjects?) {
+  if (actual === expected) {
+    return actual !== 0 || ObjectIs(actual, expected);
+  }
+
   // Check for Map object equality (subset check for partialDeepStrictEqual)
   if (isMap(actual) && isMap(expected)) {
     if (expected.size > actual.size) {
       return false; // `expected` can't be a subset if it has more elements
     }
 
-    comparedObjects ??= new SafeWeakSet();
-
-    // Handle circular references
-    if (comparedObjects.has(actual)) {
-      return true;
-    }
-    comparedObjects.add(actual);
-
-    const expectedIterator = SafeMapPrototypeIterator.$call(expected);
-
-    for (const { 0: key, 1: expectedValue } of expectedIterator) {
-      if (!SafeMapPrototypeHas.$call(actual, key)) {
-        return false;
-      }
-      const actualValue = SafeMapPrototypeGet.$call(actual, key);
-      if (!compareBranch(actualValue, expectedValue, comparedObjects)) {
-        return false;
-      }
-    }
-
-    return true;
+    return withCycleGuard(actual, expected, comparedObjects, compareBranchMap);
   }
 
   // Check for ArrayBuffer object equality
@@ -462,43 +444,14 @@ function compareBranch(actual, expected, comparedObjects?) {
     return true;
   }
 
-  // Check if expected array is a subset of actual array
+  // The expected array must match a subsequence of the actual array, in order,
+  // with each element compared partially (Node's partialArrayEquiv).
   if ($isArray(actual) && $isArray(expected)) {
     if (expected.length > actual.length) {
       return false;
     }
 
-    // Create a map to count occurrences of each element in the expected array
-    const expectedCounts = new SafeMap();
-    for (const expectedItem of expected) {
-      let found = false;
-      for (const { 0: key, 1: count } of expectedCounts) {
-        if (isDeepStrictEqual(key, expectedItem)) {
-          SafeMapPrototypeSet.$call(expectedCounts, key, count + 1);
-          found = true;
-          break;
-        }
-      }
-      if (!found) {
-        SafeMapPrototypeSet.$call(expectedCounts, expectedItem, 1);
-      }
-    }
-
-    // Create a map to count occurrences of relevant elements in the actual array
-    for (const actualItem of actual) {
-      for (const { 0: key, 1: count } of expectedCounts) {
-        if (isDeepStrictEqual(key, actualItem)) {
-          if (count === 1) {
-            SafeMapPrototypeDelete.$call(expectedCounts, key);
-          } else {
-            SafeMapPrototypeSet.$call(expectedCounts, key, count - 1);
-          }
-          break;
-        }
-      }
-    }
-
-    return !expectedCounts.size;
+    return withCycleGuard(actual, expected, comparedObjects, compareBranchArray);
   }
 
   // Comparison done when at least one of the values is not an object
@@ -506,30 +459,64 @@ function compareBranch(actual, expected, comparedObjects?) {
     return isDeepStrictEqual(actual, expected);
   }
 
-  // Use Reflect.ownKeys() instead of Object.keys() to include symbol properties
-  const keysExpected = ReflectOwnKeys(expected);
+  return withCycleGuard(actual, expected, comparedObjects, compareBranchObject);
+}
 
-  comparedObjects ??= new SafeWeakSet();
+// Path-scoped cycle detection tracking each side separately: a cycle is accepted
+// only when actual and expected each cycle back on their own side together.
+function withCycleGuard(actual, expected, comparedObjects, body) {
+  comparedObjects ??= { a: new SafeWeakSet(), b: new SafeWeakSet() };
+  const { a: seenActual, b: seenExpected } = comparedObjects;
+  const hadActual = seenActual.has(actual);
+  const hadExpected = seenExpected.has(expected);
+  if (hadActual && hadExpected) return true;
+  if (hadActual || hadExpected) return false;
+  seenActual.add(actual);
+  seenExpected.add(expected);
+  const result = body(actual, expected, comparedObjects);
+  seenActual.delete(actual);
+  seenExpected.delete(expected);
+  return result;
+}
 
-  // Handle circular references
-  if (comparedObjects.has(actual)) {
-    return true;
-  }
-  comparedObjects.add(actual);
-
-  if (AssertionError === undefined) loadAssertionError();
-  // Check if all expected keys and values match
-  for (let i = 0; i < keysExpected.length; i++) {
-    const key = keysExpected[i];
-    assert(
-      ReflectHas(actual, key),
-      new AssertionError({ message: `Expected key ${String(key)} not found in actual object` }),
-    );
-    if (!compareBranch(actual[key], expected[key], comparedObjects)) {
+function compareBranchMap(actual, expected, comparedObjects) {
+  const expectedIterator = SafeMapPrototypeIterator.$call(expected);
+  for (const { 0: key, 1: expectedValue } of expectedIterator) {
+    if (!SafeMapPrototypeHas.$call(actual, key)) {
+      return false;
+    }
+    const actualValue = SafeMapPrototypeGet.$call(actual, key);
+    if (!compareBranch(actualValue, expectedValue, comparedObjects)) {
       return false;
     }
   }
+  return true;
+}
 
+function compareBranchArray(actual, expected, comparedObjects) {
+  let actualPos = 0;
+  for (let i = 0; i < expected.length; i++) {
+    const lastCandidate = actual.length - expected.length + i;
+    while (actualPos <= lastCandidate && !compareBranch(actual[actualPos], expected[i], comparedObjects)) {
+      actualPos++;
+    }
+    if (actualPos > lastCandidate) {
+      return false;
+    }
+    actualPos++;
+  }
+  return true;
+}
+
+function compareBranchObject(actual, expected, comparedObjects) {
+  // Use Reflect.ownKeys() instead of Object.keys() to include symbol properties
+  const keysExpected = ReflectOwnKeys(expected);
+  for (let i = 0; i < keysExpected.length; i++) {
+    const key = keysExpected[i];
+    if (!ReflectHas(actual, key) || !compareBranch(actual[key], expected[key], comparedObjects)) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -782,7 +769,7 @@ function expectsError(stackStartFn: Function, actual: unknown, error: unknown, m
       details += ` (${(error as Error).name})`;
     }
     details += message ? `: ${message}` : ".";
-    const fnType = stackStartFn === assert.rejects ? "rejection" : "exception";
+    const fnType = stackStartFn === kQualifiedStackNames["assert.rejects"] ? "rejection" : "exception";
     innerFail({
       actual: undefined,
       expected: error,
@@ -825,7 +812,7 @@ function expectsNoError(stackStartFn, actual, error, message) {
 
   if (!error || hasMatchingError(actual, error)) {
     const details = message ? `: ${message}` : ".";
-    const fnType = stackStartFn === assert.doesNotReject ? "rejection" : "exception";
+    const fnType = stackStartFn === kQualifiedStackNames["assert.doesNotReject"] ? "rejection" : "exception";
     innerFail({
       actual,
       expected: error,
@@ -853,16 +840,23 @@ assert.throws = function throws(promiseFn: () => Promise<unknown> | Promise<unkn
  * @param {...any} [args]
  * @returns {Promise<void>}
  */
-function rejects(block: (() => Promise<unknown>) | Promise<unknown>, message?: string | Error): Promise<void>;
-function rejects(
-  block: (() => Promise<unknown>) | Promise<unknown>,
-  error: nodeAssert.AssertPredicate,
-  message?: string | Error,
-): Promise<void>;
-async function rejects(block: (() => Promise<unknown>) | Promise<unknown>, ...args: any[]): Promise<void> {
-  expectsError(rejects, await waitForActual(block), ...args);
-}
-assert.rejects = rejects;
+// The method-shorthand string keys bake the qualified names into the parse-time
+// (executable) names, which is what async stack frames render; V8 infers the
+// same qualified name from the call site, so node prints
+// "at async assert.rejects" where a plain `function rejects` gives "rejects"
+// under JSC. `.name` is then restored to match node's.
+const kQualifiedStackNames = {
+  async "assert.rejects"(block: (() => Promise<unknown>) | Promise<unknown>, ...args: any[]): Promise<void> {
+    // The captured binding, not `assert.rejects`: node's implementation keeps
+    // working (and reporting operator "rejects") after the property is replaced.
+    expectsError(kQualifiedStackNames["assert.rejects"], await waitForActual(block), ...args);
+  },
+  async "assert.doesNotReject"(fn: (() => Promise<unknown>) | Promise<unknown>, ...args: unknown[]): Promise<void> {
+    expectsNoError(kQualifiedStackNames["assert.doesNotReject"], await waitForActual(fn), ...args);
+  },
+};
+assert.rejects = kQualifiedStackNames["assert.rejects"];
+Object.defineProperty(assert.rejects, "name", { value: "rejects", configurable: true });
 
 /**
  * Asserts that the function `fn` does not throw an error.
@@ -880,9 +874,8 @@ assert.doesNotThrow = function doesNotThrow(fn: () => Promise<unknown>, ...args:
  * @param {...any} [args]
  * @returns {Promise<void>}
  */
-assert.doesNotReject = async function doesNotReject(fn: () => Promise<unknown>, ...args: unknown[]): Promise<void> {
-  expectsNoError(doesNotReject, await waitForActual(fn), ...args);
-};
+assert.doesNotReject = kQualifiedStackNames["assert.doesNotReject"];
+Object.defineProperty(assert.doesNotReject, "name", { value: "doesNotReject", configurable: true });
 
 /**
  * Throws `value` if the value is not `null` or `undefined`.

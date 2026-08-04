@@ -13,6 +13,7 @@
 #include "JSReadableStream.h"
 #include "JSStreamsRuntime.h"
 #include "WebCoreJSClientData.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 
@@ -70,12 +71,22 @@ void JSAsyncIteratorSourceOperation::visitChildrenImpl(JSCell* cell, Visitor& vi
     auto* thisObject = uncheckedDowncast<JSAsyncIteratorSourceOperation>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_iterator);
-    visitor.append(thisObject->m_controller);
-    visitor.append(thisObject->m_pullPromise);
+    visitor.appendHidden(thisObject->m_iterator);
+    visitor.appendHidden(thisObject->m_controller);
+    visitor.appendHidden(thisObject->m_pullPromise);
 }
 
 DEFINE_VISIT_CHILDREN(JSAsyncIteratorSourceOperation);
+
+void JSAsyncIteratorSourceOperation::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSAsyncIteratorSourceOperation>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_iterator, "iterator"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_controller, "controller"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pullPromise, "pullPromise"_s);
+}
 
 static void driveAsyncIterator(JSGlobalObject*, JSAsyncIteratorSourceOperation*);
 static void asyncIterReturnIteratorAndSettle(JSGlobalObject*, JSAsyncIteratorSourceOperation*);
@@ -275,8 +286,13 @@ static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncI
             flushPromise->performPromiseThenWithContext(vm, globalObject, runtime->onAsyncIterableSourceFlushFulfilled(), runtime->onAsyncIterableSourceErrored(), jsUndefined(), op);
             return NextStep::Suspended;
         }
-        if (auto* wrotePromise = asPromise(wrote))
+        if (auto* wrotePromise = asPromise(wrote)) {
             markPromiseAsHandled(vm, wrotePromise);
+            if (wrotePromise->status() == JSPromise::Status::Pending) {
+                wrotePromise->performPromiseThenWithContext(vm, globalObject, runtime->onAsyncIterableSourceFlushFulfilled(), runtime->onAsyncIterableSourceErrored(), jsUndefined(), op);
+                return NextStep::Suspended;
+            }
+        }
     }
 
     if (op->m_iteratorDone) {

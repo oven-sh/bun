@@ -36,9 +36,8 @@
 // errors at codegen time with the offending file:line.
 //
 // The generator also walks every `unsafe extern "C" {` block under `src/jsc/`
-// and `src/runtime/` and emits a per-crate consolidated import list as a
-// comment block at the foot of the output (audit aid; the actual move into
-// `ffi_imports.rs` is incremental).
+// and `src/runtime/` and emits a per-file tally as a trailing comment block
+// in the output (audit aid for spotting duplicate declarations).
 //
 // Usage: `bun run src/codegen/generate-host-exports.ts <codegenDir>`
 
@@ -326,10 +325,9 @@ if (errors.length) {
 
 // ──────────────────────── consolidate extern "C" {} ─────────────────────────
 // Audit-only: collect every `unsafe extern "C" {` declaration and bucket by
-// crate so the per-crate `ffi_imports.rs` migration has a checklist. We emit
-// the count and the per-file tally as a trailing comment; moving the actual
-// `fn` items is incremental (one PR per subsystem) because each block carries
-// type imports that don't trivially relocate.
+// crate. We emit the count and the per-file tally as a trailing comment so
+// duplicate declarations (same symbol, different pointer mutabilities) are
+// easy to spot.
 
 const externBlocks: Record<string, number> = {};
 const externRe = /unsafe\s+extern\s+"C"\s*\{/g;
@@ -359,7 +357,8 @@ function emitNoMangle(
 ): string {
   const qual = unsafeFn ? "unsafe " : "";
   const item = (abiStr: string, cfg: string) =>
-    `${cfg}#[unsafe(no_mangle)]
+    `${cfg}#[allow(dead_code, unreachable_pub, unused)]
+#[unsafe(no_mangle)]
 pub ${qual}extern "${abiStr}" fn ${symbol}(${sig}) -> ${ret} {
 ${body}
 }`;
@@ -433,6 +432,7 @@ ${emitNoMangle(e.abi, e.symbol, "g: &JSGlobalObject", "JSValue", body)}`;
       const call = e.params.map(p => p.name).join(", ");
       return `
 // ${loc}
+#[allow(dead_code, unreachable_pub, unused)]
 #[unsafe(no_mangle)]
 pub extern "Rust" fn ${e.symbol}(${sig}) -> ${e.ret} {
     ${impl}(${call})
@@ -509,9 +509,11 @@ const importCandidates: Array<[string, string]> = [
 ];
 const importLines: string[] = [];
 for (const [modPath, name] of importCandidates) {
-  if (new RegExp("\\b" + name + "\\b").test(body)) importLines.push("use " + modPath + "::" + name + ";");
+  if (new RegExp("\\b" + name + "\\b").test(body))
+    importLines.push("#[allow(dead_code, unreachable_pub, unused)] use " + modPath + "::" + name + ";");
 }
-if (/\bBunString\b/.test(body)) importLines.push("use bun_core::String as BunString;");
+if (/\bBunString\b/.test(body))
+  importLines.push("#[allow(dead_code, unreachable_pub, unused)] use bun_core::String as BunString;");
 const imports = importLines.join("\n") + "\n\n";
 
 const externAudit =

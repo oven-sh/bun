@@ -7,6 +7,7 @@
 #include "JSWritableStream.h"
 
 #include "BunClientData.h"
+#include "JSBuffer.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSStreamsRuntime.h"
 #include <JavaScriptCore/ArrayBuffer.h>
@@ -50,6 +51,94 @@ JSObject* extractSizeAlgorithm(const QueuingStrategyDict& strategy)
     return asObject(strategy.size);
 }
 
+// How many bytes at the tail of `data` form a valid incomplete UTF-8 sequence (1..3),
+// or 0 if it ends on a boundary (or the tail is definitely invalid and should be
+// replaced now). Applies the WHATWG UTF-8 decoder's per-lead second-byte ranges so a
+// surrogate / overlong / out-of-range prefix is not held back.
+static size_t incompleteTrailingUTF8(std::span<const uint8_t> data)
+{
+    size_t len = data.size();
+    for (size_t back = 1; back <= std::min<size_t>(3, len); ++back) {
+        uint8_t b = data[len - back];
+        if ((b & 0xC0) == 0x80)
+            continue;
+        size_t need;
+        uint8_t secondMin = 0x80, secondMax = 0xBF;
+        if (b < 0x80)
+            need = 1;
+        else if (b >= 0xC2 && b <= 0xDF)
+            need = 2;
+        else if (b >= 0xE0 && b <= 0xEF) {
+            need = 3;
+            if (b == 0xE0)
+                secondMin = 0xA0;
+            else if (b == 0xED)
+                secondMax = 0x9F;
+        } else if (b >= 0xF0 && b <= 0xF4) {
+            need = 4;
+            if (b == 0xF0)
+                secondMin = 0x90;
+            else if (b == 0xF4)
+                secondMax = 0x8F;
+        } else
+            return 0;
+        if (back >= need)
+            return 0;
+        if (back >= 2) {
+            uint8_t second = data[len - back + 1];
+            if (second < secondMin || second > secondMax)
+                return 0;
+        }
+        return back;
+    }
+    return 0;
+}
+
+JSC::JSString* streamingUTF8Decode(JSGlobalObject* globalObject, std::span<const uint8_t> chunk, StreamingUTF8DecodeState& state, bool flush)
+{
+    WTF::Vector<uint8_t> joinedStorage;
+    std::span<const uint8_t> joined = chunk;
+    if (unsigned pendingLen = state.pendingLen()) {
+        joinedStorage.reserveInitialCapacity(pendingLen + chunk.size());
+        joinedStorage.append(std::span<const uint8_t> { state.pending, pendingLen });
+        joinedStorage.append(chunk);
+        joined = joinedStorage.span();
+        state.clearPending();
+    }
+
+    if (!state.bomSeen) {
+        static constexpr uint8_t bom[] = { 0xEF, 0xBB, 0xBF };
+        if (joined.size() >= 3 && !memcmp(joined.data(), bom, 3)) {
+            joined = joined.subspan(3);
+            state.bomSeen = true;
+        } else if (!flush && !joined.empty() && joined.size() < 3 && !memcmp(joined.data(), bom, joined.size())) {
+            // Still a possible BOM prefix; carry it to the next chunk.
+            state.setPending(joined.data(), static_cast<unsigned>(joined.size()));
+            return nullptr;
+        } else if (!joined.empty())
+            state.bomSeen = true;
+    }
+
+    size_t holdBack = flush ? 0 : incompleteTrailingUTF8(joined);
+    if (holdBack)
+        state.setPending(joined.data() + (joined.size() - holdBack), static_cast<unsigned>(holdBack));
+    auto toDecode = joined.first(joined.size() - holdBack);
+    if (toDecode.empty())
+        return nullptr;
+
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (exceedsStringLimit(toDecode.size())) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    // Bun's simdutf-backed Buffer.toString('utf8') path: SIMD ASCII check,
+    // external UTF-16 for non-ASCII, replacement chars for invalid sequences.
+    JSValue decoded = JSValue::decode(Bun__encoding__toStringUTF8(toDecode.data(), toDecode.size(), globalObject));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return asString(decoded);
+}
+
 // spec IsNonNegativeNumber(v). Non-throwing leaf: pure type + range test, no coercion.
 bool isNonNegativeNumber(JSValue value)
 {
@@ -73,10 +162,9 @@ bool canTransferArrayBuffer(JSC::ArrayBuffer& buffer)
     return !buffer.isDetached() && buffer.isDetachable();
 }
 
-// spec TransferArrayBuffer(O) at the impl level: detach O (and every view over it) and
-// return a fresh ArrayBuffer over the same block. No JSArrayBuffer wrapper is created —
-// callers hand out views over the impl, and JSC materializes a wrapper only if user code
-// reads `.buffer`.
+// spec TransferArrayBuffer(O) = ArrayBufferCopyAndDetach(O, undefined, fixed-length):
+// resizability must NOT survive the transfer, or a later user resize() invalidates every
+// byte length the byte controller recorded. No JSArrayBuffer wrapper cell is created.
 RefPtr<JSC::ArrayBuffer> transferArrayBufferImpl(JSGlobalObject* globalObject, JSC::ArrayBuffer& buffer)
 {
     auto& vm = getVM(globalObject);
@@ -85,6 +173,19 @@ RefPtr<JSC::ArrayBuffer> transferArrayBufferImpl(JSGlobalObject* globalObject, J
     if (!buffer.isDetachable()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Cannot transfer an ArrayBuffer that is not detachable"_s);
         return nullptr;
+    }
+    if (buffer.isResizableNonShared()) [[unlikely]] {
+        // Same shape as JSC's arrayBufferCopyAndDetach FixedLength slow path: copy into a
+        // fixed-length block, then detach the original.
+        RefPtr<JSC::ArrayBuffer> copy = JSC::ArrayBuffer::tryCreate(buffer.span());
+        if (!copy) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
+        JSC::ArrayBufferContents droppedContents;
+        bool detached = buffer.transferTo(vm, droppedContents);
+        ASSERT_UNUSED(detached, detached);
+        return copy;
     }
     JSC::ArrayBufferContents contents;
     bool transferred = buffer.transferTo(vm, contents);
@@ -257,9 +358,13 @@ StreamAsyncContextScope::StreamAsyncContextScope(JSGlobalObject* globalObject, J
     JSValue snapshot = stream->m_asyncContext.get();
     if (!snapshot || snapshot.isUndefinedOrNull())
         return;
-    m_asyncContextData = globalObject->m_asyncContextData.get();
-    m_previous = m_asyncContextData->getInternalField(0);
-    m_asyncContextData->putInternalField(m_vm, 0, snapshot);
+    auto* asyncContextData = globalObject->m_asyncContextData.get();
+    JSValue current = asyncContextData->getInternalField(0);
+    m_asyncContextData = asyncContextData;
+    m_previous = current;
+    if (snapshot == current)
+        return;
+    asyncContextData->putInternalField(m_vm, 0, snapshot);
 }
 
 StreamAsyncContextScope::~StreamAsyncContextScope()
@@ -448,7 +553,7 @@ JSPromise* webStreamClosedPromise(JSGlobalObject* globalObject, JSWritableStream
 // record" sites only. Empty return = a VM termination the caller must propagate.
 JSValue takeAbruptCompletion(JSGlobalObject*, TopExceptionScope& catchScope)
 {
-    JSC::Exception* exception = catchScope.exception();
+    const JSC::Exception* exception = catchScope.exception();
     ASSERT(exception);
     JSValue thrown = exception->value();
     if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]

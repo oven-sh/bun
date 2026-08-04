@@ -2,7 +2,7 @@ use core::cell::UnsafeCell;
 
 use crate::fs as Fs;
 use crate::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS};
-use bun_core::{WStr, ZStr, strings};
+use bun_core::{ZStr, strings};
 
 // Thread-local scratch buffers. Stored in `UnsafeCell` (not `RefCell`)
 // because callers must receive a raw `&mut` slice that outlives the `.with` closure
@@ -33,7 +33,7 @@ fn tl_buf_mut<const N: usize>(b: &UnsafeCell<[u8; N]>) -> &'static mut [u8; N] {
 }
 
 pub fn z<'a>(input: &[u8], output: &'a mut PathBuffer) -> &'a ZStr {
-    if input.len() > MAX_PATH_BYTES {
+    if input.len() >= MAX_PATH_BYTES {
         if cfg!(debug_assertions) {
             panic!("path too long");
         }
@@ -50,7 +50,6 @@ pub fn z<'a>(input: &[u8], output: &'a mut PathBuffer) -> &'a ZStr {
 type IsSeparatorFunc = fn(char: u8) -> bool;
 // Rust cannot express "fn<T>(T) -> bool" as a value, so the generic-`T`
 // callers dispatch via Platform methods instead of fn pointers.
-type LastSeparatorFunction = fn(slice: &[u8]) -> Option<usize>;
 
 #[inline(always)]
 fn is_dotdot_with_type<T: PathChar>(slice: &[T]) -> bool {
@@ -89,7 +88,7 @@ pub fn is_parent_or_equal(parent_: &[u8], child: &[u8]) -> ParentEqual {
     ParentEqual::Unrelated
 }
 
-pub(crate) fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
+fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
     input: &[&'a [u8]],
 ) -> Option<&'a [u8]> {
     let is_path_separator = P::P.get_separator_func();
@@ -203,7 +202,7 @@ fn nql_at_index_case_insensitive_dyn(string_count: usize, index: usize, input: &
 // TODO: is it faster to determine longest_common_separator in the while loop
 // or as an extra step at the end?
 // only boether to check if this function appears in benchmarking
-pub(crate) fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) -> &'a [u8] {
+fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) -> &'a [u8] {
     let is_path_separator = P::P.get_separator_func();
 
     let nql_at_index_fn: fn(usize, usize, &[&[u8]]) -> bool = match P::P {
@@ -377,7 +376,7 @@ pub fn relative_to_common_path_buf() -> *mut PathBuffer {
 /// Find a relative path from a common path
 // Loosely based on Node.js' implementation of path.relative
 // https://github.com/nodejs/node/blob/9a7cbe25de88d87429a69050a1a1971234558d97/lib/path.js#L1250-L1259
-pub(crate) fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>(
+fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>(
     common_path_: &[u8],
     normalized_from_: &[u8],
     normalized_to_: &'a [u8],
@@ -748,7 +747,7 @@ pub fn windows_volume_name_len(path: &[u8]) -> (usize, usize) {
     windows_volume_name_len_t::<u8>(path)
 }
 
-pub(crate) fn windows_volume_name_len_t<T: PathChar>(path: &[T]) -> (usize, usize) {
+fn windows_volume_name_len_t<T: PathChar>(path: &[T]) -> (usize, usize) {
     if path.len() < 2 {
         return (0, 0);
     }
@@ -809,7 +808,7 @@ pub fn has_any_illegal_chars(maybe_path: &[u8]) -> bool {
     strings::index_of_any(maybe_path_, b"<>:\"|?*").is_some()
 }
 
-pub(crate) fn starts_with_disk_discriminator(maybe_path: &[u8]) -> bool {
+fn starts_with_disk_discriminator(maybe_path: &[u8]) -> bool {
     if !cfg!(windows) {
         return false;
     }
@@ -829,7 +828,7 @@ pub(crate) fn starts_with_disk_discriminator(maybe_path: &[u8]) -> bool {
 }
 
 // path.relative lets you do relative across different share drives
-pub(crate) fn windows_filesystem_root_t<T: PathChar>(path: &[T]) -> &[T] {
+fn windows_filesystem_root_t<T: PathChar>(path: &[T]) -> &[T] {
     if path.is_empty() {
         return &path[..0];
     }
@@ -880,24 +879,6 @@ pub(crate) fn windows_filesystem_root_t<T: PathChar>(path: &[T]) -> &[T] {
     &path[0..0]
 }
 
-pub fn normalize_string_generic<
-    'a,
-    const ALLOW_ABOVE_ROOT: bool,
-    const SEPARATOR: u8,
-    const PRESERVE_TRAILING_SLASH: bool,
->(
-    path_: &[u8],
-    buf: &'a mut [u8],
-    is_separator: impl Fn(u8) -> bool + Copy,
-) -> &'a mut [u8] {
-    normalize_string_generic_t::<u8, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(
-        path_,
-        buf,
-        SEPARATOR,
-        is_separator,
-    )
-}
-
 pub fn normalize_string_generic_t<
     'a,
     T: PathChar,
@@ -915,37 +896,6 @@ pub fn normalize_string_generic_t<
         separator,
         is_separator_t,
     )
-}
-
-/// Plain options struct whose flags become
-/// individual const-generic bools below (separator and is_separator stay
-/// runtime since Rust const generics cannot carry fn pointers / non-integral T).
-pub struct NormalizeOptions<T: PathChar> {
-    pub allow_above_root: bool,
-    pub separator: T,
-    pub is_separator: fn(T) -> bool,
-    pub preserve_trailing_slash: bool,
-    pub zero_terminate: bool,
-    pub add_nt_prefix: bool,
-}
-
-impl<T: PathChar> Default for NormalizeOptions<T> {
-    fn default() -> Self {
-        Self {
-            allow_above_root: false,
-            separator: T::from_u8(SEP),
-            is_separator: |c| {
-                if SEP == SEP_WINDOWS {
-                    c == T::from_u8(b'\\') || c == T::from_u8(b'/')
-                } else {
-                    c == T::from_u8(b'/')
-                }
-            },
-            preserve_trailing_slash: false,
-            zero_terminate: false,
-            add_nt_prefix: false,
-        }
-    }
 }
 
 // Rust cannot vary the return type on a const-generic bool without
@@ -1143,13 +1093,7 @@ pub fn normalize_string_generic_tz<
         buf[buf_i] = T::from_u8(0);
     }
 
-    let result = &mut buf[0..buf_i];
-
-    if cfg!(debug_assertions) && is_windows {
-        debug_assert!(!strings::has_prefix_t::<T>(result, T::lit(b"\\:\\")));
-    }
-
-    result
+    &mut buf[0..buf_i]
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, core::marker::ConstParamTy)]
@@ -1231,26 +1175,18 @@ impl Platform {
     }
 
     #[inline]
-    pub const fn separator_string(self) -> &'static str {
+    pub(crate) const fn separator_string(self) -> &'static str {
         match self {
             Platform::Loose | Platform::Posix => "/",
             Platform::Nt | Platform::Windows => "\\",
         }
     }
 
-    pub const fn get_separator_func(self) -> IsSeparatorFunc {
+    pub(crate) const fn get_separator_func(self) -> IsSeparatorFunc {
         match self {
             Platform::Loose => is_sep_any,
             Platform::Nt | Platform::Windows => is_sep_any,
             Platform::Posix => is_sep_posix,
-        }
-    }
-
-    pub const fn get_last_separator_func(self) -> LastSeparatorFunction {
-        match self {
-            Platform::Loose => last_index_of_separator_loose,
-            Platform::Nt | Platform::Windows => last_index_of_separator_windows,
-            Platform::Posix => last_index_of_separator_posix,
         }
     }
 
@@ -1260,7 +1196,7 @@ impl Platform {
     }
 
     #[inline(always)]
-    pub fn is_separator_t<T: PathChar>(self, char: T) -> bool {
+    pub(crate) fn is_separator_t<T: PathChar>(self, char: T) -> bool {
         match self {
             Platform::Loose => is_sep_any_t::<T>(char),
             Platform::Nt | Platform::Windows => is_sep_any_t::<T>(char),
@@ -1268,14 +1204,14 @@ impl Platform {
         }
     }
 
-    pub const fn trailing_separator(self) -> [u8; 2] {
+    pub(crate) const fn trailing_separator(self) -> [u8; 2] {
         match self {
             Platform::Nt | Platform::Windows => *b".\\",
             Platform::Posix | Platform::Loose => *b"./",
         }
     }
 
-    pub fn leading_separator_index<T: PathChar>(self, path: &[T]) -> Option<usize> {
+    pub(crate) fn leading_separator_index<T: PathChar>(self, path: &[T]) -> Option<usize> {
         match self {
             Platform::Nt | Platform::Windows => {
                 if path.len() < 1 {
@@ -1382,7 +1318,7 @@ pub fn normalize_string_buf<
     normalize_string_buf_t::<u8, ALLOW_ABOVE_ROOT, P, PRESERVE_TRAILING_SLASH>(str, buf)
 }
 
-pub(crate) fn normalize_string_buf_t<
+fn normalize_string_buf_t<
     'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
@@ -1525,7 +1461,7 @@ pub fn join_string_buf_w_same<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u
 /// Same-width `joinStringBufT`: parts already match `T`, so no UTF-8→16 transcode.
 /// split out of `join_string_buf_t` because Rust can't monomorphize on the
 /// parts' element types — callers pick the overload.
-pub(crate) fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
+fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
     buf: &'a mut [T],
     parts: &[&[T]],
 ) -> &'a [T] {
@@ -1571,23 +1507,6 @@ pub(crate) fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
     normalize_string_node_t::<T, P>(&temp_buf[0..written], buf)
 }
 
-pub fn join_string_buf_wz<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u8]]) -> &'a WStr {
-    // reshaped for borrowck — capture buf base ptr before sub-borrow
-    let buf_base = buf.as_mut_ptr();
-    let buf_len = buf.len();
-    let (start_offset, len) = {
-        let joined = join_string_buf_t::<u16, P>(&mut buf[..buf_len - 1], parts);
-        (
-            (joined.as_ptr() as usize - buf_base as usize) / 2,
-            joined.len(),
-        )
-    };
-    debug_assert!(start_offset + len < buf_len);
-    buf[start_offset + len] = 0;
-    // SAFETY: NUL written at buf[start_offset + len]; slice is within buf
-    unsafe { WStr::from_raw(buf_base.add(start_offset), len) }
-}
-
 pub fn join_string_buf_z<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a ZStr {
     // reshaped for borrowck — capture buf base ptr before sub-borrow
     let buf_base = buf.as_mut_ptr();
@@ -1605,10 +1524,7 @@ pub fn join_string_buf_z<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -
     unsafe { ZStr::from_raw(buf_base.add(start_offset), len) }
 }
 
-pub(crate) fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(
-    buf: &'a mut [T],
-    parts: &[&[u8]],
-) -> &'a [T] {
+fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(buf: &'a mut [T], parts: &[&[u8]]) -> &'a [T] {
     // Takes `&[&[u8]]` — every in-tree caller passes u8
     // parts — and transcodes to u16 below when `T == u16`.
     let mut written: usize = 0;
@@ -1665,7 +1581,7 @@ enum JoinScratch {
 
 impl JoinScratch {
     #[inline]
-    pub(crate) fn init(base: usize, parts: &[&[u8]]) -> Self {
+    fn init(base: usize, parts: &[&[u8]]) -> Self {
         let mut total = base + 2;
         for p in parts {
             total += p.len() + 1;
@@ -1746,11 +1662,11 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     _parts: &[&[u8]],
 ) -> &'a [u8] {
     if P::P == Platform::Windows || (cfg!(windows) && P::P == Platform::Loose) {
-        return _join_abs_string_buf_windows::<IS_SENTINEL>(_cwd, buf, _parts);
+        return join_abs_string_buf_windows::<IS_SENTINEL>(_cwd, buf, _parts);
     }
 
     if P::P == Platform::Nt {
-        let end_path = _join_abs_string_buf_windows::<IS_SENTINEL>(_cwd, &mut buf[4..], _parts);
+        let end_path = join_abs_string_buf_windows::<IS_SENTINEL>(_cwd, &mut buf[4..], _parts);
         let end_len = end_path.len();
         buf[0..4].copy_from_slice(b"\\\\?\\");
         if IS_SENTINEL {
@@ -1859,7 +1775,7 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     &buf[0..result_len + leading_len]
 }
 
-fn _join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
+fn join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
     cwd: &'a [u8],
     buf: &'a mut [u8],
     parts: &[&[u8]],
@@ -1975,42 +1891,38 @@ fn _join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
 // Separator predicates live in T0 `bun_core::path_sep`; re-export the full set
 // so existing `bun_paths::is_sep_*` callers are unchanged.
 pub use bun_core::path_sep::{
-    is_sep_any, is_sep_any_t, is_sep_native, is_sep_native_t, is_sep_posix_t, is_sep_win32_t,
+    is_sep_any, is_sep_any_t, is_sep_native, is_sep_native_t, is_sep_posix_t,
 };
 #[inline(always)]
-pub fn is_sep_posix(c: u8) -> bool {
+pub(crate) fn is_sep_posix(c: u8) -> bool {
     is_sep_posix_t::<u8>(c)
 }
-#[inline(always)]
-pub fn is_sep_win32(c: u8) -> bool {
-    is_sep_win32_t::<u8>(c)
-}
 
-pub(crate) fn last_index_of_separator_windows(slice: &[u8]) -> Option<usize> {
+fn last_index_of_separator_windows(slice: &[u8]) -> Option<usize> {
     last_index_of_separator_windows_t::<u8>(slice)
 }
 
-pub(crate) fn last_index_of_separator_windows_t<T: PathChar>(slice: &[T]) -> Option<usize> {
+fn last_index_of_separator_windows_t<T: PathChar>(slice: &[T]) -> Option<usize> {
     slice.iter().rposition(|&c| is_sep_any_t::<T>(c))
 }
 
-pub(crate) fn last_index_of_separator_posix(slice: &[u8]) -> Option<usize> {
+fn last_index_of_separator_posix(slice: &[u8]) -> Option<usize> {
     last_index_of_separator_posix_t::<u8>(slice)
 }
 
-pub(crate) fn last_index_of_separator_posix_t<T: PathChar>(slice: &[T]) -> Option<usize> {
+fn last_index_of_separator_posix_t<T: PathChar>(slice: &[T]) -> Option<usize> {
     slice.iter().rposition(|&c| c == T::from_u8(SEP_POSIX))
 }
 
-pub(crate) fn last_index_of_separator_loose(slice: &[u8]) -> Option<usize> {
+fn last_index_of_separator_loose(slice: &[u8]) -> Option<usize> {
     last_index_of_separator_loose_t::<u8>(slice)
 }
 
-pub(crate) fn last_index_of_separator_loose_t<T: PathChar>(slice: &[T]) -> Option<usize> {
+fn last_index_of_separator_loose_t<T: PathChar>(slice: &[T]) -> Option<usize> {
     last_index_of_sep_t::<T>(slice)
 }
 
-pub(crate) fn normalize_string_loose_buf_t<
+fn normalize_string_loose_buf_t<
     'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
@@ -2027,7 +1939,7 @@ pub(crate) fn normalize_string_loose_buf_t<
     )
 }
 
-pub(crate) fn normalize_string_windows_t<
+fn normalize_string_windows_t<
     'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
@@ -2044,7 +1956,7 @@ pub(crate) fn normalize_string_windows_t<
     )
 }
 
-pub(crate) fn normalize_string_node_t<'a, T: PathChar, P: PlatformT>(
+fn normalize_string_node_t<'a, T: PathChar, P: PlatformT>(
     str: &[T],
     buf: &'a mut [T],
 ) -> &'a mut [T] {
@@ -2152,7 +2064,7 @@ pub(crate) fn last_index_of_sep(path: &[u8]) -> Option<usize> {
     last_index_of_sep_t::<u8>(path)
 }
 
-pub(crate) fn last_index_of_sep_t<T: PathChar>(path: &[T]) -> Option<usize> {
+fn last_index_of_sep_t<T: PathChar>(path: &[T]) -> Option<usize> {
     #[cfg(not(windows))]
     {
         return strings::last_index_of_char_t::<T>(path, T::from_u8(b'/'));
@@ -2213,24 +2125,9 @@ impl PosixToWinNormalizer {
     }
 
     #[inline]
-    pub fn resolve_cwd<'a>(
-        &'a mut self,
-        maybe_posix_path: &'a [u8],
-    ) -> Result<&'a [u8], bun_core::Error> {
+    pub fn resolve_cwd<'a>(&'a mut self, maybe_posix_path: &'a [u8]) -> crate::Result<&'a [u8]> {
         Self::resolve_cwd_with_external_buf(&mut self._raw_bytes, maybe_posix_path)
     }
-
-    #[cfg(windows)]
-    #[inline]
-    pub fn resolve_cwd_z<'a>(
-        &'a mut self,
-        maybe_posix_path: &'a [u8],
-    ) -> Result<&'a mut ZStr, bun_core::Error> {
-        Self::resolve_cwd_with_external_buf_z(&mut self._raw_bytes, maybe_posix_path)
-    }
-    // On posix `_raw_bytes` is `()` so `resolve_cwd_z` is windows-only.
-    // Callers on posix use
-    // `resolve_cwd_with_external_buf_z` with an explicit PathBuffer.
 
     // underlying implementation:
 
@@ -2320,7 +2217,7 @@ impl PosixToWinNormalizer {
     pub fn resolve_cwd_with_external_buf<'a>(
         buf: &'a mut PosixToWinBuf,
         maybe_posix_path: &'a [u8],
-    ) -> Result<&'a [u8], bun_core::Error> {
+    ) -> crate::Result<&'a [u8]> {
         debug_assert!(crate::is_absolute_windows(maybe_posix_path));
 
         #[cfg(windows)]
@@ -2344,7 +2241,7 @@ impl PosixToWinNormalizer {
                     // combination can't exist on NT anyway, so error out
                     // instead of writing past a buffer.
                     if sr_len + maybe_posix_path.len() - 1 >= buf.len() {
-                        return Err(bun_core::err!("NameTooLong"));
+                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                     }
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
@@ -2368,7 +2265,7 @@ impl PosixToWinNormalizer {
     pub fn resolve_cwd_with_external_buf_z<'a>(
         buf: &'a mut PathBuffer,
         maybe_posix_path: &[u8],
-    ) -> Result<&'a mut ZStr, bun_core::Error> {
+    ) -> crate::Result<&'a mut ZStr> {
         debug_assert!(crate::is_absolute_windows(maybe_posix_path));
 
         #[cfg(windows)]
@@ -2387,7 +2284,7 @@ impl PosixToWinNormalizer {
                     // can't exist on NT anyway, so error out instead of
                     // writing past it.
                     if sr_len + maybe_posix_path.len() > buf.len() {
-                        return Err(bun_core::err!("NameTooLong"));
+                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                     }
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
@@ -2410,7 +2307,7 @@ impl PosixToWinNormalizer {
         }
 
         if maybe_posix_path.len() + 1 > buf.len() {
-            return Err(bun_core::err!("NameTooLong"));
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
         }
         buf[..maybe_posix_path.len()].copy_from_slice(maybe_posix_path);
         buf[maybe_posix_path.len()] = 0;

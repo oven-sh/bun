@@ -22,8 +22,8 @@ use crate::h3_client::h3_client;
 /// lifetime in seconds (default 24 h per §3.1).
 #[derive(Copy, Clone)]
 pub struct Entry {
-    pub port: u16,
-    pub ma: u32,
+    pub(crate) port: u16,
+    pub(crate) ma: u32,
 }
 
 impl Default for Entry {
@@ -37,11 +37,6 @@ pub enum ParseError {
     #[error("Clear")]
     Clear,
 }
-impl From<ParseError> for bun_core::Error {
-    fn from(_: ParseError) -> Self {
-        bun_core::err!("Clear")
-    }
-}
 
 /// Parse the first usable `h3` alternative out of an `Alt-Svc` field-value, or
 /// `None` if none / `clear`. Tolerant of extra whitespace and unknown params.
@@ -54,7 +49,7 @@ impl From<ParseError> for bun_core::Error {
 ///
 /// Returns `Err(ParseError::Clear)` for the literal `clear` so the caller can
 /// drop the cache entry.
-pub fn parse(field_value: &[u8]) -> Result<Option<Entry>, ParseError> {
+pub(crate) fn parse(field_value: &[u8]) -> Result<Option<Entry>, ParseError> {
     let value = strings::trim(field_value, b" \t");
     if value.is_empty() {
         return Ok(None);

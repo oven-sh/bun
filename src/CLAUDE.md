@@ -17,7 +17,7 @@ Conventions:
 - `cargo check -p <crate>` for fast iteration; `bun bd` builds and links everything.
 - Don't `.unwrap()` a fallible path that user input or the OS can hit at runtime — return the error. `.unwrap()` is for invariants you can prove.
 - The C ABI / syscall boundary uses `bun_sys::Maybe<T>` (= `Result<T, bun_sys::Error>`); ordinary Rust code uses `Result<T, E>` with `?`.
-- `bun_core::Error` is a lightweight interned `NonZeroU16` error code; `bun_sys::Error` is the rich syscall error (errno + syscall tag + path). `From<bun_sys::Error> for bun_core::Error` exists.
+- Each crate defines its own `Error` enum (a `thiserror::Error` at `<crate>/error.rs`, re-exported as `crate::Error` + `crate::Result`). Errno codes nest via `Sys(#[from] bun_errno::SystemErrno)`; OOM via `Alloc(#[from] bun_alloc::AllocError)`. `bun_sys::Error` is the rich syscall error (errno + syscall tag + path); `From<bun_sys::Error> for bun_errno::SystemErrno` exists for `?`-chaining.
 - NEVER add comments to deleted code blocks.
 - Do not add comments that reference context from the transcript.
 - Avoid adding comments where not necessary.
@@ -161,16 +161,15 @@ let url = URL::from_utf8(href)?;                  // Option<NonNull<URL>>
 
 url.protocol()   // bun_core::String
 url.pathname()   // bun_core::String
-url.search()     // bun_core::String
+url.host()       // bun_core::String — the hostname WITHOUT the port (opposite of JS `host`!)
 url.port()       // u32 (u32::MAX = unset; otherwise u16 range)
-
-// NOTE: host()/hostname() are SWAPPED relative to JS:
-url.host()       // hostname WITHOUT port  (opposite of JS!)
-url.hostname()   // hostname WITH port     (opposite of JS!)
 ```
 
-`URL::href_from_string`, `URL::file_url_from_string`, `URL::path_from_file_url`
-do whole-string conversions.
+`URL::href_from_js`, `URL::file_url_from_string`, `URL::path_from_file_url`
+do whole-string conversions. The JSC-free shim `bun_url::whatwg::URL` exposes
+`hostname()`, which returns the host WITH the port (also the opposite of JS
+`hostname`) — so `bun_jsc::URL::host` and `bun_url::whatwg::URL::hostname`
+are effectively swapped relative to their JS namesakes.
 
 ## MIME Types (`bun_http_types::MimeType`)
 

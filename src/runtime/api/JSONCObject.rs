@@ -10,7 +10,7 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     super::with_text_format_source(
         global,
         frame,
@@ -21,7 +21,7 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             let parsed = match json::ParsedJson::parse_jsonc(source, log) {
                 Ok(v) => v,
                 Err(e) => {
-                    if e == bun_core::err!(StackOverflow) {
+                    if e == bun_parsers::Error::StackOverflow {
                         return Err(global.throw_stack_overflow());
                     }
                     return Err(global.throw_value(log.to_js(global, "Failed to parse JSONC")?));

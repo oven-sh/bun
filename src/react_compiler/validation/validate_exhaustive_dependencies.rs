@@ -28,7 +28,7 @@ use core::fmt::Write as _;
 /// Note: takes `&mut HirFunction` (deviating from the read-only validation convention)
 /// because it sets `has_invalid_deps` on StartMemoize instructions when validation
 /// errors are found, so that ValidatePreservedManualMemoization can skip those blocks.
-pub fn validate_exhaustive_dependencies(
+pub(crate) fn validate_exhaustive_dependencies(
     func: &mut HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerDiagnostic> {

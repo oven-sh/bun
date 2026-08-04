@@ -44,6 +44,8 @@ public:
         Closed = 1ull << 0, // close() was called on this side; drops further deliveries.
         DrainScheduled = 1ull << 1, // a drain task for this side is in flight.
         Attached = 1ull << 2, // ctxId/port are valid; ok to schedule drains.
+        ContextKnown = 1ull << 3, // ctxId/port are valid for close-notification only (no drains).
+        ClosedByRequest = 1ull << 4, // the Closed above came from close(), not from the port being collected.
 
         QueuedShift = 8,
         QueuedOne = 1ull << QueuedShift,
@@ -61,12 +63,24 @@ public:
     // already queued (e.g. after transfer). Passing a null port is allowed and
     // means "just buffer, don't dispatch" (used before start()).
     void attach(uint8_t side, ScriptExecutionContextIdentifier, ThreadSafeWeakPtr<MessagePort>);
+    // Like attach() but only records ctxId/port so the peer's close() can deliver
+    // a 'close' event to a port that never started (no 'message' listener). Does
+    // NOT enable drains. No-op if already attached/registered/closed.
+    void registerCloseContext(uint8_t side, ScriptExecutionContextIdentifier, ThreadSafeWeakPtr<MessagePort>);
     void detach(uint8_t side);
-    void close(uint8_t side);
+    // Explicit == a real, permanent close: close(), context teardown, or an orphaned
+    // transferred endpoint. Collected == the owning MessagePort's wrapper was garbage
+    // collected while still entangled. Only Explicit sets ClosedByRequest, so jsRef()
+    // can tell a real close from a collection (node never collects an entangled port,
+    // so reading Closed alone made .ref() GC-dependent). Both notify the peer.
+    enum class CloseKind : uint8_t { Explicit,
+        Collected };
+    void close(uint8_t side, CloseKind = CloseKind::Collected);
 
     // Lockless snapshot for the GC visitor / hasPendingActivity.
     uint64_t state(uint8_t side) const { return m_sides[side].state.load(std::memory_order_acquire); }
     bool isOtherSideOpen(uint8_t side) const { return !(state(1 - side) & Closed); }
+    bool isOtherSideClosedByRequest(uint8_t side) const { return state(1 - side) & ClosedByRequest; }
 
     // Equality is by identity; used to reject "port posted through itself".
     bool operator==(const MessagePortPipe& other) const { return this == &other; }
@@ -75,6 +89,7 @@ private:
     MessagePortPipe() = default;
 
     void scheduleDrain(uint8_t side, ScriptExecutionContextIdentifier);
+    void notifyPeerClosed(uint8_t peerSide);
     void drainAndDispatch(uint8_t side, ScriptExecutionContextIdentifier expectedCtx);
 
     struct Side {

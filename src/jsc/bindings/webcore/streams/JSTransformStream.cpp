@@ -13,6 +13,8 @@
 #include "JSTransformStreamDefaultController.h"
 #include "JSWritableStream.h"
 #include "WebCoreJSClientData.h"
+#include "WebStreamsHeapAnalyzer.h"
+#include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/BuiltinNames.h>
@@ -21,6 +23,7 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/Lookup.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 
@@ -32,6 +35,7 @@ using namespace Bun::WebStreams;
 static JSC_DECLARE_CUSTOM_GETTER(jsTransformStreamPrototypeGetter_readable);
 static JSC_DECLARE_CUSTOM_GETTER(jsTransformStreamPrototypeGetter_writable);
 static JSC_DECLARE_CUSTOM_GETTER(jsTransformStreamPrototypeGetter_constructor);
+static JSC_DECLARE_HOST_FUNCTION(jsTransformStreamPrototype_inspectCustom);
 
 class JSTransformStreamPrototype final : public JSC::JSNonFinalObject {
 public:
@@ -117,18 +121,6 @@ template<> void JSTransformStreamConstructor::finishCreation(VM& vm, JSDOMGlobal
     m_instanceStructure.set(vm, this, getDOMStructure<JSTransformStream>(vm, globalObject));
 }
 
-static Structure* structureForNewTarget(JSC::VM& vm, JSTransformStreamConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
-{
-    if (newTarget == constructor) [[likely]]
-        return constructor->instanceStructure();
-
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* newTargetGlobalObject = JSC::getFunctionRealm(lexicalGlobalObject, newTarget);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    auto* baseStructure = getDOMStructure<JSTransformStream>(vm, *uncheckedDowncast<JSDOMGlobalObject>(newTargetGlobalObject));
-    RELEASE_AND_RETURN(scope, JSC::InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, baseStructure));
-}
-
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTransformStreamConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -200,10 +192,26 @@ static const HashTableValue JSTransformStreamPrototypeTableValues[] = {
 
 const ClassInfo JSTransformStreamPrototype::s_info = { "TransformStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsTransformStreamPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSTransformStream>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+    JSObject* data = constructEmptyObject(lexicalGlobalObject);
+    data->putDirect(vm, Identifier::fromString(vm, "readable"_s), thisObject->m_readable.get() ? JSValue(thisObject->m_readable.get()) : jsUndefined(), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "writable"_s), thisObject->m_writable.get() ? JSValue(thisObject->m_writable.get()) : jsUndefined(), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "backpressure"_s), jsBoolean(thisObject->m_backpressure), 0);
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "TransformStream"_s, data));
+}
+
 void JSTransformStreamPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSTransformStream::info(), JSTransformStreamPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsTransformStreamPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -269,10 +277,23 @@ void JSTransformStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSTransformStream>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_readable);
-    visitor.append(thisObject->m_writable);
-    visitor.append(thisObject->m_controller);
-    visitor.append(thisObject->m_backpressureChangePromise);
+    visitor.appendHidden(thisObject->m_readable);
+    visitor.appendHidden(thisObject->m_writable);
+    visitor.appendHidden(thisObject->m_controller);
+    visitor.appendHidden(thisObject->m_backpressureChangePromise);
+    visitor.appendHidden(thisObject->m_pendingWriteChunk);
+}
+
+void JSTransformStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSTransformStream>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_readable, "readable"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_writable, "writable"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_controller, "controller"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_backpressureChangePromise, "backpressureChangePromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pendingWriteChunk, "pendingWriteChunk"_s);
 }
 
 // Prototype host functions

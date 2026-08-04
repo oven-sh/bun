@@ -32,7 +32,7 @@ using WebCore::JSStreamsRuntime;
 // that teardown) can see a readable with no controller. A torn-down readable is terminal.
 static JSReadableStreamDefaultController* transformReadableController(JSTransformStream* stream)
 {
-    auto* readable = stream->m_readable.get();
+    const auto* readable = stream->m_readable.get();
     if (readable->m_controllerKind != ControllerKind::Default)
         return nullptr;
     return uncheckedDowncast<JSReadableStreamDefaultController>(readable->m_controller.get());
@@ -223,9 +223,9 @@ JSPromise* transformStreamDefaultSinkWriteAlgorithm(JSGlobalObject* globalObject
         auto* backpressureChangePromise = stream->m_backpressureChangePromise.get();
         ASSERT(backpressureChangePromise);
         auto* result = JSPromise::create(vm, globalObject->promiseStructure());
-        auto* context = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), stream, chunk);
+        stream->m_pendingWriteChunk.set(vm, stream, chunk);
         auto* runtime = JSStreamsRuntime::from(globalObject);
-        backpressureChangePromise->performPromiseThenWithContext(vm, globalObject, runtime->onTSSinkWriteBackpressureChangeFulfilled(), jsUndefined(), result, context);
+        backpressureChangePromise->performPromiseThenWithContext(vm, globalObject, runtime->onTSSinkWriteBackpressureChangeFulfilled(), jsUndefined(), result, stream);
         return result;
     }
     RELEASE_AND_RETURN(scope, transformStreamDefaultControllerPerformTransform(globalObject, controller, chunk));
@@ -312,11 +312,11 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSinkWriteBackpressureChangeFulf
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* context = uncheckedDowncast<InternalFieldTuple>(callFrame->argument(1));
-    auto* stream = uncheckedDowncast<JSTransformStream>(context->getInternalField(0));
-    JSValue chunk = context->getInternalField(1);
+    auto* stream = uncheckedDowncast<JSTransformStream>(callFrame->argument(1));
+    JSValue chunk = stream->m_pendingWriteChunk.get();
+    stream->m_pendingWriteChunk.clear();
 
-    auto* writable = stream->m_writable.get();
+    const auto* writable = stream->m_writable.get();
     if (writable->m_state == WritableStreamState::Erroring) {
         throwException(globalObject, scope, writable->m_storedError.get());
         return {};
@@ -336,7 +336,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSinkAbortCancelFulfilled, (JSGl
     JSValue reason = context->getInternalField(1);
     auto* finishPromise = stream->m_controller->m_finishPromise.get();
 
-    auto* readable = stream->m_readable.get();
+    const auto* readable = stream->m_readable.get();
     if (readable->m_state == ReadableStreamState::Errored) {
         rejectPromise(globalObject, finishPromise, readable->m_storedError.get());
         return JSValue::encode(jsUndefined());
@@ -374,7 +374,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSinkCloseFlushFulfilled, (JSGlo
     auto* stream = uncheckedDowncast<JSTransformStream>(callFrame->argument(1));
     auto* finishPromise = stream->m_controller->m_finishPromise.get();
 
-    auto* readable = stream->m_readable.get();
+    const auto* readable = stream->m_readable.get();
     if (readable->m_state == ReadableStreamState::Errored) {
         rejectPromise(globalObject, finishPromise, readable->m_storedError.get());
         return JSValue::encode(jsUndefined());
@@ -414,7 +414,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSourceCancelFulfilled, (JSGloba
     JSValue reason = context->getInternalField(1);
     auto* finishPromise = stream->m_controller->m_finishPromise.get();
 
-    auto* writable = stream->m_writable.get();
+    const auto* writable = stream->m_writable.get();
     if (writable->m_state == WritableStreamState::Errored) {
         rejectPromise(globalObject, finishPromise, writable->m_storedError.get());
         return JSValue::encode(jsUndefined());

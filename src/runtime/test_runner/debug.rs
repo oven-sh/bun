@@ -8,7 +8,7 @@ use bun_jsc::JsResult;
 use crate::test_runner::bun_test::{DescribeScope, ExecutionEntry, TestScheduleEntry};
 use crate::test_runner::execution::Execution;
 
-pub(crate) fn dump_sub(current: &TestScheduleEntry) -> JsResult<()> {
+fn dump_sub(current: &TestScheduleEntry) -> JsResult<()> {
     if !group::get_log_enabled() {
         return Ok(());
     }
@@ -51,7 +51,7 @@ pub(crate) fn dump_describe(describe: &DescribeScope) -> JsResult<()> {
     Ok(())
 }
 
-pub(crate) fn dump_test(current: &ExecutionEntry, label: &[u8]) -> JsResult<()> {
+fn dump_test(current: &ExecutionEntry, label: &[u8]) -> JsResult<()> {
     if !group::get_log_enabled() {
         return Ok(());
     }
@@ -103,7 +103,7 @@ pub(crate) fn dump_order(this: &Execution) -> JsResult<()> {
     Ok(())
 }
 
-pub mod group {
+pub(crate) mod group {
     use super::*;
 
     fn print_indent(writer: &mut impl std::io::Write) {
@@ -178,7 +178,7 @@ pub mod group {
         GroupGuard(())
     }
 
-    pub fn end() {
+    pub(crate) fn end() {
         if !get_log_enabled() {
             return;
         }

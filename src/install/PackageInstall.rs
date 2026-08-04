@@ -12,6 +12,7 @@ use bun_sys::OpenDirOptions;
 use bun_sys::{self as sys, Dir, EntryKind, Fd, FdExt, walker_skippable};
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode};
 use bun_threading::work_pool::Task as WorkPoolTask;
+#[cfg(windows)]
 use bun_threading::{ThreadPool, WaitGroup};
 
 use crate::package_installer::NodeModulesFolder;
@@ -26,41 +27,41 @@ pub struct PackageInstall<'a> {
     /// Borrowed view of the cache directory fd. The owner is either
     /// `PackageManager`'s cached directory handle, the cwd sentinel, or a
     /// short-lived `Dir` held by the caller — `PackageInstall` never closes it.
-    pub cache_dir: Fd,
-    pub cache_dir_subpath: &'a ZStr,
+    pub(crate) cache_dir: Fd,
+    pub(crate) cache_dir_subpath: &'a ZStr,
     // TODO: `destination_dir_subpath` aliases into `destination_dir_subpath_buf`;
     // borrowck will reject simultaneous &ZStr + &mut [u8]. Consider storing only the len.
-    pub destination_dir_subpath: &'a ZStr,
-    pub destination_dir_subpath_buf: &'a mut [u8],
+    pub(crate) destination_dir_subpath: &'a ZStr,
+    pub(crate) destination_dir_subpath_buf: &'a mut [u8],
 
-    pub progress: Option<&'a mut Progress>,
+    pub(crate) progress: Option<&'a mut Progress>,
 
-    pub package_name: SemverString,
-    pub package_version: &'a [u8],
-    pub patch: Option<Patch>,
+    pub(crate) package_name: SemverString,
+    pub(crate) package_version: &'a [u8],
+    pub(crate) patch: Option<Patch>,
 
     // TODO: this is never read
-    pub file_count: u32,
-    pub node_modules: &'a NodeModulesFolder,
+    pub(crate) file_count: u32,
+    pub(crate) node_modules: &'a NodeModulesFolder,
     pub lockfile: &'a Lockfile,
 }
 
 #[derive(Clone, Copy)]
 pub struct Patch {
-    pub contents_hash: u64,
+    pub(crate) contents_hash: u64,
 }
 
 #[derive(Default)]
 pub struct Summary {
-    pub fail: u32,
-    pub success: u32,
-    pub skipped: u32,
-    pub successfully_installed: Option<DynamicBitSet>,
+    pub(crate) fail: u32,
+    pub(crate) success: u32,
+    pub(crate) skipped: u32,
+    pub(crate) successfully_installed: Option<DynamicBitSet>,
 
     /// Package name hash -> number of scripts skipped.
     /// Multiple versions of the same package might add to the count, and each version
     /// might have a different number of scripts
-    pub packages_with_blocked_scripts: ArrayHashMap<TruncatedPackageNameHash, usize>,
+    pub(crate) packages_with_blocked_scripts: ArrayHashMap<TruncatedPackageNameHash, usize>,
 }
 
 #[repr(u8)]
@@ -119,7 +120,7 @@ bun_core::comptime_string_map! {
 
 impl Method {
     #[cfg(target_os = "macos")]
-    pub(crate) fn macos() -> BackendSupport {
+    fn macos() -> BackendSupport {
         enum_map::EnumMap::from_fn(|k| match k {
             Method::Clonefile => true,
             Method::ClonefileEachDir => true,
@@ -130,7 +131,7 @@ impl Method {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-    pub(crate) fn linux() -> BackendSupport {
+    fn linux() -> BackendSupport {
         enum_map::EnumMap::from_fn(|k| match k {
             Method::Clonefile => false,
             Method::ClonefileEachDir => false,
@@ -141,7 +142,7 @@ impl Method {
     }
 
     #[cfg(windows)]
-    pub(crate) fn windows() -> BackendSupport {
+    fn windows() -> BackendSupport {
         enum_map::EnumMap::from_fn(|k| match k {
             Method::Clonefile => false,
             Method::ClonefileEachDir => false,
@@ -173,10 +174,10 @@ impl Method {
 
 #[derive(Copy, Clone)]
 pub struct Failure {
-    pub err: bun_core::Error,
-    pub step: Step,
+    pub(crate) err: crate::Error,
+    pub(crate) step: Step,
     #[cfg(bun_debug)]
-    pub debug_trace: bun_core::StoredTrace,
+    pub(crate) debug_trace: bun_core::StoredTrace,
 }
 
 impl Failure {
@@ -187,12 +188,13 @@ impl Failure {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     #[inline]
     pub(crate) fn is_package_missing_from_cache(&self) -> bool {
-        (self.err == bun_core::err!("FileNotFound") || self.err == bun_core::err!("ENOENT"))
+        (self.err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+            || self.err == crate::Error::FileNotFound)
             && self.step == Step::OpeningCacheDir
     }
 }
 
-pub enum InstallResult {
+pub(crate) enum InstallResult {
     Success,
     Failure(Box<Failure>),
 }
@@ -201,7 +203,7 @@ impl InstallResult {
     /// Init a Result with the 'fail' tag. use `.Success` for the 'success' tag.
     #[inline]
     pub(crate) fn fail(
-        err: bun_core::Error,
+        err: crate::Error,
         step: Step,
         _trace: Option<&bun_crash_handler::StackTrace>,
     ) -> InstallResult {
@@ -216,7 +218,7 @@ impl InstallResult {
         }))
     }
 
-    pub(crate) fn is_fail(&self) -> bool {
+    fn is_fail(&self) -> bool {
         matches!(self, InstallResult::Failure(_))
     }
 }
@@ -235,7 +237,7 @@ pub enum Step {
 
 impl Step {
     /// "error: failed {s} for package"
-    pub fn name(self) -> &'static [u8] {
+    pub(crate) fn name(self) -> &'static [u8] {
         match self {
             Step::Copyfile | Step::CopyingFiles => b"copying files from cache to destination",
             Step::OpeningCacheDir => b"opening cache/package/version dir",
@@ -264,14 +266,15 @@ impl PackageInstall<'_> {
     /// Read accessor for the [`SUPPORTED_METHOD`] global. Associated fn so
     /// cross-module callers keep the `PackageInstall::supported_method()` call shape.
     #[inline]
-    pub fn supported_method() -> Method {
+    pub(crate) fn supported_method() -> Method {
         Method::from_u8(SUPPORTED_METHOD.load(Ordering::Relaxed))
     }
 
     /// Write accessor for [`SUPPORTED_METHOD`] (fallback path when
     /// clonefile/hardlink fails). Relaxed — single-writer, advisory hint.
     #[inline]
-    pub fn set_supported_method(m: Method) {
+    #[cfg(not(windows))]
+    pub(crate) fn set_supported_method(m: Method) {
         SUPPORTED_METHOD.store(m as u8, Ordering::Relaxed);
     }
 }
@@ -429,7 +432,7 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
 
 /// Open a directory handle relative to `dir`.
 #[inline]
-fn open_dir(dir: Fd, subpath: &ZStr) -> Result<Dir, bun_core::Error> {
+fn open_dir(dir: Fd, subpath: &ZStr) -> crate::Result<Dir> {
     sys::open_dir_at(dir, subpath.as_bytes())
         .map(Dir::from_fd)
         .map_err(Into::into)
@@ -437,7 +440,7 @@ fn open_dir(dir: Fd, subpath: &ZStr) -> Result<Dir, bun_core::Error> {
 
 /// Non-Z-terminated variant of [`open_dir`].
 #[inline]
-fn open_dir_a(dir: Fd, subpath: &[u8]) -> Result<Dir, bun_core::Error> {
+fn open_dir_a(dir: Fd, subpath: &[u8]) -> crate::Result<Dir> {
     sys::open_dir_at(dir, subpath)
         .map(Dir::from_fd)
         .map_err(Into::into)
@@ -449,25 +452,27 @@ fn open_dir_a(dir: Fd, subpath: &[u8]) -> Result<Dir, bun_core::Error> {
 
 // ───────────────────────────── NewTaskQueue ─────────────────────────────
 
-pub struct NewTaskQueue<TaskType> {
-    pub thread_pool: &'static ThreadPool,
+#[cfg(windows)]
+pub(crate) struct NewTaskQueue<TaskType> {
+    pub(crate) thread_pool: &'static ThreadPool,
     /// One-shot, first-write-wins handoff of the failed task from a worker
     /// thread to the consumer that called `wait()`. A `Mutex<Option<Box<_>>>`
     /// makes ownership explicit (vs. the original `AtomicPtr`, which forced
     /// every reader to remember `Box::from_raw` and risked leaks/double-free).
-    pub errored_task: bun_threading::Guarded<Option<Box<TaskType>>>,
-    pub wait_group: WaitGroup,
+    pub(crate) errored_task: bun_threading::Guarded<Option<Box<TaskType>>>,
+    pub(crate) wait_group: WaitGroup,
 }
 
+#[cfg(windows)]
 impl<TaskType> NewTaskQueue<TaskType> {
-    pub fn complete_one(&self) {
+    pub(crate) fn complete_one(&self) {
         self.wait_group.finish();
     }
 
     /// # Safety
     /// `task` must point to a live, Box-allocated `TaskType` whose ownership is
     /// being handed to the thread pool; the worker reclaims it in its callback.
-    pub unsafe fn push(&self, task: *mut TaskType)
+    pub(crate) unsafe fn push(&self, task: *mut TaskType)
     where
         TaskType: HasWorkPoolTask,
     {
@@ -479,19 +484,20 @@ impl<TaskType> NewTaskQueue<TaskType> {
         }));
     }
 
-    pub fn wait(&self) {
+    pub(crate) fn wait(&self) {
         self.wait_group.wait();
     }
 }
 
-pub trait HasWorkPoolTask {
+#[cfg(windows)]
+pub(crate) trait HasWorkPoolTask {
     fn task(&mut self) -> &mut WorkPoolTask;
 }
 
 // ───────────────────────────── HardLinkWindowsInstallTask ─────────────────────────────
 
 #[cfg(windows)]
-pub(crate) struct HardLinkWindowsInstallTask {
+struct HardLinkWindowsInstallTask {
     /// Layout: `[src .. , 0, dest .. , 0]`. `src` and `dest` are reconstructed
     /// on demand from `src_len` instead of storing self-referential pointers
     /// (which would be invalidated when this `Box<[u16]>` is moved into `Self`
@@ -500,7 +506,7 @@ pub(crate) struct HardLinkWindowsInstallTask {
     src_len: usize,
     basename: u16,
     task: WorkPoolTask,
-    err: Option<bun_core::Error>,
+    err: Option<crate::Error>,
 }
 
 #[cfg(windows)]
@@ -511,7 +517,7 @@ impl HasWorkPoolTask for HardLinkWindowsInstallTask {
 }
 
 #[cfg(windows)]
-pub(crate) type HardLinkQueue = NewTaskQueue<HardLinkWindowsInstallTask>;
+type HardLinkQueue = NewTaskQueue<HardLinkWindowsInstallTask>;
 
 // PORTING.md §Global mutable state: written once on the main thread by
 // `init_queue()` before any worker `run_from_thread_pool` reads it; workers
@@ -522,7 +528,7 @@ static HARDLINK_QUEUE: bun_core::RacyCell<core::mem::MaybeUninit<HardLinkQueue>>
 
 #[cfg(windows)]
 impl HardLinkWindowsInstallTask {
-    pub(crate) fn init_queue() -> &'static HardLinkQueue {
+    fn init_queue() -> &'static HardLinkQueue {
         // SAFETY: called once per install batch on the install main thread before any
         // push(). Returns a shared ref so worker threads in run_from_thread_pool() may
         // safely alias it via HARDLINK_QUEUE.assume_init_ref(); all queue methods take
@@ -534,16 +540,10 @@ impl HardLinkWindowsInstallTask {
         // whose internal Release/Acquire on the task queue is what publishes the
         // first-call `MaybeUninit::write` below.
         //
-        // We must NOT re-assign the whole struct each call: even though `copy()` always reaches `queue.wait()`
-        // before returning (see the loop_err handling there), `WaitGroup::wait()` can
-        // return while the last worker is still inside `WaitGroup::finish()` *after*
-        // its `fetch_sub` — touching `mutex`/`cond` for the lock-unlock-signal dance.
-        // Overwriting `wait_group` (or forming `&mut HardLinkQueue` at all) would race
-        // with that trailing access. Instead, on re-init we only drain `errored_task`
-        // through its own mutex; `wait_group`'s counter is already 0 and its
-        // Mutex/Condvar are `Sync`, so a stale `finish()` tail concurrently
-        // locking/signalling them is well-defined. `thread_pool` points at the
-        // process-wide `PackageManager` singleton and never changes.
+        // On re-init we only drain `errored_task` through its own mutex instead of
+        // re-assigning the whole struct: `wait_group`'s counter is already 0 and
+        // `thread_pool` points at the process-wide `PackageManager` singleton that
+        // never changes, so a fresh write would be a no-op anyway.
         static INITIALIZED: core::sync::atomic::AtomicBool =
             core::sync::atomic::AtomicBool::new(false);
         unsafe {
@@ -566,11 +566,7 @@ impl HardLinkWindowsInstallTask {
         }
     }
 
-    pub(crate) fn init(
-        src: &[OSPathChar],
-        dest: &[OSPathChar],
-        basename: &[OSPathChar],
-    ) -> *mut Self {
+    fn init(src: &[OSPathChar], dest: &[OSPathChar], basename: &[OSPathChar]) -> *mut Self {
         let allocation_size = src.len() + 1 + dest.len() + 1;
 
         let mut combined = vec![0u16; allocation_size].into_boxed_slice();
@@ -617,7 +613,7 @@ impl HardLinkWindowsInstallTask {
         unsafe { drop(bun_core::heap::take(self_)) };
     }
 
-    fn run(&mut self) -> Option<bun_core::Error> {
+    fn run(&mut self) -> Option<crate::Error> {
         use bun_sys::windows;
         // Read scalar fields before borrowing `bytes` so no `&mut self` reborrow
         // overlaps the slice borrows below.
@@ -681,7 +677,7 @@ impl HardLinkWindowsInstallTask {
             return None;
         }
 
-        Some(windows::get_last_error())
+        Some(windows::get_last_error().into())
     }
 }
 
@@ -834,7 +830,7 @@ impl<'a> PackageInstall<'a> {
         )
     }
 
-    pub fn verify(&mut self, resolution: &Resolution, root_node_modules_dir: &Dir) -> bool {
+    pub(crate) fn verify(&mut self, resolution: &Resolution, root_node_modules_dir: &Dir) -> bool {
         let verified = match resolution.tag {
             resolution::Tag::Git => {
                 self.verify_git_resolution(resolution.git(), root_node_modules_dir)
@@ -1035,7 +1031,7 @@ impl<'a> PackageInstall<'a> {
     fn install_with_clonefile_each_dir(
         &mut self,
         destination_dir: &Dir,
-    ) -> Result<InstallResult, bun_core::Error> {
+    ) -> crate::Result<InstallResult> {
         let cached_package_dir = match open_dir(self.cache_dir, self.cache_dir_subpath) {
             Ok(d) => d,
             Err(err) => return Ok(InstallResult::fail(err, Step::OpeningCacheDir, None)),
@@ -1050,7 +1046,7 @@ impl<'a> PackageInstall<'a> {
         };
         walker_.resolve_unknown_entry_types = true;
 
-        fn copy(destination_dir_: &Dir, walker: &mut Walker) -> Result<u32, bun_core::Error> {
+        fn copy(destination_dir_: &Dir, walker: &mut Walker) -> crate::Result<u32> {
             let mut real_file_count: u32 = 0;
             let mut stackpath = [0u8; path::MAX_PATH_BYTES];
             while let Some(entry) = walker.next()? {
@@ -1075,15 +1071,19 @@ impl<'a> PackageInstall<'a> {
                             // `get_errno` bounds-checks (SUCCESS for out-of-range errno) — avoids
                             // `from_raw`'s release-mode transmute on an unexpected value.
                             Err(e) => match e.get_errno() {
-                                sys::Errno::EXDEV => return Err(bun_core::err!("NotSupported")), // not same file system
+                                sys::Errno::EXDEV => return Err(crate::Error::NotSupported), // not same file system
                                 sys::Errno::EOPNOTSUPP => {
-                                    return Err(bun_core::err!("NotSupported"));
+                                    return Err(crate::Error::NotSupported);
                                 }
-                                sys::Errno::ENOENT => return Err(bun_core::err!("FileNotFound")),
+                                sys::Errno::ENOENT => {
+                                    return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
+                                }
                                 // sometimes the downloaded npm package has already node_modules with it, so just ignore exist error here
                                 sys::Errno::EEXIST => {}
-                                sys::Errno::EACCES => return Err(bun_core::err!("AccessDenied")),
-                                _ => return Err(bun_core::err!("Unexpected")),
+                                sys::Errno::EACCES => {
+                                    return Err(crate::Error::Sys(bun_errno::SystemErrno::EACCES));
+                                }
+                                _ => return Err(crate::Error::Unexpected),
                             },
                         }
 
@@ -1101,7 +1101,7 @@ impl<'a> PackageInstall<'a> {
             OpenDirOptions::default(),
         ) {
             Ok(d) => d,
-            Err(err) => return Ok(InstallResult::fail(err, Step::OpeningDestDir, None)),
+            Err(err) => return Ok(InstallResult::fail(err.into(), Step::OpeningDestDir, None)),
         };
         self.file_count = match copy(&subdir, &mut walker_) {
             Ok(n) => n,
@@ -1113,10 +1113,7 @@ impl<'a> PackageInstall<'a> {
 
     // https://www.unix.com/man-page/mojave/2/fclonefileat/
     #[cfg(target_os = "macos")]
-    fn install_with_clonefile(
-        &mut self,
-        destination_dir: &Dir,
-    ) -> Result<InstallResult, bun_core::Error> {
+    fn install_with_clonefile(&mut self, destination_dir: &Dir) -> crate::Result<InstallResult> {
         if self.destination_dir_subpath.as_bytes()[0] == b'@' {
             if let Some(slash) = strings::index_of_char_z(self.destination_dir_subpath, SEP) {
                 let slash = slash as usize;
@@ -1136,16 +1133,16 @@ impl<'a> PackageInstall<'a> {
         ) {
             Ok(()) => Ok(InstallResult::Success),
             Err(e) => match e.get_errno() {
-                sys::Errno::EXDEV => Err(bun_core::err!("NotSupported")), // not same file system
-                sys::Errno::EOPNOTSUPP => Err(bun_core::err!("NotSupported")),
-                sys::Errno::ENOENT => Err(bun_core::err!("FileNotFound")),
+                sys::Errno::EXDEV => Err(crate::Error::NotSupported), // not same file system
+                sys::Errno::EOPNOTSUPP => Err(crate::Error::NotSupported),
+                sys::Errno::ENOENT => Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)),
                 // We first try to delete the directory
                 // But, this can happen if this package contains a node_modules folder
                 // We want to continue installing as many packages as we can, so we shouldn't block while downloading
                 // We use the slow path in this case
                 sys::Errno::EEXIST => self.install_with_clonefile_each_dir(destination_dir),
-                sys::Errno::EACCES => Err(bun_core::err!("AccessDenied")),
-                _ => Err(bun_core::err!("Unexpected")),
+                sys::Errno::EACCES => Err(crate::Error::Sys(bun_errno::SystemErrno::EACCES)),
+                _ => Err(crate::Error::Unexpected),
             },
         }
     }
@@ -1232,7 +1229,7 @@ impl<'a> PackageInstall<'a> {
                 Err(err) => {
                     // Drop on the caller's `state` runs unconditionally on this early
                     // return, so an explicit close here would double-close. Drop handles it.
-                    return InstallResult::fail(err, Step::OpeningDestDir, None);
+                    return InstallResult::fail(err.into(), Step::OpeningDestDir, None);
                 }
             };
             return InstallResult::Success;
@@ -1256,10 +1253,10 @@ impl<'a> PackageInstall<'a> {
                 let e = windows::Win32Error::get();
                 let err = if dest_path_length == 0 {
                     e.to_system_errno()
-                        .map(|s| s.to_error())
-                        .unwrap_or(bun_core::err!("Unexpected"))
+                        .map(crate::Error::Sys)
+                        .unwrap_or(crate::Error::Unexpected)
                 } else {
-                    bun_core::err!("NameTooLong")
+                    crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
                 };
                 // Drop on caller's `state` closes cached_package_dir; explicit close
                 // here would double-close (see posix branch above for full rationale).
@@ -1295,10 +1292,10 @@ impl<'a> PackageInstall<'a> {
                 let e = windows::Win32Error::get();
                 let err = if cache_path_length == 0 {
                     e.to_system_errno()
-                        .map(|s| s.to_error())
-                        .unwrap_or(bun_core::err!("Unexpected"))
+                        .map(crate::Error::Sys)
+                        .unwrap_or(crate::Error::Unexpected)
                 } else {
-                    bun_core::err!("NameTooLong")
+                    crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
                 };
                 // Drop on caller's `state` closes cached_package_dir; explicit close
                 // here would double-close (see posix branch above for full rationale).
@@ -1343,7 +1340,7 @@ impl<'a> PackageInstall<'a> {
             head1: WinSlice<'_>,
             to_copy_into2_offset: WinOffset,
             head2: WinSlice<'_>,
-        ) -> Result<u32, bun_core::Error> {
+        ) -> crate::Result<u32> {
             #[cfg(not(windows))]
             let mut real_file_count: u32 = 0;
             #[cfg(windows)]
@@ -1365,7 +1362,7 @@ impl<'a> PackageInstall<'a> {
                     if entry.path.len() > head1.len() - to_copy_into1_offset
                         || entry.path.len() > head2.len() - to_copy_into2_offset
                     {
-                        return Err(bun_core::err!("NameTooLong"));
+                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                     }
 
                     let dest_len = to_copy_into1_offset + entry.path.len();
@@ -1569,7 +1566,7 @@ impl<'a> PackageInstall<'a> {
         InstallResult::Success
     }
 
-    fn install_with_hardlink(&mut self, dest_dir: &Dir) -> Result<InstallResult, bun_core::Error> {
+    fn install_with_hardlink(&mut self, dest_dir: &Dir) -> crate::Result<InstallResult> {
         let mut state = InstallDirState::default();
         let res = self.init_install_dir(&mut state, dest_dir, Method::Hardlink);
         if res.is_fail() {
@@ -1596,7 +1593,7 @@ impl<'a> PackageInstall<'a> {
             head1: WinSlice<'_>,
             to_copy_into2_offset: WinOffset,
             head2: WinSlice<'_>,
-        ) -> Result<u32, bun_core::Error> {
+        ) -> crate::Result<u32> {
             let mut real_file_count: u32 = 0;
             #[cfg(not(windows))]
             let _ = (to_copy_into1_offset, head1, to_copy_into2_offset, head2);
@@ -1610,7 +1607,7 @@ impl<'a> PackageInstall<'a> {
             // while workers are still inside `complete_one()` (data race on the
             // counter/condvar). Capture loop errors and always fall through to wait.
             #[cfg(windows)]
-            let mut loop_err: Option<bun_core::Error> = None;
+            let mut loop_err: Option<crate::Error> = None;
 
             loop {
                 let entry = match walker.next() {
@@ -1654,10 +1651,12 @@ impl<'a> PackageInstall<'a> {
                                         )?;
                                     }
                                     sys::E::EXDEV => {
-                                        return Err(bun_core::err!("NotSameFileSystem"));
+                                        return Err(crate::Error::NotSameFileSystem);
                                     }
                                     sys::E::ENXIO => {
-                                        return Err(bun_core::err!("ENXIO"));
+                                        return Err(crate::Error::Sys(
+                                            bun_errno::SystemErrno::ENXIO,
+                                        ));
                                     }
                                     _ => return Err(err.into()),
                                 }
@@ -1678,7 +1677,7 @@ impl<'a> PackageInstall<'a> {
                     if entry.path.len() > head1.len() - to_copy_into1_offset
                         || entry.path.len() > head2.len() - to_copy_into2_offset
                     {
-                        loop_err = Some(bun_core::err!("NameTooLong"));
+                        loop_err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                         break;
                     }
 
@@ -1748,13 +1747,14 @@ impl<'a> PackageInstall<'a> {
             Err(err) => {
                 #[cfg(windows)]
                 {
-                    if err == bun_core::err!("FailedToCopyFile") {
+                    if err == crate::Error::FailedToCopyFile {
                         return Ok(InstallResult::fail(err, Step::CopyingFiles, None));
                     }
                 }
                 #[cfg(not(windows))]
                 {
-                    if err == bun_core::err!("NotSameFileSystem") || err == bun_core::err!("ENXIO")
+                    if err == crate::Error::NotSameFileSystem
+                        || err == crate::Error::Sys(bun_errno::SystemErrno::ENXIO)
                     {
                         return Err(err);
                     }
@@ -1767,7 +1767,7 @@ impl<'a> PackageInstall<'a> {
         Ok(InstallResult::Success)
     }
 
-    fn install_with_symlink(&mut self, dest_dir: &Dir) -> Result<InstallResult, bun_core::Error> {
+    fn install_with_symlink(&mut self, dest_dir: &Dir) -> crate::Result<InstallResult> {
         let mut state = InstallDirState::default();
         let res = self.init_install_dir(&mut state, dest_dir, Method::Symlink);
         if res.is_fail() {
@@ -1814,7 +1814,7 @@ impl<'a> PackageInstall<'a> {
             head1: WinSlice<'_>,
             to_copy_into2_offset: usize,
             head2: &mut [Head2Char],
-        ) -> Result<u32, bun_core::Error> {
+        ) -> crate::Result<u32> {
             #[cfg(not(windows))]
             let mut real_file_count: u32 = 0;
             #[cfg(windows)]
@@ -1866,7 +1866,7 @@ impl<'a> PackageInstall<'a> {
                     if entry.path.len() > head1.len() - to_copy_into1_offset
                         || entry.path.len() > head2.len() - to_copy_into2_offset
                     {
-                        return Err(bun_core::err!("NameTooLong"));
+                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                     }
 
                     let dest_len = to_copy_into1_offset + entry.path.len();
@@ -1957,13 +1957,14 @@ impl<'a> PackageInstall<'a> {
             Err(err) => {
                 #[cfg(windows)]
                 {
-                    if err == bun_core::err!("FailedToCopyFile") {
+                    if err == crate::Error::FailedToCopyFile {
                         return Ok(InstallResult::fail(err, Step::CopyingFiles, None));
                     }
                 }
                 #[cfg(not(windows))]
                 {
-                    if err == bun_core::err!("NotSameFileSystem") || err == bun_core::err!("ENXIO")
+                    if err == crate::Error::NotSameFileSystem
+                        || err == crate::Error::Sys(bun_errno::SystemErrno::ENXIO)
                     {
                         return Err(err);
                     }
@@ -1975,11 +1976,7 @@ impl<'a> PackageInstall<'a> {
         Ok(InstallResult::Success)
     }
 
-    pub fn uninstall(&self, destination_dir: &Dir) {
-        let _ = destination_dir.delete_tree(self.destination_dir_subpath.as_bytes());
-    }
-
-    pub fn uninstall_before_install(&self, destination_dir: &Dir) {
+    pub(crate) fn uninstall_before_install(&self, destination_dir: &Dir) {
         let mut rand_path_buf = [0u8; 48];
         let rand_bytes = bun_core::fast_random().to_ne_bytes();
         let temp_path = {
@@ -2056,7 +2053,7 @@ impl<'a> PackageInstall<'a> {
         }
     }
 
-    pub fn is_dangling_symlink(path: &ZStr) -> bool {
+    pub(crate) fn is_dangling_symlink(path: &ZStr) -> bool {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             match sys::open(path, sys::O::PATH, 0) {
@@ -2089,39 +2086,11 @@ impl<'a> PackageInstall<'a> {
         }
     }
 
-    #[cfg(windows)]
-    pub fn is_dangling_windows_bin_link(
-        node_mod_fd: Fd,
-        path: &[u16],
-        temp_buffer: &mut [u8],
-    ) -> bool {
-        let bin_path = 'bin_path: {
-            let Ok(file) =
-                sys::openat_windows(node_mod_fd, path, sys::O::RDONLY, 0).map(sys::File::from_fd)
-            else {
-                return true;
-            };
-            let Ok(size) = file.read_all(temp_buffer) else {
-                return true;
-            };
-            let Some(decoded) = crate::windows_shim::loose_decode(&temp_buffer[..size]) else {
-                return true;
-            };
-            debug_assert!(decoded.flags.is_valid()); // looseDecode ensures valid flags
-            break 'bin_path decoded.bin_path;
-        };
-
-        {
-            let Ok(fd) = sys::openat_windows(node_mod_fd, bin_path, sys::O::RDONLY, 0) else {
-                return true;
-            };
-            fd.close();
-        }
-
-        false
-    }
-
-    pub fn install_from_link(&mut self, skip_delete: bool, destination_dir: &Dir) -> InstallResult {
+    pub(crate) fn install_from_link(
+        &mut self,
+        skip_delete: bool,
+        destination_dir: &Dir,
+    ) -> InstallResult {
         let dest_path = self.destination_dir_subpath;
         // If this fails, we don't care.
         // we'll catch it the next error
@@ -2147,25 +2116,22 @@ impl<'a> PackageInstall<'a> {
         // so map the openat errno to the named error tag to preserve the
         // user-visible error tag
         // (test/cli/install/bun-link.test.ts asserts on `FileNotFound:`).
-        let realpath_err = |e: bun_sys::Error| -> bun_core::Error {
+        let realpath_err = |e: bun_sys::Error| -> crate::Error {
             use sys::E;
             match e.get_errno() {
-                E::ENOENT => bun_core::err!("FileNotFound"),
-                E::EACCES => bun_core::err!("AccessDenied"),
-                E::ENOTDIR => bun_core::err!("NotDir"),
-                E::ENAMETOOLONG => bun_core::err!("NameTooLong"),
-                E::ELOOP => bun_core::err!("SymLinkLoop"),
-                E::ENOMEM => bun_core::err!("SystemResources"),
+                E::ENOENT => crate::Error::FileNotFound,
+                E::EACCES => crate::Error::AccessDenied,
+                E::ENOTDIR => crate::Error::NotDir,
+                E::ENAMETOOLONG => crate::Error::NameTooLong,
+                E::ELOOP => crate::Error::SymLinkLoop,
+                E::ENOMEM => crate::Error::SystemResources,
                 _ => e.into(),
             }
         };
         let to_path: &[u8] = {
-            // `symlinked_path` is always a package *directory*;
-            // bare `O::RDONLY` on Windows routes to the file-open NtCreateFile arm
-            // which requests `FILE_WRITE_ATTRIBUTES` (may be denied on RO dirs).
-            // `O::DIRECTORY` routes to `open_dir_at_windows_nt_path`
-            // (`FILE_LIST_DIRECTORY | SYNCHRONIZE`),
-            // then `get_fd_path` resolves via `GetFinalPathNameByHandleW`.
+            // `symlinked_path` is always a package *directory*; `O::DIRECTORY`
+            // routes to `open_dir_at_windows_nt_path`, then `get_fd_path`
+            // resolves via `GetFinalPathNameByHandleW`.
             let fd = match sys::openat(
                 self.cache_dir,
                 symlinked_path,
@@ -2206,10 +2172,10 @@ impl<'a> PackageInstall<'a> {
                 let e = windows::Win32Error::get();
                 let err = if dest_path_length == 0 {
                     e.to_system_errno()
-                        .map(|s| s.to_error())
-                        .unwrap_or(bun_core::err!("Unexpected"))
+                        .map(crate::Error::Sys)
+                        .unwrap_or(crate::Error::Unexpected)
                 } else {
-                    bun_core::err!("NameTooLong")
+                    crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
                 };
                 return InstallResult::fail(err, Step::LinkingDependency, None);
             }
@@ -2263,7 +2229,7 @@ impl<'a> PackageInstall<'a> {
                     }
 
                     return InstallResult::fail(
-                        bun_sys::errno_to_zig_err(err.errno.into()),
+                        bun_errno::from_errno(err.errno.into()).into(),
                         Step::LinkingDependency,
                         None,
                     );
@@ -2281,7 +2247,9 @@ impl<'a> PackageInstall<'a> {
                         OpenDirOptions::default(),
                     ) {
                         Ok(d) => d,
-                        Err(err) => return InstallResult::fail(err, Step::LinkingDependency, None),
+                        Err(err) => {
+                            return InstallResult::fail(err.into(), Step::LinkingDependency, None);
+                        }
                     },
                 )
             } else {
@@ -2313,7 +2281,7 @@ impl<'a> PackageInstall<'a> {
 
         if Self::is_dangling_symlink(symlinked_path) {
             return InstallResult::fail(
-                bun_core::err!("DanglingSymlink"),
+                crate::Error::DanglingSymlink,
                 Step::LinkingDependency,
                 None,
             );
@@ -2322,7 +2290,7 @@ impl<'a> PackageInstall<'a> {
         InstallResult::Success
     }
 
-    pub fn get_install_method(&self) -> Method {
+    pub(crate) fn get_install_method(&self) -> Method {
         if self.cache_dir_subpath.as_bytes() == b"."
             || self.cache_dir_subpath.as_bytes().starts_with(b"..")
         {
@@ -2332,7 +2300,7 @@ impl<'a> PackageInstall<'a> {
         }
     }
 
-    pub fn package_missing_from_cache(
+    pub(crate) fn package_missing_from_cache(
         &mut self,
         manager: &mut PackageManager,
         package_id: PackageID,
@@ -2358,12 +2326,10 @@ impl<'a> PackageInstall<'a> {
                                     .as_mut_slice()
                             };
 
-                            if cfg!(debug_assertions) {
-                                debug_assert!(bun_core::is_slice_in_buffer(
-                                    self.cache_dir_subpath.as_bytes(),
-                                    buf
-                                ));
-                            }
+                            debug_assert!(bun_core::is_slice_in_buffer(
+                                self.cache_dir_subpath.as_bytes(),
+                                buf
+                            ));
 
                             let subpath_len =
                                 strings::without_trailing_slash(self.cache_dir_subpath.as_bytes())
@@ -2413,7 +2379,7 @@ impl<'a> PackageInstall<'a> {
         }
     }
 
-    pub fn patched_package_missing_from_cache(
+    pub(crate) fn patched_package_missing_from_cache(
         &mut self,
         manager: &mut PackageManager,
         package_id: PackageID,
@@ -2426,7 +2392,7 @@ impl<'a> PackageInstall<'a> {
         !exists
     }
 
-    pub fn install(
+    pub(crate) fn install(
         &mut self,
         skip_delete: bool,
         destination_dir: &Dir,
@@ -2460,12 +2426,12 @@ impl<'a> PackageInstall<'a> {
                     match self.install_with_clonefile(destination_dir) {
                         Ok(result) => return result,
                         Err(err) => {
-                            if err == bun_core::err!("NotSupported") {
+                            if err == crate::Error::NotSupported {
                                 Self::set_supported_method(Method::Copyfile);
                                 supported_method_to_use = Method::Copyfile;
-                            } else if err == bun_core::err!("FileNotFound") {
+                            } else if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 return InstallResult::fail(
-                                    bun_core::err!("FileNotFound"),
+                                    crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
                                     Step::OpeningCacheDir,
                                     None,
                                 );
@@ -2482,12 +2448,12 @@ impl<'a> PackageInstall<'a> {
                     match self.install_with_clonefile_each_dir(destination_dir) {
                         Ok(result) => return result,
                         Err(err) => {
-                            if err == bun_core::err!("NotSupported") {
+                            if err == crate::Error::NotSupported {
                                 Self::set_supported_method(Method::Copyfile);
                                 supported_method_to_use = Method::Copyfile;
-                            } else if err == bun_core::err!("FileNotFound") {
+                            } else if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 return InstallResult::fail(
-                                    bun_core::err!("FileNotFound"),
+                                    crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
                                     Step::OpeningCacheDir,
                                     None,
                                 );
@@ -2505,16 +2471,16 @@ impl<'a> PackageInstall<'a> {
                     Err(err) => {
                         #[cfg(not(windows))]
                         {
-                            if err == bun_core::err!("NotSameFileSystem") {
+                            if err == crate::Error::NotSameFileSystem {
                                 Self::set_supported_method(Method::Copyfile);
                                 supported_method_to_use = Method::Copyfile;
                                 break 'outer;
                             }
                         }
 
-                        return if err == bun_core::err!("FileNotFound") {
+                        return if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                             InstallResult::fail(
-                                bun_core::err!("FileNotFound"),
+                                crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
                                 Step::OpeningCacheDir,
                                 None,
                             )
@@ -2528,7 +2494,7 @@ impl<'a> PackageInstall<'a> {
                 return match self.install_with_symlink(destination_dir) {
                     Ok(result) => result,
                     Err(err) => {
-                        if err == bun_core::err!("FileNotFound") {
+                        if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                             InstallResult::fail(err, Step::OpeningCacheDir, None)
                         } else {
                             InstallResult::fail(err, Step::CopyingFiles, None)

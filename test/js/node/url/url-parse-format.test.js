@@ -1115,8 +1115,7 @@ describe("url.parse then url.format", () => {
     }
   });
 
-  // TODO: Support parsing this.
-  test.todo("xss", () => {
+  test("xss", () => {
     const parsed = url.parse("http://nodejs.org/").resolveObject("jAvascript:alert(1);a=\x27@white-listed.com\x27");
 
     const expected = Object.assign(new url.Url(), {

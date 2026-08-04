@@ -267,7 +267,7 @@ impl<'a> GlobPattern<'a> {
 }
 
 impl WhyCommand {
-    pub(crate) fn print_usage() {
+    fn print_usage() {
         bun_core::prettyln!(
             concat!("<r><b>bun why<r> <d>v", "{}", "<r>"),
             Global::package_json_version_with_sha
@@ -292,7 +292,7 @@ impl WhyCommand {
         Output::flush();
     }
 
-    pub(crate) fn exec(ctx: command::Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: command::Context) -> Result<(), crate::Error> {
         let cli = CommandLineArguments::parse(Subcommand::Why)?;
         // Capture the few `cli` fields we read after `init` consumes it.
         let positionals = cli.positionals;
@@ -320,7 +320,7 @@ impl WhyCommand {
         ctx: command::Context,
         pm: &mut PackageManager,
         positionals: &[&[u8]],
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         if positionals.len() < 2 {
             Self::print_usage();
             Global::exit(1);
@@ -329,12 +329,12 @@ impl WhyCommand {
         Self::exec_with_manager(ctx, pm, positionals[1], pm.options.top_only)
     }
 
-    pub(crate) fn exec_with_manager(
+    fn exec_with_manager(
         ctx: command::Context,
         pm: &mut PackageManager,
         package_pattern: &[u8],
         top_only: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // Detach the `Box<Lockfile>` from `pm`
         // so `load_from_cwd` can take `Option<&mut PackageManager>` without
         // overlapping the `&mut self` lockfile borrow. `pm.options.depth` is read
@@ -563,7 +563,7 @@ fn print_package_with_type(prefix: &[u8], package: &DependentInfo) {
     }
 }
 
-pub struct TreeContext<'a> {
+pub(crate) struct TreeContext<'a> {
     all_dependents: &'a HashMap<PackageID, Vec<DependentInfo>>,
     path_tracker: HashMap<PackageID, usize>,
 }

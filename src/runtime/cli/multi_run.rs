@@ -3,9 +3,10 @@ use core::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
+use crate::Error;
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
-use bun_core::{self as bun, Error, Global, Output, UnwrapOrOom, err};
+use bun_core::{self as bun, Global, Output, UnwrapOrOom};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_io::BufferedReader;
@@ -64,7 +65,7 @@ impl<'a> PipeReader<'a> {
         }
     }
 
-    fn event_loop_ptr(&self) -> *mut MiniEventLoop<'static> {
+    fn event_loop_ptr(&self) -> *mut MiniEventLoop {
         // SAFETY: handle is a backref set in ProcessHandle::start() before any read; State
         // outlives all handles (lives on `run`'s stack frame for the whole event loop).
         unsafe { (*(*self.handle).state).event_loop }
@@ -173,7 +174,7 @@ impl<'a> ProcessHandle<'a> {
         let stdout_fd = spawned.stdout;
         #[cfg(unix)]
         let stderr_fd = spawned.stderr;
-        let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop), false);
+        let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop));
 
         self.stdout_reader.handle = std::ptr::from_ref(self);
         self.stderr_reader.handle = std::ptr::from_ref(self);
@@ -286,7 +287,7 @@ const RESET: &[u8] = ansi::RESET.as_bytes();
 
 struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
-    event_loop: *mut MiniEventLoop<'static>,
+    event_loop: *mut MiniEventLoop,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
@@ -296,12 +297,12 @@ struct State<'a> {
     shell_bin: Box<[u8]>,
     aborted: bool,
     no_exit_on_error: bool,
-    env: *mut DotEnvLoader<'static>,
+    env: *mut DotEnvLoader,
     use_colors: bool,
 }
 
 impl<'a> State<'a> {
-    pub(crate) fn is_done(&self) -> bool {
+    fn is_done(&self) -> bool {
         self.remaining_scripts == 0
     }
 
@@ -495,7 +496,7 @@ impl<'a> State<'a> {
         }
     }
 
-    pub(crate) fn abort(&mut self) {
+    fn abort(&mut self) {
         self.aborted = true;
         for handle in self.handles.iter_mut() {
             if let Some(proc) = &mut handle.process {
@@ -508,7 +509,7 @@ impl<'a> State<'a> {
         }
     }
 
-    pub(crate) fn finalize(&self) -> u8 {
+    fn finalize(&self) -> u8 {
         for handle in self.handles.iter() {
             if let Some(proc) = &handle.process {
                 match &proc.status {
@@ -553,7 +554,7 @@ impl AbortHandler {
         bun_sys::windows::FALSE
     }
 
-    pub(crate) fn install() {
+    fn install() {
         #[cfg(unix)]
         {
             // bun_sys::posix::Sigaction is a re-export of libc::sigaction; construct
@@ -582,10 +583,13 @@ impl AbortHandler {
         }
     }
 
-    pub(crate) fn uninstall() {
+    fn uninstall() {
         #[cfg(windows)]
         {
-            let _ = bun_sys::windows::SetConsoleCtrlHandler(None, bun_sys::windows::FALSE);
+            let _ = bun_sys::windows::SetConsoleCtrlHandler(
+                Some(Self::windows_ctrl_handler),
+                bun_sys::windows::FALSE,
+            );
         }
     }
 }
@@ -800,12 +804,15 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     let cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
 
     // SAFETY: transpiler.env is a process-lifetime *mut Loader set in init.
-    let env_ptr: *mut DotEnvLoader<'static> = this_transpiler.env;
+    let env_ptr: *mut DotEnvLoader = this_transpiler.env;
     let event_loop = bun_event_loop::MiniEventLoop::init_global(
         // SAFETY: env_ptr is the process-lifetime DotEnv loader; no other borrow of it is live yet.
         Some(unsafe { &mut *env_ptr }),
         None,
     );
+    // Windows: recursive kill-on-close Job so cmd.exe/.cmd-shim grandchildren
+    // (which escape libuv's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
+    bun_io::ParentDeathWatchdog::ensure_kill_on_close_job();
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --parallel). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
@@ -819,13 +826,13 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         let path_env = unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
         Box::from(
             RunCommand::find_shell(path_env, cwd)
-                .ok_or_else(|| err!("MissingShell"))?
+                .ok_or(crate::Error::MissingShell)?
                 .as_bytes_with_nul(),
         )
     } else {
         Box::from(
             bun::self_exe_path()
-                .map_err(|_| err!("MissingShell"))?
+                .map_err(|_| crate::Error::MissingShell)?
                 .as_bytes_with_nul(),
         )
     };

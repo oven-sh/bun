@@ -1651,6 +1651,33 @@ impl Run {
     }
 }
 
+/// Experiment (heap image): a process restored from an image jumps here instead of loading an entry point.
+/// The Rust `VirtualMachine`/event loop objects come from the image (heap); only thread-locals need re-seating.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__imageAdoptMainThreadVM() {
+    let vm_ptr = bun_jsc::virtual_machine::VirtualMachine::main_thread_vm_ptr();
+    assert!(!vm_ptr.is_null(), "image has no main-thread VM");
+    bun_jsc::virtual_machine::VirtualMachine::adopt_on_current_thread(vm_ptr);
+    crate::jsc_hooks::adopt_main_thread_runtime_state();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__imageContinueEventLoop() -> ! {
+    let vm_ptr = bun_jsc::virtual_machine::VirtualMachine::main_thread_vm_ptr();
+    assert!(!vm_ptr.is_null(), "image has no main-thread VM");
+    bun_jsc::virtual_machine::VirtualMachine::adopt_on_current_thread(vm_ptr);
+    // SAFETY: `vm_ptr` is the image's main-thread VM, now installed for this thread.
+    let vm = unsafe { &mut *vm_ptr };
+    while vm.is_event_loop_alive() {
+        vm.tick();
+        vm.auto_tick_active();
+    }
+    vm.on_before_exit();
+    vm.global().handle_rejected_promises();
+    vm.on_exit();
+    vm.global_exit();
+}
+
 #[inline]
 fn log_has_msgs(vm: &VirtualMachine) -> bool {
     match vm.log {

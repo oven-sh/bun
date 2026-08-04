@@ -442,6 +442,12 @@ impl VMHolder {
     pub(crate) fn set_vm(vm: Option<*mut VirtualMachine>) {
         VM.set(vm)
     }
+    /// Experiment (heap image): install an existing VM (from the image's static) as this thread's VM.
+    pub(crate) fn adopt(vm: *mut VirtualMachine) {
+        VM.set(Some(vm));
+        // SAFETY: `vm` is the image's live main-thread VM.
+        CACHED_GLOBAL_OBJECT.set(Some(unsafe { (*vm).global }));
+    }
     #[inline(always)]
     fn set_cached_global_object(g: Option<*mut JSGlobalObject>) {
         CACHED_GLOBAL_OBJECT.set(g)
@@ -658,6 +664,14 @@ impl VirtualMachine {
     /// legacy code that still needs `&mut VirtualMachine` whole-struct uses
     /// [`Self::get_mut_ptr`] + an explicit `unsafe` deref.
     #[inline(always)]
+    /// Experiment (heap image): the main-thread VM recorded in a plain static (survives an image restore, unlike TLS).
+    pub fn main_thread_vm_ptr() -> *mut VirtualMachine {
+        MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire)
+    }
+    pub fn adopt_on_current_thread(vm: *mut VirtualMachine) {
+        VMHolder::adopt(vm);
+    }
+
     pub fn get() -> &'static VirtualMachine {
         // SAFETY: `get_or_null()` returns the thread-local pointer set by
         // `init()`; non-null while a VM is installed; the allocation outlives

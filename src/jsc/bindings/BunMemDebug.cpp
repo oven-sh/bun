@@ -44,6 +44,14 @@
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #include <mach-o/dyld.h>
+#include <mach-o/getsect.h>
+#include <pthread.h>
+#include <wtf/Threading.h>
+#include <JavaScriptCore/Completion.h>
+#include <JavaScriptCore/SourceCode.h>
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/JSLock.h>
+#include <JavaScriptCore/MachineStackMarker.h>
 #endif
 #include <unistd.h>
 #if OS(DARWIN)
@@ -62,6 +70,7 @@ typedef bool(mi_free_filter_fun)(void* p);
 extern "C" void mi_free_set_filter(mi_free_filter_fun* filter) noexcept;
 extern "C" void mi_prof_visit_live(bool (*cb)(uintptr_t addr, size_t size, const uintptr_t* frames, uint8_t nframes, void* arg), void* arg) noexcept;
 #include <mimalloc.h>
+#include "ZigGlobalObject.h"
 static std::vector<std::pair<uintptr_t, uintptr_t>> s_frozenRanges; // sorted [start,end)
 static std::vector<uintptr_t> s_payloadPages; // sorted OS pages that held live malloc blocks (main heap) at freeze
 static std::map<uintptr_t, uint32_t> s_pageSizeClass; // page -> block size of (first) live block seen
@@ -101,8 +110,18 @@ static int s_seq = 0;
 
 static void memdebugSignal(int sig) { s_requested.store(sig == SIGXCPU ? 3 : sig == SIGINFO ? 2 : 1); }
 
+static void imageRestoreAndRun(const char* path);
+extern "C" void Bun__imageMaybeRestore()
+{
+    if (const char* in = getenv("BUN_IMAGE_IN")) {
+        WTF::String path = WTF::String::fromUTF8(in);
+        unsetenv("BUN_IMAGE_IN");
+        imageRestoreAndRun(path.utf8().data());
+    }
+}
 extern "C" void Bun__memdebugInstall()
 {
+
     s_dir = getenv("BUN_MEMDEBUG");
     if (!s_dir || !*s_dir) {
         s_dir = nullptr;
@@ -725,11 +744,152 @@ static void recleanFrozenPages(JSC::VM& vm)
 #endif
 }
 
+struct us_loop_t;
+extern "C" void us_loop_reinit_for_image(struct us_loop_t*);
+extern "C" struct us_loop_t* uws_get_loop();
+extern "C" void Bun__imageContinueEventLoop();
+extern "C" void Bun__imageAdoptMainThreadVM();
+// ===== v0 heap image experiment (macOS, no-ASLR, JIT off): dump all mimalloc/JSC memory + __DATA at idle; a fresh process maps it back and runs JS on the image VM.
+struct ImageHeader { char magic[8]; uint64_t textBase; uint64_t vm; uint64_t globalObject; uint64_t mainThread; uint64_t nregions; uint64_t reserved[8]; };
+struct ImageRegion { uint64_t addr; uint64_t len; uint64_t fileOff; uint64_t kind; }; // kind: 0 heap(anon), 1 __DATA segment
+
+static void imageDump(JSC::VM& vm, const char* path)
+{
+#if OS(DARWIN)
+    JSC::JSLockHolder lock(vm);
+    vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+    mi_collect(true);
+    size_t pg = getpagesize();
+    std::vector<ImageRegion> regions;
+    // 1. anonymous writable regions (mimalloc arenas + page map, structure heap, misc JSC/WTF OS allocations); skip stacks & malloc zones & JIT
+    {
+        mach_vm_address_t addr = 0;
+        for (;;) {
+            mach_vm_size_t size = 0; vm_region_extended_info_data_t info; mach_msg_type_number_t count = VM_REGION_EXTENDED_INFO_COUNT; mach_port_t objName;
+            if (mach_vm_region(mach_task_self(), &addr, &size, VM_REGION_EXTENDED_INFO, (vm_region_info_t)&info, &count, &objName) != KERN_SUCCESS) break;
+            bool writable = (info.protection & VM_PROT_WRITE) && !(info.protection & VM_PROT_EXECUTE);
+            int tag = info.user_tag;
+            bool isStack = tag == VM_MEMORY_STACK; bool isMallocZone = tag >= VM_MEMORY_MALLOC && tag <= VM_MEMORY_MALLOC_NANO; bool isGuard = tag == VM_MEMORY_GUARD || tag == 22 /* VM_RECLAIM ring (kernel) */;
+            bool anon = info.external_pager == 0;
+            // Only memory we own and place deterministically: mimalloc (tag 240) + Bun bss arenas (hint area >= 0x1f0'0000'0000), JSC OSAllocator regions (tags 63/65).
+            // Kernel-placed libSystem regions (OS_ALLOC_ONCE, malloc zones, activity tracing...) belong to the *new* process and must not be overlaid.
+            bool ours = tag == 240 || tag == 63 || tag == 65 || (addr >= 0x1f000000000ull && addr < 0x30000000000ull);
+            if (ours && writable && anon && !isStack && !isMallocZone && !isGuard && info.share_mode != SM_SHARED && (info.pages_resident > 0 || info.pages_dirtied > 0 || info.pages_swapped_out > 0)) {
+                regions.push_back({ addr, size, 0, (uint64_t)tag << 8 });
+                if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] region %llx+%llx tag=%d prot=%x/%x share=%d resident=%u dirty=%u\n", (unsigned long long)addr, (unsigned long long)size, tag, info.protection, 0, info.share_mode, info.pages_resident, info.pages_dirtied);
+            }
+            addr += size;
+        }
+    }
+    // 2. main binary __DATA* segments (globals of Bun/JSC/WTF/mimalloc)
+    const struct mach_header_64* mh = (const struct mach_header_64*)_dyld_get_image_header(0);
+    for (const char* seg : { "__DATA_CONST", "__DATA", "__DATA_DIRTY", "__AUTH", "__AUTH_CONST" }) {
+        unsigned long segSize = 0; uint8_t* segData = getsegmentdata(mh, seg, &segSize);
+        if (segData && segSize) regions.push_back({ (uint64_t)segData, (uint64_t)((segSize + pg - 1) & ~(pg - 1)), 0, 1 });
+    }
+    // drop anon regions overlapping __DATA entries (region scan sees them as file-backed anyway) and our own stack
+    uintptr_t sp = (uintptr_t)__builtin_frame_address(0);
+    std::vector<ImageRegion> out;
+    for (auto& r : regions) { if (r.kind == 0 && sp >= r.addr && sp < r.addr + r.len) continue; out.push_back(r); }
+    int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) { fprintf(stderr, "[image] open %s failed\n", path); return; }
+    ImageHeader hdr {}; memcpy(hdr.magic, "BUNIMG0", 8);
+    hdr.textBase = (uint64_t)mh; hdr.vm = (uint64_t)&vm;
+    hdr.globalObject = (uint64_t)defaultGlobalObject();
+    hdr.mainThread = (uint64_t)&WTF::Thread::currentSingleton();
+    hdr.reserved[0] = (uint64_t)mi_theap_get_default(); // main thread's mimalloc theap (TLS-referenced, lives in the heap)
+    hdr.nregions = out.size();
+    size_t tableOff = sizeof(ImageHeader); size_t dataOff = (tableOff + out.size() * sizeof(ImageRegion) + pg - 1) & ~(pg - 1);
+    size_t fileOff = dataOff, total = 0;
+    for (auto& r : out) { r.fileOff = fileOff; fileOff += r.len; }
+    for (auto& r : out) {
+        // write region contents; non-resident anon pages read as zero which is what a fresh mapping would give anyway
+        if (pwrite(fd, (void*)r.addr, r.len, r.fileOff) != (ssize_t)r.len) { fprintf(stderr, "[image] pwrite failed for %llx+%llx errno %d\n", r.addr, r.len, errno); }
+        total += r.len;
+    }
+    pwrite(fd, &hdr, sizeof hdr, 0);
+    pwrite(fd, out.data(), out.size() * sizeof(ImageRegion), tableOff);
+    close(fd);
+    fprintf(stderr, "[image] wrote %s: %zu regions, %.1fMB (vm=%p global=%p thread=%p text=%p)\n", path, out.size(), total / 1048576.0, (void*)hdr.vm, (void*)hdr.globalObject, (void*)hdr.mainThread, (void*)hdr.textBase);
+#endif
+}
+
+// Restore: called from Bun__memdebugInstall (very early in main) when BUN_IMAGE_IN is set. Never returns.
+static void imageRestoreAndRun(const char* path)
+{
+#if OS(DARWIN)
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) { fprintf(stderr, "[image] cannot open %s\n", path); _exit(2); }
+    ImageHeader hdr; pread(fd, &hdr, sizeof hdr, 0);
+    const struct mach_header_64* mh = (const struct mach_header_64*)_dyld_get_image_header(0);
+    if (memcmp(hdr.magic, "BUNIMG0", 8) || hdr.textBase != (uint64_t)mh) { fprintf(stderr, "[image] bad magic or ASLR slide differs (image text %llx vs ours %p) — run both under noaslr\n", hdr.textBase, mh); _exit(2); }
+    std::vector<ImageRegion> regions(hdr.nregions);
+    pread(fd, regions.data(), regions.size() * sizeof(ImageRegion), sizeof(ImageHeader));
+    size_t mapped = 0, copied = 0;
+    bool verbose = !!getenv("BUN_IMAGE_VERBOSE");
+    for (auto& r : regions) {
+        if (verbose) { fprintf(stderr, "[image] restoring %llx+%llx kind=%llu tag=%llu\n", r.addr, r.len, r.kind & 0xff, r.kind >> 8); }
+        if ((r.kind & 0xff) == 1) {
+            // __DATA of the running binary: make writable and copy (mmap over a segment mapping also works but keep it simple)
+            if (mprotect((void*)r.addr, r.len, PROT_READ | PROT_WRITE)) { fprintf(stderr, "[image] mprotect __DATA %llx failed errno %d\n", r.addr, errno); _exit(3); }
+            std::vector<uint8_t> buf(r.len); pread(fd, buf.data(), r.len, r.fileOff); memcpy((void*)r.addr, buf.data(), r.len); copied += r.len;
+        } else {
+            void* m = mmap((void*)r.addr, r.len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, r.fileOff);
+            if (m == MAP_FAILED) {
+                // e.g. a reservation with restrictive max_prot already sits there: deallocate the range and retry
+                int e1 = errno;
+                mach_vm_deallocate(mach_task_self(), r.addr, r.len);
+                m = mmap((void*)r.addr, r.len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, r.fileOff);
+                if (m == MAP_FAILED) { fprintf(stderr, "[image] mmap %llx+%llx (tag %llu) failed errno %d then %d — skipping\n", r.addr, r.len, r.kind >> 8, e1, errno); continue; }
+            }
+            mapped += r.len;
+        }
+    }
+    // Re-seat allocator TLS: this thread's default theap must be the image's main theap, not whatever this process created before the overlay.
+    if (hdr.reserved[0]) mi_theap_set_default((mi_theap_t*)hdr.reserved[0]);
+    fprintf(stderr, "[image] restored %zu regions: %.1fMB mapped clean, %.1fMB __DATA copied\n", regions.size(), mapped / 1048576.0, copied / 1048576.0);
+    // From here on all globals/heap are the build process's. Adopt the image's main Thread object for this OS thread.
+    WTF::Thread* mainThread = (WTF::Thread*)hdr.mainThread;
+    mainThread->adoptCurrentThreadForImage();
+    JSC::VM* vm = (JSC::VM*)hdr.vm;
+    fprintf(stderr, "[image] thread: image main=%p currentSingleton=%p currentMayBeNull=%p apiLock owner=%p held=%d\n", mainThread, &WTF::Thread::currentSingleton(), WTF::Thread::currentMayBeNull(), vm->apiLock().ownerThread() ? vm->apiLock().ownerThread()->get() : nullptr, (int)vm->apiLock().currentThreadIsHoldingLock());
+    JSC::JSGlobalObject* globalObject = (JSC::JSGlobalObject*)hdr.globalObject;
+    us_loop_reinit_for_image(uws_get_loop());
+    Bun__imageAdoptMainThreadVM();
+    if (!getenv("BUN_IMAGE_EVAL")) {
+        {
+            JSC::JSLockHolder lock(*vm);
+            NakedPtr<JSC::Exception> exception;
+            JSC::evaluate(globalObject, JSC::makeSource("globalThis.__bunImageRestored = true; if (typeof __onImageRestored === 'function') __onImageRestored();"_s, JSC::SourceOrigin {}, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue(), exception);
+            if (exception) fprintf(stderr, "[image] __onImageRestored threw: %s\n", exception->value().toWTFString(globalObject).utf8().data());
+        }
+        Bun__imageContinueEventLoop(); // never returns
+    }
+    {
+        JSC::JSLockHolder lock(*vm);
+        const char* src = getenv("BUN_IMAGE_EVAL") ? getenv("BUN_IMAGE_EVAL") : "typeof __onRestore === 'function' ? String(__onRestore()) : 'no __onRestore; keys=' + Object.keys(globalThis).length";
+        NakedPtr<JSC::Exception> exception;
+        JSC::JSValue result = JSC::evaluate(globalObject, JSC::makeSource(WTF::String::fromUTF8(src), JSC::SourceOrigin {}, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue(), exception);
+        if (exception) {
+            fprintf(stderr, "[image] eval threw: %s\n", exception->value().toWTFString(globalObject).utf8().data());
+        } else {
+            fprintf(stderr, "[image] eval => %s\n", result.toWTFString(globalObject).utf8().data());
+        }
+    }
+    _exit(0);
+#endif
+}
+
 extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
 {
     int req = s_requested.exchange(0);
     if (!s_dir)
         return;
+    if (const char* at = getenv("BUN_IMAGE_OUT_AT_MS")) {
+        static bool doneImg = false;
+        static auto startImg = std::chrono::steady_clock::now();
+        if (!doneImg && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - startImg).count() > atoi(at)) { doneImg = true; req = 8; }
+    }
     if (const char* at = getenv("BUN_FILESNAP_AT_MS")) {
         static bool done = false;
         static auto start = std::chrono::steady_clock::now();
@@ -751,6 +911,7 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
         else if (!strncmp(buf, "dirtymap", 8)) req = 5;
         else if (!strncmp(buf, "reclean", 7)) req = 6;
         else if (!strncmp(buf, "cellprofile", 11)) req = 7;
+        else if (!strncmp(buf, "imagedump", 9)) req = 8;
         else if (!strncmp(buf, "shrink", 6)) req = 3;
         else if (!strncmp(buf, "gc", 2)) req = 2;
         else req = 1;
@@ -772,6 +933,11 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
         s_recordProfile = true;
         dumpDirtyMap(*vm);
         s_recordProfile = false;
+        return;
+    }
+    if (req == 8) {
+        imageDump(*vm, getenv("BUN_IMAGE_OUT") ? getenv("BUN_IMAGE_OUT") : "/tmp/bun.img");
+        if (getenv("BUN_IMAGE_EXIT_AFTER_DUMP")) _exit(0);
         return;
     }
     if (req == 3) {

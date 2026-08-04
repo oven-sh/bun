@@ -203,6 +203,14 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     //    wires stdout/stderr `Source`s.
     output::stdio::init();
     let _flush = output::flush_guard();
+    // Experiment (heap image): with stdio/Output ready, a BUN_IMAGE_IN process diverges here and never returns.
+    #[cfg(unix)]
+    unsafe {
+        unsafe extern "C" {
+            fn Bun__imageMaybeRestore();
+        }
+        Bun__imageMaybeRestore();
+    }
 
     // 5. Per-thread stack-limit cache for the JS recursion guard.
     StackCheck::configure_thread();

@@ -775,6 +775,7 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
     return (struct us_internal_async *) cb;
 }
 
+
 // identical code as for timer, make it shared for "callback types"
 void us_internal_async_close(struct us_internal_async *a) {
     struct us_internal_callback_t *cb = (struct us_internal_callback_t *) a;
@@ -1018,4 +1019,26 @@ int us_socket_get_error(struct us_socket_t *s) {
     return error;
 }
 
+#endif
+
+#ifdef LIBUS_USE_KQUEUE
+#if defined(__APPLE__)
+/* Experiment (heap image restore): the loop struct came from another process; give it a fresh kqueue and
+ * re-create/re-register the wakeup mach port so us_wakeup_loop() works again. */
+void us_loop_reinit_for_image(struct us_loop_t *loop) {
+    loop->fd = kqueue();
+    loop->num_ready_polls = 0;
+    loop->current_ready_poll = 0;
+    struct us_internal_callback_t *cb = (struct us_internal_callback_t *) loop->data.wakeup_async;
+    if (cb) {
+        mach_port_t self = mach_task_self();
+        if (mach_port_allocate(self, MACH_PORT_RIGHT_RECEIVE, &cb->port) == KERN_SUCCESS
+            && mach_port_insert_right(self, cb->port, cb->port, MACH_MSG_TYPE_MAKE_SEND) == KERN_SUCCESS) {
+            mach_port_limits_t limits = { .mpl_qlimit = 1 };
+            mach_port_set_attributes(self, cb->port, MACH_PORT_LIMITS_INFO, (mach_port_info_t)&limits, MACH_PORT_LIMITS_INFO_COUNT);
+            us_internal_async_set((struct us_internal_async *) cb, (void (*)(struct us_internal_async *)) cb->cb);
+        }
+    }
+}
+#endif
 #endif

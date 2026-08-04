@@ -131,6 +131,15 @@ pub(crate) fn runtime_state() -> *mut RuntimeState {
     RUNTIME_STATE.with(Cell::get)
 }
 
+static MAIN_THREAD_RUNTIME_STATE: core::sync::atomic::AtomicPtr<RuntimeState> =
+    core::sync::atomic::AtomicPtr::new(ptr::null_mut());
+
+/// Experiment (heap image): install the image's main-thread RuntimeState on this thread.
+pub(crate) fn adopt_main_thread_runtime_state() {
+    let state = MAIN_THREAD_RUNTIME_STATE.load(core::sync::atomic::Ordering::Acquire);
+    RUNTIME_STATE.with(|c| c.set(state));
+}
+
 /// Recover this thread's `timer::All` heap as a raw pointer.
 ///
 /// Note: `bun_jsc::VirtualMachine.timer` is a `()` placeholder;
@@ -356,6 +365,13 @@ unsafe fn init_runtime_state(
         isolation_handles: IsolationHandles::default(),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
+    // Experiment (heap image): remember the main thread's state in a plain static so a restored process can re-seat the TLS.
+    if MAIN_THREAD_RUNTIME_STATE
+        .load(core::sync::atomic::Ordering::Relaxed)
+        .is_null()
+    {
+        MAIN_THREAD_RUNTIME_STATE.store(state, core::sync::atomic::Ordering::Release);
+    }
 
     // `Timespec::now_allow_mocked_time` reads `bun_core::mock_time` directly;
     // `FakeTimers::CurrentTime::{set,clear}` write that storage so timers

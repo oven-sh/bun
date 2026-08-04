@@ -263,13 +263,19 @@ pub extern "C" fn TextEncoderStreamEncoder__flushForStream(
 /// that much memory for the life of the encoder.
 const SCRATCH_CAP: usize = 64 * 1024;
 
-/// Native-sink transform step: encodes `chunk` into the encoder's reusable
-/// scratch buffer and writes it straight to the sink, so a
-/// `ByteStream → TextEncoderStream → JSSink` chain allocates no
-/// `JSUint8Array` per chunk. Returns the sink's `write_bytes` result (see
-/// nativeSinkWriteIsBackpressure for the backpressure-signal shapes),
-/// `undefined` for an empty output, or `JSValue::zero` with the exception
-/// pending on `global`.
+/// Native-sink transform step: hands the chunk's `WTFStringImpl` bytes
+/// straight to the sink via [`SinkHandle::write_latin1`] /
+/// [`SinkHandle::write_utf16`], so a `ByteStream → TextEncoderStream → JSSink`
+/// chain does the Latin-1/UTF-16 → UTF-8 conversion directly into the sink's
+/// own buffer with no per-chunk scratch allocation (and zero-copy for an
+/// all-ASCII 8-bit chunk — every sink's `write_latin1` has that fast path).
+/// A carried lead surrogate from the previous chunk is the only case that
+/// still needs a scratch buffer (the replacement / combined astral prefix
+/// must be part of the same sink write so only one `Writable` is produced).
+///
+/// Returns the sink's write result (see `nativeSinkWriteIsBackpressure` for
+/// the backpressure-signal shapes), `undefined` for an empty output, or
+/// `JSValue::zero` with the exception pending on `global`.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
@@ -279,14 +285,63 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
     sink_id: u8,
     sink_ptr: *mut core::ffi::c_void,
 ) -> JSValue {
-    let Ok(str) = chunk.get_zig_string(global) else {
+    // WebIDL DOMString coercion runs user JS; hold the resulting JSString cell
+    // so its `WTFStringImpl` survives the sink write even if the sink itself
+    // runs user JS (HTMLRewriter content handlers) or reaches a GC point
+    // (ArrayBufferSink's onReady) — same pattern as `JSSink::js_write`.
+    let Ok(js_str) = chunk.to_js_string(global) else {
         return JSValue::ZERO;
     };
+    let str = js_str.view(global);
+    let _keep = bun_jsc::EnsureStillAlive(js_str.to_js());
     // SAFETY: `this` is the live encoder owned by the calling JS cell; taken
     // after the coercion so no user JS runs while the borrow is live.
     let this = unsafe { &*this };
-    // Move the Vec out of the RefCell for the duration of the sink write so a
-    // (theoretical) re-entrant encode-into-sink call cannot BorrowMut-panic.
+    let Some(ptr) = NonNull::new(sink_ptr) else {
+        return JSValue::UNDEFINED;
+    };
+    // SAFETY: `sink_ptr` is a live JSSink of type `sink_id` (the C++ caller
+    // null-checks it before attaching); the sink copies what it needs.
+    let handle = unsafe { sink_handle_from_id(sink_id, ptr) };
+    if handle.is_none() {
+        return JSValue::UNDEFINED;
+    }
+
+    if this.pending_lead_surrogate.get().is_none() {
+        if !str.is_16bit() {
+            let bytes = str.slice();
+            if bytes.is_empty() {
+                return JSValue::UNDEFINED;
+            }
+            return handle
+                .write_latin1(&streams::Result::Temporary(RawSlice::new(bytes)))
+                .to_js(global);
+        }
+
+        let mut utf16 = str.utf16_slice_aligned();
+        // The sink's `write_utf16` emits U+FFFD for every unpaired surrogate
+        // (matching this encoder for mid-chunk ones); a trailing lone lead is
+        // the one position where the encoder differs — it carries it to the
+        // next chunk instead.
+        if let Some(&last) = utf16.last() {
+            if strings::u16_is_lead(last) {
+                this.pending_lead_surrogate.set(Some(last));
+                utf16 = &utf16[..utf16.len() - 1];
+            }
+        }
+        if utf16.is_empty() {
+            return JSValue::UNDEFINED;
+        }
+        let bytes: &[u8] = bytemuck::cast_slice(utf16);
+        return handle
+            .write_utf16(&streams::Result::Temporary(RawSlice::new(bytes)))
+            .to_js(global);
+    }
+
+    // A lead surrogate was carried from the previous chunk: the prefix and
+    // body go out as one write so only one `Writable` is produced. Move the
+    // Vec out of the RefCell for the duration so a (theoretical) re-entrant
+    // encode-into-sink call cannot BorrowMut-panic.
     let mut buf = this.scratch.take();
     buf.clear();
     if str.is_16bit() {
@@ -300,17 +355,6 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
         this.encode_latin1_into(str.slice(), &mut buf);
     }
     if buf.is_empty() {
-        this.scratch.replace(buf);
-        return JSValue::UNDEFINED;
-    }
-    let Some(ptr) = NonNull::new(sink_ptr) else {
-        this.scratch.replace(buf);
-        return JSValue::UNDEFINED;
-    };
-    // SAFETY: `sink_ptr` is a live JSSink of type `sink_id` (the C++ caller
-    // null-checks it before attaching); the sink copies what it needs.
-    let handle = unsafe { sink_handle_from_id(sink_id, ptr) };
-    if handle.is_none() {
         this.scratch.replace(buf);
         return JSValue::UNDEFINED;
     }

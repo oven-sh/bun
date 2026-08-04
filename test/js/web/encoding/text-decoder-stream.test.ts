@@ -264,6 +264,31 @@ test("utf-8 fatal: truncated sequence rejects at flush", async () => {
   await expect(Bun.readableStreamToArray(out)).rejects.toBeInstanceOf(TypeError);
 });
 
+// Readable-side backpressure: the readable queue's HWM is 1, so a single write
+// completes without a reader, and a second write parks until the readable side
+// is drained. Exercises both the utf-8 fast path and the Rust-decoder path.
+for (const opts of [{}, { fatal: true }] as const) {
+  test(`TextDecoderStream readable-side backpressure (fatal=${!!opts.fatal}): second write stays pending until drained`, async () => {
+    const tds = new TextDecoderStream("utf-8", opts);
+    const writer = tds.writable.getWriter();
+    const reader = tds.readable.getReader();
+
+    await writer.write(new TextEncoder().encode("first"));
+    const second = writer.write(new TextEncoder().encode("second"));
+    const raced = await Promise.race([second.then(() => "done"), Bun.sleep(0).then(() => "pending")]);
+    expect(raced).toBe("pending");
+
+    const { value } = await reader.read();
+    expect(value).toBe("first");
+    await second;
+
+    void writer.close();
+    const rest: string[] = [];
+    for (let r; !(r = await reader.read()).done; ) rest.push(r.value);
+    expect(rest.join("")).toBe("second");
+  });
+}
+
 // The transform/flush arm runs the native decoder directly, so monkeypatching
 // TextDecoder.prototype.decode no longer reaches it.
 test("TextDecoderStream does not call a patched TextDecoder.prototype.decode", async () => {

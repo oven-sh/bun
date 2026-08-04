@@ -406,6 +406,68 @@ impl SinkHandle {
         }
     }
 
+    /// Route a Latin-1 chunk to the sink's own Latin-1→UTF-8 writer so the
+    /// conversion lands directly in the sink's buffer. Every sink's
+    /// `write_latin1` has an `is_all_ascii` fast path that forwards the input
+    /// slice verbatim, so an all-ASCII `Temporary` here is zero-copy end to end.
+    ///
+    /// `ServerResponse` is unreachable: only `sink::sink_handle_from_id` (a
+    /// native transform attached to a JSSink) produces callers of this path.
+    ///
+    /// SAFETY: same pointee-liveness invariant as [`Self::write`].
+    pub fn write_latin1(&self, data: &streams::Result) -> streams::Writable {
+        match *self {
+            SinkHandle::None => streams::Writable::Done,
+            SinkHandle::ServerResponse(_) => {
+                debug_assert!(false, "ServerResponse is never a JSSink SinkID");
+                streams::Writable::Done
+            }
+            // SAFETY: live backref; ByteStream clears sink before free.
+            SinkHandle::FetchRequestBody(mut p) => unsafe { p.get_mut() }.write_latin1(data),
+            // SAFETY: live backref; ByteStream clears sink before free.
+            SinkHandle::S3Upload(mut p) => unsafe { p.get_mut() }.write_latin1(data),
+            SinkHandle::FileSink(p) => p.write_latin1(data),
+            SinkHandle::HTMLRewriter(p) => p.write_latin1(data),
+            // SAFETY: live backref; transform detaches before the JSSink is finalized.
+            SinkHandle::HttpResponse(mut p) => unsafe { p.get_mut() }.write_latin1(data),
+            // SAFETY: live backref; transform detaches before the JSSink is finalized.
+            SinkHandle::HttpsResponse(mut p) => unsafe { p.get_mut() }.write_latin1(data),
+            // SAFETY: live backref; transform detaches before the JSSink is finalized.
+            SinkHandle::H3Response(mut p) => unsafe { p.get_mut() }.write_latin1(data),
+            // SAFETY: live backref; transform detaches before the JSSink is finalized.
+            SinkHandle::ArrayBuffer(mut p) => unsafe { p.get_mut() }.write_latin1(data),
+        }
+    }
+
+    /// As [`Self::write_latin1`] but for a UTF-16 chunk (`data.slice16()`).
+    /// Every sink's `write_utf16` emits U+FFFD for unpaired surrogates, so the
+    /// caller is responsible for any cross-chunk surrogate carry.
+    ///
+    /// SAFETY: same pointee-liveness invariant as [`Self::write`].
+    pub fn write_utf16(&self, data: &streams::Result) -> streams::Writable {
+        match *self {
+            SinkHandle::None => streams::Writable::Done,
+            SinkHandle::ServerResponse(_) => {
+                debug_assert!(false, "ServerResponse is never a JSSink SinkID");
+                streams::Writable::Done
+            }
+            // SAFETY: live backref; ByteStream clears sink before free.
+            SinkHandle::FetchRequestBody(mut p) => unsafe { p.get_mut() }.write_utf16(data),
+            // SAFETY: live backref; ByteStream clears sink before free.
+            SinkHandle::S3Upload(mut p) => unsafe { p.get_mut() }.write_utf16(data),
+            SinkHandle::FileSink(p) => p.write_utf16(data),
+            SinkHandle::HTMLRewriter(p) => p.write_utf16(data),
+            // SAFETY: live backref; transform detaches before the JSSink is finalized.
+            SinkHandle::HttpResponse(mut p) => unsafe { p.get_mut() }.write_utf16(data),
+            // SAFETY: live backref; transform detaches before the JSSink is finalized.
+            SinkHandle::HttpsResponse(mut p) => unsafe { p.get_mut() }.write_utf16(data),
+            // SAFETY: live backref; transform detaches before the JSSink is finalized.
+            SinkHandle::H3Response(mut p) => unsafe { p.get_mut() }.write_utf16(data),
+            // SAFETY: live backref; transform detaches before the JSSink is finalized.
+            SinkHandle::ArrayBuffer(mut p) => unsafe { p.get_mut() }.write_utf16(data),
+        }
+    }
+
     /// Signal end-of-stream (or terminal error) to the attached sink.
     ///
     /// SAFETY: same pointee-liveness invariant as [`Self::write`].

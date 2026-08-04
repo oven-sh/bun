@@ -267,3 +267,163 @@ test("TextEncoderStream -> TextDecoderStream -> TextEncoderStream -> native HTTP
   expect(out.byteLength).toBe(expected.byteLength);
   expect(Buffer.compare(out, Buffer.from(expected))).toBe(0);
 });
+
+// Native-sink path: 8-bit (Latin-1) chunks go straight to the sink's own
+// write_latin1. An all-ASCII chunk is zero-copy; a chunk with bytes 128-255
+// is widened to 2-byte UTF-8 inside the sink.
+test("TextEncoderStream -> native HTTP sink: 8-bit chunks (ASCII + Latin-1 non-ASCII)", async () => {
+  const ascii = Buffer.alloc(300_000, "plain ascii run.").toString();
+  const latin1 = "caf\xe9 \xffna\xefve \xbd"; // é ÿ ï ½
+  const chunks = [ascii, latin1, "mid", latin1, ascii];
+  const expected = Buffer.from(new TextEncoder().encode(chunks.join("")));
+  await using server = Bun.serve({
+    port: 0,
+    fetch() {
+      const body = new ReadableStream<string>({
+        start(c) {
+          for (const s of chunks) c.enqueue(s);
+          c.close();
+        },
+      });
+      return new Response(body.pipeThrough(new TextEncoderStream()));
+    },
+  });
+  const out = Buffer.from(await (await fetch(server.url)).arrayBuffer());
+  expect(out.byteLength).toBe(expected.byteLength);
+  expect(Buffer.compare(out, expected)).toBe(0);
+});
+
+// Native-sink path: 16-bit chunks go straight to the sink's own write_utf16.
+// The encoder still owns cross-chunk surrogate carry (trailing lone lead), and
+// mid-chunk lone surrogates become U+FFFD via the sink.
+test("TextEncoderStream -> native HTTP sink: 16-bit chunks with surrogate edge cases", async () => {
+  const chunks = [
+    "A" + leading + leading, // 8-bit "A" roped with a 16-bit tail: mid-chunk lone lead + trailing lone lead
+    trailing + "B", // completes the carried pair
+    trailing, // lone trail, no carry -> FFFD
+    leading + leading + trailing, // mid-chunk lone lead + valid pair
+    "\u{1F499}".repeat(2000), // long 16-bit run
+    leading + trailing + leading, // valid pair then trailing lone lead
+    trailing, // completes
+    leading, // dangling -> FFFD at flush
+  ];
+  // Interpret lone surrogates the spec way via a per-chunk TextEncoder (each
+  // chunk's trailing lone lead carries, each chunk's leading lone trail is
+  // replaced): equivalent to pushing the chunks through a second, known-good
+  // TextEncoderStream.
+  const ref = Buffer.from(
+    await new Response(readableStreamFromArray(chunks).pipeThrough(new TextEncoderStream())).arrayBuffer(),
+  );
+  await using server = Bun.serve({
+    port: 0,
+    fetch() {
+      const body = new ReadableStream<string>({
+        start(c) {
+          for (const s of chunks) c.enqueue(s);
+          c.close();
+        },
+      });
+      return new Response(body.pipeThrough(new TextEncoderStream()));
+    },
+  });
+  const out = Buffer.from(await (await fetch(server.url)).arrayBuffer());
+  expect(out.toString("hex")).toBe(ref.toString("hex"));
+});
+
+// HTMLRewriter's sink runs user JS (content handlers) while the input slice is
+// still being parsed; a non-string chunk exercises the ToString-created JSString
+// being kept rooted across that call.
+test("TextEncoderStream -> HTMLRewriter native sink: non-string chunks + handler that allocates", async () => {
+  const ascii = Buffer.alloc(4096, "a").toString();
+  const body = new ReadableStream({
+    start(c) {
+      c.enqueue("<div>");
+      c.enqueue({ toString: () => "<p>" + ascii + "</p>" }); // 8-bit, ToString-coerced
+      c.enqueue({ toString: () => "<p>\u{1F499}</p>" }); // 16-bit, ToString-coerced
+      c.enqueue("</div>");
+      c.close();
+    },
+  });
+  let seen = 0;
+  const out = await new HTMLRewriter()
+    .on("p", {
+      element() {
+        seen++;
+        Bun.gc(true);
+      },
+    })
+    .transform(new Response(body.pipeThrough(new TextEncoderStream())))
+    .text();
+  expect(seen).toBe(2);
+  expect(out).toBe("<div><p>" + ascii + "</p><p>\u{1F499}</p></div>");
+});
+
+// Poll `get()` once per tick until it stays unchanged for 5 consecutive
+// samples (parked on backpressure) or reaches `total` (ran away).
+async function waitUntilStable(get: () => number, total: number) {
+  let last = get();
+  let stable = 0;
+  while (stable < 5 && get() < total) {
+    await Bun.sleep(1);
+    const now = get();
+    if (now === last) stable++;
+    else {
+      stable = 0;
+      last = now;
+    }
+  }
+}
+
+// Native-sink backpressure: when the HTTP response sink's socket buffer fills
+// (slow client), the sink's write_latin1 returns Backpressure and the writable
+// side parks on m_nativeSinkReadyPromise. Without that, a fast source with a
+// stalled client fills the sink buffer unboundedly.
+test("TextEncoderStream -> native HTTP sink applies backpressure to a stalled client", async () => {
+  let pulls = 0;
+  const chunk = Buffer.alloc(64 * 1024, "x").toString();
+  const TOTAL = 200;
+  await using server = Bun.serve({
+    port: 0,
+    fetch() {
+      const body = new ReadableStream<string>({
+        pull(c) {
+          pulls++;
+          c.enqueue(chunk);
+          if (pulls >= TOTAL) c.close();
+        },
+      });
+      return new Response(body.pipeThrough(new TextEncoderStream()));
+    },
+  });
+  const res = await fetch(server.url);
+  const reader = res.body!.getReader();
+  await reader.read();
+  await waitUntilStable(() => pulls, TOTAL);
+  const pullsWhileStalled = pulls;
+  while (!(await reader.read()).done) {}
+  expect(pullsWhileStalled).toBeLessThan(TOTAL);
+  expect(pulls).toBe(TOTAL);
+});
+
+// Readable-side backpressure (no native sink): the readable queue's HWM is 1,
+// so a single write completes without a reader, and a second write parks until
+// the readable side is drained.
+test("TextEncoderStream readable-side backpressure: second write stays pending until drained", async () => {
+  const tes = new TextEncoderStream();
+  const writer = tes.writable.getWriter();
+  const reader = tes.readable.getReader();
+
+  await writer.write("first");
+  const second = writer.write("second");
+  const raced = await Promise.race([second.then(() => "done"), Bun.sleep(0).then(() => "pending")]);
+  expect(raced).toBe("pending");
+
+  const { value } = await reader.read();
+  expect(new TextDecoder().decode(value)).toBe("first");
+  await second;
+
+  void writer.close();
+  const rest: Uint8Array[] = [];
+  for (let r; !(r = await reader.read()).done; ) rest.push(r.value);
+  expect(new TextDecoder().decode(Buffer.concat(rest))).toBe("second");
+});

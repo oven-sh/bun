@@ -298,9 +298,9 @@ fn expect_param(expect: Param<Help>, actual: Param<Help>) {
 // is flattened to `short`/`long` because `Names.long` is `&'static`.
 #[derive(Default)]
 pub struct Diagnostic {
-    pub(crate) arg: Vec<u8>,
-    pub(crate) short: Option<u8>,
-    pub(crate) long: Option<Vec<u8>>,
+    pub arg: Vec<u8>,
+    pub short: Option<u8>,
+    pub long: Option<Vec<u8>>,
 }
 
 impl Diagnostic {

@@ -4396,10 +4396,8 @@ unsafe fn transpile_file(
         .and_then(|pkg| (!pkg.name.is_empty()).then_some(&*pkg.name));
 
     // ── Concurrent-transpiler dispatch (`transpile_async:` block) ───────────
-    // We only run the transpiler concurrently when we can.
-    // Today that's: import statements (`import 'foo'`) and import expressions
-    // (`import('foo')`).
-    // Node compile cache: lazily initialize from env on the first fetch.
+    // We only run the transpiler concurrently when we can — today that's import statements and
+    // import expressions. Node compile cache: lazily initialize from env on the first fetch.
     bun_jsc::node_compile_cache::init_from_env_once();
 
     'transpile_async: {

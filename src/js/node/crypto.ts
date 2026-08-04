@@ -335,11 +335,8 @@ crypto_exports.createHmac = function createHmac(hmac, key, options) {
 
 crypto_exports.getHashes = getHashes;
 
-// Node dispatches async crypto callbacks through MakeCallback, which runs
-// them inside the domain that was active at call time; the native bindings
-// bypass that machinery, so bridge the trailing callback through the
-// domain-aware guard when a domain is active. Without one, this is a plain
-// delegation.
+// Node's MakeCallback runs async crypto callbacks inside the active domain; bridge
+// the trailing callback through the domain-aware guard when one is active.
 function wrapDomainCallbackLast(fn, name) {
   function wrapper(a, b, c, d) {
     if (process.domain != null) {

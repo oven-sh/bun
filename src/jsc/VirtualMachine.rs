@@ -141,10 +141,8 @@ impl Default for InitOptions {
     }
 }
 
-/// `performance.nodeTiming` startup milestones. Node reports these relative to
-/// the process start; Bun's clock origin is `VirtualMachine::origin_timer`, so
-/// each one is stamped at the closest equivalent point of Bun's startup.
-/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/nodetiming.js
+/// `performance.nodeTiming` startup milestones, stamped at the closest equivalent
+/// point of Bun's startup: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/nodetiming.js
 #[derive(Clone, Copy)]
 #[repr(u32)]
 pub enum NodeTimingMilestone {
@@ -529,11 +527,9 @@ impl VMHolder {
                 bun_core::Output::err(e, "Failed to write heap profile", ());
             }
         }
-        // Node runs every RunAtExit callback on self-directed fatal signals;
-        // the compile cache is one of them (env.cc AtExit(FlushCompileCache)).
-        // Non-latching: the signal may prove non-fatal (worker self-kill with
-        // a main-thread handler, or a default-ignored signal), and latching
-        // here would turn the real exit's persist into a no-op.
+        // Node runs RunAtExit (incl. compile cache) on self-directed fatal signals. Non-latching:
+        // the signal may prove non-fatal, and latching here would no-op the real exit's persist.
+        // https://github.com/nodejs/node/blob/main/src/env.cc (AtExit(FlushCompileCache))
         crate::node_compile_cache::persist_now();
     }
 }
@@ -1527,18 +1523,9 @@ impl VirtualMachine {
         }
     }
 
-    /// `--print`: log the entry-point completion value exactly once, without
-    /// unwrapping promises — node prints `util.inspect` of the value on the
-    /// first of beforeExit/exit (`runScriptInContext` in
-    /// lib/internal/process/execution.js), so `-p 'Promise.resolve(42)'`
-    /// prints `Promise { 42 }` and a promise still pending when
-    /// `process.exit()` fires prints `Promise { <pending> }`.
-    ///
-    /// Only the CJS eval path takes this route; the ESM top-level-await path
-    /// stores an internal capability promise (see `setEntryPointEvalResultESM`
-    /// in ZigGlobalObject.cpp) that `Run::start` unwraps — node refuses ESM
-    /// `--print` input outright (`ERR_EVAL_ESM_CANNOT_PRINT`), so that
-    /// unwrapping remains a Bun extension.
+    /// `--print`: log the entry-point completion value once without unwrapping promises,
+    /// per node's `runScriptInContext` (lib/internal/process/execution.js). CJS only;
+    /// ESM `--print` is a Bun extension (`Run::start` unwraps the capability promise).
     pub fn print_eval_result_if_needed(&mut self) {
         if !self.eval_and_print
             || self.entry_point_result.printed
@@ -1554,12 +1541,8 @@ impl VirtualMachine {
             .get()
             .unwrap_or(JSValue::UNDEFINED);
 
-        // node prints through console.log: a string value is written verbatim,
-        // everything else renders with util.inspect defaults. Bun's native
-        // console formatter deliberately differs from node's inspect, so route
-        // through the node util.inspect port for output parity — except JSX,
-        // a Bun extension node has no rendering for, which keeps the native
-        // console's `<hello>world</hello>` form.
+        // node prints via console.log (strings verbatim, else util.inspect); route through
+        // the node util.inspect port for parity, except JSX which keeps Bun's native form.
         if result.is_string() {
             if let Ok(text) = crate::bun_string_jsc::from_js(result, self.global()) {
                 let utf8 = text.to_utf8();
@@ -1756,16 +1739,9 @@ impl VirtualMachine {
             // a terminal state. Ask it to reclaim them now (waits up to 1s).
             bun_http::shutdown_for_exit();
 
-            // The HTTP daemon is parked. Release any task it posted to our
-            // queue before observing `is_shutting_down` (the read is
-            // non-atomic and can lag the JS-thread store) — `FetchTasklet`'s
-            // `on_progress_update` would have dropped the JS-side ref, and
-            // without it the tasklet ⇄ `Box<AsyncHTTP>` cycle leaks. Must
-            // precede `destructOnExit` so `FetchTasklet::deinit` can drop its
-            // JSC `Strong`/`Weak` handles against a live heap.
-            // Same gate the worker shutdown takes: in-flight work-pool fs
-            // completions post with no ScriptExecutionContext gate, so wait
-            // for them before the drain (a post after it leaks the task).
+            // Release tasks the HTTP daemon posted before observing `is_shutting_down` (else the
+            // tasklet ⇄ `Box<AsyncHTTP>` cycle leaks); must precede `destructOnExit`. Wait for
+            // work-pool fs completions first — they post ungated; a post after the drain leaks.
             self.event_loop_mut().wait_for_concurrent_posters();
             self.event_loop_mut().release_queued_tasks_for_shutdown();
 

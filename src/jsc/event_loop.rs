@@ -93,10 +93,9 @@ pub struct EventLoop {
 
     pub entered_event_loop_count: isize,
     pub concurrent_ref: AtomicI32,
-    /// Work-pool tasks that will post to `concurrent_tasks` when they finish
-    /// (counted on the JS thread before the pool hand-off, decremented on the
-    /// pool thread after the post). Shutdown waits for zero before the final
-    /// queue drain so a completion can't land after it and leak.
+    /// Work-pool tasks that will post to `concurrent_tasks` when they finish (counted on the JS
+    /// thread before hand-off, decremented on the pool thread after the post). Shutdown waits for
+    /// zero before the final queue drain so a completion can't land after it and leak.
     pub concurrent_posters: AtomicU32,
     /// Atomic nullable pointer to the next-due `WTFTimer`.
     ///
@@ -1031,10 +1030,9 @@ impl EventLoop {
         debug_assert!(prev > 0);
     }
 
-    /// Spin until every counted poster has finished its post. Called on the
-    /// JS thread during shutdown, after the last JS has run (nothing can
-    /// schedule new posters) and before the final queue drain. Each pending
-    /// fs operation is finite, so the wait is bounded by syscall latency.
+    /// Spin until every counted poster has finished its post. Called on the JS thread during
+    /// shutdown, after the last JS has run and before the final queue drain. Each pending fs
+    /// operation is finite, so the wait is bounded by syscall latency.
     pub fn wait_for_concurrent_posters(&self) {
         while self.concurrent_posters.load(Ordering::Acquire) > 0 {
             std::thread::yield_now();

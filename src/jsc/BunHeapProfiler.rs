@@ -16,12 +16,8 @@ pub struct HeapProfilerConfig {
     pub text_format: bool,
 }
 
-/// Scan a Worker's `execArgv` for the `--heap-prof` flag family. Returns a
-/// config only when `--heap-prof` itself is present; `--heap-prof-interval`
-/// is accepted-and-ignored like the CLI (see Arguments.rs).
-///
-/// # Safety
-/// Each `WTFStringImpl` in `exec_argv` must be a live WTF string.
+/// Scan a Worker's `execArgv` for `--heap-prof`; returns a config only when the flag
+/// itself is present. SAFETY: each `WTFStringImpl` in `exec_argv` must be live.
 pub unsafe fn parse_worker_exec_argv(
     exec_argv: &[bun_core::WTFStringImpl],
 ) -> Option<HeapProfilerConfig> {
@@ -76,7 +72,7 @@ pub unsafe fn parse_worker_exec_argv(
         }
     }
 
-    enabled.then(|| HeapProfilerConfig {
+    enabled.then_some(HeapProfilerConfig {
         name,
         dir,
         text_format: false,

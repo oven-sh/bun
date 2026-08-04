@@ -34,3 +34,15 @@ export function getSourceMapsSupport() {
 export function setSourceMapsSupport(enabled, options) {
   return require("internal/shared").setSourceMapsSupport(enabled, options);
 }
+
+// Implementation for `require('node:module').registerHooks`.
+export function registerHooks(hooks) {
+  return require("internal/modules/customization_hooks").registerHooks(hooks);
+}
+
+// Implementation for `require('node:module').register` (DEP0205). Bun does
+// not implement the off-thread module.register() hooks; the call stays a
+// no-op but emits Node's deprecation warning.
+export function register(_specifier) {
+  require("internal/modules/customization_hooks").emitRegisterDeprecation();
+}

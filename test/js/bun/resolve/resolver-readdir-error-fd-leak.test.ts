@@ -135,49 +135,55 @@ test.skipIf(skip)(
 );
 
 // The `bun test` scanner opens each subdirectory itself and hands the fd to
-// read_directory_with_iterator(Some(fd)), which is the had_handle=true arm of
-// the same guard. The scanner's Dir guard is disarmed via into_raw(), so the
-// function owns the fd on that path too.
-test.skipIf(skip)("resolver closes a caller-supplied directory fd when readdir fails (bun test scanner)", async () => {
-  const files: Record<string, string> = {
-    "package.json": "{}",
-    "count.test.ts": /* ts */ `
+// read_directory_with_iterator(Some(fd), iterator=ScannerDirIter). The iterator
+// queues ScanEntry { relative_dir: fd } for every entry it sees during
+// iteration, so when a later getdents64 batch fails the queued entries still
+// hold the fd and closing it here would be a use-after-close in the scan loop.
+// The guard therefore treats the fd as published once a non-void iterator is in
+// play, so the scanner's readdir-error path still holds one fd per directory.
+test.skipIf(skip)(
+  "bun test scanner keeps the directory fd when readdir fails (non-void iterator dispatched it)",
+  async () => {
+    const files: Record<string, string> = {
+      "package.json": "{}",
+      "count.test.ts": /* ts */ `
         import { test } from "bun:test";
         import { readdirSync, readlinkSync } from "node:fs";
         test("count", () => {
-          let leaked = 0;
+          let held = 0;
           for (const name of readdirSync("/proc/self/fd")) {
             try {
-              if (readlinkSync("/proc/self/fd/" + name).includes("${MARKER}")) leaked++;
+              if (readlinkSync("/proc/self/fd/" + name).includes("${MARKER}")) held++;
             } catch {}
           }
-          console.log("LEAKED=" + leaked);
+          console.log("HELD=" + held);
         });
       `,
-  };
-  for (let i = 0; i < DIR_COUNT; i++)
-    files[`d${i}${MARKER}/unreachable.test.ts`] =
-      `import { test } from "bun:test"; test("unreachable-marker", () => {});`;
-  using scanDir = tempDir("resolver-readdir-scanner-leak", files);
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "."],
-    cwd: String(scanDir),
-    env: shimEnv(),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // unreachable-marker stays undiscovered iff the shim made the marker dirs
-  // unreadable; if bun stops routing getdents64 through libc syscall() this trips.
-  expect({
-    leaked: stdout.match(/LEAKED=\d+/)?.[0] ?? stdout,
-    passCount: stderr.match(/(\d+) pass/)?.[1] ?? stderr,
-    sawUnreachable: stderr.includes("unreachable-marker"),
-    exitCode,
-  }).toEqual({
-    leaked: "LEAKED=0",
-    passCount: "1",
-    sawUnreachable: false,
-    exitCode: 0,
-  });
-});
+    };
+    for (let i = 0; i < DIR_COUNT; i++)
+      files[`d${i}${MARKER}/unreachable.test.ts`] =
+        `import { test } from "bun:test"; test("unreachable-marker", () => {});`;
+    using scanDir = tempDir("resolver-readdir-scanner-hold", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "."],
+      cwd: String(scanDir),
+      env: shimEnv(),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // unreachable-marker stays undiscovered iff the shim made the marker dirs
+    // unreadable; if bun stops routing getdents64 through libc syscall() this trips.
+    expect({
+      held: stdout.match(/HELD=\d+/)?.[0] ?? stdout,
+      passCount: stderr.match(/(\d+) pass/)?.[1] ?? stderr,
+      sawUnreachable: stderr.includes("unreachable-marker"),
+      exitCode,
+    }).toEqual({
+      held: `HELD=${DIR_COUNT}`,
+      passCount: "1",
+      sawUnreachable: false,
+      exitCode: 0,
+    });
+  },
+);

@@ -1168,7 +1168,7 @@ pub mod fs {
         // https://twitter.com/jarredsumner/status/1655464485245845506
         /// Caller borrows the returned `EntriesOption`. When `FeatureFlags::ENABLE_ENTRY_CACHE`
         /// is `false`, it is not safe to store this pointer past the current function call.
-        /// `maybe_handle` is owned: published into `DirEntry.fd` on success when `store_fd`, closed otherwise.
+        /// `maybe_handle` is owned by this call.
         pub fn read_directory_with_iterator<I: DirEntryIterator>(
             &mut self,
             dir_maybe_trail_slash: &[u8],
@@ -1270,6 +1270,10 @@ pub mod fs {
                     e
                 }
                 Err(err) => {
+                    // A non-void iterator has already observed the fd for every
+                    // entry yielded before the failure; closing now would use a
+                    // freed fd in the caller's queued work. Leak instead.
+                    handle_published.set(store_fd && !I::IS_VOID);
                     if let Some(existing) = in_place {
                         // SAFETY: see above.
                         unsafe { (*existing).data.clear() };

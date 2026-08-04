@@ -124,6 +124,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // The alias may be a keyword;
             let is_identifier = p.lexer.token == T::TIdentifier;
             let alias_loc = p.lexer.loc();
+            // Strip mode: span start of a type-only specifier that produces
+            // no import (blanked including its trailing comma).
+            let mut erased_spec_lo: Option<u32> = None;
             let alias = p.parse_clause_alias(b"import")?;
             let mut name = LocRef {
                 loc: alias_loc,
@@ -159,6 +162,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // "import { type as as as } from 'mod'"
                             // "import { type as as foo } from 'mod'"
                             had_type_only_imports = true;
+                            erased_spec_lo = Some(alias_loc.start as u32);
                             p.lexer.next()?;
                         } else {
                             // "import { type as as } from 'mod'"
@@ -219,6 +223,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.lexer.expected_string(b"\"as\"")?;
                     }
                     had_type_only_imports = true;
+                    erased_spec_lo = Some(alias_loc.start as u32);
                 }
             } else {
                 if p.lexer.is_contextual_keyword(b"as") {
@@ -256,6 +261,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if p.lexer.token != T::TComma {
+                if let Some(spec_lo) = erased_spec_lo {
+                    p.ts_strip_record_to_here(crate::ts_strip::EntryKind::Blank, spec_lo);
+                }
                 break;
             }
 
@@ -264,6 +272,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             p.lexer.next()?;
+
+            if let Some(spec_lo) = erased_spec_lo {
+                // Include the trailing comma (swc visit_import_specifiers).
+                p.ts_strip_record_to_here(crate::ts_strip::EntryKind::Blank, spec_lo);
+            }
 
             if p.lexer.has_newline_before {
                 is_single_line = false;
@@ -297,6 +310,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         while p.lexer.token != T::TCloseBrace {
             let mut alias = p.parse_clause_alias(b"export")?;
             let mut alias_loc = p.lexer.loc();
+            let spec_lo_for_strip = alias_loc.start as u32;
+            let mut erased_spec_lo: Option<u32> = None;
 
             let name = LocRef {
                 loc: alias_loc,
@@ -336,6 +351,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // "export { type as as 'foo' }"
                                 let _ = p.parse_clause_alias(b"export").unwrap_or(b"");
                                 had_type_only_exports = true;
+                                erased_spec_lo = Some(spec_lo_for_strip);
                                 p.lexer.next()?;
                             } else {
                                 // "export { type as as }"
@@ -361,6 +377,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             });
                         } else {
                             had_type_only_exports = true;
+                            erased_spec_lo = Some(spec_lo_for_strip);
                         }
                     } else {
                         // The name can actually be a keyword if we're really an "export from"
@@ -394,6 +411,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         had_type_only_exports = true;
+                        erased_spec_lo = Some(spec_lo_for_strip);
                     }
                 } else {
                     if p.lexer.is_contextual_keyword(b"as") {
@@ -430,6 +448,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // we're done if there's no comma
             if p.lexer.token != T::TComma {
+                if let Some(spec_lo) = erased_spec_lo {
+                    p.ts_strip_record_to_here(crate::ts_strip::EntryKind::Blank, spec_lo);
+                }
                 break;
             }
 
@@ -437,6 +458,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_single_line = false;
             }
             p.lexer.next()?;
+            if let Some(spec_lo) = erased_spec_lo {
+                // Include the trailing comma (swc visit_named_export).
+                p.ts_strip_record_to_here(crate::ts_strip::EntryKind::Blank, spec_lo);
+            }
             if p.lexer.has_newline_before {
                 is_single_line = false;
             }

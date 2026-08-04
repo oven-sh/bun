@@ -981,6 +981,7 @@ register                jsFunctionRegister                Function 1
 runMain                 moduleRunMain                        CustomAccessor
 setSourceMapsSupport    JSBuiltin                         Function|Builtin 1
 SourceMap               getSourceMapFunction              PropertyCallback
+stripTypeScriptTypes    JSBuiltin                         Function|Builtin 2
 syncBuiltinESMExports   jsFunctionSyncBuiltinESMExports   Function 0
 wrap                    jsFunctionWrap                    Function 1
 wrapper                 nodeModuleWrapper                 CustomAccessor

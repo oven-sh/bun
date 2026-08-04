@@ -122,6 +122,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if func.flags.contains(flags::Function::IsForwardDeclaration) {
             // Skip this property entirely
             p.pop_and_discard_scope(scope_index);
+            if let Some(member_lo) = opts.ts_strip_member_lo {
+                p.ts_strip_record_to_here(crate::ts_strip::EntryKind::Blank, member_lo);
+            }
             return Ok(None);
         }
 
@@ -309,6 +312,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     p.lexer.expect_or_insert_semicolon()?;
 
                                     // Skip this property entirely
+                                    let member_lo = opts
+                                        .ts_strip_member_lo
+                                        .unwrap_or(key_range.loc.start as u32);
+                                    p.ts_strip_record_to_here(
+                                        crate::ts_strip::EntryKind::Blank,
+                                        member_lo,
+                                    );
                                     return Ok(None);
                                 }
                                 _ => {}
@@ -434,6 +444,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             }
 
                                             p.discard_scopes_up_to(scope_index);
+                                            let member_lo = opts
+                                                .ts_strip_member_lo
+                                                .unwrap_or(name_range.loc.start as u32);
+                                            p.ts_strip_record_to_here(
+                                                crate::ts_strip::EntryKind::Blank,
+                                                member_lo,
+                                            );
                                             return Ok(None);
                                         }
                                     }
@@ -459,6 +476,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                 }
                                             }
                                             p.discard_scopes_up_to(scope_index);
+                                            let member_lo = opts
+                                                .ts_strip_member_lo
+                                                .unwrap_or(name_range.loc.start as u32);
+                                            p.ts_strip_record_to_here(
+                                                crate::ts_strip::EntryKind::Blank,
+                                                member_lo,
+                                            );
                                             return Ok(None);
                                         }
                                     }
@@ -485,6 +509,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             && Self::IS_TYPESCRIPT_ENABLED
                                             && PropertyModifierKeyword::find(raw) == Some(keyword)
                                         {
+                                            p.ts_strip_record_span(
+                                                crate::ts_strip::EntryKind::Blank,
+                                                name_range.loc.start as u32,
+                                                name_range.end().start as u32,
+                                            );
+                                            if p.ts_strip_active()
+                                                && opts.ts_strip_modifier_lo.is_none()
+                                            {
+                                                opts.ts_strip_modifier_lo =
+                                                    Some(name_range.loc.start as u32);
+                                            }
                                             errors = None;
                                             continue 'restart;
                                         }
@@ -604,11 +639,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut has_definite_assignment_assertion_operator = false;
 
             if Self::IS_TYPESCRIPT_ENABLED {
+                // swc's computed-key/generator modifier hazard: blanking
+                // `public` in `public [foo]() {}` could splice `[foo]` onto
+                // the previous member; overwrite the modifier start with `;`.
+                if let Some(modifier_lo) = opts.ts_strip_modifier_lo.take() {
+                    let key_is_hazard_word = matches!(
+                        &key.data,
+                        js_ast::ExprData::EString(str_)
+                            if str_.eql_comptime(b"in") || str_.eql_comptime(b"instanceof")
+                    );
+                    if (is_computed || opts.is_generator || key_is_hazard_word)
+                        && !opts.is_static
+                        && opts.ts_decorators.is_empty()
+                    {
+                        p.ts_strip_record_span(
+                            crate::ts_strip::EntryKind::SemiOverwrite,
+                            modifier_lo,
+                            modifier_lo + 1,
+                        );
+                    }
+                }
+
                 if opts.is_class {
                     if p.lexer.token == T::TQuestion {
                         // "class X { foo?: number }"
                         // "class X { foo!: number }"
+                        let q_lo = p.lexer.start as u32;
+                        let q_hi = p.lexer.end as u32;
                         p.lexer.next()?;
+                        p.ts_strip_record_span(crate::ts_strip::EntryKind::Blank, q_lo, q_hi);
                     } else if p.lexer.token == T::TExclamation
                         && !p.lexer.has_newline_before
                         && (kind == PropertyKind::Normal || kind == PropertyKind::AutoAccessor)
@@ -616,7 +675,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && !opts.is_generator
                     {
                         // "class X { foo!: number }"
+                        let bang_lo = p.lexer.start as u32;
+                        let bang_hi = p.lexer.end as u32;
                         p.lexer.next()?;
+                        p.ts_strip_record_span(crate::ts_strip::EntryKind::Blank, bang_lo, bang_hi);
                         has_definite_assignment_assertion_operator = true;
                     }
                 }
@@ -624,9 +686,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "class X { foo?<T>(): T }"
                 // "const x = { foo<T>(): T {} }"
                 if !has_definite_assignment_assertion_operator {
+                    let type_params_lo = p.lexer.start as u32;
                     has_type_parameters = p.skip_type_script_type_parameters(
                         TypeParameterFlag::ALLOW_CONST_MODIFIER,
                     )? != SkipTypeParameterResult::DidNotSkipAnything;
+                    if has_type_parameters {
+                        p.ts_strip_record_to_here(
+                            crate::ts_strip::EntryKind::Blank,
+                            type_params_lo,
+                        );
+                    }
                 }
             }
 
@@ -664,6 +733,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if Self::IS_TYPESCRIPT_ENABLED {
                     // Skip over types
                     if p.lexer.token == T::TColon {
+                        let colon_lo = p.lexer.start as u32;
                         p.lexer.next()?;
                         if p.options.features.emit_decorator_metadata
                             && opts.is_class
@@ -672,6 +742,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             ts_metadata = p.skip_type_script_type_with_metadata(Level::Lowest)?;
                         } else {
                             p.skip_type_script_type(Level::Lowest)?;
+                        }
+                        p.ts_strip_record_to_here(crate::ts_strip::EntryKind::Blank, colon_lo);
+                        // swc: a field named `get`/`set`/`static` would fuse with
+                        // the next member once `: T` is blanked; rewrite `:` as `;`.
+                        if p.ts_strip_active() && p.lexer.token != T::TEquals && !is_computed {
+                            if let js_ast::ExprData::EString(str_) = &key.data {
+                                if str_.eql_comptime(b"get")
+                                    || str_.eql_comptime(b"set")
+                                    || str_.eql_comptime(b"static")
+                                {
+                                    p.ts_strip_record_span(
+                                        crate::ts_strip::EntryKind::SemiOverwrite,
+                                        colon_lo,
+                                        colon_lo + 1,
+                                    );
+                                }
+                            }
                         }
                     }
                 }

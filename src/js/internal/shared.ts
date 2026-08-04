@@ -464,6 +464,53 @@ function setSourceMapsSupport(enabled, options = kEmptyObject) {
   });
 }
 
+// `module.stripTypeScriptTypes(code[, options])` — Node v26 removed `transform` mode (nodejs/node#61803).
+// https://github.com/nodejs/node/blob/main/lib/internal/modules/typescript.js
+let stripTypeScriptTypesNative: ((code: string) => any) | undefined;
+let emittedStripTypesWarning = false;
+
+function stripTypeScriptTypes(code, options = kEmptyObject) {
+  if (!emittedStripTypesWarning) {
+    emittedStripTypesWarning = true;
+    process.emitWarning(
+      "stripTypeScriptTypes is an experimental feature and might change at any time",
+      "ExperimentalWarning",
+    );
+  }
+  const { validateString, validateObject, validateOneOf } = require("internal/validators");
+  validateString(code, "code");
+  validateObject(options, "options");
+
+  const { sourceMap = false, sourceUrl = "" } = options;
+  const mode = options.mode === undefined ? "strip" : options.mode;
+  validateOneOf(mode, "options.mode", ["strip"]);
+  validateString(sourceUrl, "options.sourceUrl");
+  // Node: strip mode cannot produce a source map (positions are unchanged).
+  validateOneOf(sourceMap, "options.sourceMap", [false, undefined]);
+
+  stripTypeScriptTypesNative ??= $newRustFunction(
+    "node_module_binding.rs",
+    "stripTypeScriptTypesNative",
+    1,
+  ) as (code: string) => any;
+  const result = stripTypeScriptTypesNative(code);
+  if (typeof result !== "string") {
+    // amaro-shaped error report: distinguish invalid syntax from
+    // strip-unsupported syntax, and prepend Node's `filename:line\n<snippet>`
+    // hint to the stack (internal/modules/typescript.js decorateErrorWithSnippet).
+    const err =
+      result.errorCode === "UnsupportedSyntax"
+        ? $ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX(result.message)
+        : $ERR_INVALID_TYPESCRIPT_SYNTAX(result.message);
+    err.stack = `${sourceUrl}:${result.startLine}\n${result.snippet}\n${err.stack}`;
+    throw err;
+  }
+  if (sourceUrl) {
+    return `${result}\n\n//# sourceURL=${sourceUrl}`;
+  }
+  return result;
+}
+
 export default {
   kInternalAssertionSuffix,
   NotImplementedError,
@@ -496,4 +543,5 @@ export default {
   kEmptyObject,
   getSourceMapsSupport,
   setSourceMapsSupport,
+  stripTypeScriptTypes,
 };

@@ -507,6 +507,23 @@ const cases: Case[] = [
     loose: true,
   },
   {
+    name: "a DataView with an extra own string-named property",
+    a: () => withExtraProperty(new DataView(new ArrayBuffer(2))),
+    b: () => new DataView(new ArrayBuffer(2)),
+    strict: false,
+    loose: false,
+  },
+  {
+    // node's DataView compare uses getOwnNonIndexProperties; an integer-index
+    // own property is ignored, like on typed arrays.
+    name: "a DataView with an extra integer-index own property",
+    a: () => Object.assign(new DataView(new ArrayBuffer(2)), { 0: 1 }),
+    b: () => new DataView(new ArrayBuffer(2)),
+    strict: true,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
     name: "a Buffer and a Uint8Array with the same bytes",
     a: () => Buffer.from([1]),
     b: () => new Uint8Array([1]),
@@ -655,6 +672,18 @@ describe("util.isDeepStrictEqual", () => {
     expect(util.isDeepStrictEqual(undefined, undefined)).toBe(true);
     expect(util.isDeepStrictEqual(null, undefined)).toBe(false);
     expect(util.isDeepStrictEqual(Object.create(null), Object.create(null))).toBe(true);
+  });
+
+  test("reads an array's own symbol-keyed getter once per side", () => {
+    const s = Symbol("k");
+    let calls = 0;
+    const make = () => {
+      const a = [1];
+      Object.defineProperty(a, s, { enumerable: true, get: () => (calls++, 42) });
+      return a;
+    };
+    expect(util.isDeepStrictEqual(make(), make())).toBe(true);
+    expect(calls).toBe(2);
   });
 
   // The third argument was added in Node v26.

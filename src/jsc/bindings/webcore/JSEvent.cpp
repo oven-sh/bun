@@ -21,7 +21,6 @@
 #include "root.h"
 #include "JSEvent.h"
 
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
@@ -327,15 +326,7 @@ void JSEventPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject)
         JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum | 0);
 }
 
-const ClassInfo JSEvent::s_info = { "Event"_s, &Base::s_info, &JSEventTable
-#if 0
-    ,
-    &checkSubClassSnippetForJSEvent
-#else
-    ,
-    nullptr
-#endif
-    ,
+const ClassInfo JSEvent::s_info = { "Event"_s, &Base::s_info, &JSEventTable, nullptr,
     CREATE_METHOD_TABLE(JSEvent) };
 
 JSEvent::JSEvent(Structure* structure, JSDOMGlobalObject& globalObject, Ref<Event>&& impl)

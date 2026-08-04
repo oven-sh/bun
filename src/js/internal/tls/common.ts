@@ -14,11 +14,8 @@ function translatePeerCertificate(c) {
     // XXX: More key validation?
     info.replace(/([^\n:]*):([^\n]*)(?:\n|$)/g, (all, key, val) => {
       if (val.charCodeAt(0) === 0x22) {
-        // The translatePeerCertificate function is only
-        // used on internally created legacy certificate
-        // objects, and any value that contains a quote
-        // will always be a valid JSON string literal,
-        // so this should never throw.
+        // Only used on internally created legacy cert objects; a quoted value is
+        // always a valid JSON string literal, so this never throws.
         val = JSON.parse(val);
       }
       if (key in parsed) parsed[key].push(val);

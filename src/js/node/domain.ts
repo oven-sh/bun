@@ -27,10 +27,8 @@ domain.createDomain = domain.create = function () {
     d.emit("error", e);
   }
 
-  // Node routes a *thrown* error through Domain.prototype._errorHandler, which
-  // leaves the domain before running the handler and clears the stack after it,
-  // because an uncaught exception ends the tick.
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/domain.js#L218-L300
+  // Node's Domain.prototype._errorHandler leaves the domain before the handler
+  // and clears the stack after: https://github.com/nodejs/node/blob/v26.3.0/lib/domain.js#L218-L300
   function handleThrown(e) {
     if (typeof e === "object" && e !== null) {
       ObjectDefineProperty(e, "domain", {
@@ -112,11 +110,8 @@ domain.createDomain = domain.create = function () {
     domain.active = process.domain = stack.length ? stack[stack.length - 1] : undefined;
     return this;
   };
-  // Routes an exception thrown by an async callback that ran inside this
-  // domain, like Node's Domain.prototype._errorHandler: decorate the error,
-  // emit 'error' (never on a handlerless top-level domain, so the process
-  // still gets its uncaughtException), and clear the domain stack because the
-  // throw ended this tick. Returns whether a handler caught the error.
+  // Node's Domain.prototype._errorHandler: decorate, emit 'error' (not on a handlerless
+  // top-level domain), clear the domain stack, return whether a handler caught it.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/domain.js#L219
   d._errorHandler = function (er) {
     let caught = false;

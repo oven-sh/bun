@@ -622,12 +622,13 @@ function urlFormat(urlObject: unknown, options?: unknown) {
 
 // Mirrors Node's internal WHATWG URL formatter (bindingUrl.format).
 function formatWhatwgURL(url: URL, fragment: boolean, unicode: boolean, search: boolean, auth: boolean) {
+  const href = url.href;
   // With everything kept, the serialization is exactly the href.
-  if (fragment && !unicode && search && auth) return url.href;
+  if (fragment && !unicode && search && auth) return href;
   let ret = url.protocol;
   // file:/// and foo:// have an empty-but-present host; the href carries
   // the authority marker the components can't express.
-  if (url.href.startsWith(ret + "//")) {
+  if (href.startsWith(ret + "//")) {
     ret += "//";
     const hasUsername = url.username !== "";
     const hasPassword = url.password !== "";
@@ -642,8 +643,13 @@ function formatWhatwgURL(url: URL, fragment: boolean, unicode: boolean, search: 
     if (port !== "") ret += ":" + port;
   }
   ret += url.pathname;
-  if (search) ret += url.search;
-  if (fragment) ret += url.hash;
+  // .search/.hash return "" for both null and empty-string components, but the href serializer
+  // emits the bare "?"/"#" for empty-but-present; derive presence from the href like node does.
+  // https://url.spec.whatwg.org/#url-serializing
+  const hashAt = href.indexOf("#");
+  const queryEnd = hashAt === -1 ? href.length : hashAt;
+  if (search) ret += url.search || (href[queryEnd - 1] === "?" ? "?" : "");
+  if (fragment) ret += url.hash || (hashAt !== -1 ? "#" : "");
   return ret;
 }
 

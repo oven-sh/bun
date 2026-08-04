@@ -161,6 +161,7 @@ static JSC::JSPromise* performByteControllerPullAlgorithm(JSC::VM& vm, JSC::JSGl
     case SourceKind::FromIterable:
     case SourceKind::CrossRealm:
     case SourceKind::Native:
+    case SourceKind::TextDecode:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -194,6 +195,7 @@ static JSC::JSPromise* performByteControllerCancelAlgorithm(JSC::VM& vm, JSC::JS
     case SourceKind::FromIterable:
     case SourceKind::CrossRealm:
     case SourceKind::Native:
+    case SourceKind::TextDecode:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -676,6 +678,8 @@ void readableByteStreamControllerClearAlgorithms(JSReadableByteStreamController*
     controller->m_algorithms.method1.clear();
     controller->m_algorithms.method2.clear();
     controller->m_algorithms.algorithmContext.clear();
+    if (auto* stream = controller->m_stream.get())
+        readableStreamClearSourceBarriers(stream);
 }
 
 void readableByteStreamControllerClearPendingPullIntos(JSReadableByteStreamController* controller)

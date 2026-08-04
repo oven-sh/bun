@@ -2650,6 +2650,45 @@ impl ThreadSafeFunction {
         }
     }
 
+    /// Dequeues one item under the lock, running the empty-queue finalize
+    /// check and scheduling the backup dispatch as needed. Never enters JS.
+    fn take_one_locked(&mut self, queue_finalizer_after_call: &mut bool) -> Option<*mut c_void> {
+        let _g = self.lock.lock_guard();
+        let was_blocked = self.queue.is_blocked();
+        let Some(t) = self.queue.data.read_item() else {
+            // When there are no tasks and the number of threads that have
+            // references reaches zero, we prepare to finalize the
+            // ThreadSafeFunction.
+            if self.thread_count.load(Ordering::SeqCst) == 0 {
+                if self.queue.max_queue_size > 0 {
+                    self.blocking_condvar.signal();
+                }
+                self.maybe_queue_finalizer();
+            }
+            return None;
+        };
+
+        let prev_count = self.queue.count.fetch_sub(1, Ordering::SeqCst);
+        if prev_count == 1 && self.thread_count.load(Ordering::SeqCst) == 0 {
+            self.closing
+                .store(ClosingState::Closing as u8, Ordering::SeqCst);
+            if self.queue.max_queue_size > 0 {
+                self.blocking_condvar.signal();
+            }
+            *queue_finalizer_after_call = true;
+        } else if was_blocked && !self.queue.is_blocked() {
+            self.blocking_condvar.signal();
+        }
+
+        if prev_count > 1 && self.inflight_dispatch_tasks.load(Ordering::SeqCst) == 0 {
+            // `call` can block in a nested event loop (#36828); one backup
+            // dispatch keeps the queued-behind items reachable.
+            self.schedule_dispatch();
+        }
+
+        Some(t)
+    }
+
     /// Runs one queued call. `this` stays raw: `call` enters user JS, which
     /// can re-enter this function's dispatch through a nested event loop.
     ///
@@ -2657,46 +2696,10 @@ impl ThreadSafeFunction {
     /// `this` is a live threadsafe function on the JS thread.
     unsafe fn dispatch_one(this: *mut Self, is_first: bool) -> bool {
         let mut queue_finalizer_after_call = false;
-        let task = 'brk: {
-            // SAFETY: scoped reborrow; nothing in this block enters JS.
-            let self_ = unsafe { &mut *this };
-            // `MutexGuard` holds the lock by raw pointer, so it does not borrow
-            // `*self_` across the `&mut self` calls below.
-            let _g = self_.lock.lock_guard();
-            let was_blocked = self_.queue.is_blocked();
-            let Some(t) = self_.queue.data.read_item() else {
-                // When there are no tasks and the number of threads that have
-                // references reaches zero, we prepare to finalize the
-                // ThreadSafeFunction.
-                if self_.thread_count.load(Ordering::SeqCst) == 0 {
-                    if self_.queue.max_queue_size > 0 {
-                        self_.blocking_condvar.signal();
-                    }
-                    self_.maybe_queue_finalizer();
-                }
-                return false;
-            };
-
-            let prev_count = self_.queue.count.fetch_sub(1, Ordering::SeqCst);
-            if prev_count == 1 && self_.thread_count.load(Ordering::SeqCst) == 0 {
-                self_
-                    .closing
-                    .store(ClosingState::Closing as u8, Ordering::SeqCst);
-                if self_.queue.max_queue_size > 0 {
-                    self_.blocking_condvar.signal();
-                }
-                queue_finalizer_after_call = true;
-            } else if was_blocked && !self_.queue.is_blocked() {
-                self_.blocking_condvar.signal();
-            }
-
-            if prev_count > 1 && self_.inflight_dispatch_tasks.load(Ordering::SeqCst) == 0 {
-                // `call` below can block in a nested event loop (#36828);
-                // one backup dispatch keeps the queued-behind items reachable.
-                self_.schedule_dispatch();
-            }
-
-            break 'brk t;
+        // SAFETY: call-scoped reborrow; `take_one_locked` never enters JS.
+        let Some(task) = (unsafe { (*this).take_one_locked(&mut queue_finalizer_after_call) })
+        else {
+            return false;
         };
 
         // No borrow of `*this` is live while user JS runs.
@@ -2706,8 +2709,8 @@ impl ThreadSafeFunction {
         }
 
         if queue_finalizer_after_call {
-            // SAFETY: scoped reborrow; `this` is still live (destroy deferred).
-            unsafe { &mut *this }.maybe_queue_finalizer();
+            // SAFETY: call-scoped reborrow; `this` is still live (destroy deferred).
+            unsafe { (*this).maybe_queue_finalizer() };
         }
 
         // An item was dequeued: keep on_dispatch looping so remaining queued

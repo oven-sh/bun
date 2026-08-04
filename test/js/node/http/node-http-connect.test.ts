@@ -558,6 +558,76 @@ describe("HTTP server CONNECT", () => {
     }
   });
 
+  // The parser buffers an incomplete head and re-parses it when more bytes
+  // arrive; a CONNECT split after its request-line must still dispatch to the
+  // 'connect' listener rather than being swallowed as tunnel data. Every split
+  // below lands after consumeRequestLine has recognised CONNECT and before the
+  // header block is complete.
+  const connectLine = "CONNECT example.com:443 HTTP/1.1\r\n";
+  test.each([
+    ["one byte into the header block", connectLine + "H", "ost: example.com:443\r\n\r\n", "example.com:443", ""],
+    ["mid header name", connectLine + "Host", ": example.com:443\r\n\r\n", "example.com:443", ""],
+    ["mid header value", connectLine + "Host: exam", "ple.com:443\r\n\r\n", "example.com:443", ""],
+    ["before the terminating CRLF", connectLine + "Host: example.com:443\r\n", "\r\n", "example.com:443", ""],
+    [
+      "with tunnel bytes trailing the second half",
+      connectLine + "Host",
+      ": example.com:443\r\n\r\nHELLO",
+      "example.com:443",
+      "HELLO",
+    ],
+    ["inside the no-header terminator", connectLine + "\r", "\nHELLO", undefined, "HELLO"],
+  ] as const)(
+    "dispatches a CONNECT whose head arrives in two reads (%s)",
+    async (_name, first, second, expectedHost, expectedHead) => {
+      await using proxyServer = http.createServer();
+      const {
+        promise: gotConnect,
+        resolve: onConnect,
+        reject: onConnectFail,
+      } = Promise.withResolvers<{
+        url: string;
+        host: string | undefined;
+        head: string;
+      }>();
+      proxyServer.on("connect", (req, socket, head) => {
+        onConnect({ url: String(req.url), host: req.headers.host, head: head.toString() });
+        socket.end("HTTP/1.1 200 Connection established\r\n\r\n");
+      });
+      proxyServer.on("clientError", (err: NodeJS.ErrnoException, socket) => {
+        socket.destroy();
+        onConnectFail(new Error("unexpected clientError " + err.code));
+      });
+      await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+      const proxyAddress = proxyServer.address() as AddressInfo;
+
+      const client = net.connect(proxyAddress.port, proxyAddress.address);
+      try {
+        client.setNoDelay(true);
+        client.on("error", onConnectFail);
+        await once(client, "connect");
+        client.write(first);
+        // Two turns of the event loop: the listening side's readable wakes and
+        // consumes the first write before the second one is queued.
+        await new Promise(resolve => setImmediate(resolve));
+        await new Promise(resolve => setImmediate(resolve));
+        client.write(second);
+
+        const { promise: clientClosed, resolve: onClientClosed } = Promise.withResolvers<string>();
+        let reply = "";
+        client.on("data", chunk => {
+          reply += chunk.toString();
+        });
+        client.on("close", () => onClientClosed(reply));
+
+        expect(await gotConnect).toEqual({ url: "example.com:443", host: expectedHost, head: expectedHead });
+        expect(await clientClosed).toBe("HTTP/1.1 200 Connection established\r\n\r\n");
+      } finally {
+        client.destroy();
+      }
+    },
+  );
+
   // https CONNECT: server socket.end() after peer FIN must also FIN the TCP
   // write side. Linux-only: the close is observed via EPOLLHUP once both halves
   // have FIN'd; kqueue/libuv need the readable_ended re-arm to re-derive it.

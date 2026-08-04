@@ -981,9 +981,6 @@ struct HttpResponseData;
             if(requestLineResult.isAncientHTTP) {
                 isAncientHTTP = true;
             }
-            if(requestLineResult.isConnect) {
-                isConnectRequest = true;
-            }
             /* No request headers found */
             const char * headerStart = (headers[0].key.length() > 0) ? headers[0].key.data() : end;
 
@@ -997,6 +994,9 @@ struct HttpResponseData;
             if (postPaddedBuffer[0] == '\r' && postPaddedBuffer[1] == '\n') {
                 /* Valid request with no headers - write null terminator like the normal path */
                 headers[1].key = std::string_view(nullptr, 0);
+                if (requestLineResult.isConnect) {
+                    isConnectRequest = true;
+                }
                 return HttpParserResult::success((unsigned int) ((postPaddedBuffer + 2) - start));
             }
 
@@ -1082,6 +1082,9 @@ struct HttpResponseData;
                         if (postPaddedBuffer[1] == '\n') {
                             /* This cann take the very last header space */
                             headers->key = std::string_view(nullptr, 0);
+                            if (requestLineResult.isConnect) {
+                                isConnectRequest = true;
+                            }
                             return HttpParserResult::success((unsigned int) ((postPaddedBuffer + 2) - start));
                         } else {
                             /* \r\n\r plus non-\n letter is malformed request, or simply out of search space */

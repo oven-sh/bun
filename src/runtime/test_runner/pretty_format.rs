@@ -1582,20 +1582,27 @@ impl<'a> Formatter<'a> {
                         }
                         return Ok(());
                     } else if bun_jsc::DOMFormData::from_js(value).is_some() {
-                        let to_json_function = value.get(self.global_this, "toJSON")?.unwrap();
+                        if let Some(to_json_function) = value
+                            .get(self.global_this, "toJSON")?
+                            .filter(|f| f.is_callable())
+                        {
+                            self.add_for_new_line(b"FormData (entries) ".len());
+                            writer.write_all(
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>(
+                                    "<r><blue>FormData<r> <d>(entries)<r> ",
+                                )
+                                .as_bytes(),
+                            );
 
-                        self.add_for_new_line(b"FormData (entries) ".len());
-                        writer.write_all(
-                            pretty_fmt_const::<ENABLE_ANSI_COLORS>(
-                                "<r><blue>FormData<r> <d>(entries)<r> ",
-                            )
-                            .as_bytes(),
-                        );
+                            return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
+                                writer.ctx,
+                                to_json_function.call(self.global_this, value, &[])?,
+                                JSType::Object,
+                            );
+                        }
 
                         return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
-                            writer.ctx,
-                            to_json_function.call(self.global_this, value, &[])?,
-                            JSType::Object,
+                            writer.ctx, value, JSType::Event,
                         );
                     } else if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
                         self.add_for_new_line(

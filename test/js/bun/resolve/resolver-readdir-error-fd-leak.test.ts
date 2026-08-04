@@ -138,12 +138,10 @@ test.skipIf(skip)(
 // read_directory_with_iterator(Some(fd)), which is the had_handle=true arm of
 // the same guard. The scanner's Dir guard is disarmed via into_raw(), so the
 // function owns the fd on that path too.
-test.skipIf(skip)(
-  "resolver closes a caller-supplied directory fd when readdir fails (bun test scanner)",
-  async () => {
-    const files: Record<string, string> = {
-      "package.json": "{}",
-      "count.test.ts": /* ts */ `
+test.skipIf(skip)("resolver closes a caller-supplied directory fd when readdir fails (bun test scanner)", async () => {
+  const files: Record<string, string> = {
+    "package.json": "{}",
+    "count.test.ts": /* ts */ `
         import { test } from "bun:test";
         import { readdirSync, readlinkSync } from "node:fs";
         test("count", () => {
@@ -156,22 +154,21 @@ test.skipIf(skip)(
           console.log("LEAKED=" + leaked);
         });
       `,
-    };
-    for (let i = 0; i < DIR_COUNT; i++) files[`d${i}${MARKER}/noop.txt`] = "";
-    using scanDir = tempDir("resolver-readdir-scanner-leak", files);
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "."],
-      cwd: String(scanDir),
-      env: shimEnv(),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const m = stdout.match(/LEAKED=(\d+)/);
-    expect({ leaked: m?.[0], stderr: stderr.includes("1 pass"), exitCode }).toEqual({
-      leaked: "LEAKED=0",
-      stderr: true,
-      exitCode: 0,
-    });
-  },
-);
+  };
+  for (let i = 0; i < DIR_COUNT; i++) files[`d${i}${MARKER}/noop.txt`] = "";
+  using scanDir = tempDir("resolver-readdir-scanner-leak", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "."],
+    cwd: String(scanDir),
+    env: shimEnv(),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const m = stdout.match(/LEAKED=(\d+)/);
+  expect({ leaked: m?.[0], stderr: stderr.includes("1 pass"), exitCode }).toEqual({
+    leaked: "LEAKED=0",
+    stderr: true,
+    exitCode: 0,
+  });
+});

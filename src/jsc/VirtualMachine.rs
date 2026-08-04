@@ -4716,10 +4716,8 @@ impl VirtualMachine {
 
         // `old_global` valid for VM lifetime (safe ZST-handle deref);
         // `console` is the live per-VM ConsoleObject.
-        let new_global: *mut JSGlobalObject = JSGlobalObject::create_for_test_isolation(
-            old_global_ref,
-            self.console.cast(),
-        );
+        let new_global: *mut JSGlobalObject =
+            JSGlobalObject::create_for_test_isolation(old_global_ref, self.console.cast());
         self.global = new_global;
         self.test_isolation_state.baseline_captured = false;
         VMHolder::set_cached_global_object(Some(new_global));

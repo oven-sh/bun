@@ -519,10 +519,7 @@ describe.concurrent("--isolate global reuse", () => {
   });
 
   test("BUN_FEATURE_FLAG_DISABLE_ISOLATION_GLOBAL_REUSE=1 forces a full swap every file", async () => {
-    using dir = tempDir(
-      "isolate-reuse-disabled",
-      reuseFixtures("", `expect(pkg.slot).toBe(null);`),
-    );
+    using dir = tempDir("isolate-reuse-disabled", reuseFixtures("", `expect(pkg.slot).toBe(null);`));
     const { stderr, stats, exitCode } = await runIsolate(String(dir), {
       BUN_FEATURE_FLAG_DISABLE_ISOLATION_GLOBAL_REUSE: "1",
     });

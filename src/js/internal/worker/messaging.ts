@@ -5,9 +5,7 @@
 //
 // Differences from node: thread info comes from initThreadInfo (Bun assigns threadId
 // differently); createMainThreadPort is split into createMessagingChannel (before
-// `new Worker`) + registerMainThreadPort (after the threadId exists); and the
-// `workerMessage` listeners are invoked directly because Bun's process.emit cannot
-// report no-listeners or a throwing listener (see receiveMessageFromWorker).
+// `new Worker`) + registerMainThreadPort (after the threadId exists).
 
 const { validateNumber } = require("internal/validators");
 const { SafeMap } = require("internal/primordials");
@@ -128,25 +126,12 @@ function sendMessageToWorker(source, destination, value, transferList, memory) {
 function receiveMessageFromWorker(source, value, memory) {
   let response = WORKER_MESSAGING_RESULT_NO_LISTENERS;
 
-  // Don't use process.emit("workerMessage", ...): Bun's native emit routes a
-  // throwing listener to reportUnhandledError instead of rethrowing, so
-  // LISTENER_ERROR can't be detected. Invoke listeners directly.
-  //
-  // Known limitation: process.once('workerMessage', fn) listeners are not
-  // removed here — the native process EventEmitter tracks isOnce internally
-  // (fireEventListeners handles removal) with no JS-side onceWrapper to detect.
-  // Fixing this needs the native emit to rethrow (a broader change).
-  const listeners = process.listeners("workerMessage");
-  const listenerCount = listeners.length;
-  if (listenerCount > 0) {
-    try {
-      for (let i = 0; i < listenerCount; i++) {
-        listeners[i].$call(process, value, source);
-      }
+  try {
+    if (process.emit("workerMessage", value, source)) {
       response = WORKER_MESSAGING_RESULT_DELIVERED;
-    } catch {
-      response = WORKER_MESSAGING_RESULT_LISTENER_ERROR;
     }
+  } catch {
+    response = WORKER_MESSAGING_RESULT_LISTENER_ERROR;
   }
 
   // Populate the result.

@@ -4,8 +4,12 @@
 
 #include "DOMWrapperWorld.h"
 #include "EventNames.h"
+#include "ErrorCode.h"
 #include "JSErrorHandler.h"
 #include "JSEventListener.h"
+#include "ZigGlobalObject.h"
+#include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/ThrowScope.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Ref.h>
@@ -116,12 +120,12 @@ bool EventEmitter::emitForBindings(const Identifier& eventType, const MarkedArgu
     if (!scriptExecutionContext())
         return false;
 
-    return emit(eventType, arguments);
+    return fireEventListeners(eventType, arguments, /* propagateExceptions */ true);
 }
 
 bool EventEmitter::emit(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
-    return fireEventListeners(eventType, arguments);
+    return fireEventListeners(eventType, arguments, /* propagateExceptions */ false);
 }
 
 void EventEmitter::uncaughtExceptionInEventHandler()
@@ -175,7 +179,7 @@ Vector<JSObject*> EventEmitter::getListeners(const Identifier& eventType)
 }
 
 // https://dom.spec.whatwg.org/#concept-event-listener-invoke
-bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
+bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments, bool propagateExceptions)
 {
 
     auto* data = eventTargetData();
@@ -184,13 +188,42 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
 
     auto* listenersVector = data->eventListenerMap.find(eventType);
     if (!listenersVector) [[unlikely]] {
-        if (eventType == scriptExecutionContext()->vm().propertyNames->error && arguments.size() > 0) {
+        if (eventType == scriptExecutionContext()->vm().propertyNames->error) {
             Ref<EventEmitter> protectedThis(*this);
-            auto* thisObject = protectedThis->m_thisObject.get();
-            if (!thisObject)
+            JSValue er = arguments.size() > 0 ? arguments.at(0) : JSC::jsUndefined();
+            if (propagateExceptions) {
+                auto* globalObject = defaultGlobalObject(scriptExecutionContext()->jsGlobalObject());
+                auto& vm = globalObject->vm();
+                auto scope = DECLARE_THROW_SCOPE(vm);
+                if (er.isCell() && er.asCell()->inherits<JSC::ErrorInstance>()) {
+                    scope.throwException(globalObject, er);
+                    return false;
+                }
+                WTF::String inspected;
+                auto* inspectFn = globalObject->utilInspectFunction();
+                RETURN_IF_EXCEPTION(scope, false);
+                auto callData = JSC::getCallData(inspectFn);
+                MarkedArgumentBuffer inspectArgs;
+                inspectArgs.append(er);
+                WTF::NakedPtr<JSC::Exception> inspectException;
+                auto inspectResult = JSC::call(globalObject, inspectFn, callData, JSC::jsUndefined(), inspectArgs, inspectException);
+                if (!inspectException) {
+                    inspected = inspectResult.toWTFString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
+                }
+                auto message = makeString("Unhandled error. ("_s, inspected, ")"_s);
+                auto* err = Bun::createError(globalObject, Bun::ErrorCode::ERR_UNHANDLED_ERROR, message);
+                RETURN_IF_EXCEPTION(scope, false);
+                err->putDirect(vm, JSC::Identifier::fromString(vm, "context"_s), er, 0);
+                scope.throwException(globalObject, err);
                 return false;
-
-            Bun__reportUnhandledError(thisObject->globalObject(), JSValue::encode(arguments.at(0)));
+            }
+            if (arguments.size() > 0) {
+                auto* thisObject = protectedThis->m_thisObject.get();
+                if (!thisObject)
+                    return false;
+                Bun__reportUnhandledError(thisObject->globalObject(), JSValue::encode(er));
+            }
             return false;
         }
         return false;
@@ -198,7 +231,7 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
 
     bool prevFiringEventListeners = data->isFiringEventListeners;
     data->isFiringEventListeners = true;
-    auto fired = innerInvokeEventListeners(eventType, *listenersVector, arguments);
+    auto fired = innerInvokeEventListeners(eventType, *listenersVector, arguments, propagateExceptions);
     data->isFiringEventListeners = prevFiringEventListeners;
     return fired;
 }
@@ -206,7 +239,7 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
 // Intentionally creates a copy of the listeners vector to avoid event listeners added after this point from being run.
 // Note that removal still has an effect due to the removed field in RegisteredEventListener.
 // https://dom.spec.whatwg.org/#concept-event-listener-inner-invoke
-bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, SimpleEventListenerVector listeners, const MarkedArgumentBuffer& arguments)
+bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, SimpleEventListenerVector listeners, const MarkedArgumentBuffer& arguments, bool propagateExceptions)
 {
     Ref<EventEmitter> protectedThis(*this);
     ASSERT(!listeners.isEmpty());
@@ -252,6 +285,11 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         auto* exception = exceptionPtr.get();
 
         if (exception) [[unlikely]] {
+            if (propagateExceptions) {
+                auto scope = DECLARE_THROW_SCOPE(vm);
+                scope.throwException(lexicalGlobalObject, exception);
+                return fired;
+            }
             auto errorIdentifier = vm.propertyNames->error;
             auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
             if (!hasErrorListener || eventType == errorIdentifier) {
@@ -264,7 +302,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
                     errorValue = JSC::jsUndefined();
                 }
                 expcep.append(errorValue);
-                fireEventListeners(errorIdentifier, WTF::move(expcep));
+                fireEventListeners(errorIdentifier, WTF::move(expcep), false);
             }
         }
     }

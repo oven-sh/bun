@@ -3,7 +3,7 @@ import { decodeSerializedError } from "bake/error-serialization.ts";
 import { Subprocess, spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunExe, bunEnv as env, isPosix, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, isPosix, tempDir, tmpdirSync } from "harness";
 import path, { join } from "node:path";
 import { InspectorSession, connect } from "./junit-reporter";
 import { SocketFramer } from "./socket-framer";
@@ -993,6 +993,108 @@ function decodeGraphUpdate(buffer) {
     clientEdges,
   };
 }
+
+// The BunFrontendDevServer and HTTPServer inspector agents used to null their
+// frontend dispatcher in willDestroyFrontendAndBackend, which runs on every
+// frontend disconnect. Because the dispatcher was only ever created in the
+// agent's constructor, a second inspector client that reconnected and called
+// enable() would never receive any events: m_enabled flipped back to true but
+// every emitter still bailed on the null dispatcher guard.
+test("BunFrontendDevServer domain keeps emitting after an inspector reconnect", async () => {
+  using dir = tempDir("bun-frontend-dev-server-reconnect", {
+    "index.html": `<!doctype html><script type="module" src="./app.ts"></script><h1>x</h1>`,
+    "app.ts": `export const x: number = 0;`,
+    "server.ts": `
+      import html from "./index.html";
+      const server = Bun.serve({ port: 0, routes: { "/": html }, development: true });
+      console.log("SERVER_URL=" + server.url);
+    `,
+  });
+
+  await using child = spawn({
+    cmd: [bunExe(), "--inspect=ws://127.0.0.1:0/", join(String(dir), "server.ts")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  async function readUntil(stream: ReadableStream, regex: RegExp) {
+    let text = "";
+    const decoder = new TextDecoder();
+    for await (const chunk of stream) {
+      text += decoder.decode(chunk);
+      const m = text.match(regex);
+      if (m) return m[1];
+    }
+    throw new Error(`did not find ${regex} in:\n${text}`);
+  }
+
+  const inspectorUrl = await readUntil(child.stderr, /(ws:\/\/[^\s]+)/);
+  const serverUrl = await readUntil(child.stdout, /SERVER_URL=(http:\/\/[^\s]+)/);
+
+  // Force the dev server to materialize so /_bun/hmr accepts connections.
+  await fetch(serverUrl).then(r => r.blob());
+  const hmrUrl = new URL(serverUrl);
+  hmrUrl.protocol = "ws:";
+  hmrUrl.pathname = "/_bun/hmr";
+
+  async function session() {
+    const ws = new WebSocket(inspectorUrl);
+    const opened = Promise.withResolvers<void>();
+    ws.addEventListener("open", () => opened.resolve());
+    ws.addEventListener("error", e => opened.reject(e));
+    await opened.promise;
+
+    let nextId = 1;
+    const pending = new Map<number, (msg: any) => void>();
+    const firstEvent = Promise.withResolvers<string>();
+    ws.addEventListener("message", ({ data }) => {
+      const msg = JSON.parse(String(data));
+      if (msg.id !== undefined) pending.get(msg.id)?.(msg);
+      else if (msg.method?.startsWith("BunFrontendDevServer.")) firstEvent.resolve(msg.method);
+    });
+    const send = (method: string) => {
+      const id = nextId++;
+      const { promise, resolve } = Promise.withResolvers<any>();
+      pending.set(id, resolve);
+      ws.send(JSON.stringify({ id, method }));
+      return promise;
+    };
+
+    await send("Inspector.enable");
+    await send("BunFrontendDevServer.enable");
+    await send("Inspector.initialized");
+
+    // Opening an HMR WebSocket makes the dev server emit
+    // BunFrontendDevServer.clientConnected. If the agent's dispatcher is gone
+    // this resolves to the timeout sentinel instead.
+    const hmr = new WebSocket(hmrUrl);
+    hmr.binaryType = "arraybuffer";
+    const hmrOpen = Promise.withResolvers<void>();
+    hmr.addEventListener("open", () => hmrOpen.resolve());
+    hmr.addEventListener("error", e => hmrOpen.reject(e));
+    await hmrOpen.promise;
+
+    const result = await Promise.race([
+      firstEvent.promise,
+      Bun.sleep(3000).then(() => "timeout: no BunFrontendDevServer events"),
+    ]);
+    hmr.close();
+
+    const closed = Promise.withResolvers<void>();
+    ws.addEventListener("close", () => closed.resolve());
+    ws.close();
+    await closed.promise;
+    return result;
+  }
+
+  // The first session has always worked; the second and third sessions
+  // previously received zero events for the rest of the process.
+  expect(await session()).toBe("BunFrontendDevServer.clientConnected");
+  expect(await session()).toBe("BunFrontendDevServer.clientConnected");
+  expect(await session()).toBe("BunFrontendDevServer.clientConnected");
+}, 30000);
 
 function decodeAndAppendServerError(r: DataViewReader) {
   const owner = r.u32();

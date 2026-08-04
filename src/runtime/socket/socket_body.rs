@@ -279,6 +279,9 @@ pub struct NewSocket<const SSL: bool> {
     pub(crate) server_name: JsCell<Option<Box<[u8]>>>,
     pub(crate) buffered_data_for_node_net: JsCell<Vec<u8>>,
     pub(crate) bytes_written: Cell<u64>,
+    /// First fatal `send()` errno a JS write observed (peer RST while the loop
+    /// was blocked). Consumed by `on_close` as the close error; gates `on_end`.
+    pub(crate) fatal_write_errno: Cell<i32>,
 
     pub(crate) native_callback: JsCell<NativeCallbacks>,
     /// `upgradeTLS` produces two `TLSSocket` wrappers over one
@@ -915,6 +918,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 &sys::Error::from_code_int(fatal_send_errno, sys::Tag::write),
                 &global,
             );
+            this.fatal_write_errno.set(0); // delivered below; on_close must not re-report it
             let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
             // The error handler can destroy the socket itself; only close a
             // still-attached socket. Close without detaching so on_close runs
@@ -1287,6 +1291,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.socket.set(SocketHandler::<SSL>::DETACHED);
         self.buffered_data_for_node_net
             .with_mut(|b| b.clear_and_free());
+        self.fatal_write_errno.set(0);
         self.detach_native_callback();
         old.close(uws::CloseCode::Failure);
         self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
@@ -1602,6 +1607,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
         if this.socket.get().is_detached() {
+            return;
+        }
+        if this.fatal_write_errno.get() != 0 {
+            // Not a peer FIN. Close so `on_close` reports the errno; under
+            // allow_half_open nothing else would (sk_err already consumed).
+            let _keepalive = this.ref_guard();
+            this.socket.get().close(uws::CloseCode::Normal);
             return;
         }
         let handlers = this.get_handlers();
@@ -1985,6 +1997,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         reason: Option<*mut c_void>,
     ) -> JsResult<()> {
         jsc::mark_binding!();
+        // Per-transport; consumed here so a reconnected wrapper starts clean.
+        let fatal_write_errno = this.fatal_write_errno.replace(0);
         // A late close on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -2071,6 +2085,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         if err > 2 {
             js_error = <sys::Error as jsc::SysErrorJsc>::to_js(
                 &sys::Error::from_code_int(err, sys::Tag::read),
+                &global,
+            );
+        } else if fatal_write_errno != 0 {
+            // Loop saw a clean HUP but a JS write already observed the RST.
+            js_error = <sys::Error as jsc::SysErrorJsc>::to_js(
+                &sys::Error::from_code_int(fatal_write_errno, sys::Tag::write),
                 &global,
             );
         }
@@ -2282,7 +2302,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(
             match this.write_or_end::<false>(global, args.mut_(), false) {
                 WriteResult::Fail => JSValue::ZERO,
-                WriteResult::Success { wrote, .. } => JSValue::js_number_from_int32(wrote),
+                // `wrote < -1` is a fatal errno (recorded); native API returns -1.
+                WriteResult::Success { wrote, .. } => JSValue::js_number_from_int32(wrote.max(-1)),
             },
         )
     }
@@ -2458,6 +2479,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Kernel rejected the send (peer gone): return the negative errno so
             // JS fails the write; never close from under the caller's stack, and
             // leave the undeliverable buffer to the caller (aliasing).
+            #[cfg(not(windows))] // same quarantine as on_writable (a5e7ba5905)
+            if self.fatal_write_errno.get() == 0 {
+                self.fatal_write_errno.set(fatal_errno);
+            }
             return -fatal_errno;
         }
         let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
@@ -2964,6 +2989,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                     // buffer, stop re-arming the writable retry, and report the
                     // errno so the event-loop caller surfaces it (the data was
                     // already acknowledged to JS, so only an 'error' can).
+                    #[cfg(not(windows))] // same quarantine as on_writable (a5e7ba5905)
+                    if self.fatal_write_errno.get() == 0 {
+                        self.fatal_write_errno.set(fatal_errno);
+                    }
                     self.buffered_data_for_node_net
                         .with_mut(|b| b.clear_and_free());
                     return fatal_errno;
@@ -3137,7 +3166,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
                     let _ = this.internal_flush();
                 }
-                JSValue::js_number(wrote as f64)
+                JSValue::js_number(f64::from(wrote.max(-1)))
             }
         };
         Ok(result)
@@ -3523,6 +3552,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
+            fatal_write_errno: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
@@ -3630,6 +3660,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
+            fatal_write_errno: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
@@ -4693,6 +4724,7 @@ pub fn js_upgrade_duplex_to_tls(
         ref_pollref_on_connect: Cell::new(true),
         buffered_data_for_node_net: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),
+        fatal_write_errno: Cell::new(0),
         native_callback: JsCell::new(NativeCallbacks::None),
         twin: JsCell::new(None),
         verify_error: JsCell::new(None),

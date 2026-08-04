@@ -3333,3 +3333,105 @@ describe("TLS handshake callback throw", () => {
     }
   });
 });
+
+// Windows: the fatal-send detection in usockets is gated out there (see
+// on_writable in socket_body.rs), so the write-side RST path is POSIX-only.
+it.concurrent.skipIf(isWindows)(
+  "native write() on a peer-RST'd socket returns -1 and the close reports ECONNRESET",
+  async () => {
+    // The server lives in its own process so the RST arrives while this process
+    // is inside a synchronous write burst (the loop can't deliver it first).
+    using dir = tempDir("socket-rst-write", {
+      "server.mjs": `
+        const server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open(s) { setTimeout(() => { try { s.terminate(); } catch {} }, 100); },
+            data() {}, close() {}, error() {}, drain() {},
+          },
+        });
+        console.log("PORT", server.port);
+        setTimeout(() => process.exit(0), 60000);
+      `,
+    });
+
+    await using child = Bun.spawn({
+      cmd: [bunExe(), "server.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    let port = 0;
+    {
+      const rd = child.stdout.getReader();
+      let acc = "";
+      while (!port) {
+        const { value, done } = await rd.read();
+        if (done) throw new Error("server exited before reporting its port");
+        acc += new TextDecoder().decode(value);
+        const m = acc.match(/PORT (\d+)/);
+        if (m) port = +m[1];
+      }
+      rd.releaseLock();
+    }
+
+    const closed = Promise.withResolvers<{ err: unknown; events: string[] }>();
+    const events: string[] = [];
+    const negatives: number[] = [];
+
+    const sock = await Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      socket: {
+        open() {},
+        data() {},
+        drain() {},
+        error(_s, e) {
+          events.push("error:" + (e as any)?.code);
+        },
+        end() {
+          events.push("end");
+        },
+        close(_s, err) {
+          events.push("close");
+          closed.resolve({ err, events });
+        },
+      },
+    });
+
+    const chunk = Buffer.alloc(65536, 1);
+    // Synchronous burst: keep writing until write() reports the dead peer.
+    // The server RSTs ~100 ms after accept; give the burst a generous deadline.
+    const deadline = Date.now() + 5000;
+    while (negatives.length < 3 && Date.now() < deadline) {
+      const r = sock.write(chunk);
+      if (r < 0) negatives.push(r);
+      Bun.sleepSync(5);
+    }
+    // Yield so the loop can poll the HUP and close the socket.
+    const { err: closeErr } = await closed.promise;
+    child.kill();
+
+    // Every negative return is the documented -1 sentinel; the raw errno must
+    // not leak to JS.
+    expect(negatives).toEqual([-1, -1, -1]);
+    // A peer RST is not a clean FIN: `end` must not fire.
+    expect(events).not.toContain("end");
+    // The close carries the errno so the reset is observable. Which syscall
+    // observed it is platform-dependent: on Linux send() consumes sk_err
+    // (ECONNRESET then EPIPE) and the close reports the latched write errno;
+    // on macOS send() returns EPIPE without clearing so_error, so kqueue's
+    // recv() reports ECONNRESET first.
+    expect(closeErr).toBeInstanceOf(Error);
+    if (isLinux) {
+      expect((closeErr as any).code).toBe("ECONNRESET");
+      expect((closeErr as any).syscall).toBe("write");
+    } else {
+      expect(["ECONNRESET", "EPIPE"]).toContain((closeErr as any).code);
+      expect(["read", "write"]).toContain((closeErr as any).syscall);
+    }
+  },
+);

@@ -15,6 +15,8 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 
+extern "C" JSC::EncodedJSValue Bun__NativeTransformSink__writeBytes(uint8_t sinkId, void* sinkPtr, JSC::JSGlobalObject*, const uint8_t* ptr, size_t len);
+
 namespace Bun {
 namespace WebStreams {
 
@@ -201,7 +203,7 @@ extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* global
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         if (void* sinkPtr = stream->m_nativeSinkPtr) {
             if (outLen) {
-                JSValue wrote = JSValue::decode(WebCore::JSSink__writeBytes(static_cast<WebCore::SinkID>(stream->m_nativeSinkId), sinkPtr, globalObject, out, outLen));
+                JSValue wrote = JSValue::decode(Bun__NativeTransformSink__writeBytes(stream->m_nativeSinkId, sinkPtr, globalObject, out, outLen));
                 if (!catchScope.exception())
                     sinkBackpressure = nativeSinkWriteIsBackpressure(vm, wrote);
             }

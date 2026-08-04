@@ -206,6 +206,16 @@ test("onExit is ignored and does not leak the internal Subprocess", async () => 
   expect(result.exitCode).toBe(0);
 });
 
+test.skipIf(isWindows)("stdio: 'socket-fd' is rejected", () => {
+  expect(() =>
+    Bun.spawnAndWait({
+      cmd: [bunExe(), "-e", ""],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe", "socket-fd"],
+    }),
+  ).toThrow(/socket-fd/);
+});
+
 test("terminal option is rejected", () => {
   expect(() =>
     Bun.spawnAndWait({

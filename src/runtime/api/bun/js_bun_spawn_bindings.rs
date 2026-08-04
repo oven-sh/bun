@@ -622,7 +622,13 @@ fn spawn_maybe_sync<const IS_SYNC: bool, const BUFFERED_ASYNC: bool>(
                             // extract() leaves `out_stdio` untouched when `value` is undefined, so this
                             // must be initialized to a sane default instead of `undefined`.
                             let mut new_item: Stdio = Stdio::Ignore;
-                            Stdio::extract(&mut new_item, global_this, i, value, IS_SYNC)?;
+                            Stdio::extract(
+                                &mut new_item,
+                                global_this,
+                                i,
+                                value,
+                                IS_SYNC || BUFFERED_ASYNC,
+                            )?;
 
                             let opt = match new_item.as_spawn_option(i) {
                                 stdio::ResultT::Result(opt) => opt,

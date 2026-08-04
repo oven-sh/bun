@@ -625,11 +625,7 @@ Server.prototype.listen = function () {
   if (netServerListenChannel.hasSubscribers) {
     const arg0 = arguments[0];
     const options =
-      typeof arg0 === "object" && arg0 !== null
-        ? arg0
-        : socketPath != null
-          ? { path: socketPath }
-          : { port, host };
+      typeof arg0 === "object" && arg0 !== null ? arg0 : socketPath != null ? { path: socketPath } : { port, host };
     netServerListenChannel.asyncStart.publish({ server: this, options });
   }
 

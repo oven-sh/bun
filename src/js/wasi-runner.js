@@ -25,12 +25,14 @@ if (WASM_ENV_STR?.length) {
 }
 
 const wasi = new WASI({
+  version: "preview1",
   args: process.argv.slice(1),
   env,
   preopens: {
     ".": WASM_CWD || process.cwd(),
     "/": WASM_ROOT_DIR || "/",
   },
+  returnOnExit: false,
 });
 
 let source = globalThis.wasmSourceBytes;
@@ -46,6 +48,10 @@ const instance = !Number(WASM_USE_ASYNC_INIT)
   ? new WebAssembly.Instance(wasm, wasi.getImports(wasm))
   : await WebAssembly.instantiate(wasm, wasi.getImports(wasm));
 
-wasi.start(instance);
+if (typeof instance.exports._start === "function") {
+  wasi.start(instance);
+} else {
+  wasi.initialize(instance);
+}
 
 process.reallyExit(0);

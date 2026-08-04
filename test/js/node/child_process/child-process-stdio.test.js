@@ -2,6 +2,7 @@ import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
+import { finished } from "node:stream/promises";
 
 const CHILD_PROCESS_FILE = import.meta.dir + "/spawned-child.js";
 const OUT_FILE = import.meta.dir + "/stdio-test-out.txt";
@@ -147,9 +148,9 @@ describe("short stdio arrays", () => {
   // invisible. Without the fix the 2-element rows skip the eager load, so this
   // first post-exit access constructs a native Readable over a released handle
   // and throws "ASSERTION FAILED: typeof bunNativePtr === object".
-  // The eager load consumes the stream, so post-exit it is already ended for
-  // every row — the invariant under test is that reading `.stdout` is safe,
-  // not that the bytes are still retrievable.
+  // The invariant under test is that reading `.stdout` after exit is safe and
+  // the stream can still be driven to a clean end, not that the bytes are
+  // retrievable.
   test.each([
     [["pipe", "pipe"]],
     [["ignore", "pipe"]],
@@ -164,6 +165,11 @@ describe("short stdio arrays", () => {
     const stdout = child.stdout;
     expect(stdout).not.toBeNull();
     expect(typeof stdout.on).toBe("function");
+
+    // On Windows the pipe EOF can lag the 'exit' event, so drive the stream to
+    // completion instead of asserting it is already ended.
+    stdout.resume();
+    await finished(stdout);
     expect(stdout.readableEnded).toBe(true);
   });
 });

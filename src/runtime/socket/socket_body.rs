@@ -2991,7 +2991,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.socket.get().flush();
 
         if self.can_end_after_flush() {
-            self.mark_inactive();
+            // end() = flush + SHUT_WR; teardown runs via on_close once the peer FINs.
+            self.update_flags(|f| f.remove(Flags::END_AFTER_FLUSH));
+            self.socket.get().shutdown();
         }
         0
     }
@@ -2999,14 +3001,6 @@ impl<const SSL: bool> NewSocket<SSL> {
     #[bun_jsc::host_fn(method)]
     pub fn flush(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        // `end()` → `internalFlush` → `markInactive` → `closeAndDetach(.normal)`
-        // detaches `this.socket` and, for TLS, defers the raw close until the
-        // peer's close_notify arrives — leaving `is_active` set so the eventual
-        // `onClose` can run `handlers.markInactive()`. Without this guard a
-        // follow-up `flush()` re-enters `markInactive`, sees the detached
-        // socket as closed, and decrements `active_connections` a second time;
-        // the deferred `onClose` then underflows it. Every other
-        // `internalFlush` caller already has this check.
         if this.socket.get().is_detached() {
             return Ok(JSValue::UNDEFINED);
         }
@@ -3048,16 +3042,11 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub(crate) fn shutdown(
         this: &Self,
         _global: &JSGlobalObject,
-        callframe: &CallFrame,
+        _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        let [arg] = callframe.arguments_as_array::<1>();
-        if callframe.arguments_count() > 0 && arg.to_boolean() {
-            this.socket.get().shutdown_read();
-        } else {
-            this.socket.get().shutdown();
-        }
-
+        // `halfClose` is accepted and ignored; every form is SHUT_WR.
+        this.socket.get().shutdown();
         Ok(JSValue::UNDEFINED)
     }
 

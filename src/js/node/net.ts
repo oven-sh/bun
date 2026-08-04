@@ -1160,7 +1160,7 @@ function onconnection(err, clientHandle) {
         remotePort: _socket.remotePort,
         remoteFamily: _socket.remoteFamily || "IPv4",
       };
-      clientHandle.end();
+      clientHandle.close();
       self.emit("drop", data);
       return;
     }
@@ -1175,7 +1175,7 @@ function onconnection(err, clientHandle) {
       remoteFamily: _socket.remoteFamily || "IPv4",
     };
 
-    clientHandle.end();
+    clientHandle.close();
     self.emit("drop", data);
     return;
   }

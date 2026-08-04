@@ -5899,11 +5899,6 @@ declare module "bun" {
     end(data?: string | BufferSource, byteOffset?: number, byteLength?: number): number;
 
     /**
-     * Close the socket immediately
-     */
-    end(): void;
-
-    /**
      * Keep Bun's process alive at least until this socket is closed
      *
      * After the socket has closed, the socket is unref'd, the process may exit,
@@ -5912,11 +5907,19 @@ declare module "bun" {
     ref(): void;
 
     /**
-     * Set a timeout until the socket automatically closes.
+     * Arm an inactivity timeout that invokes the `timeout` handler after roughly
+     * `seconds` seconds of no reads or writes on this socket.
      *
-     * To reset the timeout, call this function again.
+     * This is a **notification only**: Bun does not close the socket for you. If
+     * you want the socket to close on timeout, call {@link close `close()`} or
+     * {@link terminate `terminate()`} from the `timeout` handler. If no
+     * `timeout` handler is registered the timer is a no-op.
      *
-     * When a timeout happens, the `timeout` callback is called and the socket is closed.
+     * Timeouts are coalesced into a shared sweep that runs every 4 seconds, so
+     * the delivered duration is the requested value give or take 4 seconds.
+     * Pass `0` to disarm the timer.
+     *
+     * This mirrors Node's `net.Socket#setTimeout`, which is also notify-only.
      */
     timeout(seconds: number): void;
 
@@ -5933,19 +5936,20 @@ declare module "bun" {
     terminate(): void;
 
     /**
-     * Shuts down the write-half or both halves of the connection.
-     * This allows the socket to enter a half-closed state where it can still receive data
-     * but can no longer send data (`halfClose = true`), or close both read and write
-     * (`halfClose = false`, similar to `end()` but potentially more immediate depending on OS).
-     * Calls the `shutdown(2)` syscall internally.
+     * Half-closes the write side of the connection (sends a TCP FIN via
+     * `shutdown(fd, SHUT_WR)`).
      *
-     * @param halfClose If `true`, only shuts down the write side (allows receiving). If `false` or omitted, shuts down both read and write. Defaults to `false`.
+     * After `shutdown()` no more data can be written, but the socket stays open
+     * for reading: the peer's reply is still delivered to the `data` handler,
+     * and the `close` handler runs once the peer closes its side.
+     *
+     * This is equivalent to {@link end `end()`} without a data argument.
+     *
+     * @param halfClose Ignored. Present for backwards compatibility; every
+     *   call half-closes the write side regardless of this value.
      * @example
      * ```ts
-     * // Stop sending data, but allow receiving
-     * socket.shutdown(true);
-     *
-     * // Shutdown both reading and writing
+     * // Send FIN, keep receiving the peer's reply
      * socket.shutdown();
      * ```
      */
@@ -6240,14 +6244,14 @@ declare module "bun" {
     readonly bytesWritten: number;
 
     /**
-     * Alias for `socket.end()`. Allows the socket to be used with `using` declarations
-     * for automatic resource management.
+     * Alias for {@link close `socket.close()`}. Allows the socket to be used with
+     * `using` declarations for automatic resource management.
      * @example
      * ```ts
      * async function processSocket() {
      *   using socket = await Bun.connect({ ... });
      *   socket.write("Data");
-     *   // socket.end() is called automatically when exiting the scope
+     *   // socket.close() is called automatically when exiting the scope
      * }
      * ```
      */
@@ -6298,12 +6302,10 @@ declare module "bun" {
     upgradeTLS<Data>(options: TLSUpgradeOptions<Data>): [raw: Socket<Data>, tls: Socket<Data>];
 
     /**
-     * Closes the socket.
+     * Closes the socket immediately in both directions.
      *
-     * This is a wrapper around `end()` and `shutdown()`.
-     *
-     * @see {@link end}
-     * @see {@link shutdown}
+     * For a graceful write-side half-close that keeps the read side open,
+     * use {@link end `end()`} or {@link shutdown `shutdown()`} instead.
      */
     close(): void;
 

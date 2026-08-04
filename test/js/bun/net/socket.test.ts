@@ -3333,3 +3333,76 @@ describe("TLS handshake callback throw", () => {
     }
   });
 });
+
+// end(), shutdown(), shutdown(false) and shutdown(true) all half-close the
+// write side (SHUT_WR / TCP FIN) and leave the socket readable. Prior behavior
+// mapped end() to close(2) and shutdown(true) to SHUT_RD, so a peer's reply
+// after the half-close was lost. Pin the observable contract: the client can
+// still receive the server's full reply after each call.
+describe("Socket.end() / Socket.shutdown() are a write-side half-close", () => {
+  // Small enough to fit in one non-blocking send() on every target's loopback
+  // buffer so the server's write-on-end never needs a drain cycle.
+  const PAYLOAD = Buffer.alloc(16 * 1024, 0x61);
+
+  type Call = "end()" | "end(data)" | "shutdown()" | "shutdown(false)" | "shutdown(true)";
+
+  async function halfClose(call: Call) {
+    let received = 0;
+    let writeAfter = 0;
+    let readyState: number | undefined;
+    const { promise, resolve } = Promise.withResolvers<void>();
+
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      allowHalfOpen: true,
+      socket: {
+        data() {},
+        // Client's FIN arrived: reply, then half-close back.
+        end(socket) {
+          socket.write(PAYLOAD);
+          socket.end();
+        },
+        close() {},
+      },
+    });
+
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open(socket) {
+          if (call === "end(data)") socket.end("hi");
+          else {
+            socket.write("hi");
+            if (call === "end()") socket.end();
+            else if (call === "shutdown()") socket.shutdown();
+            else if (call === "shutdown(false)") socket.shutdown(false);
+            else socket.shutdown(true);
+          }
+          readyState = socket.readyState;
+          writeAfter = socket.write("x");
+        },
+        data(_socket, chunk) {
+          received += chunk.length;
+        },
+        end() {},
+        close() {
+          resolve();
+        },
+      },
+    });
+
+    await promise;
+    return { received, writeAfter, readyState };
+  }
+
+  for (const call of ["end()", "end(data)", "shutdown()", "shutdown(false)", "shutdown(true)"] as const) {
+    it.concurrent(`${call} sends FIN and keeps the read side open`, async () => {
+      // readyState 1: socket is still established (not detached).
+      // writeAfter -1: further writes on the half-closed side are rejected.
+      // received: the full reply made it through the still-open read side.
+      expect(await halfClose(call)).toEqual({ received: PAYLOAD.length, writeAfter: -1, readyState: 1 });
+    });
+  }
+});

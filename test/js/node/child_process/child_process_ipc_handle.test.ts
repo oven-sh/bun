@@ -318,6 +318,74 @@ process.on('message', (m, socket) => {
     });
   });
 
+  test.concurrent("dgram.Socket handle arrives as a bound dgram.Socket the child can send/receive on", async () => {
+    using dir = tempDir("ipc-handle-dgram", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const dgram = require('node:dgram');
+
+const child = fork('child.js');
+const server = dgram.createSocket('udp4');
+const client = dgram.createSocket('udp4');
+
+function finish(ok, detail) {
+  console.log(ok ? 'RESPONSE:' + detail : 'FAILED:' + detail);
+  try { child.kill(); } catch {}
+  try { client.close(); } catch {}
+  process.exit(ok ? 0 : 1);
+}
+
+server.bind(0, '127.0.0.1', () => {
+  const port = server.address().port;
+  let ready = false, closed = false;
+  const maybePing = () => {
+    if (!ready || !closed) return;
+    client.once('message', buf => finish(true, buf.toString()));
+    client.send('ping', port, '127.0.0.1', err => {
+      if (err) finish(false, 'client:' + err.message);
+    });
+  };
+  child.send({ greeting: 'hi' }, server, err => {
+    if (err) return finish(false, 'send:' + err.message);
+    // The child adopted a dup of this descriptor; close the parent's copy so
+    // only the child reads from it before we ping.
+    server.close(() => { closed = true; maybePing(); });
+  });
+  child.on('message', m => {
+    if (m && m.error) return finish(false, m.error);
+    if (m !== 'ready') return;
+    ready = true; maybePing();
+  });
+});
+`,
+      "child.js": `
+const dgram = require('node:dgram');
+process.on('message', (m, socket) => {
+  if (!(socket instanceof dgram.Socket)) return process.send({ error: 'handle was ' + typeof socket });
+  if (!m || m.greeting !== 'hi') return process.send({ error: 'message was ' + JSON.stringify(m) });
+  socket.on('message', (buf, rinfo) => {
+    socket.send('pong:' + buf, rinfo.port, rinfo.address);
+  });
+  process.send('ready');
+});
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ exitCode, stderr, response: stdout.includes("RESPONSE:pong:ping") }).toEqual({
+      exitCode: 0,
+      stderr: expect.any(String),
+      response: true,
+    });
+  });
+
   test.concurrent("received net.Socket has connecting=false and remoteAddress synchronously", async () => {
     using dir = tempDir("ipc-handle-connecting", {
       "parent.js": `

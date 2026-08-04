@@ -6603,10 +6603,8 @@ impl H2FrameParser {
             if callframe.arguments_count() >= 3 {
                 if !opaque_data_arg.is_empty_or_undefined_or_null() {
                     if let Some(array_buffer) = opaque_data_arg.as_array_buffer(global_object) {
-                        // send_go_away's write() can re-enter JS on JS-backed sockets (cork flush →
-                        // onWrite → Duplex write), and that JS can detach/transfer this buffer. Own
-                        // the bytes before any JS can run so the GOAWAY payload is what the caller
-                        // passed, not whatever later occupies that heap block.
+                        // write() re-enters JS on JS-backed sockets (cork flush → onWrite), where
+                        // user code can detach this buffer; own the bytes before that can happen.
                         let copied = array_buffer.byte_slice().to_vec();
                         this.send_go_away(
                             0,

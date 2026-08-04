@@ -522,3 +522,36 @@ module.exports = 1;`,
   expect(stderr).toContain(`"await" can only be used inside an "async" function`);
   expect(exitCode).not.toBe(0);
 });
+
+// `switch`/`with` in dead branches used to be kept wholesale, leaking their
+// await-bearing test expressions into non-async CJS output.
+test.concurrent("bun build --format=cjs drops a dead switch/with statement holding an await", async () => {
+  using dir = tempDir("issue-29243-dead-switch-with", {
+    "entry.js": `if (false) {
+  switch (await a()) {
+    case 1:
+      var fromSwitch = 1;
+  }
+  with (await b()) {
+    var fromWith = 1;
+  }
+}
+module.exports = 1;`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+
+  expect(stdout).not.toContain("await");
+  expect(stdout).toContain("var fromSwitch");
+  expect(stdout).toContain("var fromWith");
+  expect(exitCode).toBe(0);
+});

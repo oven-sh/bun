@@ -706,6 +706,16 @@ impl SideEffects {
                 Self::should_keep_stmt_in_dead_control_flow(label.stmt, bump)
             }
 
+            StmtData::SWith(with) => {
+                Self::should_keep_stmt_in_dead_control_flow(with.body, bump)
+            }
+
+            StmtData::SSwitch(switch_) => switch_
+                .cases
+                .slice()
+                .iter()
+                .any(|case| Self::should_keep_stmts_in_dead_control_flow(case.body, bump)),
+
             _ => true,
         }
     }

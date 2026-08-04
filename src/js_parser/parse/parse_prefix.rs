@@ -47,7 +47,7 @@ fn token_starts_await_expr<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
         | T::TTilde => true,
         T::TIdentifier => {
             let raw = p.lexer.raw();
-            raw != b"of" && raw != b"in" && raw != b"as" && raw != b"satisfies" && raw != b"using"
+            raw != b"of" && raw != b"as" && raw != b"satisfies" && raw != b"using"
         }
         _ => false,
     }

@@ -466,8 +466,17 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             }
         }
 
-        // Wrap the last expression in return { value: expr }
-        self.repl_wrap_last_expression_with_return(&mut inner_stmts, bump);
+        // Only capture a result when the last source statement is an expression; declarations
+        // (let/const/var, class, function, import) have a [[CompletionValue]] of ~empty~ per
+        // ECMA-262 §14.3.1, so their lowered `x = init` assignment must not leak as the REPL value.
+        let capture_last = all_stmts.iter().rev().find_map(|s| match s.data {
+            StmtData::SEmpty(_) | StmtData::SComment(_) => None,
+            StmtData::SExpr(_) | StmtData::SDirective(_) => Some(true),
+            _ => Some(false),
+        });
+        if capture_last == Some(true) {
+            self.repl_wrap_last_expression_with_return(&mut inner_stmts, bump);
+        }
 
         // Create the IIFE: (() => { ...inner_stmts... })() or (async () => { ... })()
         let inner_slice: &mut [Stmt] = inner_stmts.into_bump_slice_mut();

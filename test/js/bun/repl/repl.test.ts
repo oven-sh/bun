@@ -439,11 +439,9 @@ describe.concurrent("Bun REPL", () => {
         ".exit",
       ]);
       const output = stripAnsi(stdout + stderr);
-      expect(output).toContain(`the-default`);
-      expect(output).toContain(`first`);
-      expect(output).toContain(`second`);
-      // Ensure the array is fully populated (no undefineds).
-      expect(output).not.toMatch(/\bnull\b|\bundefined\b/);
+      // Ensure the array is fully populated (JSON.stringify renders an
+      // undefined slot as `null`, so an exact match catches a missed binding).
+      expect(output).toContain(`[\\"the-default\\",\\"first\\",\\"second\\"]`);
       expect(exitCode).toBe(0);
     });
 

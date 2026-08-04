@@ -1027,10 +1027,13 @@ class REPLServer extends Interface {
                 SideEffectFreeRegExpPrototypeSymbolReplace(/^REPL\d+:\d+\r?\n/, e.stack, ""),
                 "",
               );
-              const importErrorStr = "Cannot use import statement outside a " + "module";
-              const dynamicImport = StringPrototypeIncludes(e.message, importErrorStr)
-                ? toDynamicImport(ArrayPrototypeAt(this.lines, -1))
-                : null;
+              // V8: "Cannot use import statement outside a module";
+              // JSC: "Unexpected … import call expects one or two arguments." (Parser.cpp consumeOrFail)
+              const dynamicImport =
+                StringPrototypeIncludes(e.message, "Cannot use import statement outside a module") ||
+                StringPrototypeIncludes(e.message, "import call expects one or two arguments")
+                  ? toDynamicImport(ArrayPrototypeAt(this.lines, -1))
+                  : null;
               if (dynamicImport !== null) {
                 e.message =
                   "Cannot use import statement inside the Node.js " + "REPL, alternatively use dynamic import: " + dynamicImport;

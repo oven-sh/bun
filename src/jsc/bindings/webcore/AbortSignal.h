@@ -114,8 +114,6 @@ public:
 
     template<typename Visitor> void visitAbortAlgorithms(Visitor&);
 
-    bool isFollowingSignal() const { return !!m_followingSignal; }
-
     void throwIfAborted(JSC::JSGlobalObject&);
 
     using AbortSignalSet = WeakListHashSet<AbortSignal, WeakPtrImplWithEventTargetData>;
@@ -206,7 +204,6 @@ private:
     // Strong-ref cycle leak.
     Vector<std::pair<uint32_t, Ref<AbortAlgorithm>>> m_abortAlgorithms WTF_GUARDED_BY_LOCK(m_abortAlgorithmsLock);
     Lock m_abortAlgorithmsLock;
-    WeakPtr<AbortSignal, WeakPtrImplWithEventTargetData> m_followingSignal;
     AbortSignalSet m_sourceSignals;
     AbortSignalSet m_dependentSignals;
     JSValueInWrappedObject m_reason;

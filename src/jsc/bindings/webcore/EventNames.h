@@ -23,8 +23,6 @@
 
 // #include "ThreadGlobalData.h"
 #include "EventTarget.h"
-#include <array>
-#include <functional>
 #include <wtf/text/AtomString.h>
 
 namespace WebCore {

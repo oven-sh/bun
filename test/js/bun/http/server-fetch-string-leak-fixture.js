@@ -51,8 +51,8 @@ console.log("RSS delta:", deltaMB.toFixed(1), "MB");
 
 // 2048 iterations * 2 calls * ~64 KiB = ~256 MiB leaked when broken.
 // With the fix, growth is a few MiB of allocator jitter at most.
-// ASAN: ~512 MiB of leaked URL buffers + allocator slack vs ~320 MiB
-// quarantine no-leak baseline; threshold sits between.
+// ASAN: ~649 MB leaked (measured with the Cow->Box::leak regression
+// reintroduced) vs ~325 MB quarantine no-leak baseline.
 if (deltaMB > (isASAN ? 450 : 64)) {
   console.error("server.fetch(string) leaked URL buffers");
   process.exit(1);

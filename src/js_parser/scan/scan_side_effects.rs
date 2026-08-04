@@ -716,7 +716,9 @@ impl SideEffects {
                 Self::should_keep_nested_stmt_in_dead_control_flow(label.stmt, bump)
             }
 
-            StmtData::SWith(with) => Self::should_keep_nested_stmt_in_dead_control_flow(with.body, bump),
+            StmtData::SWith(with) => {
+                Self::should_keep_nested_stmt_in_dead_control_flow(with.body, bump)
+            }
 
             StmtData::SSwitch(switch_) => switch_
                 .cases

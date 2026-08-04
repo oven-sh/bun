@@ -105,7 +105,7 @@ async function tryDlopen(addon: Buffer, force: boolean) {
   return { stdout, stderr, exitCode };
 }
 
-describe.skipIf(!isLinux)("issue #15753: glibc addon on musl throws instead of segfaulting", () => {
+describe.concurrent.skipIf(!isLinux)("issue #15753: glibc addon on musl throws instead of segfaulting", () => {
   test.each(["libc.so.6", "libpthread.so.0", "ld-linux-aarch64.so.1"])(
     "glibc-linked addon (%s) is rejected with ERR_DLOPEN_FAILED",
     async soname => {

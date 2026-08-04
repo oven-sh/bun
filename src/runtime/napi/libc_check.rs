@@ -70,7 +70,7 @@ fn elf_glibc_needed(path: &[u8]) -> Option<Vec<u8>> {
     const DT_STRTAB: i64 = 5;
     const DT_STRSZ: i64 = 10;
 
-    let file = File::openat(Fd::cwd(), path, O::RDONLY, 0).ok()?;
+    let file = File::openat(Fd::cwd(), path, O::RDONLY | O::CLOEXEC, 0).ok()?;
 
     let mut ehdr = [0u8; 64];
     if file.pread_all(&mut ehdr, 0).ok()? < ehdr.len() {
@@ -183,8 +183,7 @@ fn vaddr_to_offset(loads: &[(u64, u64, u64)], vaddr: u64) -> Option<u64> {
             return Some(off + (vaddr - base));
         }
     }
-    // ET_DYN base is normally 0: vaddr == file offset when no PT_LOAD matched.
-    Some(vaddr)
+    None
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]

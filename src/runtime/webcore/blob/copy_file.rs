@@ -793,12 +793,30 @@ impl<'a> CopyFile<'a> {
 
             // BSD fstat on a pipe reports bytes currently buffered in st_size;
             // only a regular-file st_size is a length.
-            if stat.st_size != 0 && bun_sys::S::ISREG(stat.st_mode as _) {
-                self.max_length = (SizeType::try_from(stat.st_size)
-                    .expect("int cast")
-                    .min(self.max_length))
-                .max(self.offset)
-                    - self.offset;
+            let stat_size = if stat.st_size > 0 && bun_sys::S::ISREG(stat.st_mode as _) {
+                stat.st_size as SizeType
+            } else {
+                0
+            };
+
+            if matches!(
+                self.destination_file_store.pathlike,
+                PathOrFileDescriptor::Path(_)
+            ) {
+                if let bun_sys::Result::Ok(dest_stat) = bun_sys::fstat(self.destination_fd) {
+                    if stat.st_dev == dest_stat.st_dev && stat.st_ino == dest_stat.st_ino {
+                        self.read_len = stat_size;
+                        self.do_close();
+                        return;
+                    }
+                    if bun_sys::S::ISREG(dest_stat.st_mode as _) {
+                        let _ = bun_sys::ftruncate(self.destination_fd, 0);
+                    }
+                }
+            }
+
+            if stat_size != 0 {
+                self.max_length = stat_size.saturating_sub(self.offset).min(self.max_length);
                 if self.max_length == 0 {
                     self.do_close();
                     return;
@@ -818,6 +836,10 @@ impl<'a> CopyFile<'a> {
                         self.max_length as i64,
                     );
                 }
+            }
+
+            if self.offset > 0 && bun_sys::S::ISREG(stat.st_mode as _) {
+                let _ = bun_sys::set_file_offset(self.source_fd, self.offset as u64);
             }
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -872,29 +894,22 @@ impl<'a> CopyFile<'a> {
 
             #[cfg(target_os = "macos")]
             {
-                // fcopyfile rewrites dest from offset 0 and the slice trim is
-                // ftruncate; both are only safe for a dest Bun opened O_TRUNC.
-                if matches!(
+                let is_sliced = self.offset > 0 || (stat_size > 0 && self.max_length < stat_size);
+                let is_path_dest = matches!(
                     self.destination_file_store.pathlike,
                     PathOrFileDescriptor::Path(_)
-                ) {
-                    if self.do_fcopy_file_with_read_write_loop_fallback().is_err() {
+                );
+                if is_sliced || !is_path_dest {
+                    if self.do_read_write_loop_capped(self.max_length).is_err() {
                         self.do_close();
                         return;
                     }
-                    if stat.st_size != 0
-                        && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
-                    {
-                        let _ = bun_sys::ftruncate(
-                            self.destination_fd,
-                            i64::try_from(self.max_length).expect("int cast"),
-                        );
-                    }
-                } else if self.do_read_write_loop_capped(self.max_length).is_err() {
+                } else if self.do_fcopy_file_with_read_write_loop_fallback().is_err() {
                     self.do_close();
                     return;
+                } else {
+                    self.read_len = stat_size;
                 }
-
                 self.do_close();
                 return;
             }
@@ -1025,8 +1040,7 @@ const PREALLOCATE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "a
 const PREALLOCATE_LENGTH: SizeType = 2048 * 1024;
 
 #[cfg(not(windows))]
-const OPEN_DESTINATION_FLAGS: i32 =
-    bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC;
+const OPEN_DESTINATION_FLAGS: i32 = bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY;
 #[cfg(not(windows))]
 const OPEN_SOURCE_FLAGS: i32 = bun_sys::O::CLOEXEC | bun_sys::O::RDONLY;
 

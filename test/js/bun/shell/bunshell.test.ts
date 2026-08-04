@@ -3116,7 +3116,7 @@ describe("redirect stdin from ReadableStream", () => {
     expect(out.exitCode).toBe(0);
   });
 
-  test.concurrent("native file source (Bun.file().stream())", async () => {
+  test.concurrent("Bun.file().stream() collapses to the blob path", async () => {
     using dir = tempDir("shell-stream-file", { "input.txt": "file-content" });
     const stream = Bun.file(join(String(dir), "input.txt")).stream();
     const out = await $`${BUN} -e ${childPump} < ${stream}`.env(bunEnv).nothrow().quiet();

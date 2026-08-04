@@ -70,7 +70,6 @@
   PerformanceObserverEntryList    PerformanceObserverEntryListConstructorCallback      PropertyCallback
   PerformanceResourceTiming       PerformanceResourceTimingConstructorCallback         PropertyCallback
   PerformanceServerTiming         PerformanceServerTimingConstructorCallback           PropertyCallback
-  PerformanceTiming               PerformanceTimingConstructorCallback                 PropertyCallback
   ReadableByteStreamController    ReadableByteStreamControllerConstructorCallback      DontEnum|PropertyCallback
   ReadableStream                  ReadableStreamConstructorCallback                    DontEnum|PropertyCallback
   ReadableStreamBYOBReader        ReadableStreamBYOBReaderConstructorCallback          DontEnum|PropertyCallback

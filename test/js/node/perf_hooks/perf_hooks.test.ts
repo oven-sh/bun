@@ -11,6 +11,57 @@ test("stubs", () => {
   expect(perf.performance.eventLoopUtilization()).toBeObject();
 });
 
+// Node.js has never exposed the browser Navigation Timing L1 object;
+// `typeof performance.timing !== 'undefined'` is a widespread browser sniff.
+test("performance.timing is not defined", () => {
+  expect(performance.timing).toBeUndefined();
+  expect("timing" in performance).toBe(false);
+  expect("timing" in Object.getPrototypeOf(performance)).toBe(false);
+  expect(globalThis.PerformanceTiming).toBeUndefined();
+});
+
+test("performance.toJSON() returns the Node.js shape", () => {
+  const j = performance.toJSON();
+  expect(Object.keys(j)).toEqual(["nodeTiming", "timeOrigin", "eventLoopUtilization"]);
+  expect(j.nodeTiming).toBe(performance.nodeTiming);
+  expect(typeof j.timeOrigin).toBe("number");
+  expect(j.eventLoopUtilization).toEqual({ idle: 0, active: 0, utilization: 0 });
+  expect("timing" in j).toBe(false);
+});
+
+// Must hold on the bare global before any require("perf_hooks"): this is where
+// isomorphic libraries probe `performance.timing` / JSON.stringify(performance).
+test("performance.timing and toJSON() shape without requiring perf_hooks", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const p = globalThis.performance;
+       if (p.timing !== undefined) throw new Error("timing=" + typeof p.timing);
+       if ("timing" in p) throw new Error('"timing" in performance');
+       const j = p.toJSON();
+       console.log(JSON.stringify({
+         keys: Object.keys(j),
+         hasTiming: "timing" in j,
+         nodeTiming: typeof j.nodeTiming,
+         elu: j.eventLoopUtilization,
+       }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    keys: ["nodeTiming", "timeOrigin", "eventLoopUtilization"],
+    hasTiming: false,
+    nodeTiming: "object",
+    elu: { idle: 0, active: 0, utilization: 0 },
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("doesn't throw", () => {
   expect(() => performance.mark("test")).not.toThrow();
   expect(() => performance.measure("test", "test")).not.toThrow();

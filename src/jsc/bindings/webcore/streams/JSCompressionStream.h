@@ -1,6 +1,6 @@
-// JSTextEncoderStream — the TextEncoderStream instance cell. A JSTransformStream
-// subclass whose transform/flush arms drive the Rust TextEncoderStreamEncoder
-// (m_encoder) directly.
+// JSCompressionStream — the CompressionStream instance cell. A JSTransformStream
+// subclass whose controller's transformerKind drives the Rust CompressionStreamCoder
+// (m_coder) directly.
 #pragma once
 
 #include "root.h"
@@ -12,12 +12,12 @@
 
 namespace WebCore {
 
-class JSTextEncoderStream final : public JSTransformStream {
+class JSCompressionStream final : public JSTransformStream {
 public:
     using Base = JSTransformStream;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    static JSTextEncoderStream* create(JSC::VM&, JSC::Structure*);
+    static JSCompressionStream* create(JSC::VM&, JSC::Structure*);
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
@@ -35,15 +35,15 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
 
-    // the Rust TextEncoderStreamEncoder (lone-surrogate state + reusable scratch). Freed
-    // eagerly at ClearAlgorithms; a vm.heap.addFinalizer registered in the constructor is
-    // the idempotent fallback for an abandoned stream.
-    void* m_encoder { nullptr };
+    // the Rust CompressionStreamCoder. Freed eagerly at ClearAlgorithms (post-flush /
+    // error / cancel); a vm.heap.addFinalizer registered in the constructor is the
+    // idempotent fallback for an abandoned stream.
+    void* m_coder { nullptr };
 
 private:
-    JSTextEncoderStream(JSC::VM&, JSC::Structure*);
+    JSCompressionStream(JSC::VM&, JSC::Structure*);
 };
 
-using JSTextEncoderStreamConstructor = JSStreamConstructor<JSTextEncoderStream>;
+using JSCompressionStreamConstructor = JSStreamConstructor<JSCompressionStream>;
 
 } // namespace WebCore

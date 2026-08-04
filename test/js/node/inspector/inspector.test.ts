@@ -828,6 +828,42 @@ test("a console argument whose toString throws does not break console.log", asyn
   }
 });
 
+test("Network.requestWillBeSent / webSocketCreated populate initiator.stack with the caller's frames", () => {
+  const session = new inspector.Session();
+  session.connect();
+  try {
+    const events: any[] = [];
+    session.on("Network.requestWillBeSent", m => events.push(m.params));
+    session.on("Network.webSocketCreated", m => events.push(m.params));
+    session.post("Network.enable");
+    function callerFrame() {
+      inspector.Network.requestWillBeSent({
+        requestId: "r1",
+        timestamp: 0,
+        wallTime: 0,
+        request: { url: "http://x/", method: "GET", headers: {} },
+      });
+      inspector.Network.webSocketCreated({ requestId: "ws1", url: "ws://x/" });
+    }
+    callerFrame();
+    expect(events).toHaveLength(2);
+    const thisFile = pathToFileURL(import.meta.path).href;
+    for (const evt of events) {
+      expect(evt.initiator.type).toBe("script");
+      const frames = evt.initiator.stack?.callFrames;
+      expect(Array.isArray(frames)).toBe(true);
+      // Like Node, internal node:inspector frames precede the caller; the first
+      // user frame must be our call site.
+      const firstUser = frames.find((f: any) => f.url === thisFile);
+      expect(firstUser).toMatchObject({ functionName: "callerFrame", url: thisFile });
+      expect(typeof firstUser.lineNumber).toBe("number");
+    }
+    session.post("Network.disable");
+  } finally {
+    session.disconnect();
+  }
+});
+
 // Activating breakpoints on a debugger that was attached at runtime (after the
 // entry module has already been linked) used to crash the inspected process:
 // JSC's clearCode discarded the module's UnlinkedModuleProgramCodeBlock, and
@@ -1571,7 +1607,11 @@ session.post("Runtime.evaluate", { expression: "debugger; globalThis.x = 1; glob
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: JSON.stringify({ pauses: 2 }), exitCode: 0 });
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ pauses: 2 }),
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test("Debugger.paused from a pause nested inside a post() dispatch reaches listeners before execution continues", async () => {
@@ -1608,7 +1648,10 @@ session.post("Runtime.evaluate", { expression: "debugger; 42" }, function onDone
     env: inspectorChildEnv,
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(JSON.parse(stdout)).toEqual({ sawPausedDuringDispatch: true, evalOnFrame: 2, result: 42 });
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+    stdout: { sawPausedDuringDispatch: true, evalOnFrame: 2, result: 42 },
+    stderr: "",
+    exitCode: 0,
+  });
 });

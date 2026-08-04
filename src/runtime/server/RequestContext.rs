@@ -3262,7 +3262,6 @@ where
             if !this.flags.has_written_status() {
                 let global_this = this.server().global_this();
                 let js_err = err.to_js(global_this);
-                this.byte_stream.set(None);
                 this.response_body_readable_stream_ref
                     .with_mut(|s| s.deinit());
                 this.run_error_handler(js_err);

@@ -2,16 +2,17 @@ use bun_core::strings;
 use bun_paths;
 use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
 
-pub struct Symlinker {
-    pub dest: bun_paths::Path,
-    pub target: bun_paths::RelPath,
-    pub fallback_junction_target: bun_paths::AbsPath,
+pub(crate) struct Symlinker {
+    pub(crate) dest: bun_paths::Path,
+    pub(crate) target: bun_paths::RelPath,
+    #[cfg(windows)]
+    pub(crate) fallback_junction_target: bun_paths::AbsPath,
 }
 
 impl Symlinker {
     // `&mut self` because `Path::slice_z()` writes
     // the trailing NUL into its pooled buffer and so requires `&mut`.
-    pub fn symlink(&mut self) -> bun_sys::Result<()> {
+    pub(crate) fn symlink(&mut self) -> bun_sys::Result<()> {
         #[cfg(windows)]
         {
             // borrowck — `slice_z()` mut-borrows each path to write
@@ -30,7 +31,7 @@ impl Symlinker {
         }
     }
 
-    pub fn ensure_symlink(&mut self, strategy: Strategy) -> bun_sys::Result<()> {
+    pub(crate) fn ensure_symlink(&mut self, strategy: Strategy) -> bun_sys::Result<()> {
         match strategy {
             Strategy::ExpectMissing => {
                 return match self.symlink() {

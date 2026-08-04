@@ -15,7 +15,7 @@ use crate::hir::{
 ///
 /// Port of ValidateUseMemo.ts.
 /// Returns VoidUseMemo errors separately (for logging via logErrors, not as compile errors).
-pub fn validate_use_memo(func: &HirFunction, env: &mut Environment) -> CompilerError {
+pub(crate) fn validate_use_memo(func: &HirFunction, env: &mut Environment) -> CompilerError {
     validate_use_memo_impl(
         func,
         &env.functions,

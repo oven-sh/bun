@@ -8,22 +8,6 @@ use bun_ast::{Loc, Log, Source};
 type OOM<T> = Result<T, AllocError>;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Options
-// ──────────────────────────────────────────────────────────────────────────
-
-pub struct Options {
-    pub bracked_array: bool,
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            bracked_array: true,
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 // Pure-byte helpers. They touch no parser state; exposed as free fns so
 // they are unit-testable without the Expr-carrying struct.
 // ──────────────────────────────────────────────────────────────────────────
@@ -64,13 +48,13 @@ pub(crate) fn next_dot(key: &[u8]) -> Option<usize> {
 // IniOption — tri-state used by iterators (None != end-of-iteration)
 // ──────────────────────────────────────────────────────────────────────────
 
-pub enum IniOption<T> {
+pub(crate) enum IniOption<T> {
     Some(T),
     None,
 }
 
 impl<T> IniOption<T> {
-    pub(crate) fn get(self) -> Option<T> {
+    fn get(self) -> Option<T> {
         match self {
             IniOption::Some(v) => Some(v),
             IniOption::None => None,
@@ -112,7 +96,7 @@ pub enum ConfigOpt {
 }
 
 impl ConfigOpt {
-    pub fn is_base64_encoded(self) -> bool {
+    pub(crate) fn is_base64_encoded(self) -> bool {
         matches!(self, ConfigOpt::_Auth | ConfigOpt::_Password)
     }
 }
@@ -122,15 +106,15 @@ impl ConfigOpt {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct ConfigItem {
-    pub registry_url: Box<[u8]>,
-    pub optname: ConfigOpt,
-    pub value: Box<[u8]>,
-    pub loc: Loc,
+    pub(crate) registry_url: Box<[u8]>,
+    pub(crate) optname: ConfigOpt,
+    pub(crate) value: Box<[u8]>,
+    pub(crate) loc: Loc,
 }
 
 impl ConfigItem {
     /// Duplicate ConfigIterator.Item
-    pub fn dupe(&self) -> OOM<Option<ConfigItem>> {
+    pub(crate) fn dupe(&self) -> OOM<Option<ConfigItem>> {
         Ok(Some(ConfigItem {
             registry_url: Box::<[u8]>::from(&*self.registry_url),
             optname: self.optname,
@@ -140,7 +124,11 @@ impl ConfigItem {
     }
 
     /// Duplicate the value, decoding it if it is base64 encoded.
-    pub fn dupe_value_decoded(&self, log: &mut Log, source: &Source) -> OOM<Option<Box<[u8]>>> {
+    pub(crate) fn dupe_value_decoded(
+        &self,
+        log: &mut Log,
+        source: &Source,
+    ) -> OOM<Option<Box<[u8]>>> {
         if self.optname.is_base64_encoded() {
             if self.value.is_empty() {
                 return Ok(Some(Box::default()));
@@ -154,6 +142,7 @@ impl ConfigItem {
                     bun_ast::AddErrorOptions {
                         source: Some(source),
                         loc: self.loc,
+                        redact_sensitive_information: true,
                         ..Default::default()
                     },
                 );
@@ -221,8 +210,8 @@ mod draft {
     use bun_url::URL;
 
     use super::{
-        ConfigItem, ConfigOpt, IniOption, NODE_LINKER_MAP, NodeLinker, Options, is_quoted,
-        next_dot, should_skip_line,
+        ConfigItem, ConfigOpt, IniOption, NODE_LINKER_MAP, NodeLinker, is_quoted, next_dot,
+        should_skip_line,
     };
 
     type OOM<T> = Result<T, AllocError>;
@@ -239,12 +228,10 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     pub struct Parser<'a> {
-        pub opts: Options,
-        pub source: &'a Source,
-        pub src: &'a [u8],
+        pub(crate) source: &'a Source,
+        pub(crate) src: &'a [u8],
         pub out: Expr,
-        pub logger: Log,
-        pub env: &'a DotEnvLoader,
+        pub(crate) env: &'a DotEnvLoader,
     }
 
     // The result type depends on the usage (`.section -> *Rope`, `.key ->
@@ -277,8 +264,6 @@ mod draft {
     impl<'a> Parser<'a> {
         pub fn init(source: &'a Source, env: &'a DotEnvLoader) -> Parser<'a> {
             Parser {
-                opts: Options::default(),
-                logger: Log::init(),
                 src: source.contents.as_ref(),
                 out: Expr::init(E::Object::default(), Loc::EMPTY),
                 source,
@@ -1051,7 +1036,7 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     pub struct ToStringFormatter<'a> {
-        pub d: &'a ExprData,
+        pub(crate) d: &'a ExprData,
     }
 
     impl fmt::Display for ToStringFormatter<'_> {
@@ -1099,15 +1084,14 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     pub struct ConfigIterator<'a> {
-        pub config: &'a E::Object,
-        pub source: &'a Source,
-        pub log: &'a mut Log,
+        pub(crate) config: &'a E::Object,
+        pub(crate) log: &'a mut Log,
 
-        pub prop_idx: usize,
+        pub(crate) prop_idx: usize,
     }
 
     impl<'a> ConfigIterator<'a> {
-        pub fn next(&mut self) -> Option<IniOption<ConfigItem>> {
+        pub(crate) fn next(&mut self) -> Option<IniOption<ConfigItem>> {
             if self.prop_idx >= self.config.properties.len_u32() as usize {
                 return None;
             }
@@ -1165,21 +1149,21 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     pub struct ScopeIterator<'a> {
-        pub config: &'a E::Object,
-        pub source: &'a Source,
-        pub log: &'a mut Log,
+        pub(crate) config: &'a E::Object,
+        pub(crate) source: &'a Source,
+        pub(crate) log: &'a mut Log,
 
-        pub prop_idx: usize,
-        pub count: bool,
+        pub(crate) prop_idx: usize,
+        pub(crate) count: bool,
     }
 
     pub struct ScopeItem {
-        pub scope: Box<[u8]>,
-        pub registry: NpmRegistry,
+        pub(crate) scope: Box<[u8]>,
+        pub(crate) registry: NpmRegistry,
     }
 
     impl<'a> ScopeIterator<'a> {
-        pub fn next(&mut self) -> OOM<Option<IniOption<ScopeItem>>> {
+        pub(crate) fn next(&mut self) -> OOM<Option<IniOption<ScopeItem>>> {
             if self.prop_idx >= self.config.properties.len_u32() as usize {
                 return Ok(None);
             }
@@ -1581,7 +1565,6 @@ mod draft {
 
             let mut iter = ConfigIterator {
                 config: out_obj,
-                source,
                 log,
                 prop_idx: 0,
             };

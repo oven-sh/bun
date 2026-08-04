@@ -265,10 +265,10 @@ describe("bundler", () => {
         }
       `,
     },
-    packages: "external",
+    packages: "bundle",
     external: ["!foo"],
     onAfterBundle(api) {
-      // "!foo" is externalized (packages: external), not bundled.
+      // The literal `external` entry keeps "!foo" external.
       api.expectFile("/out.js").not.toContain("Hello Bang");
       api.expectFile("/out.js").toContain(`from "!foo"`);
     },

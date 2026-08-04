@@ -1294,6 +1294,7 @@ pub mod fs {
                 }
                 if store_fd && !entries.fd.is_valid() {
                     entries.fd = handle;
+                    handle_published.set(true);
                 }
 
                 // SAFETY: `entries_ptr` is either a live BSSMap slot (`in_place`) or a fresh

@@ -798,6 +798,7 @@ static void imageDump(JSC::VM& vm, const char* path)
     hdr.globalObject = (uint64_t)defaultGlobalObject();
     hdr.mainThread = (uint64_t)&WTF::Thread::currentSingleton();
     hdr.reserved[0] = (uint64_t)mi_theap_get_default(); // main thread's mimalloc theap (TLS-referenced, lives in the heap)
+    { pthread_key_t k = 0; if (!pthread_key_create(&k, nullptr)) { hdr.reserved[1] = (uint64_t)k; pthread_key_delete(k); } } // high-water mark of pthread TLS keys
     hdr.nregions = out.size();
     size_t tableOff = sizeof(ImageHeader); size_t dataOff = (tableOff + out.size() * sizeof(ImageRegion) + pg - 1) & ~(pg - 1);
     size_t fileOff = dataOff, total = 0;
@@ -847,6 +848,8 @@ static void imageRestoreAndRun(const char* path)
     }
     // Re-seat allocator TLS: this thread's default theap must be the image's main theap, not whatever this process created before the overlay.
     if (hdr.reserved[0]) mi_theap_set_default((mi_theap_t*)hdr.reserved[0]);
+    // pthread TLS keys created by the build process (WTF::ThreadSpecific etc.) must exist here too, or setspecific silently fails; burn keys up to the image's high-water mark.
+    if (hdr.reserved[1]) { for (int i = 0; i < 1024; i++) { pthread_key_t k = 0; if (pthread_key_create(&k, nullptr)) break; if ((uint64_t)k + 1 >= hdr.reserved[1]) break; } }
     fprintf(stderr, "[image] restored %zu regions: %.1fMB mapped clean, %.1fMB __DATA copied\n", regions.size(), mapped / 1048576.0, copied / 1048576.0);
     // From here on all globals/heap are the build process's. Adopt the image's main Thread object for this OS thread.
     WTF::Thread* mainThread = (WTF::Thread*)hdr.mainThread;

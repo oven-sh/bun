@@ -2783,63 +2783,49 @@ impl ExpectMatcherUtils {
         value: JSValue,
         color_or_null: Option<&'static str>,
     ) -> JsResult<JSValue> {
-        use std::io::Write as _;
         let mut mutable_string = bun_core::MutableString::init_2048()?;
-
-        // MutableString already writes to an in-memory Vec, so no extra
-        // buffering layer is needed.
-        let writer = mutable_string.writer();
 
         if let Some(color) = color_or_null {
             if Output::enable_ansi_colors_stderr() {
-                // MutableString writes to a Vec; can't fail.
-                let _ = writer.write_all(Output::pretty_fmt::<true>(color).as_ref());
+                let _ = mutable_string.write_all(Output::pretty_fmt::<true>(color).as_ref());
             }
         }
 
+        // `format_value` (not the `Display` adapter) so a JS exception thrown
+        // while inspecting `value` (e.g. a throwing `[util.inspect.custom]`)
+        // propagates as a catchable error instead of tripping
+        // `io::Write::write_fmt`'s mismatched-error panic.
         let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-        let _ = write!(writer, "{}", value.to_fmt(&mut formatter));
+        formatter.format_value::<false>(value, &mut mutable_string)?;
 
         if color_or_null.is_some() {
             if Output::enable_ansi_colors_stderr() {
-                let _ = writer.write_all(Output::pretty_fmt::<true>("<r>").as_ref());
+                let _ = mutable_string.write_all(Output::pretty_fmt::<true>("<r>").as_ref());
             }
         }
 
-        // buffered_writer.flush() — no-op with direct Vec writer
-
         bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, mutable_string.slice())
-    }
-
-    #[inline]
-    fn print_value_catched(
-        global_this: &JSGlobalObject,
-        value: JSValue,
-        color_or_null: Option<&'static str>,
-    ) -> JSValue {
-        Self::print_value(global_this, value, color_or_null)
-            .unwrap_or_else(|_| global_this.throw_out_of_memory_value())
     }
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn stringify(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
-        Ok(Self::print_value_catched(global_this, value, None))
+        Self::print_value(global_this, value, None)
     }
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn print_expected(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
-        Ok(Self::print_value_catched(global_this, value, Some("<green>")))
+        Self::print_value(global_this, value, Some("<green>"))
     }
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn print_received(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
-        Ok(Self::print_value_catched(global_this, value, Some("<red>")))
+        Self::print_value(global_this, value, Some("<red>"))
     }
 
     #[bun_jsc::host_fn(method)]

@@ -207,7 +207,6 @@ JSC_DEFINE_HOST_FUNCTION(functionIdleDecommitSync,
 {
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
-    vm.heap.deleteAllUnlinkedCodeBlocks(JSC::DeleteAllCodeIfNotCollecting);
     vm.heap.collectNow(Sync, CollectionScope::Full);
     WTF::releaseFastMallocFreeMemory();
     mi_collect(true);

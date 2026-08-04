@@ -1270,9 +1270,7 @@ pub mod fs {
                     e
                 }
                 Err(err) => {
-                    // A non-void iterator has already observed the fd for every
-                    // entry yielded before the failure; closing now would use a
-                    // freed fd in the caller's queued work. Leak instead.
+                    // Non-void iterators already hold the fd; closing would use-after-free it.
                     handle_published.set(store_fd && !I::IS_VOID);
                     if let Some(existing) = in_place {
                         // SAFETY: see above.

@@ -678,10 +678,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         if name == b"accept" {
                             if !enabled {
-                                // Only ask `e_call` to drop the enclosing call when there is
-                                // one: the flag is parser-wide and `e_call` is the only
-                                // consumer, so setting it for a bare property read would
-                                // leak into the next unrelated call expression.
                                 if identifier_opts.is_call_target() {
                                     p.method_call_must_be_replaced_with_undefined = true;
                                 }

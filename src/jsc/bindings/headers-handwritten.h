@@ -282,28 +282,6 @@ inline constexpr Encoding Encoding__base64url = 6;
 inline constexpr Encoding Encoding__hex = 7;
 inline constexpr Encoding Encoding__buffer = 8;
 
-typedef uint8_t WritableEvent;
-inline constexpr WritableEvent WritableEvent__Close = 0;
-inline constexpr WritableEvent WritableEvent__Drain = 1;
-inline constexpr WritableEvent WritableEvent__Error = 2;
-inline constexpr WritableEvent WritableEvent__Finish = 3;
-inline constexpr WritableEvent WritableEvent__Pipe = 4;
-inline constexpr WritableEvent WritableEvent__Unpipe = 5;
-inline constexpr WritableEvent WritableEvent__Open = 6;
-inline constexpr WritableEvent WritableEventUser = 254;
-
-typedef uint8_t ReadableEvent;
-
-inline constexpr ReadableEvent ReadableEvent__Close = 0;
-inline constexpr ReadableEvent ReadableEvent__Data = 1;
-inline constexpr ReadableEvent ReadableEvent__End = 2;
-inline constexpr ReadableEvent ReadableEvent__Error = 3;
-inline constexpr ReadableEvent ReadableEvent__Pause = 4;
-inline constexpr ReadableEvent ReadableEvent__Readable = 5;
-inline constexpr ReadableEvent ReadableEvent__Resume = 6;
-inline constexpr ReadableEvent ReadableEvent__Open = 7;
-inline constexpr ReadableEvent ReadableEventUser = 254;
-
 #ifndef STRING_POINTER
 #define STRING_POINTER
 typedef struct StringPointer {

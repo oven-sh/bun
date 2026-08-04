@@ -1,22 +1,6 @@
-// Shared Buffer tagging for JSC-serialized transports (advanced IPC and
-// node:v8 serialize/deserialize). JSC's SerializedScriptValue has no
-// host-object hook, so Buffers round-trip as plain Uint8Arrays; node preserves
-// them via its serializer delegate (lib/internal/child_process/serialization.js
-// _writeHostObject / node:v8 DefaultSerializer). Senders walk the value and,
-// when Buffers are present, ship the [value, buffers] envelope: each `buffers`
-// entry aliases a view inside `value`, JSC preserves object identity across
-// one serialized graph, and the receiver restores the Buffer prototype on the
-// aliased entries — reaching every occurrence with no path bookkeeping.
-//
-// The walk avoids re-running the sender's getters: it descends through data
-// properties only (descriptor-checked), so getters keep their
-// run-exactly-once-during-send contract — the serializer alone evaluates
-// them. The cost is that a Buffer returned by a getter arrives as a plain
-// Uint8Array, where node (whose tagging happens inside the serializer)
-// preserves it. The walk is not user-code-free: Proxy ownKeys/gOPD traps and
-// patched Map/Set iterators do run here (as they do again inside the
-// serializer) — a sender lying through them only mis-tags its own value,
-// since the serializer reads the real entries either way.
+// Buffer tagging for JSC-serialized transports (advanced IPC, node:v8). JSC has no host-object hook,
+// so we ship a [value, buffers] envelope (identity-aliased) and restore Buffer prototypes on receive.
+// Node ref: https://github.com/nodejs/node/blob/main/lib/internal/child_process/serialization.js
 
 const { Buffer } = require("node:buffer");
 const BufferPrototype = Buffer.prototype;

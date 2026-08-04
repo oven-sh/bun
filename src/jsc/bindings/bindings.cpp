@@ -695,10 +695,8 @@ static bool inheritsFromErrorPrototype(JSC::JSGlobalObject* globalObject, ThrowS
     return false;
 }
 
-// node compares an error's message/name/cause/errors even though they are
-// normally non-enumerable, unless the right-hand side owns the property
-// enumerably - in which case the ordinary key walk already covers it.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L392-L404
+// node compares an error's message/name/cause/errors even when non-enumerable, unless
+// RHS owns it enumerably: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L392-L404
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
 static bool errorLikeFieldsEqual(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSObject* o1, JSObject* o2)
 {
@@ -752,12 +750,9 @@ static bool nonIndexOwnPropertiesEqual(JSC::JSGlobalObject* globalObject, Marked
     if (a1.size() != a2.size()) {
         return false;
     }
-    // Own-property-scoped reads: a plain get() would walk the prototype
-    // chain and match `a1 = [1, x: 1]` against `a2` inheriting `x` while
-    // owning some other key. GetOwnProperty slots enforce name-for-name
-    // ownership and read the value in one lookup. DontEnum is rejected too:
-    // the name lists exclude non-enumerable properties, so a non-enumerable
-    // own property on the other side must not satisfy an enumerable name.
+    // Own-property-scoped reads: a plain get() would walk the prototype chain and let an inherited
+    // key satisfy an own one. GetOwnProperty enforces name-for-name ownership in one lookup;
+    // DontEnum is rejected since the name lists exclude non-enumerable properties.
     for (size_t i = 0; i < a1.size(); i++) {
         JSC::PropertyName propertyName(a1[i]);
         PropertySlot slot2(o2, PropertySlot::InternalMethodType::GetOwnProperty);
@@ -795,11 +790,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         return false;
     }
 
-    // node's loose mode (`assert.deepEqual`): node semantics everywhere except
-    // that non-objects compare with `==`, prototypes are not compared, and
-    // symbol-keyed properties are ignored. node's strict mode is
-    // `isStrict && checkPrototypes`; Bun's own comparators never set
-    // checkPrototypes and are unaffected by every `kNodeLoose` branch below.
+    // node's loose mode (`assert.deepEqual`): non-objects compare with `==`, prototypes
+    // not compared, symbol keys ignored. Bun's own comparators never set checkPrototypes.
     constexpr bool kNodeLoose = !isStrict && checkPrototypes;
 
     // need to check this before primitives, asymmetric matchers
@@ -839,11 +831,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     if (v1.isEmpty() || v2.isEmpty())
         return v1.isEmpty() == v2.isEmpty();
 
-    // node's loose mode splits on `typeof x !== 'object'`, which counts
-    // callables as non-objects, and compares two non-objects with `==` (plus
-    // NaN == NaN). Only node's `assert.deepEqual` behaves this way; Bun's own
-    // loose comparison stays value-identity based.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L152-L167
+    // node's loose mode: `typeof x !== 'object'` (callables are non-objects), compared
+    // with `==` + NaN==NaN: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L152-L167
     if constexpr (kNodeLoose) {
         bool v1IsObject = v1.isObject() && !v1.isCallable();
         bool v2IsObject = v2.isObject() && !v2.isCallable();
@@ -908,9 +897,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
     }
 
-    // node's loose mode does not compare prototypes, but it does compare
-    // Object.prototype.toString tags, which is what separates an Arguments
-    // object from a plain object with the same keys.
+    // node's loose mode compares Object.prototype.toString tags (not prototypes):
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L184-L196
     if constexpr (kNodeLoose) {
         JSString* tag1 = JSC::objectPrototypeToString(globalObject, v1);
@@ -925,10 +912,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     if constexpr (checkPrototypes) {
-        // Distinct WeakMaps, WeakSets and Promises are never equal - their
-        // contents cannot be inspected. node tests this on the LEFT operand
-        // only, which makes the comparison asymmetric: a Proxy wrapping a
-        // promise equals that promise, but only with the proxy on the left.
+        // Distinct WeakMap/WeakSet/Promise are never equal. node tests LEFT only (asymmetric):
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L449-L451
         uint8_t leftType = c1->type();
         if (leftType == JSC::JSWeakMapType || leftType == JSC::JSWeakSetType || leftType == JSC::JSPromiseType) {
@@ -1022,6 +1006,12 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
+        if constexpr (checkPrototypes) {
+            // node compares own enumerable non-index string+symbol props via getOwnNonIndexProperties;
+            // the Bun.deepEquals symbol-only block below walks the prototype chain, so diverge here.
+            return nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, o1, o2);
+        }
+
         JSC::PropertyNameArrayBuilder a1(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
         JSC::PropertyNameArrayBuilder a2(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
         // node's loose mode enumerates with SKIP_SYMBOLS, so symbol-keyed
@@ -1073,19 +1063,12 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
         RETURN_IF_EXCEPTION(scope, false);
 
-        if constexpr (checkPrototypes) {
-            // node also compares own enumerable non-index string properties.
-            return nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, o1, o2);
-        }
-
         return true;
     }
 
     if constexpr (isStrict && !skipPrototypeIdentity) {
-        // A Proxy is transparent to this comparison: its traps forward
-        // [[GetPrototypeOf]] and own-property enumeration to the target, but
-        // JSC reports the proxy's own class name, which would reject every
-        // proxy/target pair. node compares prototypes, never class names.
+        // node compares prototypes, never class names; skip the JSC class-name check for
+        // proxies, whose class name differs from the target and would reject every pair.
         if (!o1->isProxy() && !o2->isProxy()) {
             if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
                 return false;
@@ -1338,11 +1321,8 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        // node's setEquiv pairs the two sets off: an element of set2 consumes
-        // the element of set1 it matched, so Set([{a:1},{a:1}]) is not equal to
-        // Set([{a:1},{a:2}]) even though every element of the first has some
-        // partner in the second. Only the node entry point pays for the
-        // matching pass; Bun.deepEquals keeps its "has a partner" rule.
+        // node's setEquiv pairs elements off (each match consumes its partner); only the
+        // node entry point pays for this, Bun.deepEquals keeps its "has a partner" rule.
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L677-L719
         if constexpr (checkPrototypes) {
             // Elements stay rooted by set1 for as long as it is alive, which it
@@ -1437,9 +1417,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        // As with sets, node pairs entries off: a key of map2 consumes the
-        // map1 entry it matched, so two entries with deep-equal-but-distinct
-        // object keys cannot both match the same partner.
+        // As with sets, node pairs entries off (a match consumes its partner):
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L721-L787
         if constexpr (checkPrototypes) {
             // Entries stay rooted by map1, which the caller's gcBuffer keeps alive.
@@ -1551,10 +1529,8 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     }
     case DataViewType: {
         if constexpr (!checkPrototypes) {
-            // Bun.deepEquals / bun:test have always compared DataViews as
-            // plain objects (own properties only); keep that surface
-            // unchanged and reserve the byte comparison for the node-parity
-            // instantiations.
+            // Bun.deepEquals / bun:test compare DataViews as plain objects; reserve the byte
+            // comparison for the node-parity instantiations.
             break;
         }
         if (c2Type != DataViewType) {
@@ -1579,10 +1555,10 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         if (!WTF::equalSpans(std::span { static_cast<const uint8_t*>(left->vector()), byteLength },
                 std::span { static_cast<const uint8_t*>(right->vector()), byteLength }))
             return false;
-        if constexpr (checkPrototypes) {
-            break;
-        }
-        return true;
+        // node compares DataView own properties via getOwnNonIndexProperties
+        // (an extra integer-index key is ignored), so compare the non-index
+        // keys directly instead of falling through to the full own-key walk.
+        return nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, left, right);
     }
     case JSDateType: {
         if (c2Type != JSDateType) {
@@ -1701,10 +1677,8 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 return false;
             }
 
-            // `.errors` (AggregateError) is non-enumerable too. node compares it
-            // whenever it is not an own enumerable property of the right-hand
-            // side, in which case the enumerable walk below covers it.
-            // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L392-L400
+            // `.errors` (AggregateError) is non-enumerable; node compares it unless RHS owns
+            // it enumerably: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L392-L400
             const PropertyName errorsName(vm.propertyNames->errors);
             PropertySlot rightErrorsSlot(right, PropertySlot::InternalMethodType::GetOwnProperty);
             bool rightOwnsEnumerableErrors = right->methodTable()->getOwnPropertySlot(right, globalObject, errorsName, rightErrorsSlot)
@@ -1856,11 +1830,8 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return true;
         }
 
-        // For float arrays, when not in strict mode, IEEE == handles +0/-0
-        // as equal and NaN as not equal to itself. All other dtypes (and
-        // strict mode) compare raw bytes. Every content result funnels into
-        // the single tail below so the node-parity instantiations never skip
-        // the own-property comparison.
+        // Float arrays in non-strict mode use IEEE == (+0/-0 equal, NaN != NaN); everything else
+        // compares raw bytes. All results funnel to one tail so node-parity never skips own props.
         bool contentsEqual;
         if (!isStrict && (c1Type == Float16ArrayType || c1Type == Float32ArrayType || c1Type == Float64ArrayType)) {
             if (c1Type == Float16ArrayType) {
@@ -1914,13 +1885,10 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         if (!stringsEqual) {
             return false;
         }
-        if constexpr (checkPrototypes) {
-            // node also compares own properties of boxed strings.
-            break;
-        } else if constexpr (isStrict) {
-            // Only strict mode compares extra own properties on boxed primitives.
-            // Guarded so a plain boxed string does not fall through to the property
-            // walk, which would enumerate every character index.
+        if constexpr (checkPrototypes || isStrict) {
+            // Only these modes compare extra own props on boxed primitives. Guarded so a plain
+            // boxed string skips the per-char-index walk; `break` (not nonIndexOwnPropertiesEqual)
+            // when extras exist so an out-of-range index still fails the compare, like node.
             if (hasExtraOwnProperties(c1->structure()) || hasExtraOwnProperties(c2->structure())) {
                 break;
             }
@@ -2284,13 +2252,6 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createEmpty()
     headers->relaxAdoptionRequirement();
     return headers;
 }
-void WebCore__FetchHeaders__append(WebCore::FetchHeaders* headers, const ZigString* arg1, const ZigString* arg2,
-    JSC::JSGlobalObject* lexicalGlobalObject)
-{
-    auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
-    WebCore::propagateException(*lexicalGlobalObject, throwScope, headers->append(Zig::toString(*arg1), Zig::toString(*arg2)));
-    RELEASE_AND_RETURN(throwScope, );
-}
 WebCore::FetchHeaders* WebCore__FetchHeaders__cast_(JSC::EncodedJSValue JSValue0, JSC::VM* vm)
 {
     return WebCoreCast<WebCore::JSFetchHeaders, WebCore::FetchHeaders>(JSValue0);
@@ -2365,15 +2326,6 @@ JSC::EncodedJSValue WebCore__FetchHeaders__toJS(WebCore::FetchHeaders* headers, 
     }
 
     return JSC::JSValue::encode(value);
-}
-
-JSC::EncodedJSValue WebCore__FetchHeaders__clone(WebCore::FetchHeaders* headers, JSC::JSGlobalObject* arg1)
-{
-    auto throwScope = DECLARE_THROW_SCOPE(arg1->vm());
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg1);
-    auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
-    WebCore::propagateException(*arg1, throwScope, clone->fill(*headers));
-    return JSC::JSValue::encode(WebCore::toJSNewlyCreated(arg1, globalObject, WTF::move(clone)));
 }
 
 WebCore::FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore::FetchHeaders* headers, JSC::JSGlobalObject* lexicalGlobalObject)
@@ -2622,16 +2574,6 @@ void WebCore__FetchHeaders__get_(WebCore::FetchHeaders* headers, const ZigString
     else
         *arg2 = Zig::toZigString(result.releaseReturnValue());
 }
-bool WebCore__FetchHeaders__has(WebCore::FetchHeaders* headers, const ZigString* arg1, JSC::JSGlobalObject* global)
-{
-    auto throwScope = DECLARE_THROW_SCOPE(global->vm());
-    auto result = headers->has(Zig::toString(*arg1));
-    if (result.hasException()) {
-        WebCore::propagateException(*global, throwScope, result.releaseException());
-        return false;
-    } else
-        return result.releaseReturnValue();
-}
 extern "C" void WebCore__FetchHeaders__put(WebCore::FetchHeaders* headers, HTTPHeaderName name, const BunString* arg2, JSC::JSGlobalObject* global)
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
@@ -2639,13 +2581,6 @@ extern "C" void WebCore__FetchHeaders__put(WebCore::FetchHeaders* headers, HTTPH
     // `toWTFString()` refs a `WTFStringImpl`-tagged value instead of copying it.
     WebCore::propagateException(*global, throwScope, headers->set(name, arg2->toWTFString()));
 }
-void WebCore__FetchHeaders__remove(WebCore::FetchHeaders* headers, const ZigString* arg1, JSC::JSGlobalObject* global)
-{
-    auto throwScope = DECLARE_THROW_SCOPE(global->vm());
-    WebCore::propagateException(*global, throwScope,
-        headers->remove(Zig::toString(*arg1)));
-}
-
 void WebCore__FetchHeaders__fastRemove_(WebCore::FetchHeaders* headers, unsigned char headerName)
 {
     headers->fastRemove(static_cast<WebCore::HTTPHeaderName>(headerName));
@@ -2773,7 +2708,7 @@ JSC::EncodedJSValue JSGlobalObject__createOutOfMemoryError(JSC::JSGlobalObject* 
     return JSValue::encode(exception);
 }
 
-JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
+static JSC::EncodedJSValue systemErrorToErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject, JSC::ErrorType errorType)
 {
     SystemError err = *arg0;
 
@@ -2787,7 +2722,7 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
 
     auto& names = WebCore::builtinNames(vm);
 
-    JSC::JSObject* result = createError(globalObject, ErrorType::Error, message);
+    JSC::JSObject* result = createError(globalObject, errorType, message);
 
     auto clientData = WebCore::clientData(vm);
 
@@ -2844,6 +2779,16 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
     result->putDirect(vm, names.errnoPublicName(), jsNumber(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
 
     return JSC::JSValue::encode(result);
+}
+
+JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
+{
+    return systemErrorToErrorInstance(arg0, globalObject, ErrorType::Error);
+}
+
+JSC::EncodedJSValue SystemError__toTypeErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
+{
+    return systemErrorToErrorInstance(arg0, globalObject, ErrorType::TypeError);
 }
 
 JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
@@ -3304,10 +3249,8 @@ bool Bun__deepEqualsNodeStrictSkipProto(JSC::EncodedJSValue JSValue0, JSC::Encod
     return deepEqualsWrapperImpl<true, false, true, true>(JSValue0, JSValue1, globalObject);
 }
 
-// node:assert deepEqual / notDeepEqual: node's loose mode. Same rules as
-// Bun__deepEqualsNodeStrict except that non-objects compare with `==`,
-// [[Prototype]]s are not compared and symbol keys are ignored. This is a
-// different relation from Bun.deepEquals(a, b, false), which expect() uses.
+// node:assert deepEqual: node's loose mode (non-objects via `==`, no [[Prototype]] check,
+// symbol keys ignored). Distinct from Bun.deepEquals(a, b, false), which expect() uses.
 bool Bun__deepEqualsNodeLoose(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject)
 {
     return deepEqualsWrapperImpl<false, false, true>(JSValue0, JSValue1, globalObject);
@@ -3457,10 +3400,6 @@ void JSC__JSString__toZigString(JSC::JSString* arg0, JSC::JSGlobalObject* arg1, 
     // We don't need to assert here because ->value returns a reference to the same string as the one owned by the JSString.
 }
 
-bool JSC__JSString__eql(const JSC::JSString* arg0, JSC::JSGlobalObject* obj, JSC::JSString* arg2)
-{
-    return arg0->equal(obj, arg2);
-}
 bool JSC__JSString__is8Bit(const JSC::JSString* arg0) { return arg0->is8Bit(); };
 size_t JSC__JSString__length(const JSC::JSString* arg0) { return arg0->length(); }
 
@@ -4374,6 +4313,12 @@ void JSC__JSValue__put(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, 
 {
     JSC::JSObject* object = JSC::JSValue::decode(JSValue0).asCell()->getObject();
     object->putDirect(arg1->vm(), Zig::toIdentifier(*arg2, arg1), JSC::JSValue::decode(JSValue3));
+}
+
+void JSC__JSValue__putNonEnumerable(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, const ZigString* arg2, JSC::EncodedJSValue JSValue3)
+{
+    JSC::JSObject* object = JSC::JSValue::decode(JSValue0).asCell()->getObject();
+    object->putDirect(arg1->vm(), Zig::toIdentifier(*arg2, arg1), JSC::JSValue::decode(JSValue3), JSC::PropertyAttribute::DontEnum | 0);
 }
 
 void JSC__JSValue__putToPropertyKey(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue arg2, JSC::EncodedJSValue arg3)
@@ -5331,10 +5276,6 @@ void JSC__VM__reportExtraMemory(JSC::VM* arg0, size_t arg1)
     arg0->heap.deprecatedReportExtraMemory(arg1);
 }
 
-void JSC__VM__deinit(JSC::VM* arg1, JSC::JSGlobalObject* globalObject)
-{
-}
-
 void JSC__VM__drainMicrotasks(JSC::VM* arg0)
 {
     arg0->drainMicrotasks();
@@ -5867,12 +5808,11 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInUInt64Range(JSC::EncodedJ
         return false;
 
     JSC::JSBigInt* bigInt = jsValue.asHeapBigInt();
-    auto result = bigInt->compare(bigInt, min);
-    if (result == JSBigInt::ComparisonResult::GreaterThan || result == JSBigInt::ComparisonResult::Equal) {
-        return true;
-    }
-    result = bigInt->compare(bigInt, max);
-    return result == JSBigInt::ComparisonResult::LessThan || result == JSBigInt::ComparisonResult::Equal;
+    auto low = bigInt->compare(bigInt, min);
+    if (low != JSBigInt::ComparisonResult::GreaterThan && low != JSBigInt::ComparisonResult::Equal)
+        return false;
+    auto high = bigInt->compare(bigInt, max);
+    return high == JSBigInt::ComparisonResult::LessThan || high == JSBigInt::ComparisonResult::Equal;
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJSValue value, int64_t max, int64_t min)
@@ -5882,12 +5822,11 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
         return false;
 
     JSC::JSBigInt* bigInt = jsValue.asHeapBigInt();
-    auto result = bigInt->compare(bigInt, min);
-    if (result == JSBigInt::ComparisonResult::GreaterThan || result == JSBigInt::ComparisonResult::Equal) {
-        return true;
-    }
-    result = bigInt->compare(bigInt, max);
-    return result == JSBigInt::ComparisonResult::LessThan || result == JSBigInt::ComparisonResult::Equal;
+    auto low = bigInt->compare(bigInt, min);
+    if (low != JSBigInt::ComparisonResult::GreaterThan && low != JSBigInt::ComparisonResult::Equal)
+        return false;
+    auto high = bigInt->compare(bigInt, max);
+    return high == JSBigInt::ComparisonResult::LessThan || high == JSBigInt::ComparisonResult::Equal;
 }
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
@@ -6135,12 +6074,6 @@ extern "C" bool WebCore__AbortSignal__aborted(WebCore::AbortSignal* arg0)
     return abortSignal->aborted();
 }
 
-extern "C" JSC::EncodedJSValue WebCore__AbortSignal__abortReason(WebCore::AbortSignal* arg0)
-{
-    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
-    return JSC::JSValue::encode(abortSignal->reason().getValue(jsNull()));
-}
-
 // Same value the JS `signal.reason` getter returns: lazily materializes the
 // `DOMException` for a common abort reason and caches it, so repeated reads
 // (native or JS) observe the identical object.
@@ -6177,7 +6110,9 @@ extern "C" void WebCore__AbortSignal__cleanNativeBindings(WebCore::AbortSignal* 
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__addListener(WebCore::AbortSignal* abortSignal, void* ctx, void (*callback)(void* ctx, JSC::EncodedJSValue reason))
 {
     if (abortSignal->aborted()) {
-        callback(ctx, JSC::JSValue::encode(abortSignal->reason().getValue(jsNull())));
+        auto* context = static_cast<WebCore::EventTarget*>(abortSignal)->scriptExecutionContext();
+        auto reason = context ? abortSignal->jsReason(*context->jsGlobalObject()) : abortSignal->reason().getValue(jsNull());
+        callback(ctx, JSC::JSValue::encode(reason));
         return abortSignal;
     }
     abortSignal->addNativeCallback(std::make_tuple(ctx, callback));
@@ -6490,7 +6425,7 @@ CPP_DECL void JSC__VM__setControlFlowProfiler(JSC::VM* vm, bool isEnabled)
 
 CPP_DECL void JSC__VM__performOpportunisticallyScheduledTasks(JSC::VM* vm, double until)
 {
-    vm->performOpportunisticallyScheduledTasks(MonotonicTime::now() + Seconds(until), {});
+    vm->performOpportunisticallyScheduledTasks(ApproximateTime::now() + Seconds(until), {});
 }
 
 extern "C" EncodedJSValue JSC__createError(JSC::JSGlobalObject* globalObject, const BunString* str)

@@ -1,10 +1,9 @@
 use crate::string::ZigStringSlice;
 use crate::strings;
 
-// Canonical layout lives in `bun_alloc` (lowest-tier crate) so the
-// `is_wtf_allocator` vtable-identity check is a local pointer compare with no
-// upward dependency. Re-exported here for back-compat with existing
-// `bun_core::wtf::*` / `bun_core::WTFStringImpl*` import paths.
+// Canonical layout lives in `bun_alloc` (lowest-tier crate); re-exported here
+// for back-compat with existing `bun_core::wtf::*` /
+// `bun_core::WTFStringImpl*` import paths.
 pub use bun_alloc::{WTFStringImpl, WTFStringImplPtr, WTFStringImplStruct};
 
 /// Behaves like `WTF::Ref<WTF::StringImpl>`. The

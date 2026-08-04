@@ -1810,32 +1810,6 @@ pub mod formatter {
         }
     }
 
-    impl ZigFormatter<'_, '_> {
-        /// Like the `Display` impl below, but propagates the real `JsError`
-        /// (e.g. a throwing `[util.inspect.custom]`) instead of collapsing it
-        /// to `fmt::Error`.
-        pub fn write_to(&self, writer: &mut dyn bun_io::Write) -> JsResult<()> {
-            let formatter: &mut Formatter<'_> = self
-                .formatter
-                .take()
-                .expect("ZigFormatter::write_to re-entered or used after consumption");
-
-            formatter.stack_check.update();
-            let one = [self.value];
-            formatter.remaining_values = bun_ptr::RawSlice::new(&one);
-
-            let result = (|| {
-                let tag = Tag::get(self.value, formatter.global_this)?;
-                let global = formatter.global_this;
-                formatter.format::<false>(tag, writer, self.value, global)
-            })();
-
-            formatter.remaining_values = bun_ptr::RawSlice::EMPTY;
-            self.formatter.set(Some(formatter));
-            result
-        }
-    }
-
     impl core::fmt::Display for ZigFormatter<'_, '_> {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             // Move the unique `&mut Formatter` out of the cell for the body;
@@ -5732,6 +5706,27 @@ pub mod formatter {
                 self.custom_formatted_object = obj;
             }
             self.print_as::<ENABLE_ANSI_COLORS>(result.tag.tag(), writer, value, result.cell)
+        }
+
+        /// Format a single value into `writer`, propagating a JS exception
+        /// thrown while inspecting it (e.g. a throwing `[inspect.custom]`).
+        /// Use this instead of the `Display` adapter ([`ZigFormatter`]) when a
+        /// `JsResult` caller needs the error: `Display` can only report
+        /// `fmt::Error`, which panics inside `io::Write::write_fmt` when the
+        /// sink itself did not fail.
+        pub fn format_value<const ENABLE_ANSI_COLORS: bool>(
+            &mut self,
+            value: JSValue,
+            writer: &mut dyn bun_io::Write,
+        ) -> JsResult<()> {
+            self.stack_check.update();
+            let one = [value];
+            self.remaining_values = bun_ptr::RawSlice::new(&one);
+            let global = self.global_this;
+            let result = Tag::get(value, global)
+                .and_then(|tag| self.format::<ENABLE_ANSI_COLORS>(tag, writer, value, global));
+            self.remaining_values = bun_ptr::RawSlice::EMPTY;
+            result
         }
     }
 

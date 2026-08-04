@@ -7035,6 +7035,13 @@ pub(crate) fn open_file_at_windows_nt_path(
             continue;
         }
 
+        // RtlNtStatusToDosError collapses STATUS_FILE_IS_A_DIRECTORY to
+        // ERROR_ACCESS_DENIED (→ EPERM). Preserve EISDIR so write-mode opens
+        // on a directory match libuv's fs__open.
+        if rc == w::NTSTATUS::FILE_IS_A_DIRECTORY {
+            return Err(Error::from_code(E::EISDIR, Tag::open));
+        }
+
         return match windows::Win32Error::from_nt_status(rc) {
             windows::Win32Error::SUCCESS => {
                 if (options.access_mask & w::FILE_APPEND_DATA) != 0 {

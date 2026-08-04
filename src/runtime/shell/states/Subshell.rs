@@ -7,11 +7,11 @@ use crate::shell::states::script::Script;
 use crate::shell::yield_::Yield;
 
 pub struct Subshell {
-    pub base: Base,
+    pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Subshell>,
-    pub io: IO,
-    pub state: SubshellState,
-    pub exit_code: ExitCode,
+    pub(crate) io: IO,
+    pub(crate) state: SubshellState,
+    pub(crate) exit_code: ExitCode,
 }
 
 #[derive(Default, strum::IntoStaticStr)]

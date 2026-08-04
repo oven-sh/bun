@@ -101,7 +101,7 @@ fn color_int_from_js(
 }
 
 // https://github.com/tmux/tmux/blob/dae2868d1227b95fd076fb4a5efa6256c7245943/colour.c#L44-L55
-pub mod ansi256 {
+pub(crate) mod ansi256 {
     use std::io::Write as _;
 
     const Q2C: [u32; 6] = [0x00, 0x5f, 0x87, 0xaf, 0xd7, 0xff];

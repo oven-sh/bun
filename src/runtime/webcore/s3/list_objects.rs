@@ -9,13 +9,13 @@ use bun_core::{ZigStringSlice as Utf8Slice, strings};
 pub struct S3ListObjectsOptions {
     // Each `Utf8Slice` owns (or ref-holds) its backing storage; readers go
     // through `.slice()`.
-    pub continuation_token: Option<Utf8Slice>,
-    pub delimiter: Option<Utf8Slice>,
-    pub encoding_type: Option<Utf8Slice>,
-    pub fetch_owner: Option<bool>,
-    pub max_keys: Option<i64>,
-    pub prefix: Option<Utf8Slice>,
-    pub start_after: Option<Utf8Slice>,
+    pub(crate) continuation_token: Option<Utf8Slice>,
+    pub(crate) delimiter: Option<Utf8Slice>,
+    pub(crate) encoding_type: Option<Utf8Slice>,
+    pub(crate) fetch_owner: Option<bool>,
+    pub(crate) max_keys: Option<i64>,
+    pub(crate) prefix: Option<Utf8Slice>,
+    pub(crate) start_after: Option<Utf8Slice>,
 }
 
 // Each Utf8Slice field cleans up via Drop, so no explicit `impl Drop` is
@@ -38,7 +38,7 @@ pub struct S3ListObjectsContents<'a> {
     // a maybe-owned slice.
     etag: Option<Cow<'a, [u8]>>,
     checksum_type: Option<&'a [u8]>,
-    checksum_algorithme: Option<&'a [u8]>,
+    checksum_algorithm: Option<&'a [u8]>,
     last_modified: Option<&'a [u8]>,
     object_size: Option<i64>,
     storage_class: Option<&'a [u8]>,
@@ -47,17 +47,17 @@ pub struct S3ListObjectsContents<'a> {
 
 pub struct S3ListObjectsV2Result<'a> {
     pub name: Option<&'a [u8]>,
-    pub prefix: Option<&'a [u8]>,
-    pub key_count: Option<i64>,
-    pub max_keys: Option<i64>,
-    pub delimiter: Option<&'a [u8]>,
-    pub encoding_type: Option<&'a [u8]>,
-    pub is_truncated: Option<bool>,
-    pub continuation_token: Option<&'a [u8]>,
-    pub next_continuation_token: Option<&'a [u8]>,
-    pub start_after: Option<&'a [u8]>,
-    pub common_prefixes: Option<Vec<&'a [u8]>>,
-    pub contents: Option<Vec<S3ListObjectsContents<'a>>>,
+    pub(crate) prefix: Option<&'a [u8]>,
+    pub(crate) key_count: Option<i64>,
+    pub(crate) max_keys: Option<i64>,
+    pub(crate) delimiter: Option<&'a [u8]>,
+    pub(crate) encoding_type: Option<&'a [u8]>,
+    pub(crate) is_truncated: Option<bool>,
+    pub(crate) continuation_token: Option<&'a [u8]>,
+    pub(crate) next_continuation_token: Option<&'a [u8]>,
+    pub(crate) start_after: Option<&'a [u8]>,
+    pub(crate) common_prefixes: Option<Vec<&'a [u8]>>,
+    pub(crate) contents: Option<Vec<S3ListObjectsContents<'a>>>,
 }
 
 // `contents` items (etag) + the two Vecs are all handled by Drop on
@@ -98,11 +98,16 @@ impl<'a> S3ListObjectsV2Result<'a> {
                 );
 
                 object_info.put_optional_utf8(global_object, b"eTag", item.etag.as_deref())?;
-                object_info.put_optional_utf8(
-                    global_object,
-                    b"checksumAlgorithme",
-                    item.checksum_algorithme,
-                )?;
+                if let Some(algorithm) = item.checksum_algorithm {
+                    let js_algorithm = create_utf8_for_js(global_object, algorithm)?;
+                    object_info.put(global_object, b"checksumAlgorithm", js_algorithm);
+                    // Back-compat alias for the original misspelling (#19142).
+                    object_info.put_non_enumerable(
+                        global_object,
+                        b"checksumAlgorithme",
+                        js_algorithm,
+                    );
+                }
                 object_info.put_optional_utf8(
                     global_object,
                     b"checksumType",
@@ -172,7 +177,7 @@ impl<'a> S3ListObjectsV2Result<'a> {
 
 // Infallible: the only fallible operations are allocations
 // (Vec::push / alloc), which abort on OOM.
-pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
+pub(crate) fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
     let mut result = S3ListObjectsV2Result {
         contents: None,
         common_prefixes: None,
@@ -217,7 +222,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                     let mut etag: Option<&[u8]> = None;
                     let mut etag_owned: Option<Vec<u8>> = None;
                     let mut checksum_type: Option<&[u8]> = None;
-                    let mut checksum_algorithme: Option<&[u8]> = None;
+                    let mut checksum_algorithm: Option<&[u8]> = None;
                     let mut owner_id: Option<&[u8]> = None;
                     let mut owner_display_name: Option<&[u8]> = None;
 
@@ -284,7 +289,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                     if let Some(__tag_end) =
                                         strings::index_of(&xml[i..], b"</ChecksumAlgorithm>")
                                     {
-                                        checksum_algorithme = Some(&xml[i..i + __tag_end]);
+                                        checksum_algorithm = Some(&xml[i..i + __tag_end]);
                                         i = i + __tag_end + 20;
                                     } else {
                                         i = xml.len();
@@ -380,7 +385,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                 (None, None) => None,
                             },
                             checksum_type,
-                            checksum_algorithme,
+                            checksum_algorithm,
                             last_modified,
                             object_size,
                             storage_class,
@@ -520,7 +525,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
     result
 }
 
-pub fn get_list_objects_options_from_js(
+pub(crate) fn get_list_objects_options_from_js(
     global_this: &JSGlobalObject,
     list_options: JSValue,
 ) -> JsResult<S3ListObjectsOptions> {

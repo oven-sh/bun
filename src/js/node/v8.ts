@@ -160,12 +160,9 @@ function getCppHeapStatistics(type = "detailed") {
     detail_level: type,
   };
 }
-// Buffer-bearing payloads are framed as MAGIC + version + SSV([value, buffers])
-// so deserialize can restore Buffer prototypes (JSC's serializer has no
-// host-object hook; see internal/serialization_buffers). The magic's leading
-// 0xFF cannot collide with bare SSV output, whose first byte is the small
-// little-endian format version. Buffer-free payloads stay bare SSV, so older
-// readers keep working for them.
+// Buffer-bearing payloads are framed as MAGIC + version + SSV([value, buffers]) so deserialize
+// can restore Buffer prototypes (see internal/serialization_buffers). Leading 0xFF cannot collide
+// with bare SSV output; Buffer-free payloads stay bare SSV so older readers keep working.
 const kBufferEnvelopeMagic = [0xff, 0x42, 0x55, 0x4e, 0x01]; // 0xFF "BUN" v1
 
 function hasBufferEnvelopeMagic(view) {

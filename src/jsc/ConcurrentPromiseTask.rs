@@ -30,13 +30,13 @@ pub trait ConcurrentPromiseTaskContext: Sized {
 pub struct ConcurrentPromiseTask<'a, Context: ConcurrentPromiseTaskContext> {
     // Owned here so dropping the task frees the context.
     pub ctx: Box<Context>,
-    pub task: WorkPoolTask,
+    pub(crate) task: WorkPoolTask,
     /// BACKREF — captured from the JS-thread VM at create time; the VM (and its
     /// `EventLoop`) outlives every task scheduled on it.
-    pub event_loop: BackRef<EventLoop>,
+    pub(crate) event_loop: BackRef<EventLoop>,
     pub promise: JSPromiseStrong,
     pub global_this: &'a JSGlobalObject,
-    pub concurrent_task: ConcurrentTask,
+    pub(crate) concurrent_task: ConcurrentTask,
 
     // This is a poll because we want it to enter the uSockets loop
     // (`ref` is a Rust keyword, hence `ref_`)
@@ -76,7 +76,7 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         this
     }
 
-    pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
+    pub(crate) unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
         // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
         // slot — safe-fn coerces) for the `task` field initialised in
         // `create_on_js_thread`; the WorkPool calls back with exactly that
@@ -102,18 +102,16 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
 
     fn on_finish(this: *mut Self) {
         // SAFETY: only called from `run_from_thread_pool` above with the live
-        // heap allocation recovered via `from_field_ptr!`.
-        // `concurrent_task` is an intrusive field of `*this`; `from`
-        // re-initializes it in place and returns the same address. Passing
-        // `this` while holding `&mut *this` is sound because `from` only stores
-        // the pointer (does not dereference it).
-        let this_ref = unsafe { &mut *this };
-        let event_loop = this_ref.event_loop;
-        let task = core::ptr::NonNull::from(
-            this_ref
-                .concurrent_task
-                .from(this, AutoDeinit::ManualDeinit),
-        );
+        // heap allocation recovered via `from_field_ptr!`; the work pool owns
+        // it exclusively for this callback's duration.
+        let event_loop = unsafe { (*this).event_loop };
+        // SAFETY: as above. `concurrent_task` is an intrusive field of `*this`;
+        // `from` re-initializes it in place and returns the same address.
+        // Passing `this` while a `&mut` to the field is live is sound because
+        // `from` only stores the pointer (does not dereference it).
+        let task = core::ptr::NonNull::from(unsafe {
+            (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit)
+        });
         // `task` is the live `concurrent_task` field of the heap-allocated
         // job; the queue takes ownership of its intrusive `next` link.
         event_loop.enqueue_task_concurrent(task);

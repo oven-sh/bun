@@ -1,5 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gc as gcTrace, isASAN, normalizeBunSnapshot, tempDir, withoutAggressiveGC } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  gc as gcTrace,
+  isASAN,
+  normalizeBunSnapshot,
+  rss,
+  tempDir,
+  withoutAggressiveGC,
+} from "harness";
 
 const getByteLength = str => {
   // returns the byte length of an utf8 string
@@ -924,12 +933,12 @@ it.each(["utf-16le", "utf-16be"])(
 
     // Warm up so allocator arenas / JIT reach steady state, then snapshot RSS.
     run(2);
-    const before = process.memoryUsage.rss();
+    const before = rss();
 
     // Prior to the fix each call leaked ~CODE_UNITS * 2 bytes = 32 KiB, so 3072
     // calls leaked ~96 MiB regardless of GC.
     run(24);
-    const after = process.memoryUsage.rss();
+    const after = rss();
 
     const deltaMiB = (after - before) / 1024 / 1024;
     // ASAN's quarantine retains freed allocations (default 256 MB) so the delta

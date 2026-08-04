@@ -38,7 +38,6 @@ struct BlobImplRefDerefTraits {
     }
 };
 
-using BlobRef = Ref<BlobImpl, RawPtrTraits<BlobImpl>, BlobImplRefDerefTraits>;
 using BlobRefPtr = RefPtr<BlobImpl, RawPtrTraits<BlobImpl>, BlobImplRefDerefTraits>;
 
 // TODO: Now that `bun.webcore.Blob` is ref-counted, can `RefPtr<Blob>` be replaced with `Blob`?

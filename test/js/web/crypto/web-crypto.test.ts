@@ -1,6 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { createSecretKey } from "node:crypto";
 
 // This is consistent with what Node.js does, probably for polyfills to continue to work.
 it("crypto.subtle setter should not throw", () => {
@@ -134,9 +135,8 @@ describe("Web Crypto", () => {
       expect(err.name).toBe("DataError");
     });
 
-    // Previously this promise never settled: the TypeError from JsonWebKey
-    // dictionary conversion escaped as an uncaught exception and the
-    // DeferredPromise was left in m_pendingPromises forever.
+    // With kty optional, a foreign object converts into an (empty-ish) JWK and
+    // rejects from the import algorithm itself.
     it("rejects when wrapped bytes are valid JSON but not a valid JWK", async () => {
       const { key, iv, wrapped } = await setup(new TextEncoder().encode(JSON.stringify({ foo: "bar" })));
       const err = await crypto.subtle
@@ -145,8 +145,25 @@ describe("Web Crypto", () => {
           () => null,
           e => e,
         );
+      expect(err).toBeInstanceOf(DOMException);
+      expect(err.name).toBe("DataError");
+    });
+
+    // Previously this promise never settled: the error thrown during
+    // JsonWebKey dictionary conversion (here an invalid key_ops enum entry)
+    // escaped as an uncaught exception and the DeferredPromise was left in
+    // m_pendingPromises forever. kty is optional now, so an invalid enum is
+    // what still reaches the conversion-exception branch.
+    it("settles when JsonWebKey dictionary conversion itself throws", async () => {
+      const { key, iv, wrapped } = await setup(new TextEncoder().encode(JSON.stringify({ key_ops: ["bogus"] })));
+      const err = await crypto.subtle
+        .unwrapKey("jwk", wrapped, key, { name: "AES-GCM", iv }, { name: "AES-GCM" }, true, ["encrypt", "decrypt"])
+        .then(
+          () => null,
+          e => e,
+        );
       expect(err).toBeInstanceOf(TypeError);
-      expect(err.message).toContain("kty");
+      expect(err.message).toBe("value must be enumeration (string)");
     });
 
     it("does not leak DeferredPromise in m_pendingPromises on JWK parse errors", async () => {
@@ -162,10 +179,13 @@ describe("Web Crypto", () => {
         const key = await crypto.subtle.importKey("raw", keyData, { name: "AES-GCM" }, false, [
           "encrypt", "decrypt", "wrapKey", "unwrapKey",
         ]);
+        // key_ops with an invalid enum entry throws during dictionary
+        // conversion, which is the leaky branch this fixture guards (a
+        // merely-unusable JWK now converts fine and rejects downstream).
         const wrapped = await crypto.subtle.encrypt(
           { name: "AES-GCM", iv },
           key,
-          new TextEncoder().encode(JSON.stringify({ foo: "bar" })),
+          new TextEncoder().encode(JSON.stringify({ key_ops: ["bogus"] })),
         );
         async function once() {
           await crypto.subtle
@@ -332,6 +352,427 @@ describe("Ed25519", () => {
       // @ts-ignore
       expect(privateKey.algorithm!.namedCurve).toBe(undefined);
     });
+  });
+});
+
+describe("ChaCha20-Poly1305 and AKP review fixes", () => {
+  it("raw-public import of an RSA key reports Node's aliased-format message", async () => {
+    // Node aliases raw-public/raw-secret to raw for every algorithm (verified
+    // v26.3.0: HKDF accepts raw-public), so the rejection names "raw".
+    for (const name of ["RSA-OAEP", "RSA-PSS"]) {
+      const err = await crypto.subtle
+        .importKey("raw-public", new Uint8Array(32), { name, hash: "SHA-256" }, false, [])
+        .then(
+          () => null,
+          e => e,
+        );
+      expect(err).toBeInstanceOf(DOMException);
+      expect({ name: err.name, message: err.message }).toEqual({
+        name: "NotSupportedError",
+        message: `Unable to import ${name} using raw format`,
+      });
+    }
+    // The broad aliasing itself: HKDF accepts raw-public like node.
+    const k = await crypto.subtle.importKey("raw-public", new Uint8Array(32), "HKDF", false, ["deriveBits"]);
+    expect(k.type).toBe("secret");
+  });
+
+  it("wrapKey rejects a non-extractable key before the format aliasing, like exportKey", async () => {
+    const ed = (await crypto.subtle.generateKey("Ed25519", false, ["sign", "verify"])) as CryptoKeyPair;
+    const kek = await crypto.subtle.importKey("raw", new Uint8Array(32), "AES-KW", false, ["wrapKey"]);
+    for (const op of [
+      () => crypto.subtle.exportKey("raw-seed", ed.privateKey),
+      () => crypto.subtle.wrapKey("raw-seed", ed.privateKey, kek, "AES-KW"),
+    ]) {
+      const err = await op().then(
+        () => null,
+        e => e,
+      );
+      expect(err).toBeInstanceOf(DOMException);
+      expect({ name: err.name, message: err.message }).toEqual({
+        name: "InvalidAccessError",
+        message: "key is not extractable",
+      });
+    }
+  });
+
+  it("JWK import rejects duplicate key_ops entries for every oct algorithm", async () => {
+    // Node routes all algorithms through the same validateKeyOps: the
+    // duplicate scan wins over the usage-mismatch check but loses to "use".
+    const k = Buffer.alloc(32, 1).toString("base64url");
+    const cases: [Record<string, unknown>, AlgorithmIdentifier | HmacImportParams, KeyUsage[], string][] = [
+      [{ kty: "oct", k, key_ops: ["encrypt", "encrypt"] }, "ChaCha20-Poly1305", ["encrypt"], "Duplicate key operation"],
+      [
+        { kty: "oct", k, key_ops: ["sign", "sign"] },
+        { name: "HMAC", hash: "SHA-256" },
+        ["sign"],
+        "Duplicate key operation",
+      ],
+      [
+        { kty: "oct", k, key_ops: ["verify", "verify"] },
+        { name: "HMAC", hash: "SHA-256" },
+        ["sign"],
+        "Duplicate key operation",
+      ],
+      [
+        { kty: "oct", k, use: "enc", key_ops: ["sign", "sign"] },
+        { name: "HMAC", hash: "SHA-256" },
+        ["sign"],
+        'Invalid JWK "use" Parameter',
+      ],
+    ];
+    for (const [jwk, alg, usages, message] of cases) {
+      const err = await crypto.subtle.importKey("jwk", jwk as JsonWebKey, alg, true, usages).then(
+        () => null,
+        e => e,
+      );
+      expect(err).toBeInstanceOf(DOMException);
+      expect({ name: err.name, message: err.message }).toEqual({ name: "DataError", message });
+    }
+  });
+
+  it("HMAC JWK import reports Node's member-check messages in Node's order", async () => {
+    const k = Buffer.alloc(32, 1).toString("base64url");
+    const alg = { name: "HMAC", hash: "SHA-256" };
+    const cases: [Record<string, unknown>, string][] = [
+      [{ kty: "oct", k, use: "enc" }, 'Invalid JWK "use" Parameter'],
+      [{ kty: "oct", k, key_ops: ["verify"] }, "Key operations and usage mismatch"],
+      [{ kty: "oct", k, ext: false }, 'JWK "ext" Parameter and extractable mismatch'],
+      [{ kty: "oct", k: "!!!" }, "Zero-length key is not supported"],
+      // use precedes alg, the decoded key, and the length check in node.
+      [{ kty: "oct", k, use: "enc", alg: "HS384" }, 'Invalid JWK "use" Parameter'],
+      [{ kty: "oct", k: "!!!", use: "enc" }, 'Invalid JWK "use" Parameter'],
+    ];
+    for (const [jwk, message] of cases) {
+      const err = await crypto.subtle.importKey("jwk", jwk as JsonWebKey, alg, true, ["sign"]).then(
+        () => null,
+        e => e,
+      );
+      expect(err).toBeInstanceOf(DOMException);
+      expect({ name: err.name, message: err.message }).toEqual({ name: "DataError", message });
+    }
+  });
+
+  it("buffer-format importKey never reads JWK members; jwk propagates getter errors", async () => {
+    // Node picks the keyData converter by format (verified on v26.3.0:
+    // 0 getter calls for raw, 1 for jwk with the original error surfaced).
+    let getterCalls = 0;
+    const evil = {
+      get kty() {
+        getterCalls++;
+        throw new Error("getter boom");
+      },
+    };
+    let err: any;
+    try {
+      await crypto.subtle.importKey("raw", evil as any, "HKDF", false, ["deriveBits"]);
+    } catch (e) {
+      err = e;
+    }
+    expect({ code: err.code, getterCalls }).toEqual({ code: "ERR_INVALID_ARG_TYPE", getterCalls: 0 });
+    err = undefined;
+    try {
+      await crypto.subtle.importKey("jwk", evil as any, "HKDF", false, ["deriveBits"]);
+    } catch (e) {
+      err = e;
+    }
+    expect({ message: err.message, getterCalls }).toEqual({ message: "getter boom", getterCalls: 1 });
+  });
+
+  it("importKey with a plain object for a buffer format rejects with Node's ERR_INVALID_ARG_TYPE", async () => {
+    for (const format of ["raw", "raw-secret"] as const) {
+      let err: any;
+      try {
+        await crypto.subtle.importKey(format, {} as any, "AES-GCM", true, ["encrypt"]);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(TypeError);
+      expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
+      expect(err.message).toBe(
+        "Failed to execute 'importKey' on 'SubtleCrypto': 2nd argument is not instance of ArrayBuffer, Buffer, TypedArray, or DataView.",
+      );
+    }
+  });
+
+  it("an invalid KeyFormat coerces its argument exactly once", async () => {
+    // Node stringifies the format argument once; a second coercion is
+    // observable through an adversarial toString.
+    let calls = 0;
+    const evil = {
+      toString() {
+        calls++;
+        return "bogus";
+      },
+    };
+    let err: any;
+    try {
+      await crypto.subtle.importKey(evil as any, new Uint8Array(16), "AES-GCM", true, ["encrypt"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err.code).toBe("ERR_INVALID_ARG_VALUE");
+    expect(calls).toBe(1);
+  });
+
+  it("toCryptoKey rejects AES-CFB with Node's NotSupportedError", async () => {
+    // Node v26.3.0 has no AES-CFB in webcrypto; Bun's subtle.importKey
+    // accepts it as an extension but the node:crypto API matches node.
+    const ko = createSecretKey(Buffer.alloc(16));
+    let err: any;
+    try {
+      ko.toCryptoKey("AES-CFB", true, ["encrypt"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DOMException);
+    expect(err.name).toBe("NotSupportedError");
+    expect(err.message).toBe("Unrecognized algorithm name");
+  });
+
+  it("structuredClone round-trips ChaCha20-Poly1305 keys", async () => {
+    const material = new Uint8Array(32).fill(7);
+    const key = await crypto.subtle.importKey("raw-secret", material, "ChaCha20-Poly1305", true, [
+      "encrypt",
+      "decrypt",
+    ]);
+    const clone = structuredClone(key);
+    expect(clone.algorithm).toEqual(key.algorithm);
+    expect(clone.type).toBe("secret");
+    expect(clone.extractable).toBe(true);
+    expect(clone.usages).toEqual(key.usages);
+    expect(new Uint8Array(await crypto.subtle.exportKey("raw-secret", clone))).toEqual(material);
+    // Clones must be usable, not just inspectable.
+    const iv = new Uint8Array(12);
+    const ct = await crypto.subtle.encrypt({ name: "ChaCha20-Poly1305", iv }, clone, new Uint8Array([1, 2, 3]));
+    expect(new Uint8Array(await crypto.subtle.decrypt({ name: "ChaCha20-Poly1305", iv }, key, ct))).toEqual(
+      new Uint8Array([1, 2, 3]),
+    );
+  });
+
+  it("structuredClone preserves extractable=false for ChaCha20-Poly1305 keys", async () => {
+    const key = await crypto.subtle.importKey("raw-secret", new Uint8Array(32), "ChaCha20-Poly1305", false, [
+      "encrypt",
+    ]);
+    const clone = structuredClone(key);
+    expect(clone.extractable).toBe(false);
+    await expect(crypto.subtle.exportKey("raw-secret", clone)).rejects.toThrow("key is not extractable");
+  });
+
+  it.each(["ML-DSA-65", "ML-KEM-768"])("structuredClone round-trips %s key pairs", async alg => {
+    const usages = alg.startsWith("ML-DSA") ? ["sign", "verify"] : ["encapsulateBits", "decapsulateBits"];
+    const pair = (await crypto.subtle.generateKey(alg, true, usages as KeyUsage[])) as CryptoKeyPair;
+    const pub = structuredClone(pair.publicKey);
+    const priv = structuredClone(pair.privateKey);
+    expect(pub.algorithm).toEqual(pair.publicKey.algorithm);
+    expect(pub.type).toBe("public");
+    expect(pub.usages).toEqual(pair.publicKey.usages);
+    expect(priv.type).toBe("private");
+    expect(priv.extractable).toBe(true);
+    expect(priv.usages).toEqual(pair.privateKey.usages);
+    expect(new Uint8Array(await crypto.subtle.exportKey("spki", pub))).toEqual(
+      new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey)),
+    );
+    expect(new Uint8Array(await crypto.subtle.exportKey("pkcs8", priv))).toEqual(
+      new Uint8Array(await crypto.subtle.exportKey("pkcs8", pair.privateKey)),
+    );
+    // Like Node, the clone keeps the FIPS seed (pkcs8 embeds it).
+    expect(new Uint8Array(await crypto.subtle.exportKey("raw-seed", priv))).toEqual(
+      new Uint8Array(await crypto.subtle.exportKey("raw-seed", pair.privateKey)),
+    );
+  });
+
+  it("Worker postMessage delivers ChaCha20-Poly1305 and ML-DSA keys", async () => {
+    const material = new Uint8Array(32).fill(9);
+    const chacha = await crypto.subtle.importKey("raw-secret", material, "ChaCha20-Poly1305", true, ["encrypt"]);
+    const pair = (await crypto.subtle.generateKey("ML-DSA-65", true, ["sign", "verify"])) as CryptoKeyPair;
+    const worker = new Worker(
+      URL.createObjectURL(
+        new Blob(
+          [
+            `self.onmessage = async ({ data }) => {
+              const raw = new Uint8Array(await crypto.subtle.exportKey("raw-secret", data.chacha));
+              const spki = new Uint8Array(await crypto.subtle.exportKey("spki", data.mlPublic));
+              postMessage({
+                raw,
+                spki,
+                chachaAlg: data.chacha.algorithm.name,
+                mlUsages: data.mlPublic.usages,
+              });
+            };`,
+          ],
+          { type: "application/javascript" },
+        ),
+      ),
+    );
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<any>();
+      worker.onmessage = e => resolve(e.data);
+      worker.onerror = e => reject(new Error(e.message));
+      worker.postMessage({ chacha, mlPublic: pair.publicKey });
+      const result = await promise;
+      expect(new Uint8Array(result.raw)).toEqual(material);
+      expect(result.chachaAlg).toBe("ChaCha20-Poly1305");
+      expect(result.mlUsages).toEqual(["verify"]);
+      expect(new Uint8Array(result.spki)).toEqual(
+        new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey)),
+      );
+    } finally {
+      worker.terminate();
+    }
+  });
+
+  it.each([
+    ["ChaCha20-Poly1305", "raw-secret"],
+    ["AES-GCM", "raw"],
+  ])("decrypt of undersized %s input rejects with Node's generic message", async (name, format) => {
+    const key = await crypto.subtle.importKey(format as KeyFormat, new Uint8Array(32), { name }, false, ["decrypt"]);
+    await expect(crypto.subtle.decrypt({ name, iv: new Uint8Array(12) }, key, new Uint8Array(5))).rejects.toThrow(
+      "The operation failed for an operation-specific reason",
+    );
+  });
+
+  it("encapsulateBits and encapsulateKey enumerate results in Node's order", async () => {
+    // Node v26.3.0: encapsulateBits results are sharedKey-first while
+    // encapsulateKey results are ciphertext-first.
+    const bitsPair = (await crypto.subtle.generateKey("ML-KEM-768", true, [
+      "encapsulateBits",
+      "decapsulateBits",
+    ])) as CryptoKeyPair;
+    const bits = await crypto.subtle.encapsulateBits({ name: "ML-KEM-768" }, bitsPair.publicKey);
+    expect(Object.keys(bits)).toEqual(["sharedKey", "ciphertext"]);
+    const keyPair = (await crypto.subtle.generateKey("ML-KEM-768", true, [
+      "encapsulateKey",
+      "decapsulateKey",
+    ])) as CryptoKeyPair;
+    const res = await crypto.subtle.encapsulateKey({ name: "ML-KEM-768" }, keyPair.publicKey, "HKDF", false, [
+      "deriveBits",
+    ]);
+    expect(Object.keys(res)).toEqual(["ciphertext", "sharedKey"]);
+  });
+
+  it("deriveKey can derive a ChaCha20-Poly1305 key", async () => {
+    const base = await crypto.subtle.importKey("raw", new Uint8Array(32), "HKDF", false, ["deriveKey"]);
+    const derived = await crypto.subtle.deriveKey(
+      { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(8), info: new Uint8Array(0) },
+      base,
+      { name: "ChaCha20-Poly1305" },
+      true,
+      ["encrypt", "decrypt"],
+    );
+    expect(derived.algorithm.name).toBe("ChaCha20-Poly1305");
+    const iv = new Uint8Array(12);
+    const ct = await crypto.subtle.encrypt({ name: "ChaCha20-Poly1305", iv }, derived, new Uint8Array([1, 2, 3]));
+    const pt = await crypto.subtle.decrypt({ name: "ChaCha20-Poly1305", iv }, derived, ct);
+    expect(new Uint8Array(pt)).toEqual(new Uint8Array([1, 2, 3]));
+  });
+
+  it("rejects a ChaCha20-Poly1305 iv that is not 12 bytes with Node's message", async () => {
+    const key = await crypto.subtle.importKey("raw-secret", new Uint8Array(32), "ChaCha20-Poly1305", true, [
+      "encrypt",
+      "decrypt",
+    ]);
+    for (const size of [0, 11, 16]) {
+      await expect(
+        crypto.subtle.encrypt({ name: "ChaCha20-Poly1305", iv: new Uint8Array(size) }, key, new Uint8Array(4)),
+      ).rejects.toThrow("algorithm.iv must contain exactly 12 bytes");
+    }
+    const ct = await crypto.subtle.encrypt(
+      { name: "ChaCha20-Poly1305", iv: new Uint8Array(12) },
+      key,
+      new Uint8Array(4),
+    );
+    await expect(crypto.subtle.decrypt({ name: "ChaCha20-Poly1305", iv: new Uint8Array(16) }, key, ct)).rejects.toThrow(
+      "algorithm.iv must contain exactly 12 bytes",
+    );
+  });
+
+  it("importKey('raw') still rejects for ChaCha20-Poly1305 like Node", async () => {
+    const err = await crypto.subtle.importKey("raw", new Uint8Array(32), "ChaCha20-Poly1305", true, ["encrypt"]).then(
+      () => null,
+      e => e,
+    );
+    expect(err).toBeInstanceOf(DOMException);
+    expect(err.name).toBe("NotSupportedError");
+  });
+
+  it("wrapKey and unwrapKey accept raw-public for Ed25519 public keys", async () => {
+    const kek = await crypto.subtle.importKey("raw", new Uint8Array(32), "AES-KW", false, ["wrapKey", "unwrapKey"]);
+    const pair = (await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])) as CryptoKeyPair;
+    const wrapped = await crypto.subtle.wrapKey("raw-public", pair.publicKey, kek, "AES-KW");
+    expect(wrapped.byteLength).toBeGreaterThan(0);
+    const unwrapped = await crypto.subtle.unwrapKey("raw-public", wrapped, kek, "AES-KW", "Ed25519", true, ["verify"]);
+    const a = new Uint8Array(await crypto.subtle.exportKey("raw-public", unwrapped));
+    const b = new Uint8Array(await crypto.subtle.exportKey("raw-public", pair.publicKey));
+    expect(a).toEqual(b);
+  });
+
+  // One case per branch of SubtleCrypto::getPublicKey: AKP (ML-DSA/ML-KEM),
+  // RSA, EC, and the Ed25519/X25519 owned-EVP_PKEY path. X25519 public keys
+  // carry no usages in Node v26.3.0, so its pubUsages is empty.
+  const getPublicKeyCases: [string, AlgorithmIdentifier, KeyUsage[], KeyUsage[]][] = [
+    ["ML-DSA-65", "ML-DSA-65", ["sign", "verify"], ["verify"]],
+    ["ML-KEM-768", "ML-KEM-768", ["encapsulateBits", "decapsulateBits"], ["encapsulateBits"]],
+    [
+      "RSA-PSS",
+      { name: "RSA-PSS", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      ["sign", "verify"],
+      ["verify"],
+    ],
+    ["ECDSA P-256", { name: "ECDSA", namedCurve: "P-256" }, ["sign", "verify"], ["verify"]],
+    ["Ed25519", "Ed25519", ["sign", "verify"], ["verify"]],
+    ["X25519", "X25519", ["deriveBits"], []],
+  ];
+  it.each(getPublicKeyCases)("getPublicKey round-trips the %s public key", async (_label, alg, usages, pubUsages) => {
+    const pair = (await crypto.subtle.generateKey(alg, true, usages)) as CryptoKeyPair;
+    const pub = await crypto.subtle.getPublicKey(pair.privateKey, pubUsages);
+    expect(pub.type).toBe("public");
+    expect(pub.usages).toEqual(pubUsages);
+    const a = new Uint8Array(await crypto.subtle.exportKey("spki", pub));
+    const b = new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey));
+    expect(a).toEqual(b);
+  });
+
+  it("generateKey reports Node's unsupported-usage messages", async () => {
+    await expect(crypto.subtle.generateKey({ name: "AES-CBC", length: 256 }, true, ["sign"])).rejects.toThrow(
+      "Unsupported key usage for an AES key",
+    );
+    await expect(
+      crypto.subtle.generateKey(
+        { name: "RSA-OAEP", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+        true,
+        ["sign"],
+      ),
+    ).rejects.toThrow("Unsupported key usage for a RSA key");
+  });
+
+  // The KEM usage spellings must stay invalid for every RSA variant: these
+  // cases fail if CryptoKeyUsageKemMask is dropped from the RSA predicates.
+  const kemUsages = ["encapsulateKey", "encapsulateBits", "decapsulateKey", "decapsulateBits"] as const;
+  it.each(["RSASSA-PKCS1-v1_5", "RSA-OAEP", "RSA-PSS"].flatMap(name => kemUsages.map(usage => [name, usage] as const)))(
+    "generateKey rejects the KEM usage %s/%s for RSA keys",
+    async (name, usage) => {
+      await expect(
+        crypto.subtle.generateKey(
+          { name, modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+          true,
+          [usage as KeyUsage],
+        ),
+      ).rejects.toThrow("Unsupported key usage for a RSA key");
+    },
+  );
+
+  it("generateKey rejects RSAES-PKCS1-v1_5 with its deprecation notice", async () => {
+    // RSAES is gated off at normalize, before any usage check runs, so the
+    // KEM-usage matrix the other RSA variants get cannot observe its
+    // parameter here.
+    await expect(
+      crypto.subtle.generateKey(
+        { name: "RSAES-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+        true,
+        ["encapsulateKey" as KeyUsage],
+      ),
+    ).rejects.toThrow("RSAES-PKCS1-v1_5 support is deprecated");
   });
 });
 

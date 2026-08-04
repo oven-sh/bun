@@ -1275,15 +1275,13 @@ impl<'a> Linker<'a> {
         debug_assert!(strings::has_prefix(rel_target.as_bytes(), b".."));
 
         match sys::symlink_running_executable(rel_target, abs_dest) {
-            sys::Result::Err(err) => {
-                if err.get_errno() != sys::Errno::EEXIST && err.get_errno() != sys::Errno::ENOENT {
-                    self.err = Some(err.into());
-                    Self::chmod_on_ok(self.err, abs_target);
-                    return;
-                }
-
-                // ENOENT means `.bin` hasn't been created yet. Should only happen if this isn't global
-                if err.get_errno() == sys::Errno::ENOENT {
+            sys::Result::Ok(()) => {
+                Self::chmod_on_ok(self.err, abs_target);
+                return;
+            }
+            sys::Result::Err(err) => match err.get_errno() {
+                // `.bin` hasn't been created yet. Should only happen if this isn't global.
+                sys::Errno::ENOENT => {
                     if global {
                         self.err = Some(err.into());
                         Self::chmod_on_ok(self.err, abs_target);
@@ -1297,42 +1295,32 @@ impl<'a> Linker<'a> {
                     let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
                     self.node_modules_path.set_length(node_modules_path_save);
 
-                    match sys::symlink_running_executable(rel_target, abs_dest) {
-                        sys::Result::Err(real_error) => {
-                            // It was just created, no need to delete destination and symlink again
-                            self.err = Some(real_error.into());
-                            Self::chmod_on_ok(self.err, abs_target);
-                            return;
-                        }
-                        sys::Result::Ok(()) => {
+                    if let Err(real_error) = sys::symlink_running_executable(rel_target, abs_dest) {
+                        self.err = Some(real_error.into());
+                    }
+                    Self::chmod_on_ok(self.err, abs_target);
+                    return;
+                }
+                // Something already occupies the destination, or the tree is
+                // read-only (docker `:ro`, a protected CI cache). If a link is
+                // already there with the right target the install is a no-op
+                // here; falling through to delete+recreate would surface the
+                // original error even though nothing needs to change.
+                sys::Errno::EEXIST | sys::Errno::EPERM | sys::Errno::EACCES => {
+                    let mut existing = path::path_buffer_pool::get();
+                    if let Ok(n) = sys::readlink(abs_dest, &mut existing) {
+                        if existing[..n] == *rel_target.as_bytes() {
                             Self::chmod_on_ok(self.err, abs_target);
                             return;
                         }
                     }
                 }
-
-                // beyond this error can only be `.EXIST`
-                debug_assert!(err.get_errno() == sys::Errno::EEXIST);
-            }
-            sys::Result::Ok(()) => {
-                Self::chmod_on_ok(self.err, abs_target);
-                return;
-            }
-        }
-
-        // If the existing link already points at the intended target, the
-        // install is a no-op here. Skipping the delete+recreate lets a fully
-        // populated node_modules on a read-only mount (docker `:ro`) pass
-        // through: the unlink below would fail with EACCES/EROFS and the retry
-        // symlink would then surface the original EEXIST.
-        {
-            let mut existing = path::path_buffer_pool::get();
-            if let Ok(n) = sys::readlink(abs_dest, &mut existing) {
-                if existing[..n] == *rel_target.as_bytes() {
+                _ => {
+                    self.err = Some(err.into());
                     Self::chmod_on_ok(self.err, abs_target);
                     return;
                 }
-            }
+            },
         }
 
         // delete and try again

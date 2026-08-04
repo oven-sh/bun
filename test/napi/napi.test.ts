@@ -436,6 +436,20 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   });
 
   describe("status code alignment with Node.js", () => {
+    it("matches Node for symbol description, empty named key, result-on-exception ordering, and module filename", async () => {
+      const output = await checkSameOutput("test_napi_symbol_key_result_ordering", []);
+      expect(output).toContain('set_named_property(""): status=0 pending=0');
+      expect(output).toContain('obj[""]=1');
+      expect(output).toContain("create_symbol(undefined): status=3 pending=0");
+      expect(output).toContain("create_symbol(null): status=3 pending=0");
+      expect(output).toContain('create_symbol(""): status=0 pending=0');
+      expect(output).toContain('create_symbol("") description: type=4 len=0');
+      expect(output).toContain("new_instance(throws): status=10 result_written=0");
+      expect(output).toContain("get_named_property(throws): status=10 result_written=0");
+      expect(output).toContain("has_named_property(throws): status=10 result_written=0");
+      expect(output).toContain("module_file_name: status=0 is_null=0");
+    });
+
     it("returns the same napi_status as Node.js for invalid inputs", async () => {
       const result = await checkSameOutput("test_napi_status_codes_node26", []);
 
@@ -521,6 +535,11 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   });
 
   describe("napi_threadsafe_function", () => {
+    it("passes NULL js_callback to call_js when created without a func", async () => {
+      const output = await checkSameOutput("test_tsfn_null_js_callback_driver", []);
+      expect(output).toContain("js_callback == NULL: 1");
+    });
+
     it("keeps the event loop alive without async_work", async () => {
       const result = await checkSameOutput("test_promise_with_threadsafe_function", []);
       expect(result).toContain("tsfn_callback");
@@ -1599,6 +1618,22 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       expect(output).toContain("get_all_property_names(key_conversion=99): status=1 pending=0");
       expect(output).toContain("keep_numbers key0 typeof=number");
       expect(output).toContain("numbers_to_strings key0 typeof=string");
+    });
+
+    it("coerces primitives for define_properties/freeze/seal/type_tag/set_prototype", async () => {
+      const output = await checkSameOutput("test_napi_toobject_coercion_node26", []);
+      expect(output).toContain("define_properties(number): status=0 pending=0");
+      expect(output).toContain("define_properties(null): status=2 pending=1");
+      expect(output).toContain("object_freeze(number): status=0 pending=0");
+      expect(output).toContain("object_freeze(null): status=2 pending=1");
+      expect(output).toContain("object_seal(number): status=0 pending=0");
+      expect(output).toContain("object_seal(undefined): status=2 pending=1");
+      expect(output).toContain("type_tag_object(number): status=0 pending=0");
+      expect(output).toContain("type_tag_object(null): status=10 pending=1");
+      expect(output).toContain("check_object_type_tag(number): status=0 pending=0");
+      expect(output).toContain("check_object_type_tag(null): status=10 pending=1");
+      expect(output).toContain("node_api_set_prototype(number): status=0 pending=0");
+      expect(output).toContain("node_api_set_prototype(null): status=2 pending=1");
     });
   });
 

@@ -249,7 +249,6 @@ DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(VersionSqlite3);
 class SQLiteSingleton {
 public:
     Vector<VersionSqlite3*> databases;
-    Vector<std::atomic<uint64_t>> schema_versions;
 };
 
 static SQLiteSingleton* _instance = nullptr;
@@ -261,7 +260,6 @@ static Vector<VersionSqlite3*>& databases()
         _instance = new SQLiteSingleton();
         _instance->databases = Vector<VersionSqlite3*>();
         _instance->databases.reserveInitialCapacity(4);
-        _instance->schema_versions = Vector<std::atomic<uint64_t>>();
     }
 
     return _instance->databases;

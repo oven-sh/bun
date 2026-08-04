@@ -96,7 +96,6 @@ function registerServerHandle(server, kind) {
 function unregisterServerHandle(server) {
   if (activeHandles) activeHandles.unregisterHandle(server);
 }
-const kServerHandleKind = Symbol("http.server.handleKind");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 
@@ -688,7 +687,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     if (tls) {
       this.serverName = tls.serverName || host || "localhost";
     }
-    this[kServerHandleKind] = socketPath ? "PipeWrap" : "TCPServerWrap";
     this[serverSymbol] = Bun.serve<any>({
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
       tls,
@@ -1117,7 +1115,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     // node's http.Server carries `_handle` (the listen wrap) while listening
     // and nulls it on close; the registry's liveness walk keys off it too.
     this._handle = this[serverSymbol];
-    registerServerHandle(this, this[kServerHandleKind]);
+    registerServerHandle(this, socketPath ? "PipeWrap" : "TCPServerWrap");
     isHTTPS = this[serverSymbol].protocol === "https";
     applyServerCustomOptions(this);
 

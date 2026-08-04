@@ -45,23 +45,13 @@ public:
     mutable JSC::WriteBarrier<JSString> m_dirname;
     // Initialized lazily; can be overridden.
     mutable JSC::WriteBarrier<Unknown> m_paths;
-    // Children must always be tracked in case the script decides to access
-    // `module.children`. In that case, all children may also need their
-    // children fields to exist, recursively. To avoid allocating a *JSArray for
-    // each module, the children array is constructed internally as a
-    // Vector of pointers. If accessed, deduplication happens and array is
-    // moved into JavaScript. These two fields add 16 bytes to JSCommonJSModule.
-    // `m_childrenValue` can be set to any value via the user-exposed setter,
-    // but Bun does not test that behavior besides ensuring it does not crash.
+    // module.children is tracked as a Vector (no JSArray until accessed, then deduped and moved to JS).
+    // m_childrenValue can be set to anything via the user-exposed setter; Bun only guards against crash.
     mutable JSC::WriteBarrier<Unknown> m_childrenValue;
     // This must be WriteBarrier<Unknown> to compile; always JSCommonJSModule
     WTF::Vector<WriteBarrier<Unknown>> m_children;
 
-    // Visited by the GC. When the module is assigned a non-JSCommonJSModule
-    // parent, it is assigned to this field.
-    //
-    //    module.parent = parent;
-    //
+    // GC-visited; holds `module.parent` when it is set to a non-JSCommonJSModule value.
     mutable JSC::WriteBarrier<Unknown> m_overriddenParent;
     // Not visited by the GC.
     // When the module is assigned a JSCommonJSModule parent, it is assigned to this field.
@@ -146,6 +136,9 @@ public:
     }
 
     bool hasEvaluated = false;
+    // True while the wrapper body is on the stack; mirrors Node's kIsExecuting for require(esm) cycle detection.
+    // https://github.com/nodejs/node/blob/main/lib/internal/modules/cjs/loader.js
+    bool isExecuting = false;
 
     JSCommonJSModule(JSC::VM& vm, JSC::Structure* structure, JSC::JSString* id, JSC::JSValue filename, JSC::JSString* dirname)
         : Base(vm, structure)

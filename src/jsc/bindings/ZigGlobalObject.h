@@ -514,6 +514,10 @@ public:
     /* Error.prepareStackTrace */                                                                            \
     V(public, WriteBarrier<JSC::Unknown>, m_errorConstructorPrepareStackTraceValue)                          \
                                                                                                              \
+    /* require(esm) cycle error planted by the CommonJS synthetic generator; functionEsmLoadSync */          \
+    /* matches the load rejection against this by identity to rewrite its message.               */          \
+    V(public, WriteBarrier<JSC::Unknown>, m_pendingRequireESMCycleError)                                     \
+                                                                                                             \
     /* When a napi module initializes on dlopen, we need to know what the value is */                        \
     V(public, NapiModuleAndExports, m_pendingNapiModuleAndExports)                                           \
                                                                                                              \
@@ -789,6 +793,11 @@ private:
 public:
     // De-optimization once `require("module")._resolveFilename` is written to
     bool hasOverriddenModuleResolveFilenameFunction = false;
+    // Monotonic stamp per fetched module key; functionEsmLoadSync compares against the value captured
+    // at require(esm) start to tell outer-graph modules apart when picking the cycle-error import edge.
+    uint64_t m_moduleFetchCounter { 0 };
+    UncheckedKeyHashMap<WTF::String, uint64_t> m_moduleFetchSequence;
+
     // De-optimization once `require("module").wrapper` or `require("module").wrap` is written to
     bool hasOverriddenModuleWrapper = false;
     // De-optimization once `require("module").runMain` is written to

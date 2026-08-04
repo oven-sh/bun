@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunRun, tempDir } from "harness";
 import { join } from "path";
-test("empty jsonc - package.json", async () => {
+test.concurrent("empty jsonc - package.json", async () => {
   await using dir = tempDir("jsonc", {
     "package.json": ``,
     "index.ts": `
@@ -9,10 +9,10 @@ test("empty jsonc - package.json", async () => {
     if (JSON.stringify(pkg) !== '{}') throw new Error('package.json should be empty');
     `,
   });
-  expect([join(dir, "index.ts")]).toRun();
+  expect(await bunRun(join(dir, "index.ts"))).toSpawn();
 });
 
-test("empty jsonc - tsconfig.json", async () => {
+test.concurrent("empty jsonc - tsconfig.json", async () => {
   await using dir = tempDir("jsonc", {
     "tsconfig.json": ``,
     "index.ts": `
@@ -20,10 +20,10 @@ test("empty jsonc - tsconfig.json", async () => {
     if (JSON.stringify(tsconfig) !== '{}') throw new Error('tsconfig.json should be empty');
     `,
   });
-  expect([join(dir, "index.ts")]).toRun();
+  expect(await bunRun(join(dir, "index.ts"))).toSpawn();
 });
 
-test("import anything.jsonc as json", async () => {
+test.concurrent("import anything.jsonc as json", async () => {
   const jsoncFile = `{
     // comment
     "trailingComma": 0,
@@ -36,10 +36,10 @@ test("import anything.jsonc as json", async () => {
     if (!Bun.deepEquals(file, _file)) throw new Error('anything.jsonc wasnt imported as jsonc');
     `,
   });
-  expect([join(dir, "index.ts")]).toRun();
+  expect(await bunRun(join(dir, "index.ts"))).toSpawn();
 });
 
-test("imported JSON strings match JSON.parse exactly (escapes, lone surrogates, non-ASCII)", async () => {
+test.concurrent("imported JSON strings match JSON.parse exactly (escapes, lone surrogates, non-ASCII)", async () => {
   const json = `{"lone":"\\ud800","pair":"\\ud83d\\ude00","mix":"a\\udfffz","e":"caf\\u00e9\\ud800x","lit":"é🚀","esc\\nkey":"a\\n\\"b\\""}`;
   await using dir = tempDir("jsonc", {
     "weird.json": json,
@@ -55,5 +55,5 @@ test("imported JSON strings match JSON.parse exactly (escapes, lone surrogates, 
     if (units(Bun.JSONC.parse(file)) !== units(expected)) throw new Error("Bun.JSONC.parse != JSON.parse");
     `,
   });
-  expect([join(dir, "index.ts")]).toRun();
+  expect(await bunRun(join(dir, "index.ts"))).toSpawn();
 });

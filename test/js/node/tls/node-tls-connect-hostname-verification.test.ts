@@ -105,14 +105,102 @@ describe("tls.connect hostname verification without explicit servername", () => 
   });
 });
 
+const escapingDir = path.join(import.meta.dirname, "..", "test", "fixtures", "x509-escaping");
+const escapingKey = fs.readFileSync(path.join(escapingDir, "server-key.pem"));
+
+async function altnameMismatchReason(certFile: string): Promise<NodeJS.ErrnoException | null> {
+  const cert = fs.readFileSync(path.join(escapingDir, certFile));
+  const listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls: { key: escapingKey, cert },
+    socket: {
+      open() {},
+      data() {},
+      drain() {},
+      close() {},
+      error() {},
+    },
+  });
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    const socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: listener.port,
+      tls: { ca: cert, serverName: "evil.example.com" },
+      socket: {
+        open() {},
+        handshake(s) {
+          resolve(s.getAuthorizationError());
+          s.end();
+        },
+        data() {},
+        drain() {},
+        close() {},
+        error(_s, err) {
+          reject(err);
+        },
+        connectError(_s, err) {
+          reject(err);
+        },
+      },
+    });
+    try {
+      return await promise;
+    } finally {
+      socket.end();
+    }
+  } finally {
+    listener.stop(true);
+  }
+}
+
+describe("Bun.connect TLS altname mismatch reason", () => {
+  test("quotes and escapes a DNS altname containing a comma", async () => {
+    const error = await altnameMismatchReason("alt-0-cert.pem");
+    assert.ok(error, "getAuthorizationError() must report why the socket is not authorized");
+    assert.strictEqual(
+      error.message,
+      `Hostname/IP does not match certificate's altnames: Host: evil.example.com. is not in the cert's altnames: DNS:"good.example.com\\u002c DNS:evil.example.com"`,
+    );
+    assert.strictEqual(error.code, "ERR_TLS_CERT_ALTNAME_INVALID");
+  });
+
+  test("quotes and escapes a DNS altname containing double quotes", async () => {
+    const error = await altnameMismatchReason("alt-7-cert.pem");
+    assert.ok(error, "getAuthorizationError() must report why the socket is not authorized");
+    assert.strictEqual(
+      error.message,
+      `Hostname/IP does not match certificate's altnames: Host: evil.example.com. is not in the cert's altnames: DNS:"\\"evil.example.com\\""`,
+    );
+    assert.strictEqual(error.code, "ERR_TLS_CERT_ALTNAME_INVALID");
+  });
+
+  test("quotes and escapes a DNS altname containing a non-ASCII byte", async () => {
+    const error = await altnameMismatchReason("alt-6-cert.pem");
+    assert.ok(error, "getAuthorizationError() must report why the socket is not authorized");
+    assert.strictEqual(
+      error.message,
+      `Hostname/IP does not match certificate's altnames: Host: evil.example.com. is not in the cert's altnames: DNS:"ex\\u00e4mple.com"`,
+    );
+    assert.strictEqual(error.code, "ERR_TLS_CERT_ALTNAME_INVALID");
+  });
+});
+
 describe("Bun.connect TLS hostname verification", () => {
   // The server presents the agent1 cert (CN=agent1, no SAN) signed by ca1.
   // A client that trusts ca1 and connects to "localhost" passes chain
   // validation, but the certificate is not valid for "localhost", so the
   // socket must not be reported as authorized.
+  //
+  // Bind the listener to 127.0.0.1 rather than "localhost": Bun.listen
+  // resolves the bind host without AI_ADDRCONFIG while Bun.connect resolves
+  // with it, so on a host whose only IPv6 address is loopback the listener
+  // can end up on ::1 while the client dials 127.0.0.1 and gets ECONNREFUSED
+  // (Node's net.connect behaves the same way).
   test("reports authorized=false when a CA-trusted cert does not match the connected hostname", async () => {
     const listener = Bun.listen({
-      hostname: "localhost",
+      hostname: "127.0.0.1",
       port: 0,
       tls: { key: serverKey, cert: serverCert },
       socket: {

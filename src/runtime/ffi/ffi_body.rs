@@ -465,9 +465,6 @@ impl CompileC {
         if this_.is_null() {
             return;
         }
-        // SAFETY: TinyCC threads our own `&mut CompileC` back as `ctx`; we hold
-        // the unique borrow for the duration of the callback.
-        let this = unsafe { &mut *this_ };
         let mut msg: &[u8] = if message.is_null() {
             b""
         } else {
@@ -489,7 +486,9 @@ impl CompileC {
         }
         msg = &msg[offset..];
 
-        this.deferred_errors.push(Box::<[u8]>::from(msg));
+        // SAFETY: TinyCC threads our own `&mut CompileC` back as `ctx`; the
+        // caller is suspended in the TCC call, so this access is exclusive.
+        unsafe { (*this_).deferred_errors.push(Box::<[u8]>::from(msg)) };
     }
 
     #[inline]
@@ -1446,7 +1445,11 @@ fn invalid_options_arg(global: &JSGlobalObject) -> JSValue {
 }
 
 impl FFI {
-    pub fn open(global: &JSGlobalObject, name_str: ZigString, object_value: JSValue) -> JSValue {
+    pub(crate) fn open(
+        global: &JSGlobalObject,
+        name_str: ZigString,
+        object_value: JSValue,
+    ) -> JSValue {
         jsc::mark_binding();
         let vm = jsc::VirtualMachineRef::get();
         let name_slice = name_str.to_slice();
@@ -1620,7 +1623,7 @@ impl FFI {
         JSValue::UNDEFINED
     }
 
-    pub fn link_symbols(global: &JSGlobalObject, object_value: JSValue) -> JSValue {
+    pub(crate) fn link_symbols(global: &JSGlobalObject, object_value: JSValue) -> JSValue {
         jsc::mark_binding();
 
         if object_value.is_empty_or_undefined_or_null() {
@@ -1987,8 +1990,6 @@ impl Function {
     /// without an ABI-coercing cast.
     pub(crate) unsafe extern "C" fn handle_tcc_error(ctx: *mut Function, message: *const c_char) {
         debug_assert!(!ctx.is_null());
-        // SAFETY: TinyCC threads our own `&mut Function` back as `ctx`.
-        let this = unsafe { &mut *ctx };
         // SAFETY: TCC passes a valid NUL-terminated string
         let mut msg: &[u8] = unsafe { bun_core::ffi::cstr(message) }.to_bytes();
         if !msg.is_empty() {
@@ -2004,9 +2005,13 @@ impl Function {
             msg = &msg[offset..];
         }
 
-        this.step = Step::Failed {
-            msg: Box::<[u8]>::from(msg),
-        };
+        // SAFETY: TinyCC threads our own `&mut Function` back as `ctx`; the
+        // caller is suspended in the TCC call, so this access is exclusive.
+        unsafe {
+            (*ctx).step = Step::Failed {
+                msg: Box::<[u8]>::from(msg),
+            };
+        }
     }
 
     pub(crate) fn compile(&mut self, napi_env: Option<&napi::NapiEnv>) -> crate::Result<()> {
@@ -2034,9 +2039,9 @@ impl Function {
         self.state = Some(state);
         let _guard = scopeguard::guard(std::ptr::from_mut::<Function>(self), |this_ptr| {
             // SAFETY: this_ptr is &mut self for the duration of compile()
-            let this = unsafe { &mut *this_ptr };
-            if matches!(this.step, Step::Failed { .. }) {
-                if let Some(s) = this.state.take() {
+            if matches!(unsafe { &(*this_ptr).step }, Step::Failed { .. }) {
+                // SAFETY: as above.
+                if let Some(s) = unsafe { (*this_ptr).state.take() } {
                     // SAFETY: we own the state
                     unsafe { TCC::State::destroy(s.as_ptr()) };
                 }
@@ -2357,34 +2362,134 @@ impl CompilerRT {
             return;
         };
 
-        let Ok(bun_cc) = tmpdir.make_open_path(b"bun-cc", bun_sys::OpenDirOptions::default())
-        else {
-            return;
-        };
+        #[cfg(windows)]
+        {
+            let Ok(bun_cc) = tmpdir.make_open_path(b"bun-cc", bun_sys::OpenDirOptions::default())
+            else {
+                return;
+            };
+            Self::populate_compiler_rt_dir(&bun_cc);
+        }
 
+        // Prefer the per-user directory; if it (or any candidate) cannot be
+        // safely populated -- wrong owner/mode, or an entry inside it is a
+        // pre-planted symlink -- abandon it and mint a fresh private one.
+        #[cfg(unix)]
+        {
+            if let Some(bun_cc) = Self::open_owned_compiler_rt_dir(&tmpdir)
+                && Self::populate_compiler_rt_dir(&bun_cc)
+            {
+                return;
+            }
+            for _ in 0..8 {
+                let mut name_buf = PathBuffer::uninit();
+                let Ok(name) =
+                    Fs::FileSystem::tmpname(b"bun-cc", &mut name_buf.0, bun_core::fast_random())
+                else {
+                    return;
+                };
+                match bun_sys::mkdirat(tmpdir.fd(), name, 0o700) {
+                    Ok(()) => {}
+                    Err(err) if err.get_errno() == bun_sys::E::EEXIST => continue,
+                    Err(_) => return,
+                }
+                let dir_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOFOLLOW;
+                let Ok(dir) = tmpdir.open_at_with(name.as_bytes(), dir_flags) else {
+                    return;
+                };
+                let _ = Self::populate_compiler_rt_dir(&dir);
+                return;
+            }
+        }
+    }
+
+    /// Stage every header into `bun_cc` and publish its path; returns false
+    /// (leaving nothing published) if any entry could not be written -- e.g.
+    /// a pre-planted symlinked entry refused by the no-follow write.
+    fn populate_compiler_rt_dir(bun_cc: &bun_sys::Dir) -> bool {
         for (name, source) in CompilerRtSources::SOURCES {
-            let name_z = ZBox::from_bytes(name.as_bytes());
-            let _ = bun_sys::File::write_file(bun_cc.fd(), name_z.as_zstr(), source);
+            let wrote = Self::write_compiler_rt_file(bun_cc, name.as_bytes(), source);
+            // On Unix a refused write means the entry is a planted symlink, so
+            // this directory is abandoned for a fresh one. On Windows the
+            // directory is already per-user; keep staging the rest best-effort.
+            if cfg!(unix) && !wrote {
+                return false;
+            }
         }
 
         let mut path_buf = PathBuffer::uninit();
         let Ok(path) = bun_sys::get_fd_path(bun_cc.fd(), &mut path_buf) else {
-            return;
+            return false;
         };
         // `ZBox::from_bytes` panics on OOM.
         let _ = COMPILER_RT_DIR.set(ZBox::from_bytes(&*path));
 
         let Ok(node_dir) = bun_cc.make_open_path(b"node", bun_sys::OpenDirOptions::default())
         else {
-            return;
+            return true;
         };
         for (name, source) in CompilerRtSources::NODE_HEADERS {
-            let name_z = ZBox::from_bytes(name.as_bytes());
-            let _ = bun_sys::File::write_file(node_dir.fd(), name_z.as_zstr(), source);
+            Self::write_compiler_rt_file(&node_dir, name.as_bytes(), source);
         }
         if let Ok(node_path) = bun_sys::get_fd_path(node_dir.fd(), &mut path_buf) {
             let _ = COMPILER_RT_NODE_DIR.set(ZBox::from_bytes(&*node_path));
         }
+        true
+    }
+
+    /// Write one staged header without following a pre-planted symlinked
+    /// entry inside the header directory.
+    fn write_compiler_rt_file(dir: &bun_sys::Dir, name: &[u8], source: &[u8]) -> bool {
+        #[cfg(unix)]
+        {
+            let Ok(file) = dir.open_file(
+                name,
+                bun_sys::O::WRONLY
+                    | bun_sys::O::CREAT
+                    | bun_sys::O::TRUNC
+                    | bun_sys::O::CLOEXEC
+                    | bun_sys::O::NOFOLLOW,
+                0o644,
+            ) else {
+                return false;
+            };
+            file.write_all(source).is_ok()
+        }
+        #[cfg(windows)]
+        {
+            let name_z = ZBox::from_bytes(name);
+            bun_sys::File::write_file(dir.fd(), name_z.as_zstr(), source).is_ok()
+        }
+    }
+
+    /// Per-user `bun-cc-<uid>` directory: created 0700, reused only when it
+    /// is a real directory owned by the current user and not writable by
+    /// group or others, so a pre-planted or shared entry is never used to
+    /// stage compiler headers.
+    #[cfg(unix)]
+    fn open_owned_compiler_rt_dir(tmpdir: &bun_sys::Dir) -> Option<bun_sys::Dir> {
+        let uid = bun_sys::c::getuid();
+        let mut dir_name = Vec::new();
+        write!(&mut dir_name, "bun-cc-{uid}").ok()?;
+        let dir_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOFOLLOW;
+        let dir = match tmpdir.open_at_with(&dir_name, dir_flags) {
+            Ok(dir) => dir,
+            Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
+                let name_z = ZBox::from_bytes(&dir_name);
+                match bun_sys::mkdirat(tmpdir.fd(), name_z.as_zstr(), 0o700) {
+                    Ok(()) => {}
+                    Err(err) if err.get_errno() == bun_sys::E::EEXIST => {}
+                    Err(_) => return None,
+                }
+                tmpdir.open_at_with(&dir_name, dir_flags).ok()?
+            }
+            Err(_) => return None,
+        };
+        let st = bun_sys::fstat(dir.fd()).ok()?;
+        if st.st_uid != uid || (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) != 0 {
+            return None;
+        }
+        Some(dir)
     }
 
     pub(crate) fn dir() -> Option<&'static ZStr> {
@@ -2539,7 +2644,7 @@ static WORKAROUND: MyFunctionSStructWorkAround = MyFunctionSStructWorkAround {
 /// `js2native` codegen can resolve it as `crate::ffi::ffi::bun__ffi__cc`.
 #[allow(non_snake_case)]
 #[inline]
-pub fn bun__ffi__cc(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn bun__ffi__cc(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     FFI::bun_ffi_cc(global, callframe)
 }
 

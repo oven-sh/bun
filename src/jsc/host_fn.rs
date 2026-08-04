@@ -70,6 +70,63 @@ macro_rules! jsc_host_abi {
     };
 }
 
+/// Re-exported for [`jsc_promise_handler!`] expansions so callers need no
+/// direct `bun_opaque` dep. Not public API.
+#[doc(hidden)]
+pub use bun_opaque::opaque_deref as __opaque_deref;
+
+/// Define a `JsHostFn`-shaped promise-reaction shim that forwards to a safe
+/// `fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>` body.
+///
+/// Expands to a [`jsc_host_abi!`] `extern fn` whose signature matches
+/// [`JsHostFn`] (so the fn item coerces to the `JSValue::then`/`then2`
+/// callback slot and to `Zig::GlobalObject::promiseHandlerID`'s address
+/// comparison). The `*mut → &` derefs and `JsResult → JSValue` mapping are
+/// centralised here so the caller spells zero `unsafe`.
+///
+/// Two forms:
+///
+/// ```ignore
+/// // `#[unsafe(export_name = "Link__Symbol")]` on a locally-named shim:
+/// bun_jsc::jsc_promise_handler!(
+///     pub(crate) fn on_resolve_shim = "Link__Symbol" => on_resolve
+/// );
+///
+/// // `#[unsafe(no_mangle)]` — the shim ident IS the link symbol:
+/// bun_jsc::jsc_promise_handler!(
+///     pub fn Link__Symbol => on_resolve
+/// );
+/// ```
+#[macro_export]
+macro_rules! jsc_promise_handler {
+    ($vis:vis fn $shim:ident = $link:literal => $body:path) => {
+        $crate::jsc_host_abi! {
+            #[unsafe(export_name = $link)]
+            $vis unsafe fn $shim(
+                g: *mut $crate::JSGlobalObject,
+                cf: *mut $crate::CallFrame,
+            ) -> $crate::JSValue {
+                let g = $crate::host_fn::__opaque_deref(g);
+                let cf = $crate::host_fn::__opaque_deref(cf);
+                $crate::host_fn::to_js_host_fn_result(g, $body(g, cf))
+            }
+        }
+    };
+    ($vis:vis fn $shim:ident => $body:path) => {
+        $crate::jsc_host_abi! {
+            #[unsafe(no_mangle)]
+            $vis unsafe fn $shim(
+                g: *mut $crate::JSGlobalObject,
+                cf: *mut $crate::CallFrame,
+            ) -> $crate::JSValue {
+                let g = $crate::host_fn::__opaque_deref(g);
+                let cf = $crate::host_fn::__opaque_deref(cf);
+                $crate::host_fn::to_js_host_fn_result(g, $body(g, cf))
+            }
+        }
+    };
+}
+
 // Capitalized re-exports — enough call sites (and the crate-root re-export in
 // lib.rs) use the acronym-caps `JSHostFn*` spelling that both must resolve.
 pub use {JsHostFn as JSHostFn, JsHostFnZig as JSHostFnZig};
@@ -121,7 +178,7 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
     assert!(value.is_empty() == global_this.has_exception(), "host fn return/exception state mismatch");
 }
 
-pub fn to_js_host_setter_value(global_this: &JSGlobalObject, value: JsResult<()>) -> bool {
+pub(crate) fn to_js_host_setter_value(global_this: &JSGlobalObject, value: JsResult<()>) -> bool {
     match value {
         Err(JsError::Thrown) => false,
         Err(JsError::OutOfMemory) => {
@@ -307,7 +364,7 @@ pub fn host_fn_static<R: IntoHostFnReturn>(
 /// these in `to_js_host_call` would trip the return/exception biconditional
 /// when the body legitimately leaves an exception pending.
 #[inline]
-pub fn host_fn_static_passthrough(
+pub(crate) fn host_fn_static_passthrough(
     global: &JSGlobalObject,
     callframe: &CallFrame,
     f: impl FnOnce(&JSGlobalObject, &CallFrame) -> JSValue,
@@ -430,29 +487,7 @@ pub fn host_fn_construct_this<R: IntoHostConstructReturn>(
     host_construct_result(global, || f(global, callframe, this_value))
 }
 
-/// `getInternalProperties`: `fn(&mut self, &JSGlobalObject, JSValue) -> R`.
-#[track_caller]
-#[inline]
-pub fn host_fn_internal_props<T, R: IntoHostFnReturn>(
-    this: &mut T,
-    global: &JSGlobalObject,
-    this_value: JSValue,
-    f: impl FnOnce(&mut T, &JSGlobalObject, JSValue) -> R,
-) -> JSValue {
-    host_fn_result(global, || f(this, global, this_value))
-}
 
-/// `fn(&self, &JSGlobalObject, JSValue) -> R`.
-#[track_caller]
-#[inline]
-pub fn host_fn_internal_props_shared<T, R: IntoHostFnReturn>(
-    this: &T,
-    global: &JSGlobalObject,
-    this_value: JSValue,
-    f: impl FnOnce(&T, &JSGlobalObject, JSValue) -> R,
-) -> JSValue {
-    host_fn_result(global, || f(this, global, this_value))
-}
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -507,17 +542,6 @@ pub fn host_fn_getter_shared<T, R: IntoHostFnReturn>(
     host_fn_result(global, || f(this, global))
 }
 
-/// Prototype getter (this: true): `fn(&mut self, JSValue, &JSGlobalObject) -> R`.
-#[track_caller]
-#[inline]
-pub fn host_fn_getter_this<T, R: IntoHostFnReturn>(
-    this: &mut T,
-    this_value: JSValue,
-    global: &JSGlobalObject,
-    f: impl FnOnce(&mut T, JSValue, &JSGlobalObject) -> R,
-) -> JSValue {
-    host_fn_result(global, || f(this, this_value, global))
-}
 
 /// Prototype getter (`sharedThis`, this: true):
 /// `fn(&self, JSValue, &JSGlobalObject) -> R`.
@@ -544,18 +568,6 @@ pub fn host_fn_setter_shared<T, R: IntoHostSetterReturn>(
     host_setter_result(global, || f(this, global, value))
 }
 
-/// Prototype setter (this: true): `fn(&mut self, JSValue, &JSGlobalObject, JSValue) -> R`.
-#[track_caller]
-#[inline]
-pub fn host_fn_setter_this<T, R: IntoHostSetterReturn>(
-    this: &mut T,
-    this_value: JSValue,
-    global: &JSGlobalObject,
-    value: JSValue,
-    f: impl FnOnce(&mut T, JSValue, &JSGlobalObject, JSValue) -> R,
-) -> bool {
-    host_setter_result(global, || f(this, this_value, global, value))
-}
 
 /// Prototype setter (`sharedThis`, this: true):
 /// `fn(&self, JSValue, &JSGlobalObject, JSValue) -> R`.

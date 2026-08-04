@@ -186,6 +186,11 @@ extern const unsigned char BUN_SOCKET_KIND_UWS_HTTP_TLS;
  * SSL stack unwinds; freed with the SSL if never delivered. */
 static int us_ssl_pending_session_idx = -1;
 static int us_ssl_pending_keylog_idx = -1;
+/* The SSL_SESSION* most recently delivered to the new-session callback. Under
+ * TLS 1.3 BoringSSL never updates the SSL's own established_session with a
+ * received NewSessionTicket, so SSL_get_session() alone gives an unresumable
+ * snapshot; node:tls's getSession()/getTLSTicket() read from here instead. */
+static int us_ssl_new_session_ref_idx = -1;
 #ifdef _WIN32
 static INIT_ONCE us_ex_idx_once = INIT_ONCE_STATIC_INIT;
 #else
@@ -272,6 +277,11 @@ static void us_ssl_pending_session_free(void *parent, void *ptr, CRYPTO_EX_DATA 
     pending = next;
   }
 }
+static void us_ssl_new_session_ref_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                                        int index, long argl, void *argp) {
+  (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
+  if (ptr) SSL_SESSION_free((SSL_SESSION *)ptr);
+}
 /* NSS key-log lines are produced from inside SSL_do_handshake/SSL_read, so
  * they are parked on the SSL the same way new sessions are and delivered once
  * the read unwinds. The stored bytes already carry the trailing newline Node
@@ -333,6 +343,14 @@ static int us_ssl_new_session_cb(SSL *ssl, SSL_SESSION *session) {
   if (!SSL_get_ex_data(ssl, us_ssl_is_socket_ex_idx)) {
     return 0;
   }
+  /* Stash the latest session for getSession()/getTLSTicket(): BoringSSL only
+   * hands a TLS 1.3 NewSessionTicket to this callback, never to the SSL's
+   * established_session. Do this before the serialize/park step so a session
+   * too large to queue is still reachable. */
+  SSL_SESSION_up_ref(session);
+  SSL_SESSION *prev = SSL_get_ex_data(ssl, us_ssl_new_session_ref_idx);
+  SSL_set_ex_data(ssl, us_ssl_new_session_ref_idx, session);
+  if (prev) SSL_SESSION_free(prev);
   int length = i2d_SSL_SESSION(session, NULL);
   if (length <= 0 || length > US_SSL_PENDING_SESSION_MAX) {
     return 0;
@@ -402,6 +420,7 @@ static void us_ex_idx_init(void) {
   us_ssl_inline_reject_err_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_pending_session_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_pending_session_free);
   us_ssl_pending_keylog_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_pending_session_free);
+  us_ssl_new_session_ref_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_new_session_ref_free);
 }
 
 #ifdef _WIN32
@@ -462,6 +481,14 @@ int us_ssl_pop_pending_session(SSL *ssl, unsigned char *out, int out_cap) {
 
 int us_ssl_pop_pending_keylog(SSL *ssl, unsigned char *out, int out_cap) {
   return us_ssl_pop_pending(ssl, us_ssl_pending_keylog_idx, out, out_cap);
+}
+
+/* The resumable session most recently delivered via the new-session callback,
+ * or NULL if none has arrived. The returned pointer is borrowed from the SSL's
+ * ex_data and valid until the next NewSessionTicket or SSL_free. */
+SSL_SESSION *us_ssl_get_new_session(SSL *ssl) {
+  if (us_ssl_new_session_ref_idx < 0) return NULL;
+  return SSL_get_ex_data(ssl, us_ssl_new_session_ref_idx);
 }
 
 int us_ssl_ctx_cache_ex_idx(void) {

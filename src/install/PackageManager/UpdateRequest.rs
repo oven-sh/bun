@@ -17,7 +17,7 @@ pub struct UpdateRequest {
     // CLI positionals are
     // process-lifetime, hence `&'static`.
     pub name: &'static [u8],
-    pub name_hash: PackageNameHash,
+    pub(crate) name_hash: PackageNameHash,
     pub version: dependency::Version,
     /// Backing buffer for `version.literal` (and friends) — either a leaked
     /// CLI positional (truly process-lifetime) or the active lockfile's
@@ -29,14 +29,14 @@ pub struct UpdateRequest {
     /// type map: `[]const u8` struct-field, never freed, points into a buffer
     /// owned elsewhere → `RawSlice<u8>` (centralises the outlives-holder
     /// invariant; see `version_buf()`).
-    pub version_buf: bun_ptr::RawSlice<u8>,
-    pub package_id: PackageID,
-    pub is_aliased: bool,
+    pub(crate) version_buf: bun_ptr::RawSlice<u8>,
+    pub(crate) package_id: PackageID,
+    pub(crate) is_aliased: bool,
     pub failed: bool,
     /// This must be cloned to handle when the AST store resets.
     /// ARENA-owned (AST `Expr.Data` store) — raw pointer per LIFETIMES.tsv;
     /// only valid while the store that allocated it is alive.
-    pub e_string: Option<*mut js_ast::E::String>,
+    pub(crate) e_string: Option<*mut js_ast::E::String>,
 }
 
 impl Default for UpdateRequest {
@@ -87,7 +87,7 @@ impl UpdateRequest {
     }
 
     #[inline]
-    pub fn matches(&self, dependency: &Dependency, string_buf: &[u8]) -> bool {
+    pub(crate) fn matches(&self, dependency: &Dependency, string_buf: &[u8]) -> bool {
         self.name_hash
             == if self.name.is_empty() {
                 StringBuilder::string_hash(dependency.version.literal.slice(string_buf))
@@ -96,7 +96,7 @@ impl UpdateRequest {
             }
     }
 
-    pub fn get_name(&self) -> &[u8] {
+    pub(crate) fn get_name(&self) -> &[u8] {
         if self.is_aliased {
             self.name
         } else {
@@ -105,7 +105,7 @@ impl UpdateRequest {
     }
 
     /// If `self.package_id` is not `invalid_package_id`, it must be less than `lockfile.packages.len`.
-    pub fn get_name_in_lockfile<'a>(&'a self, lockfile: &'a Lockfile) -> Option<&'a [u8]> {
+    pub(crate) fn get_name_in_lockfile<'a>(&'a self, lockfile: &'a Lockfile) -> Option<&'a [u8]> {
         if self.package_id == INVALID_PACKAGE_ID {
             None
         } else {
@@ -118,7 +118,7 @@ impl UpdateRequest {
     ///
     /// `self` needs to be a pointer! If `self` is a copy and the name returned from
     /// resolved_name is inlined, you will return a pointer to stack memory.
-    pub fn get_resolved_name<'a>(&'a self, lockfile: &'a Lockfile) -> &'a [u8] {
+    pub(crate) fn get_resolved_name<'a>(&'a self, lockfile: &'a Lockfile) -> &'a [u8] {
         if self.is_aliased {
             self.name
         } else if let Some(name) = self.get_name_in_lockfile(lockfile) {

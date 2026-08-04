@@ -52,20 +52,20 @@ use crate::program::{Host, JsxImportKind};
 
 /// Result of code generation for a single function.
 pub struct CodegenFunction {
-    pub loc: Option<DiagSourceLocation>,
-    pub id: Option<LocRef>,
-    pub name_hint: Option<String>,
-    pub params: Vec<G::Arg>,
-    pub has_rest_arg: bool,
-    pub body: Vec<Stmt>,
-    pub generator: bool,
-    pub is_async: bool,
-    pub memo_slots_used: u32,
-    pub memo_blocks: u32,
-    pub memo_values: u32,
-    pub pruned_memo_blocks: u32,
-    pub pruned_memo_values: u32,
-    pub outlined: Vec<OutlinedFunction>,
+    pub(crate) id: Option<LocRef>,
+    #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
+    pub(crate) name_hint: Option<String>,
+    pub(crate) params: Vec<G::Arg>,
+    pub(crate) has_rest_arg: bool,
+    pub(crate) body: Vec<Stmt>,
+    pub(crate) generator: bool,
+    pub(crate) is_async: bool,
+    pub(crate) memo_slots_used: u32,
+    pub(crate) memo_blocks: u32,
+    pub(crate) memo_values: u32,
+    pub(crate) pruned_memo_blocks: u32,
+    pub(crate) pruned_memo_values: u32,
+    pub(crate) outlined: Vec<OutlinedFunction>,
 }
 
 impl std::fmt::Debug for CodegenFunction {
@@ -81,8 +81,9 @@ impl std::fmt::Debug for CodegenFunction {
 }
 
 pub struct OutlinedFunction {
-    pub func: CodegenFunction,
-    pub fn_type: Option<crate::hir::ReactFunctionType>,
+    pub(crate) func: CodegenFunction,
+    #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
+    pub(crate) fn_type: Option<crate::hir::ReactFunctionType>,
 }
 
 #[derive(Clone, Copy)]
@@ -103,9 +104,9 @@ impl WellKnown {
 /// Host-side state shared across nested function-expression codegen so the
 /// same identifier name resolves to the same `Ref` everywhere in the compiled
 /// component.
-pub struct Codegen<'h> {
-    pub host: &'h mut dyn Host,
-    pub arena: &'h Arena,
+pub(crate) struct Codegen<'h> {
+    pub(crate) host: &'h mut dyn Host,
+    pub(crate) arena: &'h Arena,
     id_to_ref: IdMap<IdentifierId, Ref>,
     well_known: [Option<Ref>; WellKnown::COUNT],
     name_to_ref: HashMap<StoreStr, Ref>,
@@ -113,7 +114,11 @@ pub struct Codegen<'h> {
 }
 
 impl<'h> Codegen<'h> {
-    pub fn new(host: &'h mut dyn Host, arena: &'h Arena, memo_cache_import: Option<Ref>) -> Self {
+    pub(crate) fn new(
+        host: &'h mut dyn Host,
+        arena: &'h Arena,
+        memo_cache_import: Option<Ref>,
+    ) -> Self {
         let mut well_known = [None; WellKnown::COUNT];
         well_known[WellKnown::UseMemoCache as usize] = memo_cache_import;
         Codegen {
@@ -209,7 +214,7 @@ impl<'h> Codegen<'h> {
 }
 
 /// Top-level entry point: generates code for a reactive function.
-pub fn codegen_function(
+pub(crate) fn codegen_function(
     func: &ReactiveFunction,
     env: &mut Environment,
     cg: &mut Codegen<'_>,
@@ -359,6 +364,7 @@ pub fn codegen_function(
         let codegen = codegen_reactive_function(&mut outlined_cx, &reactive_fn_mut)?;
         outlined.push(OutlinedFunction {
             func: codegen,
+            #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
             fn_type: entry.fn_type,
         });
     }
@@ -514,8 +520,8 @@ fn codegen_reactive_function(
     });
 
     Ok(CodegenFunction {
-        loc: func.loc,
         id,
+        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
         name_hint: func.name_hint.clone(),
         params,
         has_rest_arg,
@@ -1847,14 +1853,17 @@ fn codegen_base_instruction_value(
             ))
         }
         InstructionValue::UnaryExpression {
-            operator, value, ..
+            operator,
+            value,
+            bun_flags,
+            ..
         } => {
             let arg = codegen_place_to_expression(cx, value)?;
             Ok(Expr::init(
                 E::Unary {
                     op: convert_unary_operator(*operator),
                     value: arg,
-                    flags: E::UnaryFlags::empty(),
+                    flags: *bun_flags,
                 },
                 loc,
             ))
@@ -1989,7 +1998,8 @@ fn codegen_base_instruction_value(
                 E::Unary {
                     op: OpCode::UnDelete,
                     value: property_access_expr(obj, property, loc, None),
-                    flags: E::UnaryFlags::empty(),
+                    // `lower_unary` only creates PropertyDelete when this flag was set.
+                    flags: E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
                 },
                 loc,
             ))
@@ -2049,7 +2059,7 @@ fn codegen_base_instruction_value(
                         },
                         loc,
                     ),
-                    flags: E::UnaryFlags::empty(),
+                    flags: E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
                 },
                 loc,
             ))

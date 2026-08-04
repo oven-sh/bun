@@ -1,6 +1,6 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, rmScope, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
 import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
@@ -619,7 +619,7 @@ describe("Bun.file in serve routes", () => {
       }
 
       Bun.gc(true);
-      const baseline = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+      const baseline = (rss() / 1024 / 1024) | 0;
 
       // Make many requests to large file
       for (let i = 0; i < 50; i++) {
@@ -629,7 +629,7 @@ describe("Bun.file in serve routes", () => {
       }
 
       Bun.gc(true);
-      const final = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+      const final = (rss() / 1024 / 1024) | 0;
       const delta = final - baseline;
 
       // ASAN's quarantine retains freed allocations (default 256 MB) so RSS
@@ -711,6 +711,22 @@ describe("Bun.file in serve routes", () => {
       expect(res.status).toBe(200);
       expect(await res.text()).toBe("56789");
       expect(res.headers.get("Content-Length")).toBe("5");
+    });
+
+    // The slice is shorter than the file, so the byte budget runs out before
+    // the reader reports EOF: the response completes inline while a deferred
+    // completion still hops through the event loop. Repeated requests must
+    // each deliver exactly the slice and recycle the request context cleanly.
+    it("truncated-length EOF path completes cleanly across repeated requests", async () => {
+      for (let i = 0; i < 32; i++) {
+        const res = await fetch(new URL(`/partial-slice.txt`, server.url));
+        expect(res.status).toBe(200);
+        expect(await res.text()).toBe("56789");
+        expect(res.headers.get("Content-Length")).toBe("5");
+      }
+      // The pool is still healthy afterwards: an unrelated route responds.
+      const check = await fetch(new URL(`/hello-blob.txt`, server.url));
+      expect(check.status).toBe(200);
     });
   });
 

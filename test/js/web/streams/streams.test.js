@@ -7,7 +7,7 @@ import {
   readableStreamToText,
 } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { createReadStream, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -648,6 +648,51 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     const result = await Promise.race([reader.read(), Bun.sleep(1000).then(() => "TIMEOUT")]);
     expect(result).not.toBe("TIMEOUT");
     expect(new TextDecoder().decode(result.value)).toBe("tick");
+  });
+
+  it("the per-global Web Streams state is not a GC cell", async () => {
+    // JSStreamsRuntime is a plain struct held by value on Zig::GlobalObject; it should
+    // never appear as a JSCell in a heap snapshot. Do one direct read first so every
+    // streams path that would have materialized it has run.
+    const rs = new ReadableStream({
+      type: "direct",
+      pull(c) {
+        c.write("x");
+        return new Promise(() => {});
+      },
+    });
+    const reader = rs.getReader();
+    await reader.read();
+    const snap = Bun.generateHeapSnapshot();
+    expect(snap.nodeClassNames).toBeArray();
+    expect(snap.nodeClassNames).toContain("DirectStreamController");
+    expect(snap.nodeClassNames).not.toContain("StreamsRuntime");
+    reader.cancel();
+  });
+
+  it("many direct controllers armed in one tick each deliver their own byte", async () => {
+    // Functional coverage of the nextTick-scheduled auto-flush: 64 controllers armed in the
+    // same tick, a full GC, and every read must still resolve with the byte its own pull
+    // wrote (not a sibling's).
+    const N = 64;
+    const readers = [];
+    const reads = [];
+    for (let i = 0; i < N; i++) {
+      const rs = new ReadableStream({
+        type: "direct",
+        pull(c) {
+          c.write(new Uint8Array([i]));
+          return new Promise(() => {});
+        },
+      });
+      const reader = rs.getReader();
+      readers.push(reader);
+      reads.push(reader.read());
+    }
+    Bun.gc(true);
+    const results = await Promise.all(reads);
+    expect(results.map(r => r.value[0])).toEqual([...Array(N).keys()]);
+    for (const r of readers) r.cancel();
   });
 
   it("an async generator Response body delivers each yield to a JS reader as it is produced", async () => {
@@ -1675,11 +1720,14 @@ it("Bun.file().stream() read text from large file", async () => {
   // Guard against reading the same repeating chunks
   // There were bugs previously where the stream would
   // repeat the same chunk over and over again
+  // Debug+ASAN makes the ~260k SHA1 calls below ~50x slower; 1MB still spans
+  // multiple stream chunks so the repeating-chunk guard holds.
+  const targetSize = 1024 * 1024 * (isDebug || isASAN ? 1 : 10);
   var sink = new ArrayBufferSink();
-  sink.start({ highWaterMark: 1024 * 1024 * 10 });
+  sink.start({ highWaterMark: targetSize });
   var written = 0;
   var i = 0;
-  while (written < 1024 * 1024 * 10) {
+  while (written < targetSize) {
     written += sink.write(Bun.SHA1.hash((i++).toString(10), "hex"));
   }
   const hugely = Buffer.from(sink.end()).toString();
@@ -1791,10 +1839,16 @@ recursiveFunction();
 
 it("handles exceptions during empty stream creation", () => {
   expect(() => {
+    // Only the unwind frames nearest the stack limit exercise the
+    // ReadableStream__empty exception path this test covers; the remaining
+    // thousands of frames re-run the trivially-succeeding case and push
+    // debug+ASAN past the per-test timeout.
+    let unwound = 0;
     function foo() {
       try {
         foo();
       } catch (e) {}
+      if (unwound++ > 256) return;
       const v8 = new Blob();
       v8.stream();
     }

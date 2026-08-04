@@ -4,6 +4,7 @@ use crate::cli::Command;
 use crate::cli::test::changed_files_filter as ChangedFilesFilter;
 use crate::cli::test::parallel_runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
+use crate::cli::test::timings::Timings;
 use bun_collections::{ArrayHashMap, BoundedArray, StringHashMap};
 use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{pretty_error, pretty_errorln};
@@ -213,8 +214,8 @@ fn fmt_status_text_line(
 #[derive(Default)]
 pub struct JunitFailure {
     pub name: Vec<u8>,
-    pub message: Vec<u8>,
-    pub body: Vec<u8>,
+    pub(crate) message: Vec<u8>,
+    pub(crate) body: Vec<u8>,
 }
 
 /// Append `input` to `out`, dropping CSI sequences (`ESC '[' ... final`), so a
@@ -242,34 +243,33 @@ fn push_stripping_ansi(out: &mut Vec<u8>, input: &[u8]) {
 // - Add timestamp field to the JUnit report
 #[derive(Default)]
 pub struct JunitReporter {
-    pub contents: Vec<u8>,
-    pub total_metrics: Metrics,
-    pub offset_of_testsuites_value: usize,
-    pub current_file: Box<[u8]>,
-    pub sent_upto: usize,
-    pub elements_only: bool,
-    pub file_start_ns: u64,
-    pub file_end_ns: u64,
-    pub properties_list_to_repeat_in_every_test_suite: Option<Box<[u8]>>,
+    pub(crate) contents: Vec<u8>,
+    pub(crate) total_metrics: Metrics,
+    pub(crate) offset_of_testsuites_value: usize,
+    pub(crate) current_file: Box<[u8]>,
+    pub(crate) sent_upto: usize,
+    pub(crate) elements_only: bool,
+    pub(crate) file_start_ns: u64,
+    pub(crate) file_end_ns: u64,
+    pub(crate) properties_list_to_repeat_in_every_test_suite: Option<Box<[u8]>>,
 
-    pub suite_stack: Vec<SuiteInfo>,
-    pub current_depth: u32,
+    pub(crate) suite_stack: Vec<SuiteInfo>,
+    pub(crate) current_depth: u32,
 
     /// Error captured by `on_uncaught_exception` for the currently-failing
     /// test; consumed by `write_test_case` on the next `Result::Fail`.
-    pub last_failure: Option<JunitFailure>,
+    pub(crate) last_failure: Option<JunitFailure>,
 
-    pub hostname_value: Option<Box<[u8]>>,
+    pub(crate) hostname_value: Option<Box<[u8]>>,
 }
 
 #[derive(Default)]
 pub struct SuiteInfo {
     pub name: Box<[u8]>,
-    pub offset_of_attributes: usize,
-    pub metrics: Metrics,
-    pub is_file_suite: bool,
-    pub line_number: u32,
-    pub started_ns: u64,
+    pub(crate) offset_of_attributes: usize,
+    pub(crate) metrics: Metrics,
+    pub(crate) is_file_suite: bool,
+    pub(crate) started_ns: u64,
 }
 
 // We dupe the name unconditionally in begin_test_suite_with_line, so the
@@ -277,15 +277,15 @@ pub struct SuiteInfo {
 
 #[derive(Default, Clone, Copy)]
 pub struct Metrics {
-    pub test_cases: u32,
-    pub assertions: u32,
-    pub failures: u32,
-    pub skipped: u32,
-    pub elapsed_time: u64,
+    pub(crate) test_cases: u32,
+    pub(crate) assertions: u32,
+    pub(crate) failures: u32,
+    pub(crate) skipped: u32,
+    pub(crate) elapsed_time: u64,
 }
 
 impl Metrics {
-    pub(crate) fn add(&mut self, other: &Metrics) {
+    fn add(&mut self, other: &Metrics) {
         self.test_cases += other.test_cases;
         self.assertions += other.assertions;
         self.failures += other.failures;
@@ -294,7 +294,7 @@ impl Metrics {
 }
 
 impl JunitReporter {
-    pub fn get_hostname(&mut self) -> Option<&[u8]> {
+    pub(crate) fn get_hostname(&mut self) -> Option<&[u8]> {
         if self.hostname_value.is_none() {
             #[cfg(windows)]
             {
@@ -328,7 +328,7 @@ impl JunitReporter {
         None
     }
 
-    pub fn init() -> Box<JunitReporter> {
+    pub(crate) fn init() -> Box<JunitReporter> {
         Box::new(JunitReporter::default())
     }
 
@@ -338,7 +338,7 @@ impl JunitReporter {
     /// `print_error_instance_body` has already populated, so the next
     /// `write_test_case` can emit a useful `<failure>` without re-running
     /// the exception formatter.
-    pub fn record_failure(&mut self, exception: &jsc::ZigException) {
+    pub(crate) fn record_failure(&mut self, exception: &jsc::ZigException) {
         let failure = self.last_failure.get_or_insert_default();
         let name = exception.name.to_utf8();
         let raw_message = exception.message.to_utf8();
@@ -414,7 +414,7 @@ impl JunitReporter {
     }
 
     /// VirtualMachine::on_print_error_zig_exception thunk.
-    pub fn record_failure_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException) {
+    pub(crate) fn record_failure_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException) {
         // SAFETY: `ctx` was set to `&mut JunitReporter` by `on_uncaught_exception`
         // for the duration of a single `run_error_handler` call; single-threaded,
         // no other borrow of the reporter is live across that call.
@@ -521,11 +521,11 @@ impl JunitReporter {
         &SPACES[0..(total_spaces as usize).min(SPACES.len())]
     }
 
-    pub fn begin_test_suite(&mut self, name: &[u8]) -> crate::Result<()> {
+    pub(crate) fn begin_test_suite(&mut self, name: &[u8]) -> crate::Result<()> {
         self.begin_test_suite_with_line(name, 0, true)
     }
 
-    pub fn begin_test_suite_with_line(
+    pub(crate) fn begin_test_suite_with_line(
         &mut self,
         name: &[u8],
         line_number: u32,
@@ -584,7 +584,6 @@ impl JunitReporter {
             offset_of_attributes,
             metrics: Metrics::default(),
             is_file_suite,
-            line_number,
             started_ns: if is_file_suite { self.file_start_ns } else { 0 },
         });
 
@@ -595,7 +594,7 @@ impl JunitReporter {
         Ok(())
     }
 
-    pub fn end_test_suite(&mut self) -> crate::Result<()> {
+    pub(crate) fn end_test_suite(&mut self) -> crate::Result<()> {
         if self.suite_stack.is_empty() {
             return Ok(());
         }
@@ -651,7 +650,7 @@ impl JunitReporter {
         Ok(())
     }
 
-    pub fn write_test_case(
+    pub(crate) fn write_test_case(
         &mut self,
         status: bun_test::Execution::Result,
         file: &[u8],
@@ -845,7 +844,7 @@ impl JunitReporter {
         Ok(())
     }
 
-    pub fn write_to_file(&mut self, path: &[u8]) -> crate::Result<()> {
+    pub(crate) fn write_to_file(&mut self, path: &[u8]) -> crate::Result<()> {
         if self.contents.is_empty() {
             return Ok(());
         }
@@ -917,7 +916,7 @@ impl JunitReporter {
 /// would before exiting; the vendored-node-test runner opts in via
 /// `BUN_TEST_DRAIN_EVENT_LOOP=1` so mustCall()-style exit checks see
 /// completed async work. Off by default: bun suites keep exit-after-tests.
-pub(crate) fn should_drain_event_loop() -> bool {
+fn should_drain_event_loop() -> bool {
     env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
 }
 
@@ -926,30 +925,32 @@ pub struct CommandLineReporter {
     // reporter is held in a `Box` local to `TestCommand::exec` which never
     // returns before process exit, so `'static` is sound here. Revisit if the
     // reporter ever becomes scoped.
-    pub jest: TestRunner<'static>,
-    pub last_dot: u32,
-    pub repeat_count: u32,
+    pub(crate) jest: TestRunner<'static>,
+    pub(crate) repeat_count: u32,
     /// Interior-mut: written from `BunTestRoot::on_before_print` via `&CommandLineReporter`
-    pub last_printed_dot: core::cell::Cell<bool>,
+    pub(crate) last_printed_dot: core::cell::Cell<bool>,
 
     /// When running as a `--parallel` worker, this is the coordinator-assigned
     /// index of the file currently being executed. While set, per-test output
     /// is sent over the IPC pipe instead of to stderr; the coordinator owns
     /// the terminal.
-    pub worker_ipc_file_idx: Option<u32>,
+    pub(crate) worker_ipc_file_idx: Option<u32>,
 
-    pub failures_to_repeat_buf: Vec<u8>,
-    pub skips_to_repeat_buf: Vec<u8>,
-    pub todos_to_repeat_buf: Vec<u8>,
+    pub(crate) failures_to_repeat_buf: Vec<u8>,
+    pub(crate) skips_to_repeat_buf: Vec<u8>,
+    pub(crate) todos_to_repeat_buf: Vec<u8>,
 
-    pub reporters: ReportersConfig,
+    pub(crate) reporters: ReportersConfig,
+
+    /// `--timings`: loaded before the run, updated per file, written back under `--update-timings`.
+    pub(crate) timings: Option<Timings>,
 }
 
 #[derive(Default)]
 pub struct ReportersConfig {
-    pub dots: bool,
-    pub only_failures: bool,
-    pub junit: Option<Box<JunitReporter>>,
+    pub(crate) dots: bool,
+    pub(crate) only_failures: bool,
+    pub(crate) junit: Option<Box<JunitReporter>>,
 }
 
 impl CommandLineReporter {
@@ -1366,11 +1367,11 @@ impl CommandLineReporter {
     }
 
     #[inline]
-    pub fn summary(&mut self) -> &mut Summary {
+    pub(crate) fn summary(&mut self) -> &mut Summary {
         &mut self.jest.summary
     }
 
-    pub fn handle_test_completed(
+    pub(crate) fn handle_test_completed(
         buntest: &mut bun_test::BunTest,
         sequence: &mut bun_test::Execution::ExecutionSequence,
         test_entry: &mut bun_test::ExecutionEntry,
@@ -1519,6 +1520,7 @@ impl CommandLineReporter {
                     );
                     Output::flush();
                     this.write_junit_report_if_needed();
+                    this.write_timings_if_needed();
                     Global::exit(1);
                 }
             }
@@ -1529,7 +1531,7 @@ impl CommandLineReporter {
             .saturating_add(sequence.expect_call_count);
     }
 
-    pub fn print_summary(&mut self) {
+    pub(crate) fn print_summary(&mut self) {
         let summary_ = self.summary();
         let tests = summary_.fail + summary_.pass + summary_.skip + summary_.todo;
         let files = summary_.files;
@@ -1545,10 +1547,20 @@ impl CommandLineReporter {
         Output::print_start_end(bun::start_time(), bun::time::nano_timestamp());
     }
 
+    /// Like the JUnit report, called before every exit path (including bail) so measured durations aren't lost.
+    pub(crate) fn write_timings_if_needed(&mut self) {
+        if self.jest.test_options.update_timings
+            && self.worker_ipc_file_idx.is_none()
+            && let Some(timings) = self.timings.as_mut()
+        {
+            timings.write(self.jest.test_options.shard.is_some());
+        }
+    }
+
     /// Writes the JUnit reporter output file if a JUnit reporter is active and
     /// an outfile path was configured. This must be called before any early exit
     /// (e.g. bail) so that the report is not lost.
-    pub fn write_junit_report_if_needed(&mut self) {
+    pub(crate) fn write_junit_report_if_needed(&mut self) {
         if let Some(junit) = self.reporters.junit.as_mut() {
             if let Some(outfile) = self.jest.test_options.reporter_outfile.as_deref() {
                 if !junit.current_file.is_empty() {
@@ -1559,7 +1571,7 @@ impl CommandLineReporter {
         }
     }
 
-    pub fn generate_code_coverage<
+    pub(crate) fn generate_code_coverage<
         const REPORTERS_TEXT: bool,
         const REPORTERS_LCOV: bool,
         const ENABLE_ANSI_COLORS: bool,
@@ -1599,7 +1611,7 @@ impl CommandLineReporter {
         )
     }
 
-    pub fn render_lcov(
+    pub(crate) fn render_lcov(
         &mut self,
         vm: &mut VirtualMachine,
         opts: &CodeCoverageOptions,
@@ -1650,7 +1662,7 @@ impl CommandLineReporter {
         Some(buffered)
     }
 
-    pub fn print_code_coverage<
+    pub(crate) fn print_code_coverage<
         const REPORTERS_TEXT: bool,
         const REPORTERS_LCOV: bool,
         const ENABLE_ANSI_COLORS: bool,
@@ -2027,9 +2039,7 @@ impl CommandLineReporter {
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn BunTest__shouldGenerateCodeCoverage(
-    test_name_str: bun_core::String,
-) -> bool {
+extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun_core::String) -> bool {
     let zig_slice = test_name_str.to_utf8();
     // In this particular case, we don't actually care about non-ascii latin1 characters.
     // so we skip the ascii check
@@ -2116,7 +2126,7 @@ impl TestCommand {
         // `exec()` never returns before process exit, so the heap allocation
         // outlives all observers.
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
-        jsc::initialize(false);
+        jsc::initialize_with(false, ctx.test_options.isolate);
         bun_http::http_thread::init(&Default::default());
 
         let enable_random = ctx.test_options.randomize;
@@ -2182,7 +2192,6 @@ impl TestCommand {
             jest: TestRunner {
                 default_timeout_ms: ctx.test_options.default_timeout_ms,
                 concurrent: ctx.test_options.concurrent,
-                randomize: random_instance,
                 randomize_seed: if enable_random { Some(seed) } else { None },
                 // SAFETY: lifetime-erase to `'static`; backing storage lives in `ctx`
                 // (process-lifetime singleton) and `concurrent_test_glob_view` is held
@@ -2238,7 +2247,6 @@ impl TestCommand {
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
             },
-            last_dot: 0,
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
             worker_ipc_file_idx: None,
@@ -2246,6 +2254,11 @@ impl TestCommand {
             skips_to_repeat_buf: Vec::new(),
             todos_to_repeat_buf: Vec::new(),
             reporters: ReportersConfig::default(),
+            timings: if ctx.test_options.test_worker || ctx.test_options.timings_files.is_empty() {
+                None
+            } else {
+                Some(Timings::load(&ctx.test_options.timings_files))
+            },
         });
         // `defer { if (reporter.reporters.junit) |fr| fr.deinit() }` — handled by Drop.
         reporter.repeat_count = ctx.test_options.repeat_count.max(1);
@@ -2589,14 +2602,17 @@ impl TestCommand {
         // printing a confusing "running 0/0 test files".
         if let Some(shard) = &ctx.test_options.shard {
             if !test_files.is_empty() {
-                test_files.sort_by(|a, b| strings::order(a.as_bytes(), b.as_bytes()));
-
                 let mut write: usize = 0;
-                let total = test_files.len();
-                for i in 0..total {
-                    if i % (shard.count as usize) == (shard.index as usize) - 1 {
-                        test_files[write] = test_files[i];
-                        write += 1;
+                if let Some(timings) = reporter.timings.as_ref().filter(|t| !t.is_empty()) {
+                    write = timings.select_shard(test_files, *shard);
+                } else {
+                    test_files.sort_by(|a, b| strings::order(a.as_bytes(), b.as_bytes()));
+                    let total = test_files.len();
+                    for i in 0..total {
+                        if i % (shard.count as usize) == (shard.index as usize) - 1 {
+                            test_files[write] = test_files[i];
+                            write += 1;
+                        }
                     }
                 }
 
@@ -3018,6 +3034,9 @@ impl TestCommand {
         Output::flush();
 
         reporter.write_junit_report_if_needed();
+        if !test_files.is_empty() || ctx.test_options.shard.is_some() {
+            reporter.write_timings_if_needed();
+        }
 
         if vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH {
             let vm_ptr: *mut VirtualMachine = vm;
@@ -3098,7 +3117,7 @@ impl TestCommand {
             files: &'a [Interned],
         }
         impl<'a> Context<'a> {
-            pub(crate) fn begin(&mut self) {
+            fn begin(&mut self) {
                 let reporter = &mut *self.reporter;
                 let vm = &mut *self.vm;
                 let files = self.files;
@@ -3108,6 +3127,7 @@ impl TestCommand {
 
                 if files.len() > 1 {
                     for (i, file_name) in files[0..files.len() - 1].iter().enumerate() {
+                        let started = bun::time::milli_timestamp();
                         if let Err(err) = TestCommand::run(
                             reporter,
                             vm,
@@ -3118,6 +3138,9 @@ impl TestCommand {
                             },
                         ) {
                             handle_top_level_test_error_before_javascript_start(&err);
+                        }
+                        if let Some(t) = reporter.timings.as_mut() {
+                            t.record_since(file_name.as_bytes(), started);
                         }
                         reporter.jest.default_timeout_override = u32::MAX;
                         Global::mimalloc_cleanup(false);
@@ -3132,16 +3155,21 @@ impl TestCommand {
                     }
                 }
 
+                let last = files[files.len() - 1];
+                let started = bun::time::milli_timestamp();
                 if let Err(err) = TestCommand::run(
                     reporter,
                     vm,
-                    files[files.len() - 1].as_bytes(),
+                    last.as_bytes(),
                     bun_test::FirstLast {
                         first: isolate || files.len() == 1,
                         last: true,
                     },
                 ) {
                     handle_top_level_test_error_before_javascript_start(&err);
+                }
+                if let Some(t) = reporter.timings.as_mut() {
+                    t.record_since(last.as_bytes(), started);
                 }
             }
         }
@@ -3298,6 +3326,7 @@ impl TestCommand {
                             if reporter.jest.bail == 1 { "" } else { "s" }
                         );
                         reporter.write_junit_report_if_needed();
+                        reporter.write_timings_if_needed();
 
                         vm.exit_handler.exit_code = 1;
                         vm.is_shutting_down = true;

@@ -1198,22 +1198,6 @@ us_quic_socket_context_t *us_create_quic_client_context(
     return ctx;
 }
 
-static int us_quic_resolve(const char *host, int port, struct sockaddr_storage *out) {
-    memset(out, 0, sizeof(*out));
-    struct sockaddr_in *v4 = (struct sockaddr_in *) out;
-    struct sockaddr_in6 *v6 = (struct sockaddr_in6 *) out;
-    if (inet_pton(AF_INET, host, &v4->sin_addr) == 1) {
-        v4->sin_family = AF_INET;
-        v4->sin_port = htons((unsigned short) port);
-        return 0;
-    }
-    if (inet_pton(AF_INET6, host, &v6->sin6_addr) == 1) {
-        v6->sin6_family = AF_INET6;
-        v6->sin6_port = htons((unsigned short) port);
-        return 0;
-    }
-    return -1;
-}
 
 /* One UDP endpoint for all client connections on this loop. lsquic
  * demultiplexes incoming datagrams by connection ID, so a single ephemeral
@@ -1360,8 +1344,7 @@ int us_quic_socket_context_connect(
     *out_pending = NULL;
 
     struct sockaddr_storage peer_ss;
-    /* IP literal — no DNS at all. */
-    if (us_quic_resolve(host, port, &peer_ss) == 0) {
+    if (Bun__parseIpAddress(host, (uint16_t) port, &peer_ss)) {
         *out_qs = us_quic_connect_addr(ctx, (struct sockaddr *) &peer_ss, sni,
             reject_unauthorized);
         return *out_qs ? 1 : -1;

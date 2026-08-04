@@ -3869,6 +3869,11 @@ mod posix_platform_specific_v8_apis {
     unsafe extern "C" {
         pub(super) fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt3__18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE()
         -> *mut c_void;
+        pub(super) fn _ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateENSt3__18optionalImEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v86BigInt3NewEPNS_7IsolateEl() -> *mut c_void;
+        pub(super) fn _ZN2v812HeapProfiler25StartSamplingHeapProfilerEmiNS0_13SamplingFlagsE()
+        -> *mut c_void;
     }
 }
 #[cfg(all(

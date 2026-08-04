@@ -1214,9 +1214,7 @@ use core::cell::Cell;
 
 mod _event_loop_draft {
     use super::*;
-    use std::sync::Once;
-
-    static INIT_ONCE: Once = Once::new();
+    static INIT_ONCE: bun_core::image::ImageOnce = bun_core::image::ImageOnce::new();
     // Note: `Builder::spawn` allocates an `Arc<thread::Inner>` (48 B)
     // shared between the `JoinHandle` and the new thread's TLS `current()`.
     // Dropping the handle leaves the only strong ref inside the spawned
@@ -1230,7 +1228,7 @@ mod _event_loop_draft {
         std::sync::OnceLock::new();
 
     pub(super) fn init(opts: &InitOpts) {
-        INIT_ONCE.call_once(|| init_once(opts));
+        INIT_ONCE.call(|| init_once(opts));
     }
 
     fn init_once(opts: &InitOpts) {

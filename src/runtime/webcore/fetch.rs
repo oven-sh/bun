@@ -2097,6 +2097,15 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         unix_socket_path: core::mem::replace(&mut unix_socket_path, ZigStringSlice::empty()),
     };
 
+    if bun_core::image::building() {
+        let err = global_this.to_type_error(jsc::ErrorCode::INVALID_STATE, format_args!("fetch() to the network is not available while building a snapshot; defer it until the snapshot runs (Bun.isBuildingSnapshot)"));
+        return Ok(
+            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                global_this,
+                err,
+            ),
+        );
+    }
     let _ = FetchTasklet::queue(
         global_this,
         fetch_options,

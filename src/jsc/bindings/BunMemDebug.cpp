@@ -44,6 +44,7 @@
 #include <fcntl.h>
 #if OS(DARWIN)
 #include <mach/mach.h>
+#include <termios.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/ucontext.h>
@@ -127,8 +128,10 @@ extern "C" void Bun__imageMaybeRestore()
         imageRestoreAndRun(path);
     }
 }
+extern "C" void Bun__imageSetBuilding(bool);
 extern "C" void Bun__memdebugInstall()
 {
+    if (getenv("BUN_IMAGE_OUT")) Bun__imageSetBuilding(true);
 
     s_dir = getenv("BUN_MEMDEBUG");
     if (!s_dir || !*s_dir) {
@@ -824,10 +827,13 @@ static void imageTrapReport()
     fprintf(stderr, "[imagetrap] %zu first-write faults recorded (%.1fMB of pages) -> %s\n", n, n * 16384 / 1048576.0, path);
 }
 
+static struct termios s_imageTermios; static int s_imageTermiosFd = -1; // lives in __DATA, so it travels inside the image
 static void imageDump(JSC::VM& vm, const char* path)
 {
 #if OS(DARWIN)
     JSC::JSLockHolder lock(vm);
+    s_imageTermiosFd = -1;
+    for (int fd = 0; fd < 3; fd++) if (isatty(fd) && !tcgetattr(fd, &s_imageTermios)) { s_imageTermiosFd = fd; break; }
     if (getenv("BUN_IMAGE_DELETE_CODE")) { JSC::sanitizeStackForVM(vm); vm.deleteAllCode(JSC::DeleteAllCodeIfNotCollecting); } // linked CodeBlocks, metadata (value profiles/ICs) and JIT code are per-run hot state; leave them out of the image
     if (getenv("BUN_IMAGE_NOFREEZE")) vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     else vm.heap.freezeCurrentHeapAsImmortalImage(); // GC never writes image blocks again (frozen marks = liveness, side remembered set)
@@ -865,7 +871,7 @@ static void imageDump(JSC::VM& vm, const char* path)
             bool anon = info.external_pager == 0;
             // Only memory we own and place deterministically: mimalloc (tag 240) + Bun bss arenas (hint area >= 0x1f0'0000'0000), JSC OSAllocator regions (tags 63/65).
             // Kernel-placed libSystem regions (OS_ALLOC_ONCE, malloc zones, activity tracing...) belong to the *new* process and must not be overlaid.
-            bool ours = tag == 240 || tag == 63 || tag == 65 || (addr >= 0x1f000000000ull && addr < 0x30000000000ull);
+            bool ours = tag == 240 || tag == 63 || tag == 65 || (addr >= 0x1f000000000ull && addr < 0x30000000000ull) || (addr >= 0x2e0000000000ull && addr < 0x2f0000000000ull) /* bun bss + mimalloc / WTF OSAllocator hint windows */;
             if (tag == 64 /* JS JIT */ && (info.protection & VM_PROT_EXECUTE) && anon) {
                 regions.push_back({ addr, size, 0, ((uint64_t)tag << 8) | 3 }); // reservation, no data
                 size_t npages = size / pg; std::vector<int> disp(npages); mach_vm_size_t dispCount = npages;
@@ -1000,6 +1006,7 @@ static void imageRestoreAndRun(const char* path)
     // Re-seat allocator TLS: this thread's default theap must be the image's main theap, not whatever this process created before the overlay.
     if (hdr.reserved[0]) mi_theap_set_default((mi_theap_t*)hdr.reserved[0]);
     _mi_scavenger_forked_child(); // same situation as a fork child: the image says a scavenger runs, but no such thread exists here
+    if (s_imageTermiosFd >= 0 && isatty(s_imageTermiosFd)) tcsetattr(s_imageTermiosFd, TCSANOW, &s_imageTermios); // raw mode etc. as the build process left it
     for (int i = 2; i < 8 && hdr.reserved[i]; i++) { // recreate TTY fds at their old numbers from our own stdio
         int fd = (int)(hdr.reserved[i] >> 16), fl = (int)((hdr.reserved[i] >> 4) & 0xfff), src = (int)(hdr.reserved[i] & 0xf) - 1;
         if (isatty(src) && dup2(src, fd) == fd) { if (fl & O_NONBLOCK) fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK); if (verbose) fprintf(stderr, "[image] dup2(%d, %d)\n", src, fd); }

@@ -1654,10 +1654,15 @@ impl Run {
 /// Experiment (heap image): a process restored from an image jumps here instead of loading an entry point.
 /// The Rust `VirtualMachine`/event loop objects come from the image (heap); only thread-locals need re-seating.
 #[unsafe(no_mangle)]
+pub extern "C" fn Bun__imageSetBuilding(on: bool) {
+    bun_core::image::set_building(on);
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn Bun__imageAdoptMainThreadVM() {
     let vm_ptr = bun_jsc::virtual_machine::VirtualMachine::main_thread_vm_ptr();
     assert!(!vm_ptr.is_null(), "image has no main-thread VM");
-    bun_core::Global::IMAGE_RESTORED.store(true, ::core::sync::atomic::Ordering::Relaxed);
+    bun_core::image::did_restore();
     bun_jsc::virtual_machine::VirtualMachine::adopt_on_current_thread(vm_ptr);
     crate::jsc_hooks::adopt_main_thread_runtime_state();
     #[cfg(target_os = "macos")]

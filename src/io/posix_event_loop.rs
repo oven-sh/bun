@@ -1351,8 +1351,9 @@ impl Store {
             } else {
                 None
             };
+            // Only fds we recreated (the controlling TTY) mean the same thing in this process; any other number is stale or reused.
             // SAFETY: probing an integer fd.
-            let exists = unsafe { libc::fcntl(poll.fd.native(), libc::F_GETFD) } != -1;
+            let exists = unsafe { libc::isatty(poll.fd.native()) } == 1;
             match (want, exists) {
                 (Some(flag), true) => {
                     let one_shot = poll.flags.contains(Flags::OneShot)

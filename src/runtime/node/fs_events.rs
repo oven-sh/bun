@@ -489,7 +489,7 @@ impl FSEventsLoop {
     }
 
     fn enqueue_task_concurrent(&self, task: Task) {
-        if bun_core::Global::IMAGE_RESTORED.load(Ordering::Relaxed) {
+        if bun_core::image::restored() {
             return;
         } // CF run loop thread did not survive the image
         let cf = CoreFoundation::get();
@@ -946,7 +946,7 @@ extern "C" fn close_and_wait_on_exit() {
 }
 
 fn close_and_wait() {
-    if bun_core::Global::IMAGE_RESTORED.load(Ordering::Relaxed) {
+    if bun_core::image::restored() {
         return;
     } // the CF thread belongs to the build process
     #[cfg(target_os = "macos")]

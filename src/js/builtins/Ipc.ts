@@ -25,7 +25,10 @@ export function serialize(message, handle, _options) {
     return [native, { cmd: "NODE_HANDLE", msg: message, type: "net.Socket" }];
   }
   if (handle instanceof require("node:dgram").Socket) {
-    return null;
+    const { kStateSymbol } = require("internal/dgram");
+    const native = handle[kStateSymbol]?.handle?.socket;
+    if (!native) return null;
+    return [native, { cmd: "NODE_HANDLE", msg: message, type: "dgram.Socket", dgramType: handle.type }];
   }
   throw $ERR_INVALID_HANDLE_TYPE();
 }
@@ -68,7 +71,14 @@ export function parseHandle(target, serialized, fd) {
       return;
     }
     case "dgram.Socket": {
-      throw new Error("dgram.Socket handles are not supported over IPC");
+      // Node's handleConversion['dgram.Socket'].got: wrap the received
+      // descriptor in a fresh dgram.Socket and emit once it is listening.
+      const dgram = require("node:dgram");
+      const socket = new dgram.Socket(serialized.dgramType || "udp4");
+      socket.bind({ fd, exclusive: true }, () => {
+        emit(target, serialized.msg, socket);
+      });
+      return;
     }
     default: {
       throw new Error("failed to parse handle");

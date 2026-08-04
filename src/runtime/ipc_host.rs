@@ -218,6 +218,21 @@ pub(crate) fn do_send(
                     });
                 }
             }
+        } else if let Some(udp) = handle.as_class_ref::<crate::socket::UDPSocket>() {
+            // Node's handleConversion leaves the sender's dgram.Socket open, so
+            // dup the descriptor for the wire and never close_on_complete.
+            if let Some(fd) = udp.native_fd() {
+                log!("got udp socket fd");
+                #[cfg(not(windows))]
+                match Handle::init_dup(fd, handle, false) {
+                    Ok(h) => zig_handle = Some(h),
+                    Err(e) => dup_err = Some(e),
+                }
+                #[cfg(windows)]
+                {
+                    zig_handle = Some(Handle::init(fd, handle));
+                }
+            }
         }
     }
     #[cfg(not(windows))]

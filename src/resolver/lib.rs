@@ -2133,17 +2133,6 @@ pub mod cache {
         pub(crate) stream: bool,
     }
 
-    impl Default for Fs {
-        fn default() -> Self {
-            Self {
-                shared_buffer: MutableString::init(0).expect("unreachable"),
-                macro_shared_buffer: MutableString::init(0).expect("unreachable"),
-                use_alternate_source_cache: false,
-                stream: false,
-            }
-        }
-    }
-
     /// Optional external destructor (`function(ctx)`) for foreign-owned
     /// source bytes; `NONE` when there is nothing external to free.
     #[repr(C)]

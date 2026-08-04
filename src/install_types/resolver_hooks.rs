@@ -1054,7 +1054,6 @@ impl Repository {
 // can name the `npm` arm's payload without an upward edge.
 
 pub type VersionedURL = VersionedURLType<u64>;
-pub type OldV2VersionedURL = VersionedURLType<u32>;
 
 #[repr(C)]
 pub struct VersionedURLType<SemverInt: bun_semver::version::VersionInt> {

@@ -2610,10 +2610,9 @@ impl ThreadSafeFunction {
 
     /// The creating VM's event loop, or `None` once its env has been torn down.
     ///
-    /// JS-thread only. Its callers (`call`, `maybe_queue_finalizer`) run from
-    /// the loop's own dispatch, so no other `&mut EventLoop` is live. Paths
-    /// reachable from an addon thread must use the shared `&EventLoop` that
-    /// `BackRef` derefs to, never this.
+    /// JS-thread only, called from the loop's own dispatch, so no other
+    /// `&mut EventLoop` is live. Paths reachable from an addon thread must use
+    /// the shared `&EventLoop` that `BackRef` derefs to, never this.
     #[inline]
     fn loop_mut(&mut self) -> Option<&mut EventLoop> {
         let back_ref = self.event_loop.as_mut()?;
@@ -2867,18 +2866,12 @@ impl ThreadSafeFunction {
     /// `release_locked`), so it may only take a shared `&EventLoop`: the JS
     /// thread can be inside `tick()` with its own `&mut` at the same time.
     fn schedule_dispatch(&mut self) {
-        let prev = self
+        let _ = self
             .dispatch_state
             .swap(DispatchState::Pending as u8, Ordering::SeqCst);
-        if prev == DispatchState::Pending as u8 {
-            // we've already scheduled it to run
-            return;
-        }
-        if prev == DispatchState::Running as u8
-            && self.inflight_dispatch_tasks.load(Ordering::SeqCst) > 0
-        {
-            // the running loop, or the already-queued task if it blocks in a
-            // nested event loop (#36828), picks the item up
+        if self.inflight_dispatch_tasks.load(Ordering::SeqCst) > 0 {
+            // A queued task will pick the item up, even if the running loop
+            // is blocked in a nested event loop (#36828).
             return;
         }
         let self_ptr: *mut Self = self;

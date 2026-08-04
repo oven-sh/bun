@@ -1080,19 +1080,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_openNodeInspector, (JSGlobalObject * globalO
     RETURN_IF_EXCEPTION(scope, {});
     bool waitForConnection = callFrame->argument(1).toBoolean(globalObject);
 
-    // A prior process._debugEnd() must stop suppressing the exit handshake — before the
-    // already-listening early return, since Bun's _debugEnd leaves the listener up.
-    Debugger__clearDebugEnd();
-    // Node's stop-accepting flag lives on `io_`, replaced by a new Agent::Start; clear ours too.
-    // https://github.com/nodejs/node/blob/main/src/inspector_agent.cc
-    notAcceptingConnectionsContext.store(0);
-
     auto& state = nodeInspectorState();
     bool reopen = false;
     {
         Locker<Lock> locker(state.lock);
         if (state.serverStarted && !state.url.isEmpty()) {
-            // A node:inspector server is already listening.
+            // A node:inspector server is already listening. Bun's _debugEnd leaves the listener
+            // up, so an open() after _debugEnd() re-arms the exit handshake and the accept gate.
+            Debugger__clearDebugEnd();
+            notAcceptingConnectionsContext.store(0);
             return JSValue::encode(jsNull());
         }
         if (state.serverStarted && state.controlCallback) {
@@ -1143,6 +1139,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_openNodeInspector, (JSGlobalObject * globalO
         return {};
     }
 
+    // Node's stop-accepting flag lives on `io_`, replaced by a new Agent::Start; clear ours only
+    // once the new IO actually started. https://github.com/nodejs/node/blob/main/src/inspector_agent.cc
+    Debugger__clearDebugEnd();
+    notAcceptingConnectionsContext.store(0);
     return JSValue::encode(jsString(vm, resolvedUrl));
 }
 

@@ -407,6 +407,20 @@ impl Response {
         self.init_mut().headers.as_deref_mut()
     }
 
+    /// Deep-copy this response's init headers (if any) into a fresh
+    /// `HeadersRef`. Centralises the `FetchHeaders::clone_this` +
+    /// `HeadersRef::adopt` pair so callers stay `unsafe`-free.
+    #[inline]
+    pub(crate) fn clone_init_headers(
+        &self,
+        global: &JSGlobalObject,
+    ) -> JsResult<Option<HeadersRef>> {
+        match self.init_mut().headers.as_ref() {
+            Some(headers) => headers.clone_this(global),
+            None => Ok(None),
+        }
+    }
+
     #[inline]
     pub(crate) fn swap_init_headers(&self) -> Option<HeadersRef> {
         self.init.with_mut(|init| init.headers.take())

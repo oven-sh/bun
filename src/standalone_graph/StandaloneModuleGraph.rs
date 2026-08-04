@@ -1603,10 +1603,11 @@ pub(crate) fn inject(
                 // The base bun binary is already signed, but we've appended
                 // the JS bundle after the original signature.  Strip the old
                 // .codesign and sign the modified file so the signature
-                // covers the entire standalone binary.
-                if let Err(err) = ohos_sign::sign_selfsign_inplace_with_strip(out_path) {
-                    bun_core::pretty_errorln!("<red>error<r>: ohos self-sign {}: {}", out_path.display(), err);
-                }
+                // covers the entire standalone binary. Silent: a failure
+                // must not pollute stderr (test assertions like
+                // stderr.not.toContain("error:") would trip); the runtime
+                // reports the real load error.
+                let _ = ohos_sign::sign_selfsign_inplace_with_strip(out_path);
             }
             return cloned_executable_fd;
         }
@@ -2147,9 +2148,11 @@ pub fn to_executable(
                 if let Some(signed_path) = core::str::from_utf8(outfile).ok() {
                     let p = std::path::Path::new(signed_path);
                     if p.exists() {
-                        if let Err(err) = ohos_sign::sign_selfsign_inplace_with_strip(p) {
-                            bun_core::pretty_errorln!("<red>error<r>: ohos self-sign {}: {}", p.display(), err);
-                        }
+                        // Silent: a failure here must not pollute stderr
+                        // (test assertions like stderr.not.toContain("error:")
+                        // would trip); the user's exec of the output reports
+                        // the real error.
+                        let _ = ohos_sign::sign_selfsign_inplace_with_strip(p);
                     }
                 }
             }

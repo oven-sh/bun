@@ -2542,9 +2542,11 @@ pub(crate) fn ohos_sign_native_binaries(pkg_dir: &[u8]) {
         full.extend_from_slice(name);
         let full_str = unsafe { core::str::from_utf8_unchecked(&full) };
         let p = std::path::Path::new(full_str);
-        if ohos_sign::has_codesign(&std::fs::read(p).unwrap_or_default()) {
-            continue;
-        }
-        let _ = ohos_sign::sign_selfsign_inplace(p);
+        // Re-sign unconditionally: a stale .codesign section defeats
+        // has_codesign() while the signature no longer covers the file, and
+        // exec then fails with EACCES. Strip any old section and re-sign
+        // (no-op strip when none present). Failures are silent — the
+        // postinstall/exec reports the real error.
+        let _ = ohos_sign::sign_selfsign_inplace_with_strip(p);
     }
 }

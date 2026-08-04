@@ -1466,9 +1466,6 @@ pub mod fs {
                     };
                     FileSystem::set_max_fd(file.native());
 
-                    // The fd must be closed on every `?` early-return below; it is
-                    // only kept open once it has been written into the returned
-                    // `cache` (and only when we opened it for caching).
                     let we_opened_it = !existing_fd.is_valid();
                     let close_even_on_success = !store_fd || self.need_to_close_files();
                     let fd_published = core::cell::Cell::new(false);

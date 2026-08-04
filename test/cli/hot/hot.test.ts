@@ -990,32 +990,36 @@ it(
     const last = samples[samples.length - 1];
     expect(last.i).toBe(reloads);
 
-    const maxRefStrings = Math.max(...samples.map(s => s.refStrings));
-    const maxCodeBlocks = Math.max(...samples.map(s => s.codeBlocks));
+    const minRefStrings = Math.min(...samples.map(s => s.refStrings));
+    const maxRefOverCode = Math.max(...samples.map(s => s.refStrings - s.codeBlocks));
     const bytesPerReload = ((last.rss - first.rss) / (last.i - first.i)) | 0;
 
-    // Without clearing the JSC CodeCache, UnlinkedModuleProgramCodeBlock
-    // climbs one per reload (here: to `reloads`). With it cleared, only the
-    // just-loaded module's block is live after GC.
-    // Without the ref-count balance, `ref_strings` adds one entry per unique
-    // transpiled output and never drains. `--expose-internals` + bunEnv's
-    // BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING make the hook available; a -1
-    // sample means the probe silently failed and is itself a failure.
-    // (The third leak, the resolver's per-reload `DirEntry` / `EntryStore`
-    // orphaning, is covered by the fd-count test above: fixing it is what
-    // makes the directory handle reusable. RSS itself is too noisy across
-    // CI lanes (allocator quarantine, aarch64 page sizes) to bound tightly;
-    // `bytesPerReload` is reported below as context only.)
+    // JSC's CodeCache pins one `SourceProvider` (via the `SourceCodeKey`)
+    // per unique source until its own prune policy evicts it (at 2000 entries
+    // / 16 MB / 10 s); that accumulation is bounded by design and we keep the
+    // cache so unchanged modules hit it on the next reload. The `ref_strings`
+    // map holds one entry per live `ExternalStringImpl`, which is owned by
+    // exactly that `SourceProvider` once the refcount balance is right: when
+    // CodeCache evicts, the provider is collected and the `ref_strings` entry
+    // is removed in the external-string finalizer. So `ref_strings` count must
+    // never exceed live `UnlinkedModuleProgramCodeBlock` count by more than a
+    // small constant. Without the balance the +1 from `create_external` is
+    // never released and `ref_strings` only grows.
+    // `--expose-internals` + bunEnv's BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING
+    // make the hook resolve; a -1 sample means the probe silently failed.
+    // (The resolver's per-reload `DirEntry` / `EntryStore` orphaning is
+    // covered by the fd-count test above: fixing it is what makes the
+    // directory handle reusable. RSS itself is too noisy across CI lanes to
+    // bound tightly; `bytesPerReload` is reported as context only.)
     expect({
-      maxCodeBlocksUnder10: maxCodeBlocks < 10,
-      maxRefStringsUnder10: maxRefStrings >= 0 && maxRefStrings < 10,
+      refStringDiagnosticAvailable: minRefStrings >= 0,
+      refStringsNeverExceedCodeCache: maxRefOverCode <= 5,
       // Carried for context on failure:
-      maxCodeBlocks,
-      maxRefStrings,
+      samples,
       bytesPerReload,
     }).toMatchObject({
-      maxCodeBlocksUnder10: true,
-      maxRefStringsUnder10: true,
+      refStringDiagnosticAvailable: true,
+      refStringsNeverExceedCodeCache: true,
     });
   },
   longTimeout,

@@ -181,7 +181,6 @@
 #include "EventLoopTask.h"
 #include "NodeModuleModule.h"
 #include <JavaScriptCore/JSCBytecodeCacheVersion.h>
-#include <JavaScriptCore/CodeCache.h>
 #include "JSPerformanceServerTiming.h"
 #include "JSPerformanceResourceTiming.h"
 #include "JSPerformanceTiming.h"
@@ -3566,9 +3565,6 @@ void GlobalObject::reload()
     }
     this->requireMap()->clear(this);
     RETURN_IF_EXCEPTION(scope, );
-
-    // Stale entries (keyed by old source text) pin their old SourceProvider.
-    vm.codeCache()->clear();
 
     // If we run the GC every time, we will never get the SourceProvider cache hit.
     // So we run the GC every other time.

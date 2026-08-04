@@ -475,7 +475,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool, const BUFFERED_ASYNC: bool>(
         }
 
         if !args.is_empty() && args.is_object() {
-            // Reject terminal option on spawnSync
+            // Reject terminal option on spawnSync / spawnAndWait
             if IS_SYNC || BUFFERED_ASYNC {
                 if args.get_truthy(global_this, "terminal")?.is_some() {
                     return Err(global_this.throw_invalid_arguments(format_args!(

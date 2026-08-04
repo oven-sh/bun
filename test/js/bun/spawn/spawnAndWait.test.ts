@@ -213,7 +213,7 @@ test("stdio: 'socket-fd' is rejected", () => {
       env: bunEnv,
       stdio: ["ignore", "pipe", "pipe", "socket-fd"],
     }),
-  ).toThrow(/socket-fd/);
+  ).toThrow("stdio: 'socket-fd' cannot be used with spawnSync or spawnAndWait");
 });
 
 test("terminal option is rejected", () => {

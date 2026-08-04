@@ -1821,7 +1821,7 @@ where
             });
         }
 
-        self.flags.set_needs_content_length(true);
+        self.flags.set_needs_content_length(is_regular);
         let mut sendfile = SendfileContext {
             remain: blob_offset + original_size,
             offset: blob_offset,

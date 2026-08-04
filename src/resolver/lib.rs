@@ -1112,12 +1112,22 @@ pub mod fs {
 
         /// Cache (or threadlocal-
         /// stash) an `EntriesOption::Err` for `dir` and hand back its address.
+        ///
+        /// `refreshing_in_place` is set when the slot already holds a live
+        /// `Entries(&'static mut DirEntry)` whose stale-generation re-read
+        /// just failed. Overwriting that slot with `Err` (or re-pointing the
+        /// index at `NOT_FOUND`) would orphan the leaked `Box<DirEntry>`
+        /// behind the reference, and closing its cached `.fd` is unsafe
+        /// (copies live in `Watcher.watchlist`, `ParseTask.contents_or_fd`,
+        /// and `DirectoryWatchStore`). Leave the slot alone and hand back a
+        /// threadlocal `Err`; the next lookup re-tries the open.
         fn read_directory_error(
             &mut self,
             dir: &[u8],
             err: crate::Error,
+            refreshing_in_place: bool,
         ) -> crate::CrateResult<&'static mut EntriesOption> {
-            if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
+            if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE && !refreshing_in_place {
                 let mut get_or_put_result = self.entries.get_or_put(dir)?;
                 if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                     self.entries.mark_not_found(get_or_put_result);
@@ -1223,7 +1233,7 @@ pub mod fs {
                 Some(h) => h,
                 None => match self.open_dir(dir) {
                     Ok(h) => h,
-                    Err(err) => return self.read_directory_error(dir, err),
+                    Err(err) => return self.read_directory_error(dir, err, in_place.is_some()),
                 },
             };
 
@@ -1265,7 +1275,7 @@ pub mod fs {
                         // SAFETY: see above.
                         unsafe { (*existing).data.clear() };
                     }
-                    return self.read_directory_error(dir, err);
+                    return self.read_directory_error(dir, err, in_place.is_some());
                 }
             };
 
@@ -1590,7 +1600,7 @@ pub mod fs {
                         Err(err) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err.into()).ok();
+                            return self.read_directory_error(dir, err.into(), true).ok();
                         }
                     };
                     let _close_guard = scopeguard::guard(handle, |h| {
@@ -1608,7 +1618,7 @@ pub mod fs {
                         Err(err) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err).ok();
+                            return self.read_directory_error(dir, err, true).ok();
                         }
                     }
                 }

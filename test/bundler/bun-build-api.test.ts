@@ -494,6 +494,50 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
+  // A second in-process Bun.build() re-reads cached directories whose listing
+  // predates the current bundle generation. When that re-read fails (the
+  // directory was replaced with a regular file, so open() returns ENOTDIR),
+  // the error path used to overwrite the cache slot with an Err variant. That
+  // orphaned the Box<DirEntry> behind the previous Entries value and cached
+  // the Err for every later generation, so a third build after the directory
+  // was restored still failed to resolve through it.
+  test.concurrent.skipIf(isWindows)("rebuilding after a cached directory is replaced with a file", async () => {
+    using dir = tempDir("rebuild-dir-replaced", {
+      "package.json": `{}`,
+      "driver.ts": `
+          import { rmSync, writeFileSync, mkdirSync } from "node:fs";
+          import { join } from "node:path";
+          const root = process.argv[2];
+          const sub = join(root, "sub");
+          const entry = join(root, "entry.js");
+          const first = await Bun.build({ entrypoints: [entry], throw: false });
+          if (!first.success) throw new AggregateError(first.logs, "first build failed");
+          rmSync(sub, { recursive: true, force: true });
+          writeFileSync(sub, "");
+          const second = await Bun.build({ entrypoints: [entry], throw: false });
+          if (second.success) throw new Error("second build should have failed to resolve ./sub/mod.js");
+          rmSync(sub, { force: true });
+          mkdirSync(sub);
+          writeFileSync(join(sub, "mod.js"), "export const value = 2;\\n");
+          const third = await Bun.build({ entrypoints: [entry], throw: false });
+          if (!third.success) throw new AggregateError(third.logs, "third build failed");
+          console.log("OK");
+        `,
+      "entry.js": `import { value } from "./sub/mod.js"; console.log(value);\n`,
+      "sub/mod.js": `export const value = 1;\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "driver.ts", String(dir)],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({ stdout: "OK", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   // https://github.com/oven-sh/bun/issues/33099
   // A package reached through a symlinked node_modules entry caches its file
   // descriptor in the resolver. A second in-process Bun.build() used to reuse a

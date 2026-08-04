@@ -3959,10 +3959,11 @@ fn server_set_on_server_name(
                 );
                 if let Some(listener) = this.listener {
                     // S008: app::ListenSocket<SSL> ≡ uws_sys::ListenSocket (ZST opaque).
-                    bun_opaque::opaque_deref_mut(listener.cast::<uws_sys::ListenSocket>()).on_server_name(
-                        us_dispatch_serve_server_name,
-                        this.any_server_packed as *mut c_void,
-                    );
+                    bun_opaque::opaque_deref_mut(listener.cast::<uws_sys::ListenSocket>())
+                        .on_server_name(
+                            us_dispatch_serve_server_name,
+                            this.any_server_packed as *mut c_void,
+                        );
                 }
                 return Ok(JSValue::UNDEFINED);
             }

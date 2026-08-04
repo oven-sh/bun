@@ -207,9 +207,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait"
     ),
     parse_param!(
-        "--inspect-port <STR>              Set the default [host:]port used when the debugger is activated with --inspect"
+        "--inspect-port <STR>!             Set the default [host:]port used when the debugger is activated with --inspect"
     ),
-    parse_param!("--debug-port <STR>"),
+    parse_param!("--debug-port <STR>!"),
     parse_param!("--permission"),
     parse_param!("--allow-fs-read <STR>..."),
     parse_param!("--allow-fs-write <STR>..."),
@@ -1272,7 +1272,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             }
 
             ctx.runtime_options.check_syntax = args.flag(b"--check");
-            if ctx.runtime_options.check_syntax && !ctx.runtime_options.eval.script.is_empty() {
+            if ctx.runtime_options.check_syntax && ctx.runtime_options.eval.provided {
                 // Node prints this (and exits 9) for `node -c -e foo`.
                 let exec_path: &[u8] = bun_core::self_exe_path()
                     .map(|p| p.as_bytes())

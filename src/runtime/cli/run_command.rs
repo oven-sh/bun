@@ -2962,13 +2962,14 @@ impl RunCommand {
     /// `--check` / `-c`: read the entry (or stdin), boot with a no-op eval so
     /// `--require` preloads still run like `node --check`, then syntax-check in
     /// `Run::start`. https://github.com/nodejs/node/blob/main/lib/internal/main/check_syntax.js
-    pub fn exec_check(ctx: &mut ContextData) -> crate::Result<()> {
+    pub(crate) fn exec_check(ctx: &mut ContextData, tag: CommandTag) -> crate::Result<()> {
         // RunCommand prepends a literal "run" positional (Auto/RunAsNode do
         // not); strip it so the file lookup and `exec_eval` see only user args.
-        if ctx
-            .positionals
-            .first()
-            .is_some_and(|p| p.as_ref() == b"run")
+        if tag == CommandTag::RunCommand
+            && ctx
+                .positionals
+                .first()
+                .is_some_and(|p| p.as_ref() == b"run")
         {
             ctx.positionals.remove(0);
         }
@@ -3059,7 +3060,7 @@ impl RunCommand {
         ctx.args.disable_default_env_files = true;
 
         if ctx.runtime_options.check_syntax {
-            return Self::exec_check(ctx);
+            return Self::exec_check(ctx, CommandTag::RunAsNodeCommand);
         }
 
         // `node --interactive [-e code]`: same gate as AutoCommand — a script

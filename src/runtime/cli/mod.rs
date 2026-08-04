@@ -1415,7 +1415,7 @@ pub mod command {
             // `--check` / `-c`: syntax-check the entry point (or stdin) without
             // executing it. `--check` together with `--eval` already errored
             // during argument parsing.
-            return run_command::RunCommand::exec_check(ctx);
+            return run_command::RunCommand::exec_check(ctx, tag);
         }
 
         // Node: `-i foo.js` runs the script; `-i -e code` evals then enters the

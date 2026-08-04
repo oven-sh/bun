@@ -422,6 +422,215 @@ describe("frame size limit (checklist §4.2)", () => {
   });
 });
 
+describe.concurrent("header block decoding errors (RFC 9113 §4.3)", () => {
+  // The stream is rejected before the 'stream' event ever fires, so no user code can have
+  // attached an 'error' listener to it. The error must stay at the connection level
+  // (GOAWAY COMPRESSION_ERROR) instead of being raised as an uncaught exception that kills
+  // the process. Run in a child so a regression shows up as the child dying, not this runner.
+  test("an undecodable HEADERS block does not kill the server process", async () => {
+    const fixture = String.raw`
+      const http2 = require("node:http2");
+      const net = require("node:net");
+      const server = http2.createServer((req, res) => res.end("ok"));
+      server.listen(0, "127.0.0.1", () => {
+        const port = server.address().port;
+        // Raw prior-knowledge h2c client: preface, empty SETTINGS, then a HEADERS frame
+        // (END_HEADERS | END_STREAM, stream 1) whose payload is not a valid HPACK block.
+        const raw = net.connect(port, "127.0.0.1", () => {
+          const preface = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
+          const settings = Buffer.from([0, 0, 0, 4, 0, 0, 0, 0, 0]);
+          const block = Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff]);
+          const headers = Buffer.alloc(9);
+          headers.writeUIntBE(block.length, 0, 3);
+          headers[3] = 0x01;
+          headers[4] = 0x05;
+          headers.writeUInt32BE(1, 5);
+          raw.write(Buffer.concat([preface, settings, headers, block]));
+        });
+        let received = Buffer.alloc(0);
+        raw.on("data", d => (received = Buffer.concat([received, d])));
+        raw.on("error", () => {});
+        // The server answers with GOAWAY and closes the connection; only then prove the
+        // process is still alive and still serving by completing a real request.
+        raw.on("close", () => {
+          let goawayCode = -1;
+          for (let i = 0; i + 9 <= received.length; i += 9 + received.readUIntBE(i, 3)) {
+            if (received[i + 3] === 0x07) {
+              goawayCode = received.readUInt32BE(i + 9 + 4);
+              break;
+            }
+          }
+          console.log("goaway", goawayCode);
+          const client = http2.connect("http://127.0.0.1:" + port);
+          client.on("error", err => {
+            console.error(err);
+            process.exit(3);
+          });
+          const req = client.request({ ":path": "/" });
+          req.setEncoding("utf8");
+          let body = "";
+          req.on("data", c => (body += c));
+          req.on("error", err => {
+            console.error(err);
+            process.exit(4);
+          });
+          req.on("end", () => {
+            console.log("second request", body);
+            client.close();
+            server.close();
+          });
+          req.end();
+        });
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // COMPRESSION_ERROR (0x9) on the wire, and the process survived to serve the second request.
+    // stderr is in the diff for debugging but only asserted not to carry the uncaught stream
+    // error (debug/ASAN builds write benign warnings to it).
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "goaway 9\nsecond request ok\n",
+      stderr: expect.not.stringContaining("ERR_HTTP2"),
+      exitCode: 0,
+    });
+  }, 30_000);
+
+  // Same sink, reached by PROTOCOL_ERROR instead of COMPRESSION_ERROR: a HEADERS frame without
+  // END_HEADERS followed by anything other than a CONTINUATION on the same stream is a connection
+  // error (RFC 9113 §6.10). The stream was created for the HEADERS frame but never announced.
+  test("a non-CONTINUATION frame during header assembly does not kill the server process", async () => {
+    const fixture = String.raw`
+      const http2 = require("node:http2");
+      const net = require("node:net");
+      const server = http2.createServer((req, res) => res.end("ok"));
+      server.on("sessionError", () => {});
+      server.listen(0, "127.0.0.1", () => {
+        const port = server.address().port;
+        const raw = net.connect(port, "127.0.0.1", () => {
+          const preface = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
+          const settings = Buffer.from([0, 0, 0, 4, 0, 0, 0, 0, 0]);
+          // HEADERS (stream 1, END_STREAM, NOT END_HEADERS) with a valid one-byte HPACK fragment,
+          // then a DATA frame on stream 3 where CONTINUATION(stream 1) was required.
+          const block = Buffer.from([0x82]);
+          const headers = Buffer.alloc(9);
+          headers.writeUIntBE(block.length, 0, 3);
+          headers[3] = 0x01;
+          headers[4] = 0x01;
+          headers.writeUInt32BE(1, 5);
+          const data = Buffer.alloc(9 + 1);
+          data.writeUIntBE(1, 0, 3);
+          data[3] = 0x00;
+          data[4] = 0x01;
+          data.writeUInt32BE(3, 5);
+          data[9] = 0x78;
+          raw.write(Buffer.concat([preface, settings, headers, block, data]));
+        });
+        let received = Buffer.alloc(0);
+        raw.on("data", d => (received = Buffer.concat([received, d])));
+        raw.on("error", () => {});
+        raw.on("close", () => {
+          let goawayCode = -1;
+          for (let i = 0; i + 9 <= received.length; i += 9 + received.readUIntBE(i, 3)) {
+            if (received[i + 3] === 0x07) {
+              goawayCode = received.readUInt32BE(i + 9 + 4);
+              break;
+            }
+          }
+          console.log("goaway", goawayCode);
+          const client = http2.connect("http://127.0.0.1:" + port);
+          client.on("error", err => {
+            console.error(err);
+            process.exit(3);
+          });
+          const req = client.request({ ":path": "/" });
+          req.setEncoding("utf8");
+          let body = "";
+          req.on("data", c => (body += c));
+          req.on("error", err => {
+            console.error(err);
+            process.exit(4);
+          });
+          req.on("end", () => {
+            console.log("second request", body);
+            client.close();
+            server.close();
+          });
+          req.end();
+        });
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // PROTOCOL_ERROR (0x1) on the wire, and the process survived to serve the second request.
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "goaway 1\nsecond request ok\n",
+      stderr: expect.not.stringContaining("ERR_HTTP2"),
+      exitCode: 0,
+    });
+  }, 30_000);
+
+  // Same guard, second hand-off point: a pushStream() whose PUSH_PROMISE headers fail native
+  // validation destroys the not-yet-delivered pushed stream with the validation error. Only the
+  // pushStream callback reports it; emitting 'error' on that stream was an uncaught exception.
+  test("a pushStream() validation error is reported through the callback, not as an uncaught 'error'", async () => {
+    const fixture = String.raw`
+      const http2 = require("node:http2");
+      const server = http2.createServer();
+      server.on("stream", stream => {
+        stream.pushStream({ ":path": "/p", "bad header": "x" }, err => {
+          console.log("pushStream callback", err ? err.code : null);
+          stream.respond({ ":status": 200 });
+          stream.end("main");
+        });
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const client = http2.connect("http://127.0.0.1:" + server.address().port);
+        client.on("error", err => {
+          console.error(err);
+          process.exit(3);
+        });
+        client.on("stream", pushed => pushed.on("error", () => {}));
+        const req = client.request({ ":path": "/" });
+        req.setEncoding("utf8");
+        let body = "";
+        req.on("data", c => (body += c));
+        req.on("error", err => {
+          console.error(err);
+          process.exit(4);
+        });
+        req.on("end", () => {
+          console.log("response", body);
+          client.close();
+          server.close();
+        });
+        req.end();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "pushStream callback ERR_INVALID_HTTP_TOKEN\nresponse main\n",
+      stderr: expect.not.stringContaining("ERR_INVALID_HTTP_TOKEN"),
+      exitCode: 0,
+    });
+  }, 30_000);
+});
+
 // ── Client-side conformance: a raw byte-level HTTP/2 *server* drives a Bun `node:http2`
 // client and asserts the client's wire behavior (push stream states, SETTINGS ack ordering).
 

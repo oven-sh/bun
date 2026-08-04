@@ -441,6 +441,129 @@ fn flush_changed_paths_for_reload() {
     }
 }
 
+// ── node-parity `--watch` status messages ─────────────────────────────────
+
+/// Node's `kCommandStr`: `util.inspect(process.argv.slice(1).join(' '))`. Set by
+/// `run_command` for `--watch` only (unset for `--hot`/`build --watch`/`test --watch`).
+/// https://github.com/nodejs/node/blob/main/lib/internal/main/watch_mode.js
+static WATCH_COMMAND_DISPLAY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// A watcher-triggered reload can race the JS thread (kill-signal path) with
+/// the watcher grace timer; print `Restarting` at most once per process (the
+/// winner execve()s momentarily).
+static WATCH_RESTART_PRINTED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+pub fn set_watch_command_display(entry: &[u8], script_args: &[Box<[u8]>]) {
+    let mut joined: Vec<u8> = Vec::with_capacity(
+        entry.len() + script_args.iter().map(|a| a.len() + 1).sum::<usize>(),
+    );
+    joined.extend_from_slice(entry);
+    for arg in script_args {
+        joined.push(b' ');
+        joined.extend_from_slice(arg);
+    }
+    // argv bytes → display string; node's process.argv is already a lossy
+    // decode of OS argv, so U+FFFD substitution here is node-parity.
+    #[allow(clippy::disallowed_methods)]
+    let _ = WATCH_COMMAND_DISPLAY.set(node_inspect_quote(&String::from_utf8_lossy(&joined)));
+}
+
+/// node colorizes its watch messages when stderr has colors
+/// (internal/util/colors.refresh reads process.stderr, even though the
+/// messages go to stdout).
+fn watch_message_color(color: &'static str) -> [&'static str; 2] {
+    if bun_core::output::enable_ansi_colors_stderr() {
+        [color, "\x1b[39m"]
+    } else {
+        ["", ""]
+    }
+}
+
+/// `util.inspect` string quoting — node `strEscape`:
+/// https://github.com/nodejs/node/blob/main/lib/internal/util/inspect.js
+fn node_inspect_quote(s: &str) -> String {
+    let has_single = s.contains('\'');
+    let has_double = s.contains('"');
+    let has_backtick = s.contains('`') || s.contains("${");
+    let quote = if !has_single {
+        '\''
+    } else if !has_double {
+        '"'
+    } else if !has_backtick {
+        '`'
+    } else {
+        '\''
+    };
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push(quote);
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '\u{8}' => out.push_str("\\b"),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\u{c}' => out.push_str("\\f"),
+            '\r' => out.push_str("\\r"),
+            '$' if quote == '`' && chars.peek() == Some(&'{') => out.push_str("\\$"),
+            c if c == quote => {
+                out.push('\\');
+                out.push(c);
+            }
+            c if (c as u32) < 0x20 || (0x7f..=0x9f).contains(&(c as u32)) => {
+                let code = c as u32;
+                out.push_str("\\x");
+                let hex = b"0123456789ABCDEF";
+                out.push(hex[(code >> 4) as usize] as char);
+                out.push(hex[(code & 0xf) as usize] as char);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push(quote);
+    out
+}
+
+/// Node watch_mode.js `restart()`: clear screen, then green `Restarting <cmd>`.
+/// Returns the clear flag for `reload_process` (false once we've cleared here).
+/// https://github.com/nodejs/node/blob/main/lib/internal/main/watch_mode.js
+pub fn print_watch_restart_message(clear_screen: bool) -> bool {
+    let Some(cmd) = WATCH_COMMAND_DISPLAY.get() else {
+        return clear_screen;
+    };
+    if WATCH_RESTART_PRINTED.swap(true, Ordering::SeqCst) {
+        return false;
+    }
+    if clear_screen {
+        Output::flush();
+        bun_core::output::reset_terminal_all();
+    }
+    let [c, r] = watch_message_color("\x1b[32m");
+    Output::print(format_args!("{c}Restarting {cmd}{r}\n"));
+    Output::flush();
+    false
+}
+
+/// Node watch_mode.js child-exit message: blue `Completed running …` on exit 0,
+/// red `Failed running …` otherwise. Called when the watch run-loop drains.
+/// https://github.com/nodejs/node/blob/main/lib/internal/main/watch_mode.js
+pub fn print_watch_idle_message(failed: bool) {
+    let Some(cmd) = WATCH_COMMAND_DISPLAY.get() else {
+        return;
+    };
+    let (verb, color) = if failed {
+        ("Failed", "\x1b[31m")
+    } else {
+        ("Completed", "\x1b[34m")
+    };
+    let [c, r] = watch_message_color(color);
+    Output::print(format_args!(
+        "{c}{verb} running {cmd}. Waiting for file changes before restarting...{r}\n"
+    ));
+    Output::flush();
+}
+
 unsafe extern "C" {
     safe fn BunDebugger__willHotReload();
 }
@@ -644,10 +767,10 @@ where
             crate::node_compile_cache::persist_now();
             Output::flush();
             flush_changed_paths_for_reload();
-            bun_core::reload_process(
+            let clear_screen = print_watch_restart_message(
                 CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
-                false,
             );
+            bun_core::reload_process(clear_screen, false);
             unreachable!();
         }
 
@@ -709,15 +832,18 @@ fn arm_watch_reload_grace_timer() {
     let handler_running = crate::posix_signal_handle::is_emitting_watch_kill_signal;
     let force = || -> ! {
         Output::flush();
-        bun_core::reload_process(
+        let clear_screen = print_watch_restart_message(
             CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
-            false,
         );
+        bun_core::reload_process(clear_screen, false);
         unreachable!();
     };
     let spawned = std::thread::Builder::new()
         .name("WatchReloadGrace".into())
         .spawn(move || {
+            // Output's writers are thread-local; init them before the
+            // restart-message print below.
+            Output::Source::configure_thread_no_js();
             const STEP_MS: u64 = 10;
             // Budget to drain the posted WatchReloadTask; extended once when
             // the kill-signal emit is observed so a bounded synchronous

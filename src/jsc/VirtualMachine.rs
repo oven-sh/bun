@@ -861,7 +861,7 @@ impl VirtualMachine {
     /// keep the cross-thread hazard visible. Callers must scope any reborrow to
     /// a single mutex-guarded `Watcher` operation.
     #[inline]
-    pub(crate) fn bun_watcher_ptr(&self) -> *mut crate::hot_reloader::ImportWatcher {
+    pub fn bun_watcher_ptr(&self) -> *mut crate::hot_reloader::ImportWatcher {
         self.bun_watcher
     }
 
@@ -3589,14 +3589,16 @@ impl VirtualMachine {
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
     pub(crate) fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
         if self.hot_reload == HOT_RELOAD_WATCH {
-            // Watch reload replaces the process: never defer on a pending
-            // entry promise (node restarts regardless of child state), and
-            // emit the --watch-kill-signal JS handlers first, like node.
-            crate::posix_signal_handle::emit_watch_kill_signal_before_reload(self.global());
+            // Watch reload replaces the process (never defer on a pending entry
+            // promise). Node prints `Restarting` then kills the child:
+            // https://github.com/nodejs/node/blob/main/lib/internal/main/watch_mode.js
             let should_clear_terminal =
                 !self.env_loader().has_set_no_clear_terminal_on_reload(
                     !bun_core::Output::enable_ansi_colors_stdout(),
                 );
+            let should_clear_terminal =
+                crate::hot_reloader::print_watch_restart_message(should_clear_terminal);
+            crate::posix_signal_handle::emit_watch_kill_signal_before_reload(self.global());
             // execve will not reach on_exit; flush the compile cache here like
             // node's child does via AtExit(FlushCompileCache) on every restart.
             crate::node_compile_cache::persist_now();

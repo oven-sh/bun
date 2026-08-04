@@ -412,7 +412,7 @@ impl Source {
     ///
     /// Threads that *may* run JS (web workers, debugger, the main VM thread)
     /// must keep using [`configure_thread`] / [`configure_named_thread`].
-    pub(crate) fn configure_thread_no_js() {
+    pub fn configure_thread_no_js() {
         if SOURCE_SET.get() {
             return;
         }

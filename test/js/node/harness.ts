@@ -4,6 +4,27 @@
 import { hideFromStackTrace, exampleSite } from "harness";
 import assertNode from "node:assert";
 
+// Vendored watch-mode tests statically `import ... from
+// 'internal/watch_mode/files_watcher'` (node runs them with
+// --expose-internals). Static ESM imports resolve before common/index.js can
+// install its require('internal/*') interceptor, so serve this one specifier
+// from a preload-time plugin backed by the byte-identical vendored node
+// source under test/common/nodeinternals/.
+if (typeof Bun !== "undefined" && typeof Bun.plugin === "function") {
+  const nodeinternalsPath = `${import.meta.dir}/test/common/nodeinternals.js`;
+  Bun.plugin({
+    name: "node-test-watch-mode-internals",
+    setup(build) {
+      build.module("internal/watch_mode/files_watcher", () => {
+        const mod = require(nodeinternalsPath).requireVendoredNodeInternal(
+          "internal/watch_mode/files_watcher",
+        );
+        return { loader: "object", exports: { ...mod, default: mod } };
+      });
+    },
+  });
+}
+
 type DoneCb = (err?: Error) => any;
 function noop() {}
 export function createTest(path: string) {

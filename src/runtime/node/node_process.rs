@@ -62,10 +62,15 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
         // regardless. `process.exit()` must never return control to JS, so replace the process
         // here instead of unwinding — the 'exit' event has already been dispatched by the caller.
         if bun_jsc::posix_signal_handle::is_emitting_watch_kill_signal() {
+            // `Restarting` was already printed (and the screen cleared) by
+            // `VirtualMachine::reload` before the kill-signal emit; the print
+            // latch makes this return false in that case.
             let should_clear_terminal =
                 !vm.env_loader().has_set_no_clear_terminal_on_reload(
                     !bun_core::Output::enable_ansi_colors_stdout(),
                 );
+            let should_clear_terminal =
+                bun_jsc::hot_reloader::print_watch_restart_message(should_clear_terminal);
             bun_jsc::node_compile_cache::persist_now();
             bun_core::Output::flush();
             bun_core::reload_process(should_clear_terminal, false);

@@ -43,6 +43,8 @@
 #include <fcntl.h>
 #if OS(DARWIN)
 #include <mach/mach.h>
+#include <sys/ucontext.h>
+#include <signal.h>
 #include <libkern/OSCacheControl.h>
 #include <pthread.h>
 #include <mach/mach_vm.h>
@@ -581,6 +583,7 @@ static void dumpDirtyMap(JSC::VM& vm)
         }
         // classify changed blocks by change shape
         size_t onlyHeader8 = 0, small32 = 0, larger = 0;
+        struct SigInfo { size_t count = 0; std::vector<std::string> examples; }; std::map<std::string, SigInfo> smallSigs;
         for (uintptr_t b : changedBlocks) {
             auto it = std::lower_bound(s_liveBlocks.begin(), s_liveBlocks.end(), std::make_pair(b, 0u));
             uint32_t sz = it->second;
@@ -595,7 +598,16 @@ static void dumpDirtyMap(JSC::VM& vm)
                 if (memcmp(&o, (void*)a, 8)) { cntw++; if (first == SIZE_MAX) first = off; last = off; }
             }
             if (cntw == 1 && first == 0) onlyHeader8++; else if (cntw <= 4) small32++; else larger++;
+            if (cntw <= 4 && first != SIZE_MAX) {
+                // signature: size class, first changed offset, before>after of that word
+                uintptr_t a = b + first; uintptr_t page = a & ~(pg - 1); uint64_t before = 0, after = *(uint64_t*)a;
+                auto r = std::upper_bound(s_runs.begin(), s_runs.end(), page, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
+                if (r != s_runs.begin()) { --r; if (page < r->start + r->len) pread(s_snapFd, &before, 8, r->fileOff + (a - r->start)); }
+                char sig[160]; snprintf(sig, sizeof sig, "sz%u +%zu n%zu", sz, first, cntw);
+                auto& sc = smallSigs[sig]; sc.count++; if (sc.examples.size() < 3) { char ex[64]; snprintf(ex, sizeof ex, "%llx>%llx", (unsigned long long)before, (unsigned long long)after); sc.examples.push_back(ex); }
+            }
         }
+        { std::vector<std::pair<size_t, std::string>> ss; for (auto& [k, v] : smallSigs) { std::string e = k + " x" + std::to_string(v.count) + " ["; for (auto& x : v.examples) e += x + " "; e += "]"; ss.push_back({ v.count, e }); } std::sort(ss.begin(), ss.end(), std::greater<>()); fprintf(stderr, "[diffmap] small-change signatures (sizeclass +firstOff nWords xCount [before>after...]):\n"); for (size_t i = 0; i < std::min<size_t>(ss.size(), 40); i++) fprintf(stderr, "    %s\n", ss[i].second.c_str()); }
         fprintf(stderr, "[diffmap] dirtyPayloadPages=%zu (%.1fMB) pagesWithNoByteChange=%zu changedBytes=%.2fMB changedBlocks=%zu: firstWordOnly=%zu (refcount-like) small(<=4 words)=%zu larger=%zu; strayWrites(outside live blocks)=%zu\n",
             dirtyPayloadPages, dirtyPayloadPages * pg / 1048576.0, pagesNoChange, changedBytes / 1048576.0, changedBlocks.size(), onlyHeader8, small32, larger, blockClass["<not in live block (freed-at-freeze space)>"]);
         std::vector<std::pair<size_t, uint32_t>> sizes; for (auto& [sz, v] : bySize) sizes.push_back({ v.first, sz });
@@ -671,13 +683,21 @@ static void dumpDirtyMap(JSC::VM& vm)
             };
             char path[512]; snprintf(path, sizeof path, "%s/payload-owners.%d.tsv", s_dir, getpid());
             Ctx ctx { &fw, fopen(path, "w"), 0, 0 };
+            static char obuf[1 << 20]; if (ctx.f) setvbuf(ctx.f, obuf, _IOFBF, sizeof obuf); // no malloc under the profiler lock (sampled malloc would self-deadlock)
             if (ctx.f) {
                 mi_prof_visit_live([](uintptr_t addr, size_t size, const uintptr_t* frames, uint8_t nframes, void* arg) -> bool {
                     Ctx* c = static_cast<Ctx*>(arg);
                     // only blocks inside the frozen image
                     uint64_t probe; if (!(*c->fileWordAt)(addr, probe)) return true;
                     size_t changedWords = 0, firstOff = SIZE_MAX;
-                    for (size_t off = 0; off + 8 <= size; off += 8) { uint64_t o; if (!(*c->fileWordAt)(addr + off, o)) break; if (memcmp(&o, (void*)(addr + off), 8)) { changedWords++; if (firstOff == SIZE_MAX) firstOff = off; } }
+                    static uint8_t fbuf[1 << 16];
+                    for (size_t base = 0; base < size; base += sizeof fbuf) {
+                        size_t n = std::min(sizeof fbuf, size - base); uintptr_t a0 = addr + base; uintptr_t page = a0 & ~(uintptr_t)16383;
+                        auto r = std::upper_bound(s_runs.begin(), s_runs.end(), page, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
+                        if (r == s_runs.begin()) break; --r; if (a0 >= r->start + r->len) break; n = std::min<size_t>(n, r->start + r->len - a0);
+                        if (pread(s_snapFd, fbuf, n, r->fileOff + (a0 - r->start)) != (ssize_t)n) break;
+                        for (size_t off = 0; off + 8 <= n; off += 8) if (memcmp(fbuf + off, (void*)(a0 + off), 8)) { changedWords++; if (firstOff == SIZE_MAX) firstOff = base + off; }
+                    }
                     c->n++; if (changedWords) c->changed++;
                     fprintf(c->f, "%zu\t%zu\t%zu\t", size, changedWords, firstOff == SIZE_MAX ? 0 : firstOff);
                     for (uint8_t k = 0; k < nframes && k < 14; k++) fprintf(c->f, "%s0x%lx", k ? ";" : "", (unsigned long)frames[k]);
@@ -757,15 +777,71 @@ extern "C" void Bun__imageAdoptMainThreadVM();
 struct ImageHeader { char magic[8]; uint64_t textBase; uint64_t vm; uint64_t globalObject; uint64_t mainThread; uint64_t nregions; uint64_t reserved[8]; };
 struct ImageRegion { uint64_t addr; uint64_t len; uint64_t fileOff; uint64_t kind; }; // kind: 0 heap(anon), 1 __DATA segment
 
+// First-writer trap: image pages are made read-only; the fault handler records the writer's stack, unprotects the page and resumes.
+struct TrapRec { uintptr_t page; uintptr_t pcs[10]; };
+static TrapRec* s_trapRecs = nullptr; static std::atomic<size_t> s_trapCount { 0 }; static size_t s_trapCap = 0;
+static struct sigaction s_prevBus, s_prevSegv;
+static void imageTrapHandler(int sig, siginfo_t* info, void* uctx)
+{
+    uintptr_t a = (uintptr_t)info->si_addr; size_t pg = 16384; uintptr_t page = a & ~(pg - 1);
+    auto it = std::upper_bound(s_frozenRanges.begin(), s_frozenRanges.end(), std::make_pair(a, UINTPTR_MAX));
+    bool ours = it != s_frozenRanges.begin() && a < std::prev(it)->second;
+    if (!ours) { struct sigaction* prev = sig == SIGBUS ? &s_prevBus : &s_prevSegv; if (prev->sa_flags & SA_SIGINFO) prev->sa_sigaction(sig, info, uctx); else if (prev->sa_handler == SIG_DFL || prev->sa_handler == SIG_IGN) { signal(sig, SIG_DFL); raise(sig); } else prev->sa_handler(sig); return; }
+    mprotect((void*)page, pg, PROT_READ | PROT_WRITE);
+    size_t i = s_trapCount.fetch_add(1);
+    if (i < s_trapCap) {
+        TrapRec& r = s_trapRecs[i]; r.page = page;
+        ucontext_t* uc = (ucontext_t*)uctx; r.pcs[0] = (uintptr_t)__darwin_arm_thread_state64_get_pc(uc->uc_mcontext->__ss); r.pcs[1] = (uintptr_t)__darwin_arm_thread_state64_get_lr(uc->uc_mcontext->__ss);
+        uintptr_t fp = (uintptr_t)__darwin_arm_thread_state64_get_fp(uc->uc_mcontext->__ss);
+        for (int k = 2; k < 10; k++) { if (!fp || (fp & 7)) { r.pcs[k] = 0; continue; } uintptr_t* f = (uintptr_t*)fp; r.pcs[k] = f[1]; uintptr_t next = f[0]; if (next <= fp) { fp = 0; continue; } fp = next; }
+    }
+}
+static void imageTrapArm()
+{
+    s_trapCap = 1 << 18; s_trapRecs = (TrapRec*)mmap(nullptr, s_trapCap * sizeof(TrapRec), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    struct sigaction sa {}; sa.sa_sigaction = imageTrapHandler; sa.sa_flags = SA_SIGINFO | SA_NODEFER; sigemptyset(&sa.sa_mask);
+    sigaction(SIGBUS, &sa, &s_prevBus); sigaction(SIGSEGV, &sa, &s_prevSegv);
+    size_t n = 0; for (auto& r : s_frozenRanges) { if (!mprotect((void*)r.first, r.second - r.first, PROT_READ)) n += r.second - r.first; }
+    fprintf(stderr, "[imagetrap] armed: %.1fMB read-only\n", n / 1048576.0);
+}
+static void imageTrapReport()
+{
+    size_t n = std::min(s_trapCount.load(), s_trapCap);
+    char path[512]; snprintf(path, sizeof path, "%s/imagetrap.%d.tsv", s_dir ? s_dir : "/tmp", getpid());
+    FILE* f = fopen(path, "w"); if (!f) return;
+    for (size_t i = 0; i < n; i++) { TrapRec& r = s_trapRecs[i]; fprintf(f, "%lx\t%s", (unsigned long)r.page, pageIn(s_cellPages, r.page) ? "cell" : pageIn(s_payloadPages, r.page) ? "payload" : "other"); for (int k = 0; k < 10; k++) fprintf(f, "%c%lx", k ? ';' : '\t', (unsigned long)r.pcs[k]); fprintf(f, "\n"); }
+    fclose(f);
+    fprintf(stderr, "[imagetrap] %zu first-write faults recorded (%.1fMB of pages) -> %s\n", n, n * 16384 / 1048576.0, path);
+}
+
 static void imageDump(JSC::VM& vm, const char* path)
 {
 #if OS(DARWIN)
     JSC::JSLockHolder lock(vm);
+    if (getenv("BUN_IMAGE_DELETE_CODE")) { JSC::sanitizeStackForVM(vm); vm.deleteAllCode(JSC::DeleteAllCodeIfNotCollecting); } // linked CodeBlocks, metadata (value profiles/ICs) and JIT code are per-run hot state; leave them out of the image
     if (getenv("BUN_IMAGE_NOFREEZE")) vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     else vm.heap.freezeCurrentHeapAsImmortalImage(); // GC never writes image blocks again (frozen marks = liveness, side remembered set)
     mi_option_set(mi_option_purge_delay, 0);
     mi_collect(true); // free spans get decommitted so "resident" below means "image payload"
     size_t pg = getpagesize();
+    { // page/block index for post-restore dirtymap/diffmap attribution (these vectors travel inside the image)
+        s_cellPages.clear(); s_payloadPages.clear(); s_pageSizeClass.clear(); s_liveBlocks.clear();
+        vm.heap.objectSpace().forEachBlock([&](JSC::MarkedBlock::Handle* h) {
+            for (uintptr_t a = (uintptr_t)&h->block(); a < (uintptr_t)&h->block() + JSC::MarkedBlock::blockSize; a += pg) s_cellPages.push_back(a);
+        });
+        mi_heap_visit_blocks(mi_heap_main(), true, recordUsedBlock, &pg);
+        std::sort(s_cellPages.begin(), s_cellPages.end());
+        std::sort(s_liveBlocks.begin(), s_liveBlocks.end());
+        std::sort(s_payloadPages.begin(), s_payloadPages.end());
+        s_payloadPages.erase(std::unique(s_payloadPages.begin(), s_payloadPages.end()), s_payloadPages.end());
+        std::vector<uintptr_t> tmp; std::set_difference(s_payloadPages.begin(), s_payloadPages.end(), s_cellPages.begin(), s_cellPages.end(), std::back_inserter(tmp)); s_payloadPages.swap(tmp);
+        fprintf(stderr, "[image] cellPages=%.1fMB payloadPages=%.1fMB liveMallocBlocks=%zu\n", s_cellPages.size() * pg / 1048576.0, s_payloadPages.size() * pg / 1048576.0, s_liveBlocks.size());
+    }
+    std::vector<std::pair<uintptr_t, uintptr_t>> freeRanges; // arena slices in no page: free memory, whatever the kernel says about residency
+    mi_arenas_visit_free_ranges(mi_heap_main(), [](void* start, size_t size, void* arg) { static_cast<std::vector<std::pair<uintptr_t, uintptr_t>>*>(arg)->push_back({ (uintptr_t)start, (uintptr_t)start + size }); }, &freeRanges);
+    std::sort(freeRanges.begin(), freeRanges.end());
+    { size_t fb = 0; for (auto& r : freeRanges) fb += r.second - r.first; fprintf(stderr, "[image] arena free ranges: %zu, %.1fMB\n", freeRanges.size(), fb / 1048576.0); }
+    auto inFreeRange = [&](uintptr_t a) { auto it = std::upper_bound(freeRanges.begin(), freeRanges.end(), std::make_pair(a, UINTPTR_MAX)); return it != freeRanges.begin() && a < std::prev(it)->second; };
     std::vector<ImageRegion> regions;
     // 1. anonymous writable regions (mimalloc arenas + page map, structure heap, misc JSC/WTF OS allocations); skip stacks & malloc zones & JIT
     {
@@ -796,9 +872,10 @@ static void imageDump(JSC::VM& vm, const char* path)
                 regions.push_back({ addr, size, 0, ((uint64_t)tag << 8) | 4 }); // anonymous reserve, then resident runs as file-backed data
                 size_t npages = size / pg; std::vector<int> disp(npages); mach_vm_size_t dispCount = npages;
                 if (mach_vm_page_range_query(mach_task_self(), addr, size, (mach_vm_address_t)disp.data(), &dispCount) == KERN_SUCCESS) {
+                    auto live = [&](size_t k) { return disp[k] && !inFreeRange(addr + k * pg); }; // purged spans can still read as present; mimalloc knows they are free
                     for (size_t i = 0; i < dispCount;) {
-                        if (!disp[i]) { i++; continue; }
-                        size_t j = i; while (j < dispCount && disp[j]) j++;
+                        if (!live(i)) { i++; continue; }
+                        size_t j = i; while (j < dispCount && live(j)) j++;
                         regions.push_back({ addr + i * pg, (j - i) * pg, 0, (uint64_t)tag << 8 });
                         i = j;
                     }
@@ -901,14 +978,18 @@ static void imageRestoreAndRun(const char* path)
     // Re-seat allocator TLS: this thread's default theap must be the image's main theap, not whatever this process created before the overlay.
     if (hdr.reserved[0]) mi_theap_set_default((mi_theap_t*)hdr.reserved[0]);
     _mi_scavenger_forked_child(); // same situation as a fork child: the image says a scavenger runs, but no such thread exists here
+    { const char* d = getenv("BUN_MEMDEBUG"); s_dir = (d && *d) ? strdup(d) : nullptr; } // globals now hold the build process's env pointers
     if (!getenv("BUN_IMAGE_NOFRESHHEAP")) {
         // Image payload pages are immortal: never free into them (that would dirty a clean file-backed page for allocator metadata) and allocate from fresh pages.
-        s_frozenRanges.clear();
-        for (auto& r : regions) if ((r.kind & 0xff) == 0 && (r.kind >> 8) == 240) s_frozenRanges.push_back({ r.addr, r.addr + r.len });
+        s_frozenRanges.clear(); s_runs.clear();
+        for (auto& r : regions) if ((r.kind & 0xff) == 0) { s_frozenRanges.push_back({ r.addr, r.addr + r.len }); s_runs.push_back({ (uintptr_t)r.addr, (size_t)r.len, (size_t)r.fileOff }); }
         std::sort(s_frozenRanges.begin(), s_frozenRanges.end());
+        std::sort(s_runs.begin(), s_runs.end(), [](const FrozenRun& x, const FrozenRun& y) { return x.start < y.start; });
+        s_snapFd = fd; // keep the image open so dirtymap/celldiff can diff against it
         mi_free_set_filter(frozenFreeFilter);
         mi_theap_set_default(mi_heap_theap(mi_heap_new()));
     }
+    if (getenv("BUN_IMAGE_TRAP")) imageTrapArm();
     // pthread TLS keys created by the build process (WTF::ThreadSpecific etc.) must exist here too, or setspecific silently fails; burn keys up to the image's high-water mark.
     if (hdr.reserved[1]) { for (int i = 0; i < 1024; i++) { pthread_key_t k = 0; if (pthread_key_create(&k, nullptr)) break; if ((uint64_t)k + 1 >= hdr.reserved[1]) break; } }
     fprintf(stderr, "[image] restored %zu regions: %.1fMB mapped clean, %.1fMB __DATA copied\n", regions.size(), mapped / 1048576.0, copied / 1048576.0);
@@ -976,6 +1057,7 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
         else if (!strncmp(buf, "reclean", 7)) req = 6;
         else if (!strncmp(buf, "cellprofile", 11)) req = 7;
         else if (!strncmp(buf, "imagedump", 9)) req = 8;
+        else if (!strncmp(buf, "trapreport", 10)) req = 9;
         else if (!strncmp(buf, "shrink", 6)) req = 3;
         else if (!strncmp(buf, "gc", 2)) req = 2;
         else req = 1;
@@ -999,6 +1081,7 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
         s_recordProfile = false;
         return;
     }
+    if (req == 9) { imageTrapReport(); return; }
     if (req == 8) {
         imageDump(*vm, getenv("BUN_IMAGE_OUT") ? getenv("BUN_IMAGE_OUT") : "/tmp/bun.img");
         if (getenv("BUN_IMAGE_EXIT_AFTER_DUMP")) _exit(0);

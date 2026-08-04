@@ -2124,7 +2124,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let output_value = match handlers.binary_type.get().to_js(data, &global) {
             Ok(v) => v,
             Err(err) => {
-                this.handle_error(global.take_exception(err));
+                this.handle_error(global.take_error(err));
                 return;
             }
         };

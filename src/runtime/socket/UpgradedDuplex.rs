@@ -249,18 +249,18 @@ impl UpgradedDuplex {
             let buffer = match bun_jsc::array_buffer::BinaryType::Buffer.to_js(data, &global) {
                 Ok(b) => b,
                 Err(err) => {
-                    (self.handlers.on_error)(self.handlers.ctx, global.take_exception(err));
+                    (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
                     return;
                 }
             };
             buffer.ensure_still_alive();
 
             if let Err(err) = write_or_end.call(&global, duplex, &[buffer]) {
-                (self.handlers.on_error)(self.handlers.ctx, global.take_exception(err));
+                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
             }
         } else {
             if let Err(err) = write_or_end.call(&global, duplex, &[JSValue::NULL]) {
-                (self.handlers.on_error)(self.handlers.ctx, global.take_exception(err));
+                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
             }
         }
     }

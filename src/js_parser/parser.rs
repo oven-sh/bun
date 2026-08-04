@@ -535,8 +535,8 @@ pub use crate::p::P;
 pub use bun_ast as js_ast;
 use js_ast::G;
 pub use js_ast::{
-    B, Binding, BindingNodeIndex, BindingNodeList, E, Expr, ExprNodeIndex, ExprNodeList, LocRef, S,
-    Scope, Stmt, StmtNodeIndex, StmtNodeList, Symbol,
+    B, Binding, BindingNodeIndex, E, Expr, ExprNodeIndex, ExprNodeList, LocRef, S, Scope, Stmt,
+    StmtNodeIndex, StmtNodeList, Symbol,
 };
 
 pub use js_ast::Op;

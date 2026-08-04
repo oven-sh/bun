@@ -86,5 +86,5 @@ root = "src"  # Only scan for tests in the src directory
 
 Tests run in the following order:
 
-1. Test files run sequentially (not in parallel)
+1. Test files run sequentially, or across worker processes with [`--parallel`](/test/parallel)
 2. Within each file, tests run sequentially in definition order

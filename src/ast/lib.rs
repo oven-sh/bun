@@ -2909,7 +2909,6 @@ pub mod flags {
     #[derive(EnumSetType, Debug)]
     pub enum JSXElement {
         IsKeyAfterSpread,
-        HasAnyDynamic,
     }
     pub type JSXElementBitset = EnumSet<JSXElement>;
 
@@ -3171,7 +3170,7 @@ pub fn data_store_dupe_str(bytes: &[u8]) -> &'static [u8] {
 }
 
 /// RAII scope for [`store_ast_alloc_heap`]: `enter()` on construction,
-/// `reset()` via [`Self::reset`], `exit()` on drop.
+/// `exit()` on drop.
 #[must_use = "side-arena heap lives until this guard drops"]
 pub struct StoreAstAllocHeap(());
 impl StoreAstAllocHeap {
@@ -3179,10 +3178,6 @@ impl StoreAstAllocHeap {
     pub fn new() -> Self {
         store_ast_alloc_heap::enter();
         Self(())
-    }
-    #[inline]
-    pub fn reset(&self) {
-        store_ast_alloc_heap::reset();
     }
 }
 impl Drop for StoreAstAllocHeap {

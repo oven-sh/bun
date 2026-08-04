@@ -86,6 +86,8 @@ const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const { kIncomingMessage } = require("node:_http_common");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
+const kClosing = Symbol("http.server.closing");
+const kPendingDrainClose = Symbol("http.server.pendingDrainClose");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 
 // node.http trace events ('http.server.request' b/e). The agent module is
@@ -119,7 +121,19 @@ const DateNow = Date.now;
 
 let cluster;
 
+// Like Node.js's net.Server#_emitCloseIfDrained: the native all-closed promise
+// resolves on pending_requests == 0 (not connections == 0), so gate the actual
+// 'close' on kTrackedConnections draining; #onClose reschedules once it does.
 function emitCloseServer(self: Server) {
+  if (!self[kClosing]) return;
+  const connections = self[kTrackedConnections];
+  if (connections && connections.size > 0) {
+    self[kPendingDrainClose] = true;
+    return;
+  }
+  self[kPendingDrainClose] = false;
+  self[kClosing] = false;
+  self[serverSymbol] = undefined;
   callCloseCallback(self);
   self.emit("close");
 }
@@ -276,7 +290,7 @@ function emitRequestCloseNT(self) {
 }
 
 function emitListeningNextTick(self, hostname, port) {
-  if ((self.listening = !!self[serverSymbol])) {
+  if ((self.listening = !!self[serverSymbol] && !self[kClosing])) {
     // TODO: remove the arguments
     // Note does not pass any arguments.
     self.emit("listening", null, hostname, port);
@@ -309,6 +323,8 @@ function Server(options, callback): void {
   defineHttpAllowHalfOpen(this);
   this[kInternalSocketData] = undefined;
   this[kTrackedConnections] = new Set();
+  this[kClosing] = false;
+  this[kPendingDrainClose] = false;
   this[tlsSymbol] = null;
   this.noDelay = true;
   if (typeof options === "function") {
@@ -471,16 +487,13 @@ Server.prototype.unref = function () {
   return this;
 };
 
+// Node destroys every tracked connection and leaves the listen socket alone.
 Server.prototype.closeAllConnections = function () {
-  const server = this[serverSymbol];
-  if (!server) {
-    return;
+  const connections = this[kTrackedConnections];
+  if (!connections) return;
+  for (const socket of connections) {
+    socket.destroy();
   }
-  this[serverSymbol] = undefined;
-  clearInterval(this[kConnectionsCheckingInterval]);
-  this.listening = false;
-
-  server.stop(true);
 };
 
 Server.prototype.getConnections = function (callback) {
@@ -494,8 +507,21 @@ Server.prototype.getConnections = function (callback) {
 };
 
 Server.prototype.closeIdleConnections = function () {
-  const server = this[serverSymbol];
-  server?.closeIdleConnections();
+  // Native sweep is authoritative on a live server (its isIdle flag spares
+  // mid-parse connections); the kTrackedConnections pass covers the
+  // post-close() window once the native app has deinit'd.
+  this[serverSymbol]?.closeIdleConnections();
+  if (!this[kClosing]) return;
+  const connections = this[kTrackedConnections];
+  if (!connections) return;
+  for (const socket of connections) {
+    if (socket.destroyed) continue;
+    const message = socket._httpMessage;
+    if (message && !message.finished) continue;
+    if (socket[kPipelinedResponses]?.length) continue;
+    if (socket[kHandle]?.response) continue;
+    socket.destroy();
+  }
 };
 
 Server.prototype.close = function (optionalCallback?) {
@@ -503,12 +529,14 @@ Server.prototype.close = function (optionalCallback?) {
   // Node.js's httpServerPreClose clears the connections-checking interval
   // even when the server was never listening.
   clearInterval(this[kConnectionsCheckingInterval]);
-  if (!server) {
+  if (!server || this[kClosing]) {
     if (typeof optionalCallback === "function") process.nextTick(optionalCallback, $ERR_SERVER_NOT_RUNNING());
     // Like Node.js's net.Server#close, close() returns the server.
     return this;
   }
-  this[serverSymbol] = undefined;
+  // kClosing is Node's "_handle == null" stand-in; serverSymbol stays set
+  // until emitCloseServer so the drain helpers keep working after close().
+  this[kClosing] = true;
   if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
   this.listening = false;
   server.closeIdleConnections();
@@ -553,7 +581,7 @@ Server.prototype[Symbol.asyncDispose] = function () {
 };
 
 Server.prototype.address = function () {
-  if (!this[serverSymbol]) return null;
+  if (!this[serverSymbol] || this[kClosing]) return null;
   return this[serverSymbol].address;
 };
 
@@ -1095,6 +1123,11 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       },
     });
 
+    // Cancel any prior close()'s pending drain now that the new handle is
+    // installed (after the fallible Bun.serve() so a throw leaves state intact).
+    this[kClosing] = false;
+    this[kPendingDrainClose] = false;
+    this[kCloseCallback] = undefined;
     getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
     isHTTPS = this[serverSymbol].protocol === "https";
     applyServerCustomOptions(this);
@@ -1614,7 +1647,14 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
     // released parser (free() invoked, kOnTimeout nulled).
     releaseServerParserShim(this);
     this[kHandle] = null;
-    this.server?.[kTrackedConnections]?.delete(this);
+    const server = this.server;
+    const tracked = server?.[kTrackedConnections];
+    if (tracked) {
+      tracked.delete(this);
+      if (tracked.size === 0 && server[kPendingDrainClose]) {
+        process.nextTick(emitCloseServer, server);
+      }
+    }
     const timer = this[kSocketTimeoutTimer];
     if (timer) {
       clearTimeout(timer);

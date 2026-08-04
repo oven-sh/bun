@@ -557,7 +557,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     #[inline]
     fn decode_escapes(&mut self, body: &[u8], buf: &mut Vec<u8>) -> PResult {
-        decode_string_escapes::<false, _>(self, body, buf)
+        decode_string_escapes(self, body, buf)
     }
 
     fn parse_scalar(&mut self, loc: Loc) -> PResult<Expr> {
@@ -1322,7 +1322,7 @@ fn read_trail_surrogate_escape(
     Some(value as u16)
 }
 
-fn decode_string_escapes<'s, const ALLOW_RAW_CONTROL: bool, L: LexerLog<'s, Err = crate::Error>>(
+fn decode_string_escapes<'s, L: LexerLog<'s, Err = crate::Error>>(
     l: &mut L,
     body: &[u8],
     buf: &mut Vec<u8>,
@@ -1332,7 +1332,7 @@ fn decode_string_escapes<'s, const ALLOW_RAW_CONTROL: bool, L: LexerLog<'s, Err 
     while iterator.next(&mut iter) {
         let c = iter.c;
         if c != '\\' as CodePoint {
-            if !ALLOW_RAW_CONTROL && (0..0x20).contains(&c) {
+            if (0..0x20).contains(&c) {
                 if c == 0x0A || c == 0x0D {
                     l.add_default_error(b"Unterminated string literal")?;
                 } else {
@@ -1391,50 +1391,4 @@ fn decode_string_escapes<'s, const ALLOW_RAW_CONTROL: bool, L: LexerLog<'s, Err 
         }
     }
     Ok(())
-}
-
-struct MiniLog<'a, 's> {
-    log: &'a mut Log,
-    source: &'s Source,
-    prev_error_loc: Loc,
-}
-
-impl<'s> LexerLog<'s> for MiniLog<'_, 's> {
-    type Err = crate::Error;
-    fn log_mut(&mut self) -> &mut Log {
-        self.log
-    }
-    fn source(&self) -> &'s Source {
-        self.source
-    }
-    fn prev_error_loc_mut(&mut self) -> &mut Loc {
-        &mut self.prev_error_loc
-    }
-    fn start(&self) -> usize {
-        0
-    }
-    fn syntax_err() -> crate::Error {
-        crate::Error::SyntaxError
-    }
-}
-
-pub(crate) fn decode_auto_quoted(
-    source: &Source,
-    log: &mut Log,
-    bump: &Bump,
-    body: &[u8],
-    opts: JSONOptions,
-) -> crate::Result<E::String> {
-    let mut l = MiniLog {
-        log,
-        source,
-        prev_error_loc: Loc::EMPTY,
-    };
-    let mut body = body;
-    if opts.ignore_leading_escape_sequences && body.first() == Some(&b'\\') {
-        body = &body[1..];
-    }
-    let mut buf: Vec<u8> = Vec::with_capacity(body.len());
-    decode_string_escapes::<true, _>(&mut l, body, &mut buf)?;
-    Ok(E::String::init(bump.alloc_slice_copy(&buf)))
 }

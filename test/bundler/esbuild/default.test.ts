@@ -4387,7 +4387,7 @@ describe.concurrent("bundler", () => {
     },
     define: {
       "import.meta": 1,
-      "import.meta.foo": "bun!",
+      "import.meta.foo": '"bun!"',
       "import.meta.foo.bar": 3,
     },
     run: {

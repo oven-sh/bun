@@ -949,7 +949,10 @@ it(
             "}));",
           ]
         : [`console.log(JSON.stringify({i: ${i}}));`];
-      writeFileSync(entry, [`var x${i} = ${i};`, `var big = "${sourcePad}";`, "Bun.gc(true);", ...probe].join("\n"));
+      writeHotFileAtomicSync(
+        entry,
+        [`var x${i} = ${i};`, `var big = "${sourcePad}";`, "Bun.gc(true);", ...probe].join("\n"),
+      );
     };
     writeEntry(0);
 

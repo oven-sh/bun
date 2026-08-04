@@ -3738,7 +3738,12 @@ impl VirtualMachine {
         match self.ref_strings.entry(hash) {
             Entry::Occupied(o) => {
                 *new = false;
-                *o.get()
+                let r = *o.get();
+                // SAFETY: `r` is live while it sits in `ref_strings` under
+                // `ref_strings_mutex`. Take the caller's +1 here so it is
+                // secured before the lock drops.
+                unsafe { (*r).ref_() };
+                r
             }
             Entry::Vacant(v) => {
                 // Dupe the input bytes when `DUPE`, otherwise
@@ -3788,12 +3793,9 @@ impl VirtualMachine {
     ) -> *mut crate::ref_string::RefString {
         debug_assert!(!input_.is_empty());
         let mut was_new = false;
-        let r = self.ref_counted_string_with_was_new::<DUPE>(&mut was_new, input_, hash_);
-        if !was_new {
-            // SAFETY: `r` is live in `self.ref_strings`; fresh entries already have +1 from `create_external`.
-            unsafe { (*r).ref_() };
-        }
-        r
+        // Fresh entries have +1 from `create_external`; the Occupied arm
+        // takes +1 under `ref_strings_mutex`.
+        self.ref_counted_string_with_was_new::<DUPE>(&mut was_new, input_, hash_)
     }
 
     // Note: `flags` is a runtime arg —

@@ -242,20 +242,12 @@ impl DirInfo {
     /// read-only call sites (`.get()`, `.fd`, iteration). The `DirEntry` is a
     /// slot in the BSSMap-backed `EntriesOptionMap` singleton (ARENA — process
     /// lifetime), so a `&'static` reborrow of the `&'static mut` returned by
-    /// `entries_at` is sound and needs no `unsafe` here. Prefer this over
-    /// `get_entries` + per-site raw deref whenever the caller only reads.
-    pub(crate) fn get_entries_ref(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
-        let entries_ptr = fs::FileSystem::instance()
-            .fs
-            .entries_at(self.entries, generation)?;
-        match entries_ptr {
-            fs::EntriesOption::Entries(entries) => Some(&**entries),
-            fs::EntriesOption::Err(_) => None,
-        }
-    }
-
-    /// [`get_entries_ref`](Self::get_entries_ref) for call sites that already
-    /// hold `entries_mutex` (the mutex is non-recursive); see
+    /// `entries_at_locked` is sound and needs no `unsafe` here.
+    ///
+    /// Callers must hold `entries_mutex` for the lookup AND for every
+    /// subsequent `.data` read on the returned `&DirEntry`: another thread can
+    /// refresh a stale/older-generation slot in place (which frees the
+    /// hashbrown bucket array) under that lock. See
     /// [`RealFS::entries_at_locked`](fs::RealFS::entries_at_locked).
     pub(crate) fn get_entries_ref_locked(
         &self,

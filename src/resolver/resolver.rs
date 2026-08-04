@@ -1665,7 +1665,11 @@ impl<'a> Resolver<'a> {
                     module_type_from_ext(name.ext).unwrap_or(options::ModuleType::Unknown);
             }
 
-            if let Some(entries) = dir.get_entries_ref(self.generation) {
+            // `.data` is freed and rewritten in place when another thread
+            // refreshes a stale/older-generation slot; hold `entries_mutex`
+            // across both the lookup and the `.data.get()` that follows.
+            let _entries_unlock = self.fs_ref().fs.entries_mutex.lock_guard();
+            if let Some(entries) = dir.get_entries_ref_locked(self.generation) {
                 if let Some(query) = entries.get(name.filename) {
                     // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
                     let symlink_path =
@@ -3700,7 +3704,8 @@ impl<'a> Resolver<'a> {
                         return MatchStatus::NotFound;
                     }
                 };
-                let entries = match resolved_dir_info.get_entries_ref(self.generation) {
+                let entries_unlock = self.fs_ref().fs.entries_mutex.lock_guard();
+                let entries = match resolved_dir_info.get_entries_ref_locked(self.generation) {
                     Some(e) => e,
                     None => {
                         esm_resolution.status = Status::ModuleNotFound;
@@ -3762,8 +3767,12 @@ impl<'a> Resolver<'a> {
 
                     // Try to have a friendly error message if people forget the "/index.js" suffix
                     if ends_with_star {
+                        // `dir_info_cached` re-takes `entries_mutex` (non-recursive).
+                        drop(entries_unlock);
                         if let Ok(Some(dir_info_ref)) = self.dir_info_cached(abs_esm_path) {
-                            if let Some(dir_entries) = dir_info_ref.get_entries_ref(self.generation)
+                            let _entries_unlock = self.fs_ref().fs.entries_mutex.lock_guard();
+                            if let Some(dir_entries) =
+                                dir_info_ref.get_entries_ref_locked(self.generation)
                             {
                                 let index = b"index";
                                 let buf = bufs!(load_as_file);
@@ -5244,7 +5253,9 @@ impl<'a> Resolver<'a> {
         base[0..b"index".len()].copy_from_slice(b"index");
         base[b"index".len()..].copy_from_slice(ext);
 
-        if let Some(entries) = dir_info.get_entries_ref(self.generation) {
+        // SAFETY: see note at `rfs` above.
+        let _entries_unlock = unsafe { &*rfs }.entries_mutex.lock_guard();
+        if let Some(entries) = dir_info.get_entries_ref_locked(self.generation) {
             if let Some(lookup) = entries.get(&base[..]) {
                 // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
                 if unsafe { lookup.entry().kind(rfs, self.store_fd) }
@@ -5701,6 +5712,11 @@ impl<'a> Resolver<'a> {
                 Ok(e) => bun_ptr::BackRef::new(&*e),
                 Err(_) => dec_ret!(None),
             };
+
+        // Another thread can refresh this slot in place (frees `.data` buckets)
+        // under `entries_mutex`; hold it across every `entries!().get(..)` below.
+        // SAFETY: `rfs` points at the process-global RealFS singleton.
+        let _entries_unlock = unsafe { &*rfs }.entries_mutex.lock_guard();
 
         if let Fs::file_system::real_fs::EntriesOption::Err(err) = dir_entry.get() {
             match err.original_err {

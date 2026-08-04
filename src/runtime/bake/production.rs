@@ -1447,11 +1447,7 @@ pub struct PerThread {
     pub(crate) source_maps: StringArrayHashMap<OutputFileIndex>,
 
     // Thread-local
-    // Note: stored as `BackRef` (the VM
-    // is process-lifetime and outlives every `PerThread`); `load_module`
-    // re-derives a mutable VM via the per-thread singleton, so no write
-    // provenance is needed here.
-    pub(crate) vm: bun_ptr::BackRef<VirtualMachine>,
+    pub(crate) vm: bun_ptr::BackRef<VirtualMachine, bun_ptr::Mut>,
     /// Indexed by entry point index (OpaqueFileId)
     pub(crate) loaded_files: AutoBitSet,
     /// JSArray of JSString, indexed by entry point index (OpaqueFileId)
@@ -1496,7 +1492,9 @@ impl PerThread {
             module_keys: Vec::new(),
             module_map: StringArrayHashMap::default(),
             source_maps: StringArrayHashMap::default(),
-            vm: bun_ptr::BackRef::from(NonNull::new(vm).expect("vm non-null")),
+            // SAFETY: `vm` is the live per-thread VM from `init_bake` (non-null,
+            // write provenance); outlives `PerThread`.
+            vm: unsafe { bun_ptr::BackRef::from_raw_mut(vm) },
             loaded_files: AutoBitSet::init_empty(0).expect("unreachable"),
             all_server_files: None,
             attached: false,
@@ -1516,8 +1514,9 @@ impl PerThread {
         let loaded_files = AutoBitSet::init_empty(n)?;
         // errdefer loaded_files.deinit() — handled by Drop on error path
 
-        // BackRef invariant: vm is the live per-thread VM; outlives PerThread.
-        let vm = bun_ptr::BackRef::from(NonNull::new(vm).expect("vm non-null"));
+        // SAFETY: BackRef invariant — vm is the live per-thread VM from `init_bake`
+        // (non-null, write provenance); outlives PerThread.
+        let vm = unsafe { bun_ptr::BackRef::from_raw_mut(vm) };
         let global = vm.global();
         let all_server_files = Some(bun_jsc::Strong::create(
             JSValue::create_empty_array(global, n).map_err(js_err)?,

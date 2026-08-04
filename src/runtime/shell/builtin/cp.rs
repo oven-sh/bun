@@ -243,7 +243,13 @@ impl Cp {
                     // SAFETY: paired with `heap::alloc` in `create()`.
                     drop(unsafe { bun_core::heap::take(t) });
                 }
-                Some((t, false)) => return Self::print_shell_cp_task(interp, cmd, t),
+                // SAFETY: `t` is a live heap task stashed in
+                // `on_shell_cp_task_done`; reclaim ownership.
+                Some((t, false)) => {
+                    return Self::print_shell_cp_task(interp, cmd, unsafe {
+                        bun_core::heap::take(t)
+                    });
+                }
                 None => break,
             }
         }
@@ -260,12 +266,14 @@ impl Cp {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_count -= 1;
         }
+        // SAFETY: `task` was heap-allocated in `create()`; ownership transfers
+        // to this completion callback. Re-leaked below only on the EBUSY-defer path.
+        #[cfg_attr(not(windows), allow(unused_mut))]
+        let mut task = unsafe { bun_core::heap::take(task) };
         #[cfg(windows)]
         {
-            // SAFETY: `task` is a live heap-allocated task; main-thread only.
-            let tref = unsafe { &mut *task };
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                if let Some(err) = &tref.err {
+                if let Some(err) = &task.err {
                     // Defer the task to the ebusy phase. Note the precedence:
                     //   `(is_sys && errno==EBUSY && tgt_match) || src_match`
                     // i.e. ANY sys error whose `path` equals `src_absolute` is
@@ -273,21 +281,21 @@ impl Cp {
                     // compatibility.
                     let is_ebusy = matches!(err, ShellErr::Sys(sys)
                         if (sys.get_errno() == bun_sys::E::EBUSY
-                                && tref.tgt_absolute.as_deref()
+                                && task.tgt_absolute.as_deref()
                                     .map_or(false, |p| sys.path.eql_utf8(p)))
-                            || tref.src_absolute.as_deref()
+                            || task.src_absolute.as_deref()
                                     .map_or(false, |p| sys.path.eql_utf8(p)));
                     if is_ebusy {
-                        exec.ebusy.tasks.push(task);
+                        exec.ebusy.tasks.push(bun_core::heap::into_raw(task));
                         return Self::next(interp, cmd).run(interp);
                     }
                 } else {
                     // Record successful absolute paths so a deferred EBUSY
                     // sibling can be suppressed.
-                    if let Some(tgt) = tref.tgt_absolute.take() {
+                    if let Some(tgt) = task.tgt_absolute.take() {
                         bun_core::handle_oom(exec.ebusy.absolute_targets.insert(&tgt));
                     }
-                    if let Some(src) = tref.src_absolute.take() {
+                    if let Some(src) = task.src_absolute.take() {
                         bun_core::handle_oom(exec.ebusy.absolute_srcs.insert(&src));
                     }
                 }
@@ -296,9 +304,11 @@ impl Cp {
         Self::print_shell_cp_task(interp, cmd, task).run(interp);
     }
 
-    fn print_shell_cp_task(interp: &Interpreter, cmd: NodeId, task: *mut ShellCpTask) -> Yield {
-        // SAFETY: task was heap-allocated in create(); reclaim.
-        let mut task = unsafe { bun_core::heap::take(task) };
+    #[allow(
+        clippy::boxed_local,
+        reason = "reclaim point for the box the work pool handed back"
+    )]
+    fn print_shell_cp_task(interp: &Interpreter, cmd: NodeId, mut task: Box<ShellCpTask>) -> Yield {
         // The lock is uncontended here (all work-pool subtasks have
         // finished) but the data lives inside it.
         let output = core::mem::take(&mut *task.verbose_output.lock());

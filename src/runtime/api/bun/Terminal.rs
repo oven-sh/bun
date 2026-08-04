@@ -551,7 +551,9 @@ impl Terminal {
         }
 
         // Start reading data
-        terminal.reader.with_mut(|r| r.read());
+        // SAFETY: the reader cell is live for the terminal's lifetime; `read`
+        // is the raw re-entrancy-safe entry (its dispatch runs user JS).
+        unsafe { IOReader::read(terminal.reader.as_ptr()) };
 
         // Get or create the JS wrapper
         let this_value = existing_js_value.unwrap_or_else(|| js::to_js(parent_ptr, global_object));
@@ -713,9 +715,8 @@ impl Terminal {
         let guard = scopeguard::guard((), |()| self.deref_());
         if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
             // SAFETY: single JS thread; re-entrant user JS (data callback may
-            // call `terminal.close()`) is handled via the raw-pointer dispatch
-            // convention used by `__bun_run_file_poll` for BUFFERED_READER.
-            unsafe { (*self.reader.as_ptr()).read() };
+            // call `terminal.close()`) is handled by `read`'s raw dispatch.
+            unsafe { IOReader::read(self.reader.as_ptr()) };
             if self.flags.get().contains(Flags::CLOSED) {
                 return;
             }
@@ -727,7 +728,7 @@ impl Terminal {
         let flags = self.flags.get();
         if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
             // SAFETY: same as the `read()` call above.
-            unsafe { (*self.reader.as_ptr()).read() };
+            unsafe { IOReader::read(self.reader.as_ptr()) };
         }
         // An inline terminal whose child has exited no longer keeps the event
         // loop alive; the polls stay registered so grandchild output still

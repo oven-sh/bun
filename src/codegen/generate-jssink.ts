@@ -236,7 +236,6 @@ protected:
 JSObject* createJSSinkPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WebCore::SinkID sinkID);
 JSObject* createJSSinkControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WebCore::SinkID sinkID);
 Structure* createJSSinkControllerStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WebCore::SinkID sinkID);
-JSC::EncodedJSValue JSSink__writeBytes(SinkID, void*, JSC::JSGlobalObject*, const uint8_t*, size_t);
 } // namespace WebCore
 `;
   var templ = outer;
@@ -307,23 +306,8 @@ using namespace JSC;
 
 ${classes.map(name => `extern "C" size_t ${name}__memoryCost(void* sinkPtr);`).join("\n")}
 ${classes.map(name => `extern "C" void ${name}__controllerDetached(void* sinkPtr, JSC::EncodedJSValue controllerValue);`).join("\n")}
-${classes.map(name => `extern "C" JSC::EncodedJSValue ${name}__writeBytes(void* sinkPtr, JSC::JSGlobalObject* global, const uint8_t* ptr, size_t len);`).join("\n")}
 
 const ClassInfo JSReadableSinkControllerBase::s_info = { "ReadableSinkController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableSinkControllerBase) };
-
-JSC::EncodedJSValue JSSink__writeBytes(SinkID id, void* sinkPtr, JSC::JSGlobalObject* global, const uint8_t* ptr, size_t len)
-{
-    switch (id) {
-${classes.map(name => `    case SinkID::${name}: return ${name}__writeBytes(sinkPtr, global, ptr, len);`).join("\n")}
-    default: break;
-    }
-    return JSC::JSValue::encode(JSC::jsUndefined());
-}
-
-extern "C" JSC::EncodedJSValue Bun__JSSink__writeBytesById(uint8_t sinkId, void* sinkPtr, JSC::JSGlobalObject* global, const uint8_t* ptr, size_t len)
-{
-    return JSSink__writeBytes(static_cast<SinkID>(sinkId), sinkPtr, global, ptr, len);
-}
 `;
   var templ = head;
 
@@ -1222,17 +1206,6 @@ pub extern "C" fn ${name}__close(global: &JSGlobalObject, this: &mut ${name}) ->
 #[unsafe(no_mangle)]
 pub extern "C" fn ${name}__updateRef(this: &mut ${name}, value: bool) {
     ${JSSinkT}::js_update_ref(this, value)
-}
-
-`;
-
-    // extern "C" JSC::EncodedJSValue ${name}__writeBytes(void* sinkPtr, JSC::JSGlobalObject*, const uint8_t*, size_t)
-    // — called from JSSink__writeBytes in JSSink.cpp. C++ caller null-checks `sinkPtr`.
-    symbols.push(`${name}__writeBytes`);
-    templ += `#[allow(dead_code, unreachable_pub, unused)]
-#[unsafe(no_mangle)]
-pub extern "C" fn ${name}__writeBytes(this: &mut ${name}, global: &bun_jsc::JSGlobalObject, ptr: *const u8, len: usize) -> bun_jsc::JSValue {
-    ${JSSinkT}::js_write_bytes(this, global, ptr, len)
 }
 
 `;

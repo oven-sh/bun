@@ -6143,8 +6143,7 @@ impl bun_io::Write for DirectWriterStruct {
 impl DirectWriterStruct {
     /// The payload of a PADDED DATA frame (RFC 9113 6.1); the caller wrote the frame header.
     fn write_padded(&mut self, data: &[u8], padding: u8) -> bun_io::Result<()> {
-        // Owned per call: over a JS-backed transport, `write()` can re-enter
-        // send_data()/flush_queue() before this frame is fully corked.
+        // Owned per call: `write()` can re-enter this path through a JS transport mid-frame.
         let mut payload = Vec::with_capacity(1 + data.len() + padding as usize);
         payload.push(padding);
         payload.extend_from_slice(data);

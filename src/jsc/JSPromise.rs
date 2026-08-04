@@ -103,18 +103,6 @@ impl Strong {
         self.swap().reject(global, Ok(err))
     }
 
-    /// Like `reject`, except it drains microtasks at the end of the current event loop iteration.
-    pub fn reject_task(
-        &mut self,
-        global: &JSGlobalObject,
-        val: JSValue,
-    ) -> Result<(), JsTerminated> {
-        // The safe wrapper funnels through the single audited deref in
-        // `enter_event_loop_scope`.
-        let _guard = VirtualMachine::get().enter_event_loop_scope();
-        self.reject(global, Ok(val))
-    }
-
     pub fn resolve(&mut self, global: &JSGlobalObject, val: JSValue) -> Result<(), JsTerminated> {
         self.swap().resolve(global, val)
     }

@@ -3886,6 +3886,48 @@ fn server_set_on_connection(
     Ok(JSValue::UNDEFINED)
 }
 
+/// `us_select_cert_cb` dispatches this from inside the TLS handshake for every
+/// ClientHello carrying a servername. The SNI data slot holds the owning
+/// server's `any_server_packed` word (set by `server_set_on_server_name`), so
+/// server state is read through `AnyServer`'s safe accessors rather than a
+/// typed raw deref. Same return contract as [`us_dispatch_server_name`].
+extern "C" fn us_dispatch_serve_server_name(
+    ls: *mut uws_sys::ListenSocket,
+    hostname: *const core::ffi::c_char,
+    abort_handshake: *mut core::ffi::c_int,
+    _socket: *mut c_void,
+) -> *mut c_void {
+    jsc::mark_binding!();
+    if ls.is_null() || hostname.is_null() {
+        return core::ptr::null_mut();
+    }
+    // S008: `ListenSocket` is an `opaque_ffi!` ZST - safe deref.
+    let data = bun_opaque::opaque_deref_mut(ls).server_name_data();
+    if data.is_null() {
+        return core::ptr::null_mut();
+    }
+    let server = super::AnyServer::from_packed(data as u64);
+    if server.vm().is_shutting_down() || server.js_value_for_dispatch().is_none() {
+        return core::ptr::null_mut();
+    }
+    let callback = server.on_server_name();
+    if callback.is_empty_or_undefined_or_null() {
+        return core::ptr::null_mut();
+    }
+    let global = server.global_this();
+    // SAFETY: `hostname` is NUL-terminated per the C contract (same read as
+    // `us_dispatch_server_name` in Listener.rs for this callback).
+    let name = unsafe { core::ffi::CStr::from_ptr(hostname) };
+    let js_name = ZigString::init(name.to_bytes()).to_js(global);
+    // socket_handle = undefined: no resume handle for the uWS socket yet, so
+    // a deferred cb() falls through to the default context.
+    let result = match callback.call(global, JSValue::UNDEFINED, &[js_name, JSValue::UNDEFINED]) {
+        Ok(v) => v,
+        Err(err) => global.take_exception(err),
+    };
+    crate::socket::listener::decode_sni_result(result, abort_handshake)
+}
+
 fn server_set_on_server_name(
     global: &JSGlobalObject,
     server: JSValue,
@@ -3915,53 +3957,12 @@ fn server_set_on_server_name(
                     global,
                     <$T>::js_gc_on_server_name_set,
                 );
-                // `ls.group().owner()` is the uWS HttpContext here, so the
-                // owning server goes in the listen socket's SNI data slot.
-                extern "C" fn dispatch(
-                    ls: *mut uws_sys::ListenSocket,
-                    hostname: *const core::ffi::c_char,
-                    abort_handshake: *mut core::ffi::c_int,
-                    _socket: *mut c_void,
-                ) -> *mut c_void {
-                    jsc::mark_binding!();
-                    if ls.is_null() || hostname.is_null() {
-                        return core::ptr::null_mut();
-                    }
-                    // S008: `ListenSocket` is an `opaque_ffi!` ZST - safe deref.
-                    let data = bun_opaque::opaque_deref_mut(ls).server_name_data();
-                    if data.is_null() {
-                        return core::ptr::null_mut();
-                    }
-                    // SAFETY: `data` is the `*mut Self` registered below; the
-                    // listen socket cannot outlive the server that owns it.
-                    let this = unsafe { &*data.cast::<$T>() };
-                    if this.vm.is_shutting_down() || this.js_value_for_dispatch().is_none() {
-                        return core::ptr::null_mut();
-                    }
-                    let callback = this.on_server_name;
-                    if callback.is_empty_or_undefined_or_null() {
-                        return core::ptr::null_mut();
-                    }
-                    let global = this.global_this();
-                    // SAFETY: `hostname` is NUL-terminated per the C contract.
-                    let name = unsafe { core::ffi::CStr::from_ptr(hostname) };
-                    let js_name = ZigString::init(name.to_bytes()).to_js(global);
-                    // socket_handle = undefined: no resume handle for the uWS
-                    // socket yet, so a deferred cb() falls through to default.
-                    let result = match callback.call(
-                        global,
-                        JSValue::UNDEFINED,
-                        &[js_name, JSValue::UNDEFINED],
-                    ) {
-                        Ok(v) => v,
-                        Err(err) => global.take_exception(err),
-                    };
-                    crate::socket::listener::decode_sni_result(result, abort_handshake)
-                }
                 if let Some(listener) = this.listener {
                     // S008: app::ListenSocket<SSL> ≡ uws_sys::ListenSocket (ZST opaque).
-                    bun_opaque::opaque_deref_mut(listener.cast::<uws_sys::ListenSocket>())
-                        .on_server_name(dispatch, core::ptr::from_mut::<$T>(this).cast::<c_void>());
+                    bun_opaque::opaque_deref_mut(listener.cast::<uws_sys::ListenSocket>()).on_server_name(
+                        us_dispatch_serve_server_name,
+                        this.any_server_packed as *mut c_void,
+                    );
                 }
                 return Ok(JSValue::UNDEFINED);
             }

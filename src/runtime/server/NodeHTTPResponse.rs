@@ -17,7 +17,7 @@ use bun_uws_sys as uws_sys;
 use crate::server::jsc::{
     self, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine,
 };
-use crate::server::{AnyServer, AnyServerTag, HTTPStatusText, ServerWebSocket};
+use crate::server::{AnyServer, HTTPStatusText, ServerWebSocket};
 use crate::webcore::AutoFlusher;
 
 bun_core::declare_scope!(NodeHTTPResponse, visible);
@@ -329,25 +329,9 @@ extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
 }
 
 /// Unpack the `AnyServer` tagged-pointer u64 handed across FFI from C++.
-///
-/// The packed repr is bits 0..49 = ptr,
-/// bits 49..64 = tag, with tag = `1024 - index` (see `bun_ptr::tagged_pointer`).
-/// The Rust `AnyServer` stores `(tag, ptr)` unpacked, so map the wire tag back
-/// to `AnyServerTag` here.
 #[inline]
 fn any_server_from_packed(packed: u64) -> AnyServer {
-    let repr = bun_ptr::TaggedPtr::from(packed);
-    let tag = match repr.data() {
-        1024 => AnyServerTag::HTTPServer,
-        1023 => AnyServerTag::HTTPSServer,
-        1022 => AnyServerTag::DebugHTTPServer,
-        1021 => AnyServerTag::DebugHTTPSServer,
-        _ => unreachable!("Invalid pointer tag"),
-    };
-    AnyServer {
-        tag,
-        ptr: repr.get::<()>(),
-    }
+    AnyServer::from_packed(packed)
 }
 
 /// `jsc.Codegen.JSNodeHTTPResponse` cached-property accessors.

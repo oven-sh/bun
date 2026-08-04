@@ -3666,7 +3666,7 @@ impl AnyServer {
 
     /// Re-pack into the tagged-pointer wire format
     /// (`u49` ptr | `u15` tag) for the C++ FFI boundary. Inverse of
-    /// [`NodeHTTPResponse::any_server_from_packed`]. Tag values are
+    /// [`AnyServer::from_packed`]. Tag values are
     /// `1024 - index` in declaration order
     /// (HTTP, HTTPS, DebugHTTP, DebugHTTPS).
     pub(crate) fn to_packed(self) -> u64 {
@@ -3678,6 +3678,23 @@ impl AnyServer {
         };
         // `TaggedPtr::to()` bit-casts the full packed word through `*mut c_void`.
         bun_ptr::TaggedPtr::init(self.ptr, tag).to() as u64
+    }
+
+    /// Unpack the tagged-pointer wire format produced by [`Self::to_packed`].
+    #[inline]
+    pub(crate) fn from_packed(packed: u64) -> AnyServer {
+        let repr = bun_ptr::TaggedPtr::from(packed);
+        let tag = match repr.data() {
+            1024 => AnyServerTag::HTTPServer,
+            1023 => AnyServerTag::HTTPSServer,
+            1022 => AnyServerTag::DebugHTTPServer,
+            1021 => AnyServerTag::DebugHTTPSServer,
+            _ => unreachable!("Invalid pointer tag"),
+        };
+        AnyServer {
+            tag,
+            ptr: repr.get::<()>(),
+        }
     }
 
     /// Shared borrow of the process-static VM. Routes through
@@ -3712,6 +3729,11 @@ impl AnyServer {
     #[inline]
     pub(crate) fn js_value_for_dispatch(&self) -> Option<JSValue> {
         any_server_dispatch!(self, |s| s.js_value_for_dispatch())
+    }
+
+    #[inline]
+    pub(crate) fn on_server_name(&self) -> JSValue {
+        any_server_dispatch!(self, |s| s.on_server_name)
     }
 
     pub(crate) fn h3_alt_svc(&self) -> Option<&[u8]> {

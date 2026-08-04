@@ -137,11 +137,15 @@ impl FileSinkPtr {
     /// `ptr` is non-null, points to a live `FileSink` from
     /// `FileSink::create*`, and the caller transfers its single owned ref to
     /// this handle.
-    #[cfg(windows)]
     #[inline]
     unsafe fn adopt(ptr: *mut FileSink) -> Self {
         // SAFETY: caller contract — `ptr` is non-null.
         Self(unsafe { core::ptr::NonNull::new_unchecked(ptr) })
+    }
+
+    #[inline]
+    fn as_ptr(&self) -> *mut FileSink {
+        self.0.as_ptr()
     }
 }
 
@@ -688,6 +692,13 @@ impl ShellSubprocess {
         let stdio1 = core::mem::replace(&mut stdio_guard[1], Stdio::Ignore);
         let stdio2 = core::mem::replace(&mut stdio_guard[2], Stdio::Ignore);
 
+        // `ReadableStream` is `Copy`; the handle is wired into the stdin
+        // `FileSink` after the subprocess is fully constructed.
+        let stdin_stream: Option<webcore::ReadableStream> = match &stdio0 {
+            Stdio::ReadableStream(s) => Some(*s),
+            _ => None,
+        };
+
         // `to_process` consumes the result for pid/pidfd; pull the fd handles out first.
         let spawn_stdin = spawn_result.stdin.take();
         let spawn_stdout = spawn_result.stdout.take();
@@ -772,9 +783,10 @@ impl ShellSubprocess {
         // `Writable::on_close` (drops the `Arc<FileSink>`) runs when the sink
         // finishes. `stdin` lives inside the Box-allocated `Subprocess` at a
         // stable address, so the self-referential raw pointer is sound for the
-        // life of the subprocess. Only reachable on Windows (POSIX
-        // `Writable::init` never returns `Pipe` for shell stdio).
-        {
+        // life of the subprocess. Only reachable on Windows for `Stdio::Pipe`
+        // (POSIX `Writable::init` never returns `Pipe` except for ReadableStream,
+        // which sets `source` to the upstream ByteStream/FileReader below).
+        if stdin_stream.is_none() {
             // Derive `stdin_ptr` from the raw heap pointer (`subprocess`), not
             // the local `subproc: &mut` reborrow — the pointer is stored
             // long-term in `FileSink::source` and dereferenced from
@@ -796,6 +808,42 @@ impl ShellSubprocess {
                         // SAFETY: `stdin_ptr` is the live `&raw mut` writable (write provenance).
                         unsafe { bun_ptr::BackRef::from_raw_mut(stdin_ptr) },
                     ));
+            }
+        }
+
+        // ReadableStream stdin: wire the stream into the FileSink via the
+        // SinkHandle abstraction. `assign_to_stream` tries `wire_native_sink`
+        // first (ByteStream/FileReader → `SinkHandle::FileSink`, no JS) and
+        // falls back to the JS pump for other streams.
+        if let Some(mut stream) = stdin_stream {
+            let assign_err: Option<Box<[u8]>> = 'assign: {
+                let Some(global) = cmd_parent.interp.get().global_this_ref() else {
+                    break 'assign None;
+                };
+                // SAFETY: borrow of the stdin slot scoped to this block; single-threaded.
+                let Writable::Pipe(pipe) = (unsafe { &mut (*subprocess).stdin }) else {
+                    break 'assign None;
+                };
+                match pipe.assign_to_stream(&mut stream, global).to_error() {
+                    None => None,
+                    Some(err) => {
+                        use std::io::Write;
+                        let mut msg = Vec::<u8>::new();
+                        let _ = write!(
+                            &mut msg,
+                            "Failed to pipe ReadableStream to stdin: {}",
+                            err.fmt_string(global)
+                        );
+                        Some(msg.into_boxed_slice())
+                    }
+                }
+            };
+            if let Some(msg) = assign_err {
+                // SAFETY: scoped `&mut` for the kill; `abort_after_failed_start`
+                // then consumes the allocation.
+                let _ = unsafe { (*subprocess).try_kill(SignalCode::SIGTERM as i32) };
+                Self::abort_after_failed_start(subprocess);
+                return Err(ShellErr::Custom(msg));
             }
         }
 
@@ -863,6 +911,23 @@ impl ShellSubprocess {
 
     pub(crate) fn on_process_exit(&mut self, _: &Process, status: &Status, _: &Rusage) {
         log!("onProcessExit({:x})", std::ptr::from_mut(self) as usize);
+
+        // ReadableStream stdin: notify the FileSink (cancels the stream and
+        // closes the writer; `on_close` → `source.close()` detaches the native
+        // source's `SinkHandle`) and mark buffered stdin closed so
+        // `Cmd::has_finished()` can complete. `source` is never `ShellWritable`
+        // on this path, so the close cannot reassign `self.stdin` under us.
+        if let Writable::Pipe(pipe) = &self.stdin {
+            let raw = pipe.as_ptr();
+            // SAFETY: `raw` is the canonical `*mut FileSink` (from
+            // `FileSink::create*` via `FileSinkPtr::adopt`); kept alive by the
+            // `FileSinkPtr` held in `self.stdin` for the duration.
+            unsafe { FileSink::on_attached_process_exit(raw, status) };
+            // SAFETY: cmd_parent backref resolves to the owning Cmd which
+            // outlives the subprocess (freed only in `Cmd::deinit`).
+            unsafe { self.cmd_parent.cmd_mut() }.buffered_input_close();
+        }
+
         let exit_code: Option<u8> = 'brk: {
             if let Status::Exited(exited) = &status {
                 break 'brk Some(exited.code);
@@ -889,6 +954,10 @@ impl ShellSubprocess {
             let cmd = unsafe { handle.cmd_mut() };
             if cmd.exit_code.is_none() {
                 cmd.on_exit(code.into());
+            } else if cmd.has_finished() {
+                // Stdout/stderr closing set `exit_code` first; the stdin close
+                // above may have just satisfied `has_finished()`.
+                cmd.on_exit(cmd.exit_code.unwrap());
             }
         }
     }
@@ -1079,8 +1148,25 @@ impl Writable {
                 Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
                 Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
                 Stdio::ReadableStream(_) => {
-                    // The shell never uses this
-                    panic!("Unimplemented stdin readable_stream");
+                    let fd = result.unwrap();
+                    let _ = bun_sys::set_nonblocking(fd);
+                    let pipe_ptr = FileSink::create(event_loop, fd);
+                    // SAFETY: `create` returns a freshly-boxed non-null FileSink
+                    // with refcount 1; sole reference.
+                    match unsafe {
+                        (*pipe_ptr)
+                            .writer
+                            .with_mut(|w| w.start((*pipe_ptr).fd.get(), true))
+                    } {
+                        bun_sys::Result::Ok(()) => {}
+                        bun_sys::Result::Err(_) => {
+                            // SAFETY: `pipe_ptr` is live with refcount 1; deref frees it.
+                            unsafe { FileSink::deref(pipe_ptr) };
+                            return Err(WritableInitError::UnexpectedCreatingStdin);
+                        }
+                    }
+                    // SAFETY: `create` returns non-null with one owned ref; `adopt` takes it over.
+                    Ok(Writable::Pipe(unsafe { FileSinkPtr::adopt(pipe_ptr) }))
                 }
                 Stdio::SocketFd => {
                     // The shell never uses this; rejected at i < 3 anyway.

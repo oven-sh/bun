@@ -3085,6 +3085,113 @@ test("stdin redirect from a Uint8Array sends the bytes captured when the command
   expect(result.exitCode).toBe(0);
 }, 60_000);
 
+describe("redirect stdin from ReadableStream", () => {
+  // External command: on POSIX `cat` is external, on Windows it's a builtin,
+  // so use a spawned Bun child everywhere.
+  const childPump = `process.stdout.write(await Bun.stdin.text())`;
+
+  test.concurrent("native source (subprocess stdout)", async () => {
+    // #18262 repro: a Bun.spawn stdout ReadableStream (backed by a native
+    // ByteStream) piped into a shell command's stdin via the SinkHandle path.
+    await using proc = Bun.spawn({
+      cmd: [BUN, "-e", "process.stdout.write('hello from stream')"],
+      env: bunEnv,
+      stdout: "pipe",
+    });
+    const out = await $`${BUN} -e ${childPump} < ${proc.stdout}`.env(bunEnv).nothrow().quiet();
+    expect({ stdout: out.stdout.toString(), exitCode: out.exitCode }).toEqual({
+      stdout: "hello from stream",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("native source, large payload with backpressure", async () => {
+    const size = 256 * 1024;
+    await using proc = Bun.spawn({
+      cmd: [BUN, "-e", `process.stdout.write(Buffer.alloc(${size}, 'x'))`],
+      env: bunEnv,
+      stdout: "pipe",
+    });
+    const out = await $`${BUN} -e ${childPump} < ${proc.stdout}`.env(bunEnv).nothrow().quiet();
+    expect({ len: out.stdout.length, exitCode: out.exitCode }).toEqual({
+      len: size,
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("native file source (Bun.file().stream())", async () => {
+    using dir = tempDir("shell-stream-file", { "input.txt": "file-content" });
+    const stream = Bun.file(join(String(dir), "input.txt")).stream();
+    const out = await $`${BUN} -e ${childPump} < ${stream}`.env(bunEnv).nothrow().quiet();
+    expect({ stdout: out.stdout.toString(), exitCode: out.exitCode }).toEqual({
+      stdout: "file-content",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("JS-backed multi-chunk stream", async () => {
+    const stream = new ReadableStream({
+      async pull(c) {
+        c.enqueue(new TextEncoder().encode("chunk1 "));
+        await Bun.sleep(0);
+        c.enqueue(new TextEncoder().encode("chunk2"));
+        c.close();
+      },
+    });
+    const out = await $`${BUN} -e ${childPump} < ${stream}`.env(bunEnv).nothrow().quiet();
+    expect({ stdout: out.stdout.toString(), exitCode: out.exitCode }).toEqual({
+      stdout: "chunk1 chunk2",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("child exits while stream is still producing", async () => {
+    const stream = new ReadableStream({
+      async pull(c) {
+        c.enqueue(new TextEncoder().encode("x"));
+        await Bun.sleep(0);
+      },
+    });
+    // Child reads 3 bytes then exits; the shell must cancel the stream and
+    // finish the command with the child's exit status.
+    const child = `const b = Buffer.alloc(3); require('fs').readSync(0, b); process.stdout.write(b)`;
+    const out = await $`${BUN} -e ${child} < ${stream}`.env(bunEnv).nothrow().quiet();
+    expect({ stdout: out.stdout.toString(), exitCode: out.exitCode }).toEqual({
+      stdout: "xxx",
+      exitCode: 0,
+    });
+  });
+
+  test("stdout/stderr redirect throws", async () => {
+    const s = new ReadableStream({ pull: c => c.close() });
+    expect(runWithErrorPromise(() => $`${BUN} -e 0 > ${s}`)).resolves.toThrow(
+      /ReadableStream cannot be used for stdout or stderr/,
+    );
+  });
+
+  test("locked stream throws", async () => {
+    const s = new ReadableStream({ pull: c => (c.enqueue(new Uint8Array([65])), c.close()) });
+    const r = s.getReader();
+    expect(runWithErrorPromise(() => $`${BUN} -e 0 < ${s}`)).resolves.toThrow(/already been used/);
+    r.releaseLock();
+  });
+
+  test("disturbed stream throws", async () => {
+    const s = new ReadableStream({ pull: c => (c.enqueue(new Uint8Array([65])), c.close()) });
+    const r = s.getReader();
+    await r.read();
+    r.releaseLock();
+    expect(runWithErrorPromise(() => $`${BUN} -e 0 < ${s}`)).resolves.toThrow(/already been used/);
+  });
+
+  test("redirect to a builtin throws", async () => {
+    const s = new ReadableStream({ pull: c => (c.enqueue(new Uint8Array([65])), c.close()) });
+    expect(runWithErrorPromise(() => $`echo < ${s}`)).resolves.toThrow(
+      /ReadableStream cannot be redirected to a builtin command/,
+    );
+  });
+});
+
 describe("stdin redirect from a zero-length buffer delivers EOF to the spawned command", () => {
   // A spawned command reading stdin (cat) must see EOF when the redirect
   // source is an empty ArrayBuffer/TypedArray, same as an empty Blob.

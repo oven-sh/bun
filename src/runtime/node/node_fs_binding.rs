@@ -7,8 +7,9 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, S
 
 use crate::node::fs::{
     self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
-    NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, check_fs_permission, ret,
+    NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, fs_perm, ret,
 };
+use crate::permission;
 
 /// Signature of every generated NodeFS host function.
 pub(crate) type NodeFSFunction =
@@ -46,9 +47,15 @@ where
         return Ok(JSValue::ZERO);
     }
 
-    // Ask the permission model before the syscall, so a denial has no side
-    // effects (Node checks in the same place — see node_file.cc).
-    check_fs_permission(global, &args)?;
+    if permission::is_enabled() {
+        if let Some(denied) = args.permission_denied() {
+            return Err(permission::throw_access_denied(
+                global,
+                denied.scope,
+                &denied.resource,
+            ));
+        }
+    }
 
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
     // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned
@@ -69,7 +76,7 @@ where
 /// Windows path picks `UVFSRequest` for a handful of fds-only ops while
 /// everything else uses `AsyncFSTask`, and that choice is encoded in the
 /// `async_::*` type aliases rather than derivable from `F` alone.
-fn run_async<A: FsArgument>(
+fn run_async<A: FsArgument, const F: NodeFSFunctionEnum>(
     this: &Binding,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -121,12 +128,25 @@ fn run_async<A: FsArgument>(
         }
     }
 
-    if let Err(err) = check_fs_permission(global, &args) {
-        args.unprotect();
-        drop(args);
-        // SAFETY: not yet dropped; only drop site for this path.
-        unsafe { ManuallyDrop::drop(&mut slice) };
-        return Err(err);
+    if permission::is_enabled() {
+        if let Some(denied) = args.permission_denied() {
+            let error = permission::access_denied_error(global, denied.scope, &denied.resource);
+            args.unprotect();
+            drop(args);
+            // SAFETY: not yet dropped; only drop site for this path.
+            unsafe { ManuallyDrop::drop(&mut slice) };
+            // Ops checked before the sync/async split in node_file.cc throw
+            // synchronously; the rest deliver the denial through the
+            // callback/promise.
+            if F.permission_check_throws_sync() {
+                return Err(global.throw_value(error));
+            }
+            return Ok(
+                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                    global, error,
+                ),
+            );
+        }
     }
 
     // The `cp` / `readdir` operations are handled by their dedicated
@@ -217,11 +237,20 @@ impl Binding {
             return Ok(JSValue::ZERO);
         }
 
-        if let Err(err) = check_fs_permission(global, &cp_args) {
-            drop(cp_args);
-            // SAFETY: not yet dropped; only drop site for this path.
-            unsafe { ManuallyDrop::drop(&mut slice) };
-            return Err(err);
+        if permission::is_enabled() {
+            if let Some(denied) =
+                fs_perm::read(&cp_args.src).or_else(|| fs_perm::write(&cp_args.dest))
+            {
+                let error = permission::access_denied_error(global, denied.scope, &denied.resource);
+                drop(cp_args);
+                // SAFETY: not yet dropped; only drop site for this path.
+                unsafe { ManuallyDrop::drop(&mut slice) };
+                return Ok(
+                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                        global, error,
+                    ),
+                );
+            }
         }
 
         // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
@@ -246,7 +275,17 @@ impl Binding {
             return Ok(JSValue::ZERO);
         }
 
-        check_fs_permission(global, &cp_args)?;
+        if permission::is_enabled() {
+            if let Some(denied) =
+                fs_perm::read(&cp_args.src).or_else(|| fs_perm::write(&cp_args.dest))
+            {
+                return Err(permission::throw_access_denied(
+                    global,
+                    denied.scope,
+                    &denied.resource,
+                ));
+            }
+        }
 
         // R-2: blocking syscall — `&mut NodeFS` scoped to the call, no JS re-entry.
         match this.node_fs.with_mut(|nfs| nfs.cp(&cp_args, Flavor::Sync)) {
@@ -283,11 +322,18 @@ impl Binding {
             return Ok(JSValue::ZERO);
         }
 
-        if let Err(err) = check_fs_permission(global, &rd_args) {
-            drop(rd_args);
-            // SAFETY: not yet dropped; only drop site for this path.
-            unsafe { ManuallyDrop::drop(&mut slice) };
-            return Err(err);
+        if permission::is_enabled() {
+            if let Some(denied) = fs_perm::read(&rd_args.path) {
+                let error = permission::access_denied_error(global, denied.scope, &denied.resource);
+                drop(rd_args);
+                // SAFETY: not yet dropped; only drop site for this path.
+                unsafe { ManuallyDrop::drop(&mut slice) };
+                return Ok(
+                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                        global, error,
+                    ),
+                );
+            }
         }
 
         // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
@@ -318,12 +364,15 @@ impl Binding {
             return Ok(JSValue::ZERO);
         }
 
-        // fs_event_wrap.cc checks read on the watched path before starting.
-        crate::permission::check(
-            global,
-            crate::permission::Scope::FileSystemRead,
-            watch_args.path.slice(),
-        )?;
+        if permission::is_enabled() {
+            if let Some(denied) = fs_perm::read(&watch_args.path) {
+                return Err(permission::throw_access_denied(
+                    global,
+                    denied.scope,
+                    &denied.resource,
+                ));
+            }
+        }
 
         // R-2: `NodeFS::watch` only reads `self.vm` (no scratch-buffer write);
         // scoped via `with_mut` so the borrow cannot outlive the call.
@@ -352,12 +401,15 @@ impl Binding {
             return Ok(JSValue::ZERO);
         }
 
-        // node_stat_watcher.cc checks read on the watched path before starting.
-        crate::permission::check(
-            global,
-            crate::permission::Scope::FileSystemRead,
-            wf_args.path.slice(),
-        )?;
+        if permission::is_enabled() {
+            if let Some(denied) = fs_perm::read(&wf_args.path) {
+                return Err(permission::throw_access_denied(
+                    global,
+                    denied.scope,
+                    &denied.resource,
+                ));
+            }
+        }
 
         match this
             .node_fs
@@ -405,7 +457,12 @@ macro_rules! node_fs_bindings {
                     global: &JSGlobalObject,
                     frame: &CallFrame,
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(this, global, frame, async_::$F::create)
+                    run_async::<$Args, { NodeFSFunctionEnum::$F }>(
+                        this,
+                        global,
+                        frame,
+                        async_::$F::create,
+                    )
                 }
             )*
         }

@@ -4315,6 +4315,33 @@ unsafe fn transpile_file(
         }
     });
 
+    // ── `--permission --allow-fs-read` gate ─────────────────────────────────
+    // Node's CJS/ESM loaders read through the `fs.read`-gated bindings
+    // (`ReadFileUtf8` in node_file.cc), so an un-granted `require` throws
+    // `ERR_ACCESS_DENIED`. Bun reads below without going through `node:fs`,
+    // so enforce the same scope here. `[eval]`/`[stdin]`/blob contents/`data:`
+    // have no disk read and are not gated.
+    // <https://github.com/nodejs/node/blob/v26.3.0/test/parallel/test-permission-fs-require.js>
+    if crate::permission::is_enabled()
+        && lr.virtual_source.is_none()
+        && !bun_core::strings::has_prefix_comptime(lr.path.text, b"data:")
+        && !crate::permission::is_granted(
+            crate::permission::Scope::FileSystemRead,
+            Some(lr.path.text),
+        )
+    {
+        let err = crate::permission::access_denied_error(
+            global_ref,
+            crate::permission::Scope::FileSystemRead,
+            lr.path.text,
+        );
+        // SAFETY: per fn contract — `ret` is a valid out-param.
+        unsafe {
+            *ret = ErrorableResolvedSource::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), err);
+        }
+        return ptr::null_mut();
+    }
+
     // ── force_loader / require.extensions override ──────────────────────────
     if let Some(loader_type) = force_loader_type {
         // Note: `@branchHint(.unlikely)` dropped (no stable Rust equiv).

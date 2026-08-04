@@ -2,6 +2,7 @@
 const EventEmitter = require("node:events");
 const OsModule = require("node:os");
 const { kHandle } = require("internal/shared");
+const permission = require("internal/permission");
 const {
   validateBoolean,
   validateFunction,
@@ -1012,6 +1013,11 @@ function normalizeSpawnArguments(file, args, options) {
     ArrayPrototypeUnshift.$call(args, file);
   }
 
+  if (permission.enabled && !permission.has("child")) {
+    // process_wrap.cc Spawn: the resource is the resolved executable.
+    throw permission.accessDeniedError("child", file);
+  }
+
   const env = options.env || process.env;
   const bunEnv = {};
 
@@ -1046,6 +1052,10 @@ function normalizeSpawnArguments(file, args, options) {
     }
   }
 
+  if (permission.enabled) {
+    copyPermissionModelFlagsToEnv(bunEnv, "NODE_OPTIONS", args);
+  }
+
   return {
     // Make a shallow copy so we don't clobber the user's options object.
     __proto__: null,
@@ -1061,6 +1071,40 @@ function normalizeSpawnArguments(file, args, options) {
     argv0: options.argv0,
     windowsBatchFileError,
   };
+}
+
+// `copyPermissionModelFlagsToEnv` in node's lib/child_process.js: a sandboxed
+// parent forwards its permission flags through NODE_OPTIONS so a spawned
+// process.execPath child inherits the sandbox.
+const kPermissionModelFlags = [
+  "--allow-fs-read",
+  "--allow-fs-write",
+  "--allow-addons",
+  "--allow-child-process",
+  "--allow-net",
+  "--allow-inspector",
+  "--allow-wasi",
+  "--allow-worker",
+  "--permission",
+];
+
+function copyPermissionModelFlagsToEnv(env, key, args) {
+  // Do not override if permission was already passed to file
+  if (
+    ArrayPrototypeIncludes.$call(args, "--permission") ||
+    ArrayPrototypeIncludes.$call(args, "--permission-audit") ||
+    (env[key] && env[key].indexOf("--permission") !== -1)
+  ) {
+    return;
+  }
+
+  for (const arg of process.execArgv) {
+    for (const flag of kPermissionModelFlags) {
+      if (arg.startsWith(flag)) {
+        env[key] = env[key] ? `${env[key]} ${arg}` : arg;
+      }
+    }
+  }
 }
 
 function checkExecSyncError(ret, args, cmd?) {

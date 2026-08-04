@@ -1,5 +1,58 @@
 // Hardcoded module "node:dns"
-const dns = Bun.dns;
+let dns = Bun.dns;
+const permission = require("internal/permission");
+if (permission.enabled) {
+  // cares_wrap.cc gates every query on the net scope per call; wrap the binding
+  // so all query paths (callback/promises/Resolver) share one per-call gate.
+  // https://github.com/nodejs/node/blob/main/src/cares_wrap.cc
+  dns = makePermissionCheckedDnsFacade(dns);
+}
+
+function makePermissionCheckedDnsFacade(native) {
+  const facade = { __proto__: null };
+  for (const key of ["ADDRCONFIG", "ALL", "V4MAPPED"]) {
+    if (key in native) {
+      facade[key] = native[key];
+    }
+  }
+  for (const key of ["getServers", "setServers", "cancel"]) {
+    if (typeof native[key] === "function") {
+      facade[key] = native[key].bind(native);
+    }
+  }
+  for (const key of [
+    "lookup",
+    "lookupService",
+    "resolve",
+    "resolve4",
+    "resolve6",
+    "resolveAny",
+    "resolveCaa",
+    "resolveCname",
+    "resolveMx",
+    "resolveNaptr",
+    "resolveNs",
+    "resolvePtr",
+    "resolveSoa",
+    "resolveSrv",
+    "resolveTxt",
+    "reverse",
+  ]) {
+    if (typeof native[key] === "function") {
+      facade[key] = makeCheckedDnsQuery(native, native[key]);
+    }
+  }
+  return facade;
+}
+
+function makeCheckedDnsQuery(native, query) {
+  return function checkedDnsQuery(...args) {
+    if (!permission.has("net")) {
+      return Promise.$reject(permission.accessDeniedError("net"));
+    }
+    return query.$apply(native, args);
+  };
+}
 const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
 const { isIP } = require("internal/net/isIP");
 const { guardCallback } = require("internal/shared");
@@ -78,7 +131,11 @@ function newResolver(options) {
   if (!newResolver.native) {
     newResolver.native = $newRustFunction("runtime/dns_jsc/dns.rs", "Resolver.newResolver", 1);
   }
-  return newResolver.native(options);
+  const resolver = newResolver.native(options);
+  if (permission.enabled) {
+    return makePermissionCheckedDnsFacade(resolver);
+  }
+  return resolver;
 }
 
 function defaultResultOrder() {

@@ -197,10 +197,10 @@ unsafe extern "C" {
     safe fn Bun__getNodeHTTPResponseThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
     safe fn Bun__getNodeHTTPServerSocketThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
 
-    // node:http flood prevention (JSNodeHTTPServerSocket.cpp): the signal makes the uWS request
-    // loop stop consuming pipelined requests at the next boundary while paused; the resumable
-    // hook replays what it parked, in order, before resuming reads.
-    safe fn Bun__NodeHTTP__setReadsPausedSignal(ssl: core::ffi::c_int, socket: *mut c_void);
+    // node:http flood prevention (JSNodeHTTPServerSocket.cpp): onReadsPaused marks the socket
+    // paused and tells the uWS request loop to park pipelined requests at the next boundary;
+    // onReadsResumable replays what was parked, in order, before resuming reads.
+    safe fn Bun__NodeHTTP__onReadsPaused(ssl: core::ffi::c_int, socket: *mut c_void);
     safe fn Bun__NodeHTTP__onReadsResumable(ssl: core::ffi::c_int, socket: *mut c_void);
 
     // Moves the connection's captured node:http request-trailer section out. `*out` points into
@@ -508,7 +508,7 @@ impl NodeHTTPResponse {
             return Ok(JSValue::UNDEFINED);
         }
         raw.pause();
-        Bun__NodeHTTP__setReadsPausedSignal(
+        Bun__NodeHTTP__onReadsPaused(
             any_response_is_ssl(&raw) as core::ffi::c_int,
             raw.socket().cast(),
         );

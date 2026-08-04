@@ -605,10 +605,10 @@ struct HttpResponseData;
     private:
         std::string fallback;
     public:
-        /* node:http flood prevention: when a pipelined dispatch finds outgoing backpressure,
-         * Node pauses the parser alongside the socket. The signal stops the request loop at the
-         * next boundary; the unconsumed remainder is parked here and replayed when reads resume. */
-        bool nodeHttpReadsPausedSignal = false;
+        /* node:http flood prevention. HTTP_NODE_READS_PAUSED (state bit) = the socket's raw reads are
+         * paused and stays set through spill replay; this flag = "the parse loop running now must stop
+         * at the next request boundary and park the rest", cleared for replay so it can make progress. */
+        bool nodeHttpParkAtNextBoundary = false;
         bool nodeHttpSpillReplayScheduled = false;
         std::string nodeHttpPausedSpill;
     private:
@@ -1163,7 +1163,7 @@ struct HttpResponseData;
              * Stop at this request boundary, park the rest, report it as consumed so the
              * caller does not spill it into the size-capped header fallback buffer. */
             if constexpr (IsNodeHttp) {
-                if (nodeHttpReadsPausedSignal) [[unlikely]] {
+                if (nodeHttpParkAtNextBoundary) [[unlikely]] {
                     nodeHttpPausedSpill.append(data, length);
                     consumedTotal += length;
                     return HttpParserResult::success(consumedTotal, user);

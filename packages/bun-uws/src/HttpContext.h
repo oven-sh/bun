@@ -411,7 +411,7 @@ private:
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
                     /* Also stop the request loop over the buffer being parsed
                      * right now — pausing the socket alone cannot bound it. */
-                    httpResponseData->nodeHttpReadsPausedSignal = true;
+                    httpResponseData->nodeHttpParkAtNextBoundary = true;
                     ((HttpResponse<SSL> *) s)->pause();
                 }
                 }
@@ -441,10 +441,10 @@ private:
 
                     /* Node's flood prevention: sync write()+end() handlers bypass the pipelined
                      * branch yet still back up the socket. On outgoing backpressure, pause reads
-                     * and park already-received requests. No already-paused guard (replay clears signal only). */
+                     * and park already-received requests. No already-paused guard (replay clears the park flag only). */
                     if (((AsyncSocket<SSL> *) s)->getBufferedAmount() > 0) {
                         httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
-                        httpResponseData->nodeHttpReadsPausedSignal = true;
+                        httpResponseData->nodeHttpParkAtNextBoundary = true;
                         ((HttpResponse<SSL> *) s)->pause();
                     }
                 }

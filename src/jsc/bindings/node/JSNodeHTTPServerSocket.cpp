@@ -408,7 +408,9 @@ static void replayNodeHttpPausedSpill(us_socket_t* socket)
 {
     auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
     httpResponseData->nodeHttpSpillReplayScheduled = false;
-    httpResponseData->nodeHttpReadsPausedSignal = false;
+    /* Let the replay's own parse loop run; HTTP_NODE_READS_PAUSED stays set so
+     * fresh socket bytes cannot race ahead of the spill. */
+    httpResponseData->nodeHttpParkAtNextBoundary = false;
     std::string spill = std::move(httpResponseData->nodeHttpPausedSpill);
     httpResponseData->nodeHttpPausedSpill.clear();
     if (!spill.empty()) {
@@ -421,7 +423,7 @@ static void replayNodeHttpPausedSpill(us_socket_t* socket)
         socket = returned;
         httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
     }
-    if (httpResponseData->nodeHttpReadsPausedSignal) {
+    if (httpResponseData->nodeHttpParkAtNextBoundary) {
         /* A dispatch during the replay hit backpressure again and re-parked
          * the rest; stay paused until the next resumable event. */
         return;
@@ -453,7 +455,7 @@ static void onNodeHttpReadsResumable(us_socket_t* socket)
         }
     }
     if (httpResponseData->nodeHttpPausedSpill.empty()) {
-        httpResponseData->nodeHttpReadsPausedSignal = false;
+        httpResponseData->nodeHttpParkAtNextBoundary = false;
         httpResponseData->state &= ~uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
         reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->resume();
         return;
@@ -490,23 +492,25 @@ static void onNodeHttpReadsResumable(us_socket_t* socket)
     });
 }
 
+/* Pause edge (JS-driven, after the caller paused the socket): mark the socket-level
+ * pause and tell the in-progress parse loop to park at the next request boundary. */
 template<bool SSL>
-static void setReadsPausedSignalImpl(us_socket_t* socket)
+static void onNodeHttpReadsPaused(us_socket_t* socket)
 {
     auto* d = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
-    d->nodeHttpReadsPausedSignal = true;
+    d->nodeHttpParkAtNextBoundary = true;
     d->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
 }
 
-extern "C" void Bun__NodeHTTP__setReadsPausedSignal(int ssl, us_socket_t* socket)
+extern "C" void Bun__NodeHTTP__onReadsPaused(int ssl, us_socket_t* socket)
 {
     if (!socket || us_socket_is_closed(socket)) {
         return;
     }
     if (ssl) {
-        setReadsPausedSignalImpl<true>(socket);
+        onNodeHttpReadsPaused<true>(socket);
     } else {
-        setReadsPausedSignalImpl<false>(socket);
+        onNodeHttpReadsPaused<false>(socket);
     }
 }
 

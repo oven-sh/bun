@@ -7,6 +7,7 @@
 #include "root.h"
 #include "blob.h"
 #include <span>
+#include <wtf/Function.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -16,10 +17,17 @@ namespace WebCore {
 // indistinguishable from a genuinely empty Blob.
 std::span<const uint8_t> clipboardBlobBytes(Blob&);
 
-// Whether reading this Blob would have to touch a file or the network. The
-// clipboard write path snapshots bytes synchronously, so these are rejected
-// loudly rather than written as empty representations.
+// Whether reading this Blob would have to touch a file or the network, in
+// which case clipboardBlobBytes() is empty and the write path pulls the bytes
+// in with clipboardBlobReadAsync() before its platform transaction.
 bool clipboardBlobNeedsToReadFile(Blob&);
+
+// `failureMessage` is null on success; the span does not outlive the call.
+using ClipboardBlobReadCompletion = Function<void(std::span<const uint8_t>, const String& failureMessage)>;
+
+// Reads the Blob's bytes wherever they live (memory, file, S3) and delivers
+// them on the JS thread exactly once — synchronously when they are resident.
+void clipboardBlobReadAsync(JSC::JSGlobalObject&, Blob&, ClipboardBlobReadCompletion&&);
 
 String clipboardBlobContentType(Blob&);
 

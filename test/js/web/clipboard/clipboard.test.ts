@@ -392,18 +392,6 @@ describe("read / write", () => {
     // Writing an empty sequence is a no-op that must not reject.
     await navigator.clipboard.write([]);
 
-    // A Blob whose bytes are not in memory (`Bun.file()`) must reject rather
-    // than be written as an empty representation — both when its declared type
-    // matches the key (the write path checks residency) and when it does not
-    // (re-wrapping would have to read it).
-    using fileDir = tempDir("clipboard-file-blob", { "a.txt": "on disk", "b.mjs": "export {};" });
-    await expect(
-      navigator.clipboard.write([new ClipboardItem({ "text/plain": Bun.file(join(String(fileDir), "a.txt")) })]),
-    ).rejects.toThrow(TypeError);
-    await expect(
-      navigator.clipboard.write([new ClipboardItem({ "text/plain": Bun.file(join(String(fileDir), "b.mjs")) })]),
-    ).rejects.toThrow(TypeError);
-
     // A ClipboardItemData that rejects propagates as the write's rejection,
     // and an uncoercible settled value rejects there too.
     await expect(
@@ -412,6 +400,38 @@ describe("read / write", () => {
     await expect(
       navigator.clipboard.write([new ClipboardItem({ "text/plain": Promise.resolve(Symbol("x")) as never })]),
     ).rejects.toThrow(TypeError);
+  });
+
+  // A file-backed Blob (Bun.file) has no resident bytes; the writer reads it
+  // in before the platform transaction instead of rejecting it.
+  test("write() reads file-backed representations in; a missing file rejects", async () => {
+    using fileDir = tempDir("clipboard-file-blob", { "a.txt": "from disk" });
+    // The read failure arrives before any platform access, so this arm is
+    // deterministic even with no reachable clipboard.
+    await expectDOMException(
+      navigator.clipboard.write([new ClipboardItem({ "text/plain": Bun.file(join(String(fileDir), "missing.txt")) })]),
+      "NotAllowedError",
+    );
+    const write = navigator.clipboard.write([
+      new ClipboardItem({ "text/plain": Bun.file(join(String(fileDir), "a.txt")) }),
+    ]);
+    if (savedClipboard === null) {
+      await expectDOMException(write, "NotAllowedError");
+      return;
+    }
+    await write;
+    expect(await navigator.clipboard.readText()).toBe("from disk");
+  });
+
+  // Spec: getType() resolves the representation's Blob ("resolve p with v");
+  // a file-backed one passes through lazily, even when its declared type
+  // differs from the representation's key.
+  test("getType() passes file-backed Blobs through as lazy Blobs", async () => {
+    using fileDir = tempDir("clipboard-file-gettype", { "a.txt": "lazy bytes" });
+    const item = new ClipboardItem({ "text/html": Bun.file(join(String(fileDir), "a.txt")) });
+    const blob = await item.getType("text/html");
+    expect(blob).not.toBeInstanceOf(File);
+    expect(await blob.text()).toBe("lazy bytes");
   });
 
   // Regression: the write's data source holds only a WeakPtr back-edge to its
@@ -708,6 +728,13 @@ describe("readText / writeText", () => {
     const unicode = "héllo 🌍 — ünïcödé ✂️📋";
     await navigator.clipboard.writeText(unicode);
     expect(await navigator.clipboard.readText()).toBe(unicode);
+
+    // Spec note on writeText: Windows converts bare LF to CRLF for
+    // CF_UNICODETEXT; other platforms write the text byte-for-byte.
+    await navigator.clipboard.writeText("line1\nline2\r\nline3");
+    expect(await navigator.clipboard.readText()).toBe(
+      process.platform === "win32" ? "line1\r\nline2\r\nline3" : "line1\nline2\r\nline3",
+    );
 
     // WebIDL DOMString conversion: null becomes the string "null".
     await navigator.clipboard.writeText(null as unknown as string);

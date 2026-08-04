@@ -125,16 +125,15 @@ RefPtr<Blob> ClipboardItem::blobFromSettledValue(JSC::JSGlobalObject* globalObje
     if (RefPtr blob = Blob::create(value)) {
         // A Blob already declaring the requested type is handed back untouched,
         // even if its bytes are not resident — getType() callers can read it,
-        // and the write path checks residency before the platform transaction.
+        // and the write path pulls bytes in before the platform transaction.
         if (clipboardBlobTypeMatches(clipboardBlobContentType(*blob), type))
             return blob;
-        // Re-wrapping copies the source Blob's bytes, which a file- or
-        // network-backed Blob does not have in memory; doing it anyway would
-        // silently produce an empty representation.
-        if (clipboardBlobNeedsToReadFile(*blob)) {
-            throwTypeError(globalObject, scope, makeString("Cannot use a file-backed Blob as a \""_s, type, "\" representation. Read it into memory first (`await blob.bytes()`)."_s));
-            return nullptr;
-        }
+        // Re-wrapping copies bytes a file- or network-backed Blob does not
+        // have in memory; pass it through instead. The write path reads it
+        // under the representation's key, and getType() surfaces it as a lazy
+        // Blob, matching the spec's "resolve p with v".
+        if (clipboardBlobNeedsToReadFile(*blob))
+            return blob;
         // A Blob declaring some other type still carries the bytes the caller
         // meant; re-wrap them rather than stringifying the Blob object.
         return createClipboardBlob(globalObject, clipboardBlobBytes(*blob), type);

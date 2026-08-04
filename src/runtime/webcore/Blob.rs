@@ -6092,6 +6092,86 @@ pub extern "C" fn Blob__implNeedsToReadFile(blob: &Blob) -> bool {
     blob.needs_to_read_file() || blob.is_s3()
 }
 
+/// Invoked on the JS thread exactly once; `err`/`err_len` are null/0 on success
+/// and carry a UTF-8 message on failure. The byte span does not outlive the call.
+type BlobReadBytesCallback =
+    unsafe extern "C" fn(ctx: *mut c_void, ptr: *const u8, len: usize, err: *const u8, err_len: usize);
+
+struct ClipboardBlobReadHandler {
+    ctx: *mut c_void,
+    callback: BlobReadBytesCallback,
+}
+
+impl ClipboardBlobReadHandler {
+    fn finish(self: Box<Self>, result: ReadBytesResult) {
+        match result {
+            ReadBytesResult::Ok(bytes) => {
+                // SAFETY: per this type's contract, `callback`/`ctx` are valid
+                // to invoke once on the JS thread.
+                unsafe {
+                    (self.callback)(self.ctx, bytes.as_ptr(), bytes.len(), core::ptr::null(), 0)
+                }
+            }
+            ReadBytesResult::Err(e) => {
+                let code = e.code.get().to_utf8_bytes();
+                let message = e.message.get().to_utf8_bytes();
+                let text = match (code.is_empty(), message.is_empty()) {
+                    (false, false) => {
+                        let mut joined = code;
+                        joined.extend_from_slice(b": ");
+                        joined.extend_from_slice(&message);
+                        joined
+                    }
+                    (false, true) => code,
+                    (true, false) => message,
+                    (true, true) => b"The Blob's bytes could not be read.".to_vec(),
+                };
+                // SAFETY: same contract as the success arm.
+                unsafe {
+                    (self.callback)(self.ctx, core::ptr::null(), 0, text.as_ptr(), text.len())
+                }
+            }
+        }
+    }
+}
+
+impl ReadBytesHandler for ClipboardBlobReadHandler {
+    fn on_read_bytes(&mut self, result: ReadBytesResult) {
+        // SAFETY: `self` is the `*mut Self` leaked in `Blob__implReadBytes` and
+        // delivered here exactly once; reclaim the Box so it frees on return.
+        let boxed = unsafe { bun_core::heap::take(std::ptr::from_mut::<Self>(self)) };
+        boxed.finish(result);
+    }
+}
+
+/// Reads the Blob's bytes — file, S3, or in-memory — and delivers them to
+/// `callback` on the JS thread exactly once (synchronously when the bytes are
+/// resident). The clipboard write path pulls non-resident representations
+/// (`Bun.file`, S3) into memory with this before its platform transaction.
+/// # Safety
+/// `callback` must be callable on the JS thread with `ctx` until it runs.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Blob__implReadBytes(
+    blob: &Blob,
+    global: &JSGlobalObject,
+    ctx: *mut c_void,
+    callback: BlobReadBytesCallback,
+) {
+    let handler = bun_core::heap::into_raw(Box::new(ClipboardBlobReadHandler { ctx, callback }));
+    // SAFETY: `handler` is freshly leaked and exclusively owned by the read
+    // dispatch until `on_read_bytes` reclaims it.
+    if unsafe { blob.read_bytes_to_handler(handler, global) }.is_err() {
+        // The read was never armed (VM terminating), so `on_read_bytes` will
+        // not run: reclaim the handler and report the failure ourselves.
+        // SAFETY: sole owner again per the line above.
+        let boxed = unsafe { bun_core::heap::take(handler) };
+        boxed.finish(ReadBytesResult::Err(Box::new(bun_jsc::SystemError {
+            message: BunString::static_(b"The VM is terminating.").into(),
+            ..Default::default()
+        })));
+    }
+}
+
 /// Clears the File-specific fields so a dupe of a File surfaces as a plain
 /// Blob. The clipboard's getType() resolves "a new Blob" per spec.
 #[unsafe(no_mangle)]

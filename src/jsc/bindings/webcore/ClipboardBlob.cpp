@@ -13,6 +13,7 @@ extern "C" void Blob__implGetSpan(BlobImpl*, const uint8_t** outPtr, size_t* out
 extern "C" bool Blob__implNeedsToReadFile(BlobImpl*);
 extern "C" void Blob__implGetContentType(BlobImpl*, const uint8_t** outPtr, size_t* outLength);
 extern "C" void Blob__implClearFile(BlobImpl*);
+extern "C" void Blob__implReadBytes(BlobImpl*, JSC::JSGlobalObject*, void* ctx, void (*callback)(void* ctx, const uint8_t* ptr, size_t length, const uint8_t* error, size_t errorLength));
 extern "C" void* Blob__fromBytesWithNormalizedType(JSC::JSGlobalObject*, const uint8_t* ptr, size_t len, const uint8_t* mime, size_t mimeLength, bool normalize);
 extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(JSC::JSGlobalObject*, void*);
 
@@ -33,6 +34,31 @@ bool clipboardBlobNeedsToReadFile(Blob& blob)
 {
     auto* impl = blob.impl();
     return impl && Blob__implNeedsToReadFile(impl);
+}
+
+namespace {
+struct ClipboardBlobReadContext {
+    ClipboardBlobReadCompletion completion;
+};
+}
+
+static void clipboardBlobReadComplete(void* opaque, const uint8_t* bytes, size_t length, const uint8_t* error, size_t errorLength)
+{
+    std::unique_ptr<ClipboardBlobReadContext> context { static_cast<ClipboardBlobReadContext*>(opaque) };
+    String failureMessage;
+    if (error)
+        failureMessage = String::fromUTF8ReplacingInvalidSequences({ error, errorLength });
+    context->completion({ bytes, length }, failureMessage);
+}
+
+void clipboardBlobReadAsync(JSC::JSGlobalObject& globalObject, Blob& blob, ClipboardBlobReadCompletion&& completion)
+{
+    auto* impl = blob.impl();
+    if (!impl) {
+        completion({}, "The Blob is detached."_s);
+        return;
+    }
+    Blob__implReadBytes(impl, &globalObject, new ClipboardBlobReadContext { WTF::move(completion) }, clipboardBlobReadComplete);
 }
 
 String clipboardBlobContentType(Blob& blob)

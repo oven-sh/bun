@@ -262,6 +262,7 @@ void Clipboard::ItemWriter::didSetAllData()
     auto dataToWrite = std::exchange(m_dataToWrite, {});
 
     ClipboardItemData representations;
+    Vector<size_t> pendingReadIndices;
     for (auto& itemData : dataToWrite) {
         // Failures already rejected in the collect completion; a missing entry
         // here means the writer was invalidated underneath us.
@@ -270,14 +271,64 @@ void Clipboard::ItemWriter::didSetAllData()
             return;
         }
         for (auto& representation : *itemData) {
-            // The platform transaction snapshots memory, so a Blob whose bytes
-            // are not resident would silently become an empty representation.
-            if (clipboardBlobNeedsToReadFile(representation.value.get())) {
-                reject(ExceptionCode::TypeError, "Cannot write a file-backed Blob to the clipboard. Read it into memory first (`await blob.bytes()`)."_s);
-                return;
-            }
+            // The platform transaction snapshots memory; a Blob whose bytes are
+            // not resident (Bun.file, S3) is read in first.
+            if (clipboardBlobNeedsToReadFile(representation.value.get()))
+                pendingReadIndices.append(representations.size());
             representations.append(representation);
         }
+    }
+
+    if (pendingReadIndices.isEmpty()) {
+        schedulePlatformWrite(WTF::move(representations));
+        return;
+    }
+
+    m_representationsToWrite = WTF::move(representations);
+    m_pendingBlobReads = pendingReadIndices.size();
+    for (auto index : pendingReadIndices) {
+        // A synchronous failure (detached Blob, terminating VM) rejects and
+        // clears the staged representations mid-loop.
+        if (!m_promise)
+            return;
+        clipboardBlobReadAsync(*globalObject, m_representationsToWrite[index].value.get(), [protectedThis = Ref { *this }, index](std::span<const uint8_t> bytes, const String& failureMessage) mutable {
+            protectedThis->didReadBlobForWrite(index, bytes, failureMessage);
+        });
+    }
+}
+
+void Clipboard::ItemWriter::didReadBlobForWrite(size_t index, std::span<const uint8_t> bytes, const String& failureMessage)
+{
+    RefPtr promise = m_promise;
+    if (!promise)
+        return; // Superseded, or a sibling read already rejected.
+
+    if (!failureMessage.isNull()) {
+        reject(ExceptionCode::NotAllowedError, failureMessage);
+        return;
+    }
+
+    auto* globalObject = promise->globalObject();
+    if (!globalObject) {
+        reject(ExceptionCode::InvalidStateError, "The clipboard is no longer available."_s);
+        return;
+    }
+
+    // Snapshot the bytes (the span dies with this call) under the
+    // representation's key, which is the type the platform write uses.
+    m_representationsToWrite[index].value = createClipboardBlob(globalObject, bytes, m_representationsToWrite[index].key, MimeNormalization::Exact);
+    ASSERT(m_pendingBlobReads);
+    if (!--m_pendingBlobReads)
+        schedulePlatformWrite(std::exchange(m_representationsToWrite, {}));
+}
+
+void Clipboard::ItemWriter::schedulePlatformWrite(ClipboardItemData&& representations)
+{
+    RefPtr promise = m_promise;
+    auto* globalObject = promise ? promise->globalObject() : nullptr;
+    if (!globalObject) {
+        reject(ExceptionCode::InvalidStateError, "The clipboard is no longer available."_s);
+        return;
     }
 
     auto request = ClipboardRequest::create([protectedThis = Ref { *this }](JSC::JSGlobalObject&, std::span<const ClipboardRepresentation>, const String& failureMessage) mutable {
@@ -353,6 +404,9 @@ void Clipboard::ItemWriter::releaseItems()
 void Clipboard::ItemWriter::detachFromClipboard()
 {
     releaseItems();
+    // Drop staged Blobs; an in-flight read's completion bails on the nulled
+    // promise before indexing into this.
+    m_representationsToWrite = {};
     RefPtr clipboard = m_clipboard.get();
     if (clipboard && clipboard->m_activeItemWriter.get() == this)
         clipboard->m_activeItemWriter = nullptr;

@@ -30,6 +30,7 @@
 #include "ContextDestructionObserver.h"
 #include "EventTarget.h"
 #include "ExceptionCode.h"
+#include <span>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
 #include <wtf/TZoneMalloc.h>
@@ -97,6 +98,8 @@ private:
 
         void setData(std::optional<ClipboardItemData>&&, size_t index);
         void didSetAllData();
+        void didReadBlobForWrite(size_t index, std::span<const uint8_t> bytes, const String& failureMessage);
+        void schedulePlatformWrite(ClipboardItemData&&);
         void didFinishPlatformWrite(const String& failureMessage);
         void reject(ExceptionCode, const String& message);
         // Rejects with the value a representation failed with, so the caller
@@ -113,6 +116,10 @@ private:
         RefPtr<DeferredPromise> m_promise;
         Vector<std::optional<ClipboardItemData>> m_dataToWrite;
         unsigned m_pendingItemCount { 0 };
+        // Representations staged for the platform transaction while the bytes
+        // of non-resident Blobs (Bun.file, S3) are read in.
+        ClipboardItemData m_representationsToWrite;
+        unsigned m_pendingBlobReads { 0 };
     };
 
     RefPtr<ItemWriter> m_activeItemWriter;

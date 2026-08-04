@@ -636,17 +636,39 @@ mod platform {
         Ok(None)
     }
 
+    /// Replaces every bare `\n` with `\r\n`, per the spec's writeText note for
+    /// Windows; `CF_UNICODETEXT` consumers expect CRLF line endings.
+    fn normalize_to_crlf(bytes: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(bytes.len() + 16);
+        let mut prev = 0u8;
+        for &byte in bytes {
+            if byte == b'\n' && prev != b'\r' {
+                out.push(b'\r');
+            }
+            out.push(byte);
+            prev = byte;
+        }
+        out
+    }
+
     /// Build a `GMEM_MOVEABLE` HGLOBAL holding `bytes` (as NUL-terminated
     /// UTF-16 for text, in the `CF_HTML` envelope for HTML). Returns null on
     /// allocation failure.
     fn make_global(mime: Mime, bytes: &[u8]) -> *mut c_void {
         let wide;
         let enveloped;
+        let converted;
         let payload: &[u8] = match mime {
             Mime::TextPlain => {
+                let text: &[u8] = if bytes.contains(&b'\n') {
+                    converted = normalize_to_crlf(bytes);
+                    &converted
+                } else {
+                    bytes
+                };
                 // `fail_if_invalid = false` replaces ill-formed sequences and
                 // `sentinel` appends the NUL that `CF_UNICODETEXT` requires.
-                match bun_core::strings::to_utf16_alloc_for_real(bytes, false, true) {
+                match bun_core::strings::to_utf16_alloc_for_real(text, false, true) {
                     Ok(w) => {
                         wide = w;
                         // SAFETY: a `&[u16]`'s bytes reinterpreted as `&[u8]`.

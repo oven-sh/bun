@@ -3113,10 +3113,8 @@ describe("redirect stdin from ReadableStream", () => {
       stdout: "pipe",
     });
     const out = await $`${BUN} -e ${childPump} < ${proc.stdout}`.env(bunEnv).nothrow().quiet();
-    expect({ len: out.stdout.length, exitCode: out.exitCode }).toEqual({
-      len: size,
-      exitCode: 0,
-    });
+    expect(out.stdout.equals(Buffer.alloc(size, "x"))).toBe(true);
+    expect(out.exitCode).toBe(0);
   });
 
   test.concurrent("native file source (Bun.file().stream())", async () => {
@@ -3146,25 +3144,39 @@ describe("redirect stdin from ReadableStream", () => {
   });
 
   test.concurrent("child exits while stream is still producing", async () => {
+    const { promise: cancelled, resolve: onCancel } = Promise.withResolvers<true>();
     const stream = new ReadableStream({
       async pull(c) {
         c.enqueue(new TextEncoder().encode("x"));
         await Bun.sleep(0);
       },
+      cancel() {
+        onCancel(true);
+      },
     });
     // Child reads 3 bytes then exits; the shell must cancel the stream and
     // finish the command with the child's exit status.
-    const child = `const b = Buffer.alloc(3); require('fs').readSync(0, b); process.stdout.write(b)`;
+    const child = `
+      const b = Buffer.alloc(3);
+      let n = 0;
+      while (n < 3) { const r = require('fs').readSync(0, b, n, 3 - n); if (r <= 0) break; n += r; }
+      process.stdout.write(b.subarray(0, n));
+    `;
     const out = await $`${BUN} -e ${child} < ${stream}`.env(bunEnv).nothrow().quiet();
     expect({ stdout: out.stdout.toString(), exitCode: out.exitCode }).toEqual({
       stdout: "xxx",
       exitCode: 0,
     });
+    expect(await cancelled).toBe(true);
   });
 
   test("stdout/stderr redirect throws", async () => {
-    const s = new ReadableStream({ pull: c => c.close() });
-    expect(runWithErrorPromise(() => $`${BUN} -e 0 > ${s}`)).resolves.toThrow(
+    const s1 = new ReadableStream({ pull: c => c.close() });
+    await expect(runWithErrorPromise(() => $`${BUN} -e 0 > ${s1}`)).resolves.toThrow(
+      /ReadableStream cannot be used for stdout or stderr/,
+    );
+    const s2 = new ReadableStream({ pull: c => c.close() });
+    await expect(runWithErrorPromise(() => $`${BUN} -e 0 2> ${s2}`)).resolves.toThrow(
       /ReadableStream cannot be used for stdout or stderr/,
     );
   });
@@ -3172,7 +3184,7 @@ describe("redirect stdin from ReadableStream", () => {
   test("locked stream throws", async () => {
     const s = new ReadableStream({ pull: c => (c.enqueue(new Uint8Array([65])), c.close()) });
     const r = s.getReader();
-    expect(runWithErrorPromise(() => $`${BUN} -e 0 < ${s}`)).resolves.toThrow(/already been used/);
+    await expect(runWithErrorPromise(() => $`${BUN} -e 0 < ${s}`)).resolves.toThrow(/already been used/);
     r.releaseLock();
   });
 
@@ -3181,12 +3193,12 @@ describe("redirect stdin from ReadableStream", () => {
     const r = s.getReader();
     await r.read();
     r.releaseLock();
-    expect(runWithErrorPromise(() => $`${BUN} -e 0 < ${s}`)).resolves.toThrow(/already been used/);
+    await expect(runWithErrorPromise(() => $`${BUN} -e 0 < ${s}`)).resolves.toThrow(/already been used/);
   });
 
   test("redirect to a builtin throws", async () => {
     const s = new ReadableStream({ pull: c => (c.enqueue(new Uint8Array([65])), c.close()) });
-    expect(runWithErrorPromise(() => $`echo < ${s}`)).resolves.toThrow(
+    await expect(runWithErrorPromise(() => $`echo < ${s}`)).resolves.toThrow(
       /ReadableStream cannot be redirected to a builtin command/,
     );
   });

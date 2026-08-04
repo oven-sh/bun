@@ -722,6 +722,16 @@ impl ShellSubprocess {
             Err(WritableInitError::UnexpectedCreatingStdin) => {
                 panic!("unexpected error while creating stdin");
             }
+            Err(WritableInitError::Sys(e)) => {
+                // Child is spawned but not yet moved into a Subprocess; the
+                // pidfd is still in `spawn_result`, which is about to drop.
+                #[cfg(not(windows))]
+                {
+                    let _ = spawn_stdout.map(bun_sys::Fd::close);
+                    let _ = spawn_stderr.map(bun_sys::Fd::close);
+                }
+                return Err(ShellErr::Sys(e.to_shell_system_error()));
+            }
         };
         let stdout = Readable::init(
             OutKind::Stdout,
@@ -915,9 +925,16 @@ impl ShellSubprocess {
         // ReadableStream stdin: notify the FileSink (cancels the stream and
         // closes the writer; `on_close` → `source.close()` detaches the native
         // source's `SinkHandle`) and mark buffered stdin closed so
-        // `Cmd::has_finished()` can complete. `source` is never `ShellWritable`
-        // on this path, so the close cannot reassign `self.stdin` under us.
+        // `Cmd::has_finished()` can complete. Shell stdin is only ever
+        // `Stdio::{Fd,Ignore,Blob,ReadableStream}` (`InKind::to_subproc_stdio`
+        // + `init_subproc_redirections`), so `Writable::Pipe` here is the
+        // ReadableStream case and `source` is the upstream ByteStream /
+        // FileReader or `None`; the close cannot reassign `self.stdin`.
         if let Writable::Pipe(pipe) = &self.stdin {
+            debug_assert!(!matches!(
+                *pipe.source.get(),
+                webcore::streams::SourceHandle::ShellWritable(_)
+            ));
             let raw = pipe.as_ptr();
             // SAFETY: `raw` is the canonical `*mut FileSink` (from
             // `FileSink::create*` via `FileSinkPtr::adopt`); kept alive by the
@@ -971,6 +988,8 @@ impl ShellSubprocess {
 pub enum WritableInitError {
     #[error("UnexpectedCreatingStdin")]
     UnexpectedCreatingStdin,
+    #[error("{0}")]
+    Sys(bun_sys::Error),
 }
 
 pub enum Writable {
@@ -1149,7 +1168,10 @@ impl Writable {
                 Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
                 Stdio::ReadableStream(_) => {
                     let fd = result.unwrap();
-                    let _ = bun_sys::set_nonblocking(fd);
+                    if let bun_sys::Result::Err(e) = bun_sys::set_nonblocking(fd) {
+                        fd.close();
+                        return Err(WritableInitError::Sys(e));
+                    }
                     let pipe_ptr = FileSink::create(event_loop, fd);
                     // SAFETY: `create` returns a freshly-boxed non-null FileSink
                     // with refcount 1; sole reference.
@@ -1159,10 +1181,10 @@ impl Writable {
                             .with_mut(|w| w.start((*pipe_ptr).fd.get(), true))
                     } {
                         bun_sys::Result::Ok(()) => {}
-                        bun_sys::Result::Err(_) => {
+                        bun_sys::Result::Err(e) => {
                             // SAFETY: `pipe_ptr` is live with refcount 1; deref frees it.
                             unsafe { FileSink::deref(pipe_ptr) };
-                            return Err(WritableInitError::UnexpectedCreatingStdin);
+                            return Err(WritableInitError::Sys(e));
                         }
                     }
                     // SAFETY: `create` returns non-null with one owned ref; `adopt` takes it over.

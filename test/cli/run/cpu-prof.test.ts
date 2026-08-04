@@ -127,17 +127,23 @@ describe.concurrent("--cpu-prof", () => {
 
   // On Windows the path buffer is ~98 KB and the CreateProcess command-line
   // limit is ~32 KB, so an overflowing CLI argument cannot be delivered. On
-  // POSIX 5000 bytes exceeds the fixed path buffer (Linux 4096, macOS 1024).
+  // POSIX 5000 bytes exceeds the fixed path buffer (Linux 4096, macOS 1024);
+  // 2500 + 2500 exercises the combined bound with components that fit
+  // individually on Linux.
   test.skipIf(isWindows).each([
-    ["--cpu-prof-dir", Buffer.alloc(5000, "d").toString()],
-    ["--cpu-prof-name", Buffer.alloc(5000, "n").toString()],
-  ])("%s longer than PATH_MAX reports an error instead of panicking", async (flag, value) => {
+    ["--cpu-prof-dir", ["--cpu-prof-dir", Buffer.alloc(5000, "d").toString()]],
+    ["--cpu-prof-name", ["--cpu-prof-name", Buffer.alloc(5000, "n").toString()]],
+    [
+      "--cpu-prof-dir + --cpu-prof-name combined",
+      ["--cpu-prof-dir", Buffer.alloc(2500, "d").toString(), "--cpu-prof-name", Buffer.alloc(2500, "n").toString()],
+    ],
+  ] as const)("%s longer than PATH_MAX reports an error instead of panicking", async (_label, args) => {
     using dir = tempDir("cpu-prof-pathmax", {
       "test.js": `const end = Date.now() + 60; while (Date.now() < end) {}`,
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--cpu-prof", flag, value, "test.js"],
+      cmd: [bunExe(), "--cpu-prof", ...args, "test.js"],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",

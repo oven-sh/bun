@@ -211,15 +211,21 @@ test("--heap-prof-name and --heap-prof-dir work together", async () => {
 
 // On Windows the path buffer is ~98 KB and the CreateProcess command-line
 // limit is ~32 KB, so an overflowing CLI argument cannot be delivered. On
-// POSIX 5000 bytes exceeds the fixed path buffer (Linux 4096, macOS 1024).
+// POSIX 5000 bytes exceeds the fixed path buffer (Linux 4096, macOS 1024);
+// 2500 + 2500 exercises the combined bound with components that fit
+// individually on Linux.
 test.skipIf(isWindows).each([
-  ["--heap-prof-dir", Buffer.alloc(5000, "d").toString()],
-  ["--heap-prof-name", Buffer.alloc(5000, "n").toString()],
-])("%s longer than PATH_MAX reports an error instead of panicking", async (flag, value) => {
+  ["--heap-prof-dir", ["--heap-prof-dir", Buffer.alloc(5000, "d").toString()]],
+  ["--heap-prof-name", ["--heap-prof-name", Buffer.alloc(5000, "n").toString()]],
+  [
+    "--heap-prof-dir + --heap-prof-name combined",
+    ["--heap-prof-dir", Buffer.alloc(2500, "d").toString(), "--heap-prof-name", Buffer.alloc(2500, "n").toString()],
+  ],
+] as const)("%s longer than PATH_MAX reports an error instead of panicking", async (_label, args) => {
   using dir = tempDir("heap-prof-pathmax", {});
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "--heap-prof", flag, value, "-e", `console.log("done");`],
+    cmd: [bunExe(), "--heap-prof", ...args, "-e", `console.log("done");`],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",

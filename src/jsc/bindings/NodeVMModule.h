@@ -17,9 +17,6 @@ public:
 
     JSArray* toJS(JSGlobalObject* globalObject) const;
 
-    const WTF::String& specifier() const { return m_specifier; }
-    const WTF::HashMap<WTF::String, WTF::String>& importAttributes() const { return m_importAttributes; }
-
 private:
     WTF::String m_specifier;
     WTF::HashMap<WTF::String, WTF::String> m_importAttributes;

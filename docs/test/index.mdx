@@ -61,7 +61,7 @@ To run a specific file in the test runner, make sure the path starts with `./` o
 bun test ./test/specific-file.test.ts
 ```
 
-The test runner runs all tests in a single process. It loads all `--preload` scripts (see [Lifecycle](/test/lifecycle)), then runs all tests. If a test fails, the test runner exits with a non-zero exit code.
+By default the test runner runs all tests in a single process: it loads all `--preload` scripts (see [Lifecycle](/test/lifecycle)), then runs every file in one shared global. Pass [`--parallel`](/test/parallel) to spread files across CPU cores instead. If a test fails, the test runner exits with a non-zero exit code.
 
 ## CI/CD integration
 
@@ -115,6 +115,8 @@ bun test --timeout 20
 ```
 
 ## Concurrent test execution
+
+To run test **files** across CPU cores, see [`--parallel`](/test/parallel). The flags below control concurrency of tests _within_ a file.
 
 By default, Bun runs all tests sequentially within each test file. Concurrent execution runs async tests in parallel, which speeds up test suites with independent tests.
 
@@ -365,6 +367,63 @@ Bun is compatible with popular UI testing libraries:
 - [React Testing Library](https://testing-library.com/docs/react-testing-library/intro)
 
 See [DOM testing](/test/dom).
+
+## Large codebases
+
+For a suite with thousands of test files, `bun test` has several knobs that stack — worker processes, isolation level, sharding across machines, and duration-aware scheduling. Each is covered in depth on [Parallel & isolated test runs](/test/parallel); here is how they fit together, roughly in order of payoff:
+
+**1. Use every core: [`--parallel`](/test/parallel#--parallel).** One worker per core, files handed out one at a time.
+
+**2. Decide how much isolation you need.** `--parallel` gives every file a fresh global, which is the safe default and what Jest/Vitest do. If your files don't leak state into each other (they already pass under plain `bun test`, which shares one global), [`--parallel --no-isolate`](/test/parallel#every-file-is-isolated-unless-you-opt-out) lets each worker evaluate your imports and preloads once instead of once per file. On suites made of many small files that is the single biggest win — see [how it compares](/test/parallel#how-it-compares).
+
+**3. Split across machines: [`--shard=i/n`](/test/parallel#splitting-a-suite-across-ci-machines-with---shard).** Deterministic, no coordinator; each CI job runs one slice, and each slice still uses `--parallel` locally.
+
+**4. Balance by time, not count: [`--timings`](/test/parallel#balancing-with---timings).** With recorded durations, shards are cut so each gets about the same total time (longest-processing-time style, but keeping path-neighbours together so a worker's module cache stays warm), each worker starts its slowest file first, and idle workers steal the slowest remaining file — so the run isn't held up by one long file that happened to start last.
+
+**5. Keep the timings fresh automatically: `--update-timings`.** Each shard writes the durations of the files it ran; the next run reads all of them. In GitHub Actions that looks like:
+
+```yaml title=".github/workflows/test.yml" icon="github"
+jobs:
+  test:
+    strategy:
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      # last successful run's per-shard timings (nothing on the very first run)
+      - uses: actions/cache/restore@v4
+        with:
+          path: .bun-test-timings
+          key: bun-test-timings-${{ github.run_id }}
+          restore-keys: bun-test-timings-
+      - run: |
+          bun test --parallel --shard=${{ matrix.shard }}/4 --update-timings \
+            --timings=.bun-test-timings/next/${{ matrix.shard }}.json \
+            $(ls .bun-test-timings/*.json 2>/dev/null | sed 's/^/--timings=/')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: timings-${{ matrix.shard }}
+          path: .bun-test-timings/next/${{ matrix.shard }}.json
+  save-timings:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: timings-*
+          path: .bun-test-timings
+          merge-multiple: true
+      - uses: actions/cache/save@v4
+        with:
+          path: .bun-test-timings
+          key: bun-test-timings-${{ github.run_id }}
+```
+
+Every shard must read the _same set_ of timings files for the shards to add up to the whole suite, which is why a run reads the previous run's files (restored from the cache) and writes its own where sibling shards still in flight won't pick them up (`next/` above). Add `--no-isolate` to the `bun test` line if step 2 applies to you.
+
+**6. Within a file: [`test.concurrent`](#concurrent-test-execution)** for I/O-bound tests that spend their time awaiting.
 
 ## Performance
 

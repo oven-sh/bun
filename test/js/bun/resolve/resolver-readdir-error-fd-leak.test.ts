@@ -156,7 +156,8 @@ test.skipIf(skip)("resolver closes a caller-supplied directory fd when readdir f
       `,
   };
   for (let i = 0; i < DIR_COUNT; i++)
-    files[`d${i}${MARKER}/unreachable.test.ts`] = `import { test } from "bun:test"; test("unreachable-marker", () => {});`;
+    files[`d${i}${MARKER}/unreachable.test.ts`] =
+      `import { test } from "bun:test"; test("unreachable-marker", () => {});`;
   using scanDir = tempDir("resolver-readdir-scanner-leak", files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "."],
@@ -169,7 +170,12 @@ test.skipIf(skip)("resolver closes a caller-supplied directory fd when readdir f
   const m = stdout.match(/LEAKED=(\d+)/);
   // unreachable-marker stays undiscovered iff the shim made the marker dirs
   // unreadable; if bun stops routing getdents64 through libc syscall() this trips.
-  expect({ leaked: m?.[0], shimFired: !stderr.includes("unreachable-marker"), onePass: stderr.includes("1 pass"), exitCode }).toEqual({
+  expect({
+    leaked: m?.[0],
+    shimFired: !stderr.includes("unreachable-marker"),
+    onePass: stderr.includes("1 pass"),
+    exitCode,
+  }).toEqual({
     leaked: "LEAKED=0",
     shimFired: true,
     onePass: true,

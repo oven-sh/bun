@@ -751,6 +751,7 @@ pub(crate) unsafe fn sink_handle_from_id(
 /// [`JsSinkType::get_pending_error`] guard: every sink uses the trait-default
 /// `None`, so omitting it is behavior-preserving.
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn Bun__NativeTransformSink__writeBytes(
     sink_id: u8,
     sink_ptr: *mut c_void,

@@ -248,10 +248,8 @@ impl Default for StringOrBuffer {
     }
 }
 
-/// Type-tag classification of a value that [`StringOrBuffer::from_js`] would
-/// accept. Computing it runs no user JS, so callers can classify an argument
-/// up front, coerce later arguments (which may run `toString`/getters), and
-/// only then decode via [`StringOrBuffer::from_js_with_kind`].
+/// Type-tag classification (no user JS) for deferred decoding via
+/// [`StringOrBuffer::from_js_with_kind`].
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StringOrBufferKind {
     String,

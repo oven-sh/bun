@@ -3,12 +3,12 @@
 //! state per-`Environment`; Bun stores it per-process, so `drop()` is global.
 
 use core::sync::atomic::{AtomicBool, Ordering};
-use std::sync::RwLock;
 
 use bun_core::ZigString;
 use bun_jsc::{
     CallFrame, ErrorCode, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, ZigStringJsc as _,
 };
+use bun_threading::RwLock;
 
 use crate::node::util::validators;
 
@@ -111,7 +111,7 @@ impl FsGrants {
     /// `FSPermission::GrantAccess`.
     fn grant(&mut self, resolved: Vec<u8>) {
         let path = wildcard_if_dir(resolved);
-        if self.granted.iter().any(|g| *g == path) {
+        if self.granted.contains(&path) {
             return;
         }
         self.granted.push(path);
@@ -260,12 +260,7 @@ pub fn init_from_cli(grants: &CliGrants<'_>) {
         }
     }
 
-    match STATE.write() {
-        Ok(mut guard) => *guard = st,
-        // A poisoned lock this early means a panic already unwound through a
-        // permission check; refuse to run rather than run unsandboxed.
-        Err(_) => bun_core::Output::panic(format_args!("permission model state is unrecoverable")),
-    }
+    *STATE.write() = st;
     ENABLED.store(true, Ordering::Release);
 }
 
@@ -288,11 +283,7 @@ pub fn is_granted(scope: Scope, reference: Option<&[u8]>) -> bool {
         // Node reports (`process.permission` does not even exist there).
         return true;
     }
-    let Ok(st) = STATE.read() else {
-        // Fail closed: a poisoned lock means we cannot prove the access is
-        // allowed.
-        return false;
-    };
+    let st = STATE.read();
     match scope {
         // Node: `has('fs')` is true only when both directions are fully open.
         Scope::FileSystem => st.fs_read.allow_all && st.fs_write.allow_all,
@@ -318,9 +309,7 @@ fn drop_scope(scope: Scope, reference: Option<&[u8]>) {
     if !is_enabled() {
         return;
     }
-    let Ok(mut st) = STATE.write() else {
-        return;
-    };
+    let mut st = STATE.write();
     let reference = reference.filter(|r| !r.is_empty());
     match (scope, reference) {
         (Scope::FileSystem, None) => {
@@ -461,9 +450,7 @@ pub fn emit_startup_warnings(global: &JSGlobalObject) {
         return;
     }
     let (bypass_flags, net_granted, comma_flags) = {
-        let Ok(st) = STATE.read() else {
-            return;
-        };
+        let st = STATE.read();
         // Order matches Node's `warnFlags`. `--allow-ffi` is omitted: Bun does
         // not build with `node_use_ffi`, so Node would not warn for it either.
         (

@@ -24,6 +24,7 @@
 #include <string>
 #include <chrono>
 #include <map>
+#include <functional>
 #include <set>
 #include <JavaScriptCore/UnlinkedMetadataTable.h>
 #include <JavaScriptCore/CodeBlock.h>
@@ -42,6 +43,7 @@
 #if OS(DARWIN)
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#include <mach-o/dyld.h>
 #endif
 #include <unistd.h>
 #if OS(DARWIN)
@@ -58,6 +60,7 @@ extern "C" size_t mi_usable_size(const void*) noexcept;
 extern "C" int mi_heap_snapshot_to_file(const char* path, unsigned flags) noexcept;
 typedef bool(mi_free_filter_fun)(void* p);
 extern "C" void mi_free_set_filter(mi_free_filter_fun* filter) noexcept;
+extern "C" void mi_prof_visit_live(bool (*cb)(uintptr_t addr, size_t size, const uintptr_t* frames, uint8_t nframes, void* arg), void* arg) noexcept;
 #include <mimalloc.h>
 static std::vector<std::pair<uintptr_t, uintptr_t>> s_frozenRanges; // sorted [start,end)
 static std::vector<uintptr_t> s_payloadPages; // sorted OS pages that held live malloc blocks (main heap) at freeze
@@ -65,6 +68,8 @@ static std::map<uintptr_t, uint32_t> s_pageSizeClass; // page -> block size of (
 struct FrozenRun { uintptr_t start; size_t len; size_t fileOff; };
 static std::vector<FrozenRun> s_runs;
 static int s_snapFd = -1;
+static std::set<uintptr_t> s_profileCells; // cells changed during the "training" interaction
+static bool s_recordProfile = false;
 static std::vector<std::pair<uintptr_t, uint32_t>> s_liveBlocks; // (start, size) of live malloc blocks at freeze, sorted
 static std::vector<uintptr_t> s_cellPages; // sorted OS pages inside MarkedBlocks at freeze
 static bool recordUsedBlock(const mi_heap_t*, const mi_heap_area_t*, void* block, size_t block_size, void* arg)
@@ -424,6 +429,31 @@ static void fileSnapshotHeap(JSC::VM& vm)
             i = j;
         }
     }
+    // MarkedBlocks living outside mimalloc regions (e.g. the StructureHeap reservation, JSC-tagged VM) were skipped above; remap them too.
+    if (!getenv("BUN_FILESNAP_NOREMAP")) {
+        std::sort(s_frozenRanges.begin(), s_frozenRanges.end());
+        std::vector<uintptr_t> extra;
+        vm.heap.objectSpace().forEachBlock([&](JSC::MarkedBlock::Handle* h) {
+            uintptr_t a = (uintptr_t)&h->block();
+            auto it = std::upper_bound(s_frozenRanges.begin(), s_frozenRanges.end(), std::make_pair(a, UINTPTR_MAX));
+            bool covered = it != s_frozenRanges.begin() && a < std::prev(it)->second;
+            if (!covered) extra.push_back(a);
+        });
+        std::sort(extra.begin(), extra.end());
+        size_t i = 0, extraBytes = 0;
+        while (i < extra.size()) {
+            size_t j = i + 1;
+            while (j < extra.size() && extra[j] == extra[j - 1] + JSC::MarkedBlock::blockSize) j++;
+            uintptr_t a = extra[i]; size_t len = (j - i) * JSC::MarkedBlock::blockSize;
+            if (pwrite(fd, (void*)a, len, fileOff) == (ssize_t)len) {
+                void* m = mmap((void*)a, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, fileOff);
+                if (m != MAP_FAILED) { remapped += len; runs++; extraBytes += len; s_frozenRanges.push_back({ a, a + len }); s_runs.push_back({ a, len, fileOff }); }
+                fileOff += len;
+            }
+            i = j;
+        }
+        fprintf(stderr, "[filesnap] additionally remapped %.1fMB of MarkedBlocks outside malloc regions\n", extraBytes / 1048576.0);
+    }
     if (freeze && !getenv("BUN_FILESNAP_NOMI")) {
         std::sort(s_frozenRanges.begin(), s_frozenRanges.end());
         mi_free_set_filter(frozenFreeFilter);
@@ -433,7 +463,18 @@ static void fileSnapshotHeap(JSC::VM& vm)
         void* probe2 = WTF::fastMalloc(100); uintptr_t a2 = (uintptr_t)probe2; auto it2 = std::upper_bound(s_frozenRanges.begin(), s_frozenRanges.end(), std::make_pair(a2, UINTPTR_MAX)); bool f2 = it2 != s_frozenRanges.begin() && a2 < std::prev(it2)->second;
         fprintf(stderr, "[filesnap] post-switch probes landing in frozen ranges: mi_malloc %zu/64, fastMalloc %d\n", inFrozen, (int)f2);
     }
+    std::sort(s_runs.begin(), s_runs.end(), [](const FrozenRun& x, const FrozenRun& y) { return x.start < y.start; });
+    std::sort(s_frozenRanges.begin(), s_frozenRanges.end());
     s_snapFd = fd;
+    if (const char* prot = getenv("BUN_FILESNAP_PROTECT")) {
+        // Debug: make image blocks of one subspace read-only so the first writer faults with a backtrace.
+        size_t n = 0;
+        vm.heap.objectSpace().forEachBlock([&](JSC::MarkedBlock::Handle* h) {
+            if (!h->block().isImmortal() || strcmp(h->subspace()->name(), prot)) return;
+            if (!mprotect(&h->block(), JSC::MarkedBlock::blockSize, PROT_READ)) n++;
+        });
+        fprintf(stderr, "[filesnap] mprotect(PROT_READ) %zu blocks of %s\n", n, prot);
+    }
     // keep fd open for the life of the process (mapping holds a reference anyway)
     fprintf(stderr, "[filesnap] candidates=%zu remapped=%.1fMB in %zu runs, skipped=%zu, file=%.1fMB\n", candidates.size(), remapped / 1048576.0, runs, skipped, fileOff / 1048576.0);
 }
@@ -540,6 +581,10 @@ static void dumpDirtyMap(JSC::VM& vm)
         // Cell-granularity diff over immortal MarkedBlocks: how many cells actually changed vs pages dirtied.
         {
             size_t cellsTotal = 0, cellsChanged = 0, cellsHeaderOnly = 0, bytesInChangedCells = 0, dirtyCellPages = 0, identicalDirtyCellPages = 0;
+            size_t coldMissCells = 0, coldMissBytes = 0; std::set<uintptr_t> coldMissPages; std::map<std::string, size_t> coldByClass;
+            std::map<std::string, std::map<size_t, size_t>> offsetHistBy;
+            std::map<std::string, size_t> identicalByClass;
+            std::map<std::string, std::map<std::string, size_t>> headerPatBy; // high 32 bits of header (indexingType,type,flags,cellState) before>after
             std::map<std::string, std::pair<size_t, size_t>> byClass; // class -> (changed, total)
             auto fileWordAt = [&](uintptr_t a, uint64_t& out) -> bool {
                 uintptr_t page = a & ~(pg - 1);
@@ -562,21 +607,64 @@ static void dumpDirtyMap(JSC::VM& vm)
                     cellsTotal++; byClass[cls].second++;
                     if (!anyDirty) return IterationStatus::Continue;
                     size_t changedWords = 0; bool headerChanged = false;
+                    static const char* offCls = getenv("BUN_MEMDEBUG_OFFSETS_FOR");
+                    bool trackOff = offCls && (std::string(",") + offCls + ",").find("," + cls + ",") != std::string::npos;
                     for (size_t off = 0; off + 8 <= h->cellSize(); off += 8) {
                         uint64_t o; if (!fileWordAt((uintptr_t)cell + off, o)) break;
-                        if (memcmp(&o, (uint8_t*)cell + off, 8)) { changedWords++; if (!off) headerChanged = true; }
+                        if (memcmp(&o, (uint8_t*)cell + off, 8)) { changedWords++; if (!off) { headerChanged = true; if (trackOff) { uint64_t cur; memcpy(&cur, (uint8_t*)cell, 8); char buf[64]; snprintf(buf, sizeof buf, "%016llx>%016llx", (unsigned long long)(o & 0xffffffff00000000ull), (unsigned long long)(cur & 0xffffffff00000000ull)); headerPatBy[cls][buf]++; } } if (trackOff) offsetHistBy[cls][off]++; }
                     }
-                    if (changedWords) { cellsChanged++; byClass[cls].first++; bytesInChangedCells += h->cellSize(); blockAnyChange = true; if (changedWords == 1 && headerChanged) cellsHeaderOnly++; }
+                    if (changedWords) {
+                        cellsChanged++; byClass[cls].first++; bytesInChangedCells += h->cellSize(); blockAnyChange = true; if (changedWords == 1 && headerChanged) cellsHeaderOnly++;
+                        if (s_recordProfile) s_profileCells.insert((uintptr_t)cell);
+                        else if (!s_profileCells.empty() && !s_profileCells.count((uintptr_t)cell)) { coldMissCells++; coldMissBytes += h->cellSize(); coldMissPages.insert((uintptr_t)cell & ~(pg - 1)); coldByClass[cls]++; }
+                    }
                     return IterationStatus::Continue;
                 });
-                if (anyDirty && !blockAnyChange) identicalDirtyCellPages += disp.size();
+                if (anyDirty && !blockAnyChange) { size_t nd = 0; for (auto d : disp) if ((d & VM_PAGE_QUERY_PAGE_DIRTY) || (d & VM_PAGE_QUERY_PAGE_COPIED)) nd++; identicalDirtyCellPages += nd; identicalByClass[cls] += nd; }
             });
             fprintf(stderr, "[celldiff] immortal live cells=%zu changed=%zu (%.1f%%) headerOnly=%zu bytesOfChangedCells=%.2fMB vs dirtyCellPages=%.2fMB (identical-content dirty pages=%.2fMB) => perfect segregation would dirty ~%.2fMB\n",
                 cellsTotal, cellsChanged, cellsTotal ? 100.0 * cellsChanged / cellsTotal : 0.0, cellsHeaderOnly, bytesInChangedCells / 1048576.0, dirtyCellPages * pg / 1048576.0, identicalDirtyCellPages * pg / 1048576.0, bytesInChangedCells / 1048576.0);
+            if (s_recordProfile) fprintf(stderr, "[cellprofile] recorded %zu changed cells as the hot profile\n", s_profileCells.size());
+            else if (!s_profileCells.empty()) {
+                fprintf(stderr, "[celldiff] vs profile(%zu hot cells): cells changed that were NOT hot in profile = %zu (%.2fMB of cells, spanning %zu distinct 16K pages = %.2fMB upper bound)\n", s_profileCells.size(), coldMissCells, coldMissBytes / 1048576.0, coldMissPages.size(), coldMissPages.size() * pg / 1048576.0);
+                std::vector<std::pair<size_t, std::string>> cm; for (auto& [k, v] : coldByClass) cm.push_back({ v, k }); std::sort(cm.begin(), cm.end(), std::greater<>());
+                fprintf(stderr, "    cold misses by class:"); for (size_t i = 0; i < std::min<size_t>(cm.size(), 10); i++) fprintf(stderr, " %s=%zu", cm[i].second.c_str(), cm[i].first); fprintf(stderr, "\n");
+            }
+            { std::vector<std::pair<size_t, std::string>> ib; for (auto& [k, v] : identicalByClass) ib.push_back({ v, k }); std::sort(ib.begin(), ib.end(), std::greater<>()); fprintf(stderr, "[celldiff] identical-content dirty pages by class:"); for (size_t i = 0; i < std::min<size_t>(ib.size(), 10); i++) fprintf(stderr, " %s=%.2fMB", ib[i].second.c_str(), ib[i].first * pg / 1048576.0); fprintf(stderr, "\n"); }
+            for (auto& [c, hist] : offsetHistBy) { fprintf(stderr, "[celldiff] changed word offsets for %s:", c.c_str()); for (auto& [off, n] : hist) fprintf(stderr, " +%zu:%zu", off, n); fprintf(stderr, "\n"); }
+            for (auto& [c, pats] : headerPatBy) { fprintf(stderr, "[celldiff] header byte patterns (idxType,type,flags,cellState hi32 before>after) for %s:", c.c_str()); size_t k = 0; for (auto& [pat, n] : pats) { if (k++ < 8) fprintf(stderr, " %s x%zu", pat.c_str(), n); } fprintf(stderr, "\n"); }
             std::vector<std::pair<size_t, std::string>> crow;
             for (auto& [k, v] : byClass) { char line[200]; snprintf(line, sizeof line, "    %-36s changed %7zu / %7zu (%3.0f%%)", k.c_str(), v.first, v.second, v.second ? 100.0 * v.first / v.second : 0.0); crow.push_back({ v.first, line }); }
             std::sort(crow.begin(), crow.end(), std::greater<>());
             for (size_t i = 0; i < std::min<size_t>(crow.size(), 18); i++) fprintf(stderr, "%s\n", crow[i].second.c_str());
+        }
+        // Owners of mutated payload: join live profiler samples with the byte diff.
+        if (getenv("MIMALLOC_PROF_SAMPLE_RATE")) {
+            struct Ctx { std::function<bool(uintptr_t, uint64_t&)>* fileWordAt; FILE* f; size_t n; size_t changed; };
+            std::function<bool(uintptr_t, uint64_t&)> fw = [&](uintptr_t a, uint64_t& out) -> bool {
+                uintptr_t page = a & ~(pg - 1);
+                auto r = std::upper_bound(s_runs.begin(), s_runs.end(), page, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
+                if (r == s_runs.begin()) return false; --r; if (page >= r->start + r->len) return false;
+                return pread(s_snapFd, &out, 8, r->fileOff + (a - r->start)) == 8;
+            };
+            char path[512]; snprintf(path, sizeof path, "%s/payload-owners.%d.tsv", s_dir, getpid());
+            Ctx ctx { &fw, fopen(path, "w"), 0, 0 };
+            if (ctx.f) {
+                mi_prof_visit_live([](uintptr_t addr, size_t size, const uintptr_t* frames, uint8_t nframes, void* arg) -> bool {
+                    Ctx* c = static_cast<Ctx*>(arg);
+                    // only blocks inside the frozen image
+                    uint64_t probe; if (!(*c->fileWordAt)(addr, probe)) return true;
+                    size_t changedWords = 0, firstOff = SIZE_MAX;
+                    for (size_t off = 0; off + 8 <= size; off += 8) { uint64_t o; if (!(*c->fileWordAt)(addr + off, o)) break; if (memcmp(&o, (void*)(addr + off), 8)) { changedWords++; if (firstOff == SIZE_MAX) firstOff = off; } }
+                    c->n++; if (changedWords) c->changed++;
+                    fprintf(c->f, "%zu\t%zu\t%zu\t", size, changedWords, firstOff == SIZE_MAX ? 0 : firstOff);
+                    for (uint8_t k = 0; k < nframes && k < 14; k++) fprintf(c->f, "%s0x%lx", k ? ";" : "", (unsigned long)frames[k]);
+                    fprintf(c->f, "\n");
+                    return true;
+                }, &ctx);
+                fclose(ctx.f);
+                fprintf(stderr, "[owners] wrote %s: %zu live sampled image blocks, %zu changed; loadaddr=%p\n", path, ctx.n, ctx.changed, (void*)_dyld_get_image_header(0));
+            }
         }
         fprintf(stderr, "[diffmap] changed blocks by block size (count, bytes changed):");
         for (size_t i = 0; i < std::min<size_t>(sizes.size(), 24); i++) fprintf(stderr, " %u:%zu/%zuB", sizes[i].second, sizes[i].first, bySize[sizes[i].second].second);
@@ -662,6 +750,7 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
         if (!strncmp(buf, "filesnap", 8)) req = 4;
         else if (!strncmp(buf, "dirtymap", 8)) req = 5;
         else if (!strncmp(buf, "reclean", 7)) req = 6;
+        else if (!strncmp(buf, "cellprofile", 11)) req = 7;
         else if (!strncmp(buf, "shrink", 6)) req = 3;
         else if (!strncmp(buf, "gc", 2)) req = 2;
         else req = 1;
@@ -677,6 +766,12 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
     }
     if (req == 6) {
         recleanFrozenPages(*vm);
+        return;
+    }
+    if (req == 7) {
+        s_recordProfile = true;
+        dumpDirtyMap(*vm);
+        s_recordProfile = false;
         return;
     }
     if (req == 3) {

@@ -517,6 +517,7 @@ describe.concurrent("bun test --changed-first", () => {
         stdin: "ignore",
       });
       const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) expect(stderr).toBe("");
       expect(exitCode).toBe(0);
       return { ran: ranFiles(stderr, names), order: fileOrder(stderr, names) };
     }

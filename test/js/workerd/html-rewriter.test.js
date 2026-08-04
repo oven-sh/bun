@@ -1771,9 +1771,7 @@ describe("output consumed via pipeThrough after a native-sink input transform", 
   it("completes when read with arrayBuffer()", async () => {
     const compressed = makeRewritten().body.pipeThrough(new CompressionStream("gzip"));
     const buf = await new Response(compressed).arrayBuffer();
-    const text = await new Response(
-      new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip")),
-    ).text();
+    const text = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
     expect(text).toBe(expected);
   });
 
@@ -1783,23 +1781,18 @@ describe("output consumed via pipeThrough after a native-sink input transform", 
       fetch: () => new Response(makeRewritten().body.pipeThrough(new CompressionStream("gzip"))),
     });
     const buf = await (await fetch(server.url)).arrayBuffer();
-    const text = await new Response(
-      new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip")),
-    ).text();
+    const text = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
     expect(text).toBe(expected);
   });
 
   // CompressionStream is the only native-byte-transform that can sit downstream
   // of the rewriter's ByteStream output; cover each format so a later per-codec
   // regression shows up here.
-  it.each(["gzip", "deflate", "deflate-raw", "brotli", "zstd"])(
-    "completes for CompressionStream(%s)",
-    async format => {
-      const compressed = makeRewritten().body.pipeThrough(new CompressionStream(format));
-      const text = await new Response(compressed.pipeThrough(new DecompressionStream(format))).text();
-      expect(text).toBe(expected);
-    },
-  );
+  it.each(["gzip", "deflate", "deflate-raw", "brotli", "zstd"])("completes for CompressionStream(%s)", async format => {
+    const compressed = makeRewritten().body.pipeThrough(new CompressionStream(format));
+    const text = await new Response(compressed.pipeThrough(new DecompressionStream(format))).text();
+    expect(text).toBe(expected);
+  });
 
   // Two input chunks → the second chunk is what the Backpressure wake must
   // re-pull from upstream (the single-chunk case only owes the end() call).

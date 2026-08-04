@@ -142,12 +142,7 @@ describe("Valkey: Recovery after failure (#29925)", () => {
       // was terminal — every subsequent command got "Connection has
       // failed" and there was no way to recover short of replacing the
       // client instance.
-      const failed = await client.get("recovery:k").then(
-        () => "resolved",
-        (e: Error) => e,
-      );
-      expect(failed).toBeInstanceOf(Error);
-      expect((failed as Error).message).toMatch(/connection/i);
+      await expect(client.get("recovery:k")).rejects.toThrow(/connection/i);
 
       // The key assertion: explicit connect() recovers the client.
       // Without the fix this either hung forever (because the new HELLO

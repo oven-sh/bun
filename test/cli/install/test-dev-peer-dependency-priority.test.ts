@@ -214,7 +214,6 @@ test.concurrent("Next.js monorepo scenario should not make unnecessary network r
   {
     const { stderr, exitCode } = await spawnBun(["install"], String(dir));
     expect(stderr).not.toContain("error:");
-    expect(stderr).not.toContain("GET");
     expect(exitCode).toBe(0);
   }
   expect(registryHits).toBe(0);

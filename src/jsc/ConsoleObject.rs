@@ -1810,6 +1810,34 @@ pub mod formatter {
         }
     }
 
+    impl ZigFormatter<'_, '_> {
+        /// Format into a byte sink, propagating the real `JsError` (a throwing
+        /// `[util.inspect.custom]`, termination, OOM). The `Display` impl below
+        /// collapses that to `fmt::Error`, which `std::io::Write::write_fmt`
+        /// turns into a panic when the sink itself never errored; use this
+        /// wherever the caller can `?`-propagate instead.
+        pub fn write_to(&self, writer: &mut dyn bun_io::Write) -> JsResult<()> {
+            let formatter: &mut Formatter<'_> = self
+                .formatter
+                .take()
+                .expect("ZigFormatter::write_to re-entered or used after consumption");
+
+            formatter.stack_check.update();
+            let one = [self.value];
+            formatter.remaining_values = bun_ptr::RawSlice::new(&one);
+
+            let result = (|| {
+                let tag = Tag::get(self.value, formatter.global_this)?;
+                let global = formatter.global_this;
+                formatter.format::<false>(tag, writer, self.value, global)
+            })();
+
+            formatter.remaining_values = bun_ptr::RawSlice::EMPTY;
+            self.formatter.set(Some(formatter));
+            result
+        }
+    }
+
     impl core::fmt::Display for ZigFormatter<'_, '_> {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             // Move the unique `&mut Formatter` out of the cell for the body;

@@ -1218,6 +1218,21 @@ describe("bun test", () => {
         expect(stderr).toContain("First user: Alice with tag: admin");
       });
 
+      test("surfaces a throwing custom formatter in the interpolated value as a test error", () => {
+        const stderr = runTest({
+          args: [],
+          expectExitCode: 1,
+          input: `
+            import { test } from "bun:test";
+
+            test.each([{ a: { b: { [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("boom from inspect.custom"); } } } }])("case $a.b", () => {});
+            test.each([[{ [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("boom from inspect.custom"); } }]])("case %p", () => {});
+          `,
+        });
+
+        expect(stderr).toContain("boom from inspect.custom");
+      });
+
       test("handles missing properties gracefully", () => {
         const cases = [{ a: 1 }];
 

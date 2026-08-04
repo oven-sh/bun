@@ -8,6 +8,7 @@ const isBuffer = Buffer.isBuffer;
 const ObjectKeys = Object.keys;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const SafeSet = Set;
 
 /** Returns null when `value` holds no Buffers, else the [value, buffers] envelope. */
@@ -42,7 +43,7 @@ function tagBuffers(value: unknown): [unknown, unknown[]] | null {
     const keys = ObjectKeys(current);
     for (let i = 0; i < keys.length; i++) {
       const desc = ObjectGetOwnPropertyDescriptor(current, keys[i]);
-      if (desc && "value" in desc) stack.push(desc.value);
+      if (desc && ObjectPrototypeHasOwnProperty.$call(desc, "value")) stack.push(desc.value);
     }
   }
   return buffers === null ? null : [value, buffers];

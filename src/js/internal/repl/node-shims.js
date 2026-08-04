@@ -557,7 +557,7 @@ class InspectorSession {
   }
 }
 
-function sendInspectorCommand(cb, onError) {
+function sendInspectorCommand(cb, _onError) {
   return cb(new InspectorSession());
 }
 
@@ -681,8 +681,9 @@ function makeRequireFunction(_mod) {
     try {
       return boundRequire(id);
     } catch (err) {
-      if (err?.code === "MODULE_NOT_FOUND" && typeof err.specifier === "string" && err.referrer === anchor) {
-        const nodeError = new Error(`Cannot find module '${err.specifier}'\nRequire stack:\n- <repl>`);
+      const specifier = err?.specifier;
+      if (err?.code === "MODULE_NOT_FOUND" && typeof specifier === "string" && err.referrer === anchor) {
+        const nodeError = new Error(`Cannot find module '${specifier}'\nRequire stack:\n- <repl>`);
         nodeError.code = "MODULE_NOT_FOUND";
         nodeError.requireStack = ["<repl>"];
         throw nodeError;

@@ -521,7 +521,7 @@ describe('REPL tab completion (core functionality)', () => {
             'Int16Array',
             'Int32Array',
             'Int8Array',
-            ...(common.hasIntl ? ['Intl'] : []),
+            ...(typeof Intl !== 'undefined' ? ['Intl'] : []),
             'Iterator',
             'inspector',
             'isFinite',

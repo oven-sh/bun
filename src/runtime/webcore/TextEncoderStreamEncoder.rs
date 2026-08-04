@@ -294,8 +294,10 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
     };
     let str = js_str.view(global);
     let _keep = bun_jsc::EnsureStillAlive(js_str.to_js());
-    // SAFETY: `this` is the live encoder owned by the calling JS cell; taken
-    // after the coercion so no user JS runs while the borrow is live.
+    // SAFETY: `this` is the live encoder owned by the calling JS cell (on the
+    // C++ caller's stack, so it cannot be finalized mid-call). The sink write
+    // below can run user JS, but re-entry only forms another shared `&*this`;
+    // all state is `Cell`/`RefCell` and `scratch` is moved out before the write.
     let this = unsafe { &*this };
     let Some(ptr) = NonNull::new(sink_ptr) else {
         return JSValue::UNDEFINED;

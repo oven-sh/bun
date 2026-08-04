@@ -275,16 +275,17 @@ for (const opts of [{}, { fatal: true }] as const) {
 
     await writer.write(new TextEncoder().encode("first"));
     const second = writer.write(new TextEncoder().encode("second"));
-    const raced = await Promise.race([second.then(() => "done"), Bun.sleep(0).then(() => "pending")]);
-    expect(raced).toBe("pending");
+    expect(Bun.peek.status(second)).toBe("pending");
 
     const { value } = await reader.read();
     expect(value).toBe("first");
+    expect(Bun.peek.status(second)).toBe("pending");
     await second;
 
-    void writer.close();
+    const closed = writer.close();
     const rest: string[] = [];
     for (let r; !(r = await reader.read()).done; ) rest.push(r.value);
+    await closed;
     expect(rest.join("")).toBe("second");
   });
 }

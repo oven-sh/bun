@@ -78,7 +78,7 @@ Runs each test file in a fresh JavaScript global object inside the same process.
 - closes servers, sockets, file watchers and subprocesses the file left open, cancels its timers, and restores fake timers,
 - re-runs `--preload` scripts in the new global.
 
-This is the same model Jest and Vitest use by default. It makes "passes alone, fails in the full suite" bugs go away at the cost of re-evaluating imports per file.
+This is how Jest and Vitest behave by default. It makes "passes alone, fails in the full suite" bugs go away at the cost of re-evaluating imports per file.
 
 To keep that cost low, transpiled source and bytecode are cached at the process level and shared across globals: the second file to import a module skips reading, transpiling and parsing it and goes straight to evaluation. Only the module's top-level code runs again.
 
@@ -157,68 +157,11 @@ The file is plain JSON, slowest first, so it doubles as a "what's slow" report:
 
 #### One timings file per shard
 
-`--timings` can be passed more than once; the files are read as one table (paths that don't exist yet are skipped), and `--update-timings` writes to the **first** path. Under `--shard` that output contains just the files the shard ran, so the shards' outputs are disjoint and, read together on the next run, add up to the whole suite — no merge step. The [large codebases](#large-codebases-putting-it-together) section below has the full CI workflow.
-
-## Large codebases: putting it together
-
-For a suite with thousands of files the pieces above stack. Roughly in order of payoff:
-
-**1. Use every core: `--parallel`.** One worker per core, files handed out one at a time.
-
-**2. Decide how much isolation you need.** `--parallel` gives every file a fresh global, which is the safe default and what Jest/Vitest do. If your files don't leak state into each other (they already pass under plain `bun test`, which shares one global), `--parallel --no-isolate` lets each worker evaluate your imports and preloads once instead of once per file. On suites made of many small files that is the single biggest win — see the table below.
-
-**3. Split across machines: `--shard=i/n`.** Deterministic, no coordinator; each CI job runs one slice, and each slice still uses `--parallel` locally.
-
-**4. Balance by time, not count: `--timings`.** With recorded durations, shards are cut so each gets about the same total time (longest-processing-time style, but keeping path-neighbours together so a worker's module cache stays warm), each worker starts its slowest file first, and idle workers steal the slowest remaining file — so the run isn't held up by one long file that happened to start last.
-
-**5. Keep the timings fresh automatically: `--update-timings`.** Each shard writes the durations of the files it ran; the next run reads all of them. In GitHub Actions that looks like:
-
-```yaml title=".github/workflows/test.yml" icon="github"
-jobs:
-  test:
-    strategy:
-      matrix:
-        shard: [1, 2, 3, 4]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install
-      # last successful run's per-shard timings (nothing on the very first run)
-      - uses: actions/cache/restore@v4
-        with:
-          path: .bun-test-timings
-          key: bun-test-timings-${{ github.run_id }}
-          restore-keys: bun-test-timings-
-      - run: |
-          bun test --parallel --shard=${{ matrix.shard }}/4 --update-timings \
-            --timings=.bun-test-timings/next/${{ matrix.shard }}.json \
-            $(ls .bun-test-timings/*.json 2>/dev/null | sed 's/^/--timings=/')
-      - uses: actions/upload-artifact@v4
-        with:
-          name: timings-${{ matrix.shard }}
-          path: .bun-test-timings/next/${{ matrix.shard }}.json
-  save-timings:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: timings-*
-          path: .bun-test-timings
-          merge-multiple: true
-      - uses: actions/cache/save@v4
-        with:
-          path: .bun-test-timings
-          key: bun-test-timings-${{ github.run_id }}
-```
-
-Every shard must read the _same set_ of timings files for the shards to add up to the whole suite, which is why a run reads the previous run's files (restored from the cache) and writes its own where sibling shards still in flight won't pick them up (`next/` above). Add `--no-isolate` to the `bun test` line if step 2 applies to you.
-
-**6. Within a file: `test.concurrent`** for I/O-bound tests that spend their time awaiting.
+`--timings` can be passed more than once; the files are read as one table (paths that don't exist yet are skipped), and `--update-timings` writes to the **first** path. Under `--shard` that output contains just the files the shard ran, so the shards' outputs are disjoint and, read together on the next run, add up to the whole suite — no merge step. [Large codebases](/test/index#large-codebases) on the main page has the full CI workflow.
 
 ## How it compares
 
-2 000 TypeScript test files × 8 small tests each, all importing a small app built on `zod`, `date-fns` and `lodash`, with a shared setup file (custom matcher + `beforeEach`/`afterEach`) loaded via each runner's preload mechanism — the shape of a large application's unit-test suite ([`bench/test/app`](https://github.com/oven-sh/bun/tree/main/bench/test), `bun app/setup.ts 2000 20`). 16-core Apple M4 Max:
+2 000 TypeScript test files × 8 small tests each, all importing a small app built on `zod`, `date-fns` and `lodash`, with a shared setup file (custom matcher + `beforeEach`/`afterEach`) loaded via each runner's preload mechanism — the shape of a large application's unit-test suite ([`bench/test/app`](https://github.com/oven-sh/bun/tree/main/bench/test/app), `bun app/setup.ts 2000 20`). 16-core Apple M4 Max:
 
 | Mode                             | Bun                                           | Vitest 4.1                                            | Jest 30 (`@swc/jest`)                                  |
 | -------------------------------- | --------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------ |

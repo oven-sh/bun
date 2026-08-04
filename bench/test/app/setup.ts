@@ -26,7 +26,7 @@ mkdirSync(root + "/tests", { recursive: true });
 
 for (let m = 0; m < MODULES; m++) {
   writeFileSync(
-    `${root}/src/model${m}.ts`,
+    `${root}/src/inventory${m}.ts`,
     `import { z } from "zod";
 import { addDays, differenceInCalendarDays, parseISO } from "date-fns";
 import groupBy from "lodash/groupBy";
@@ -64,13 +64,13 @@ export function summarize${m}(items: Item${m}[]) {
 }
 
 let barrel = "";
-for (let m = 0; m < MODULES; m++) barrel += `export * from "./model${m}";\n`;
+for (let m = 0; m < MODULES; m++) barrel += `export * from "./inventory${m}";\n`;
 writeFileSync(`${root}/src/index.ts`, barrel);
 
 for (let f = 0; f < FILES; f++) {
   const m = f % MODULES;
   let body = `import { Item${m}, make${m}, summarize${m} } from "../src";\n\n`;
-  body += `describe("model${m} (file ${f})", () => {\n`;
+  body += `describe("inventory${m} (file ${f})", () => {\n`;
   for (let t = 0; t < TESTS_PER_FILE; t++) {
     body += `  test("case ${t}", () => {
     const items = Array.from({ length: ${ITEMS + t} }, (_, i) => make${m}(i));
@@ -84,7 +84,7 @@ for (let f = 0; f < FILES; f++) {
   });\n`;
   }
   body += `});\n`;
-  writeFileSync(`${root}/tests/model${String(f).padStart(3, "0")}.test.ts`, body);
+  writeFileSync(`${root}/tests/inventory${String(f).padStart(4, "0")}.test.ts`, body);
 }
 
 // A setup file every runner loads before each test file (bun --preload,

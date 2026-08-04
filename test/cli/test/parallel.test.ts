@@ -1053,7 +1053,7 @@ test("--parallel --no-isolate: a worker keeps one global and module registry acr
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const m = [...(stdout + stderr).matchAll(/COUNT (\d+) G (\w)/g)];
-    return { counts: m.map(x => x[1]), globals: new Set(m.map(x => x[2])).size, stdout, exitCode };
+    return { counts: m.map(x => x[1]), globals: new Set(m.map(x => x[2])).size, stdout, stderr, exitCode };
   };
 
   // Dispatch order across chunks isn't the point here; module state and globalThis are.
@@ -1061,11 +1061,15 @@ test("--parallel --no-isolate: a worker keeps one global and module registry acr
   expect(isolated.stdout).toContain("PARALLEL");
   expect(isolated.counts).toEqual(["1", "1", "1"]);
   expect(isolated.globals).toBe(3);
+  expect(isolated.stderr).toContain("3 pass");
+  expect(isolated.stderr).not.toContain("error:");
   expect(isolated.exitCode).toBe(0);
 
   const shared = await run("--no-isolate");
   expect(shared.stdout).toContain("PARALLEL");
   expect(shared.counts).toEqual(["1", "2", "3"]);
   expect(shared.globals).toBe(1);
+  expect(shared.stderr).toContain("3 pass");
+  expect(shared.stderr).not.toContain("error:");
   expect(shared.exitCode).toBe(0);
 });

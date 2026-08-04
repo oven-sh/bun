@@ -14,13 +14,14 @@ all three runners with their stock configs (`jest.config.cjs` uses `@swc/jest`;
 cd bench/test
 bun install
 bun app/setup.ts 2000 20         # files, items-per-test
+cd app                           # bunfig.toml / jest.config.cjs / vitest.config.ts here wire in preload.ts
 hyperfine --warmup 1 --runs 3 -N \
-  -n 'bun test'                         'bun test app/tests' \
-  -n 'bun test --parallel'              'bun test --parallel app/tests' \
-  -n 'bun test --parallel --no-isolate' 'bun test --parallel --no-isolate app/tests' \
-  -n 'jest'                             './node_modules/.bin/jest' \
-  -n 'vitest run'                       './node_modules/.bin/vitest run app/tests' \
-  -n 'vitest run --no-isolate'          './node_modules/.bin/vitest run --no-isolate app/tests'
+  -n 'bun test'                         'bun test tests' \
+  -n 'bun test --parallel'              'bun test --parallel tests' \
+  -n 'bun test --parallel --no-isolate' 'bun test --parallel --no-isolate tests' \
+  -n 'jest'                             '../node_modules/.bin/jest' \
+  -n 'vitest run'                       '../node_modules/.bin/vitest run' \
+  -n 'vitest run --no-isolate'          '../node_modules/.bin/vitest run --no-isolate'
 ```
 
 ## `parallel/`: many independent slow files

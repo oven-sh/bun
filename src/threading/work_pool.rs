@@ -146,6 +146,13 @@ impl WorkPool {
         POOL.get_or_init(create)
     }
 
+    /// Called once right after an image restore, before any task is scheduled.
+    pub fn did_restore_from_image() {
+        if let Some(pool) = POOL.get() {
+            pool.forget_threads_after_image_restore();
+        }
+    }
+
     pub fn schedule(task: *mut Task) {
         Self::get().schedule(Batch::from(task));
     }

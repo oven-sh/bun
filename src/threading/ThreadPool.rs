@@ -246,6 +246,19 @@ impl ThreadPool {
         }
     }
 
+    /// Heap-image restore: the worker threads counted in `sync` belonged to the process that built the image. Forget them (queue and
+    /// config stay) so the next `schedule`/`notify` spawns fresh workers here.
+    pub fn forget_threads_after_image_restore(&self) {
+        let mut sync = self.sync.load(Ordering::Relaxed);
+        sync.set_spawned(0);
+        sync.set_idle(0);
+        sync.set_notified(false);
+        self.sync.0.store(sync.0, Ordering::Release);
+        self.threads.store(ptr::null_mut(), Ordering::Release);
+        self.idle_event.reset_after_image_restore();
+        self.notify(false); // if anything is queued, this spawns the first worker here
+    }
+
     /// Dump aggregate worker idle/busy stats to stderr. No-op unless
     /// `BUN_THREADPOOL_STATS` is set. Safe to call at any time; intended for
     /// the bundler to call between phases.
@@ -1338,6 +1351,13 @@ impl Default for Event {
         Event {
             state: AtomicU32::new(Self::EMPTY),
         }
+    }
+}
+
+impl Event {
+    /// Waiter counts in `state` describe threads of the process that built the image.
+    fn reset_after_image_restore(&self) {
+        self.state.store(Self::EMPTY, Ordering::Release);
     }
 }
 

@@ -843,14 +843,23 @@ static void imageTrapReport()
 
 static struct termios s_imageTermios; static int s_imageTermiosFd = -1; // lives in __DATA, so it travels inside the image
 static uint64_t s_imageOpenFds[16]; // fds 0..1023 open in the build process: the restored process parks /dev/null on them so stale closes are harmless and new fds never alias them
+struct ImageFileFd { int fd; int flags; char path[1000]; };
+static ImageFileFd s_imageFileFds[32]; static int s_imageFileFdCount = 0; // writable regular files (logs) get reopened O_APPEND at the same fd number
 static void imageDump(JSC::VM& vm, const char* path)
 {
 #if OS(DARWIN)
     JSC::JSLockHolder lock(vm);
     s_imageTermiosFd = -1;
     for (int fd = 0; fd < 3; fd++) if (isatty(fd) && !tcgetattr(fd, &s_imageTermios)) { s_imageTermiosFd = fd; break; }
-    memset(s_imageOpenFds, 0, sizeof s_imageOpenFds);
-    for (int fd = 3; fd < 1024; fd++) if (fcntl(fd, F_GETFD) != -1) s_imageOpenFds[fd / 64] |= 1ull << (fd % 64);
+    memset(s_imageOpenFds, 0, sizeof s_imageOpenFds); s_imageFileFdCount = 0;
+    for (int fd = 3; fd < 1024; fd++) {
+        if (fcntl(fd, F_GETFD) == -1) continue;
+        s_imageOpenFds[fd / 64] |= 1ull << (fd % 64);
+        struct stat st; if (s_imageFileFdCount < 32 && !fstat(fd, &st) && S_ISREG(st.st_mode)) {
+            ImageFileFd& f = s_imageFileFds[s_imageFileFdCount]; f.fd = fd; f.flags = fcntl(fd, F_GETFL);
+            if ((f.flags & O_ACCMODE) != O_RDONLY && fcntl(fd, F_GETPATH, f.path) != -1) s_imageFileFdCount++;
+        }
+    }
     { // Error objects keep raw StackFrames (CodeBlock pointers) until .stack is first read; resolve them now so nothing in the image points at code we drop or re-link
         JSC::HeapIterationScope scope(vm.heap);
         vm.heap.objectSpace().forEachLiveCell(scope, [&](JSC::HeapCell* heapCell, JSC::HeapCell::Kind kind) {
@@ -1034,6 +1043,7 @@ static void imageRestoreAndRun(const char* path)
     { // park /dev/null on every fd number the image thinks it owns (the image file fd itself gets moved out of the way first)
         int hi = 1023; while (hi > 2 && !(s_imageOpenFds[hi / 64] & (1ull << (hi % 64)))) hi--;
         if (fd <= hi) { int moved = fcntl(fd, F_DUPFD_CLOEXEC, hi + 1); if (moved >= 0) { close(fd); fd = moved; } }
+        for (int i = 0; i < s_imageFileFdCount; i++) { ImageFileFd& f = s_imageFileFds[i]; if (fcntl(f.fd, F_GETFD) != -1) continue; int nfd = open(f.path, (f.flags & ~(O_CREAT | O_TRUNC | O_EXCL)) | O_APPEND | O_CLOEXEC); if (nfd < 0) continue; if (nfd != f.fd) { dup2(nfd, f.fd); close(nfd); } if (verbose) fprintf(stderr, "[image] reopened log fd %d -> %s\n", f.fd, f.path); }
         int devnull = open("/dev/null", O_RDWR | O_CLOEXEC); int parked = 0;
         for (int k = 3; k <= hi; k++) if ((s_imageOpenFds[k / 64] & (1ull << (k % 64))) && fcntl(k, F_GETFD) == -1 && dup2(devnull, k) == k) parked++;
         if (devnull > hi) close(devnull);

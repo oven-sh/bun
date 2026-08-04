@@ -564,10 +564,8 @@ export function getChannel() {
   })();
 }
 
-// Called (with `this` = process) by the native promise-rejection tracker so
-// 'unhandledRejection' listeners run with a JS frame on the stack: node
-// dispatches through internal/process/promises and listeners may call
-// Error.captureStackTrace(err, listener) expecting caller frames to remain.
+// Called (with `this` = process) by the native promise-rejection tracker so listeners
+// run with a JS caller frame, as in node's internal/process/promises dispatch.
 export function emitUnhandledRejectionFromNative(reason, promise) {
   return this.emit("unhandledRejection", reason, promise);
 }

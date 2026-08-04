@@ -4,7 +4,6 @@
 
 #include "ImportMetaObject.h"
 #include "ZigGlobalObject.h"
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
@@ -360,10 +359,9 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
             }
         }
 
-        // node resolves builtin ids before validating `paths`
-        // (Module._resolveFilename checks BuiltinModule.normalizeRequirableId
-        // first), so `require.resolve("node:fs", { paths: [0] })` must not
-        // throw. Only real builtins bypass; "node:nope" still validates.
+        // node resolves builtin ids before validating `paths`, so `require.resolve("node:fs",
+        // { paths: [0] })` must not throw. Only real builtins bypass; "node:nope" still validates.
+        // https://github.com/nodejs/node/blob/main/lib/internal/modules/cjs/loader.js
         if (!userPathList.isUndefinedOrNull() && moduleName.isString()) {
             auto builtinCheckStr = moduleName.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});

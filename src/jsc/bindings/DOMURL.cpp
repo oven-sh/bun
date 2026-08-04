@@ -26,24 +26,7 @@
 #include "config.h"
 #include "DOMURL.h"
 
-#include "ActiveDOMObject.h"
-// #include "Blob.h"
-// #include "BlobURL.h"
-// #include "MemoryCache.h"
-// #include "PublicURLManager.h"
-// #include "ResourceRequest.h"
-#include "ScriptExecutionContext.h"
-// #include "SecurityOrigin.h"
 #include "URLSearchParams.h"
-#include <wtf/MainThread.h>
-
-class URLRegistrable {
-public:
-};
-
-class Blob {
-public:
-};
 
 namespace Bun {
 bool hasValidPunycodeHost(WTF::StringView);
@@ -64,34 +47,33 @@ static bool hasValidParsedHost(const URL& url)
     return !url.hasSpecialScheme();
 }
 
-// WebKit's URLParser runs the host through the platform ICU, whose
-// IdnaMappingTable can predate Unicode 15.1/16.0 (node v26 semantics via
-// ada::idna): old data rejects U+180E outright and maps U+1E9E to "ss".
-// When the authority component of `urlString` contains a delta source code
-// point, return a copy with the Unicode 16 delta applied to the host span
-// only (path/query/fragment are percent-encoded by the parser and must stay
-// untouched). Returns a null String when no rewrite is needed, which is the
-// case for every URL that stays on the common path.
+// Platform ICU may predate Unicode 15.1/16.0 (node v26 uses ada::idna): apply the Unicode 16
+// IDNA delta to the host span only when it contains a delta source code point. Returns a null
+// String when no rewrite is needed (the common path). See NodeURL.cpp for the delta table.
 static String applyIDNADeltaToURLAuthority(const String& urlString, StringView specialBaseScheme = {})
 {
+    // Percent-encoded delta sources are all-ASCII and intentionally excluded; the durable fix
+    // is bundling Unicode-16 ICU data so the parser's own domain-to-ASCII handles it uniformly.
     if (urlString.is8Bit() || !urlString.length())
         return {};
 
     StringView view { urlString };
 
-    // The URL parser strips tab/CR/LF/leading-C0 before locating anything.
+    // Mirror https://url.spec.whatwg.org/#concept-basic-url-parser steps 1/3 (strip C0/tab/CR/LF)
+    // so an embedded tab in the scheme or `//` run does not defeat the special-scheme match below.
+    auto isTabOrNewline = [](char16_t ch) { return ch == '\t' || ch == '\n' || ch == '\r'; };
+    String stripped;
+    if (view.find(isTabOrNewline) != notFound) {
+        stripped = urlString.removeCharacters(isTabOrNewline);
+        view = stripped;
+    }
     size_t scan = 0;
     while (scan < view.length() && (view[scan] <= 0x20))
         scan++;
 
-    // Non-special-scheme URLs have opaque hosts and never run IDNA (the host
-    // is UTF-8 percent-encoded verbatim), so only the six special schemes are
-    // eligible. For those, the WHATWG parser's special-authority-ignore-slashes
-    // state consumes any run of '/' and '\\' (including zero) after the colon
-    // and parses whatever follows as the host. One exception: when the input's
-    // scheme equals the base's scheme, the parser enters the relative state
-    // instead unless "//" follows, so the remainder is a path, not a host.
-    // A scheme-relative "//" inherits the base's scheme.
+    // Only the six special schemes run IDNA (https://url.spec.whatwg.org/#special-scheme). The
+    // special-authority-ignore-slashes state consumes any '/'|'\\' run after ':'; same-scheme-as-base
+    // without "//" enters the relative state (path, not host). Scheme-relative "//" inherits base.
     auto isSlash = [](char16_t ch) { return ch == '/' || ch == '\\'; };
     // file: routes through file state/file slash state/file host state: only
     // exactly two slashes then a non-slash introduce a host; file:///x and
@@ -150,8 +132,7 @@ static String applyIDNADeltaToURLAuthority(const String& urlString, StringView s
     }
 
     // Userinfo is percent-encoded, not IDNA-mapped, in node too: only the
-    // host[:port] span after the last '@' gets the delta. The port is ASCII
-    // digits, which the delta maps to themselves.
+    // host span after the last '@' gets the delta.
     size_t hostStart = authorityStart;
     auto authority = view.substring(authorityStart, authorityEnd - authorityStart);
     size_t at = authority.reverseFind('@');
@@ -163,7 +144,13 @@ static String applyIDNADeltaToURLAuthority(const String& urlString, StringView s
     if (hostStart < view.length() && view[hostStart] == '[')
         return {};
 
-    auto hostView = view.substring(hostStart, authorityEnd - hostStart);
+    // Port span must stay verbatim: the delta strips ignored-class code points, which would turn
+    // an invalid non-digit port char into a valid port. Last ':' is the port separator here.
+    auto hostAndPort = view.substring(hostStart, authorityEnd - hostStart);
+    size_t portColon = hostAndPort.reverseFind(':');
+    size_t hostEnd = portColon == notFound ? authorityEnd : hostStart + portColon;
+
+    auto hostView = view.substring(hostStart, hostEnd - hostStart);
     if (!Bun::containsUnicode16IDNADeltaSource(hostView))
         return {};
 
@@ -171,7 +158,7 @@ static String applyIDNADeltaToURLAuthority(const String& urlString, StringView s
     StringBuilder builder;
     builder.append(view.left(hostStart));
     builder.append(mappedHost);
-    builder.append(view.substring(authorityEnd));
+    builder.append(view.substring(hostEnd));
     return builder.toString();
 }
 
@@ -275,46 +262,11 @@ void DOMURL::flushPendingSearchParamsUpdate() const
         self->m_url.setQuery(WTF::move(serialized));
 }
 
-String DOMURL::createObjectURL(ScriptExecutionContext& scriptExecutionContext, Blob& blob)
-{
-    UNUSED_PARAM(blob);
-    UNUSED_PARAM(scriptExecutionContext);
-    return String();
-    // return createPublicURL(scriptExecutionContext, blob);
-}
-
-String DOMURL::createPublicURL(ScriptExecutionContext& scriptExecutionContext, URLRegistrable& registrable)
-{
-    // URL publicURL = BlobURL::createPublicURL(scriptExecutionContext.securityOrigin());
-    // if (publicURL.isEmpty())
-    //     return String();
-
-    // scriptExecutionContext.publicURLManager().registerURL(publicURL, registrable);
-
-    // return publicURL.string();
-    UNUSED_PARAM(scriptExecutionContext);
-    UNUSED_PARAM(registrable);
-    return String();
-}
-
 URLSearchParams& DOMURL::searchParams()
 {
     if (!m_searchParams)
         m_searchParams = URLSearchParams::create(search(), this);
     return *m_searchParams;
-}
-
-void DOMURL::revokeObjectURL(ScriptExecutionContext& scriptExecutionContext, const String& urlString)
-{
-    // URL url { urlString };
-    // ResourceRequest request(url);
-    // request.setDomainForCachePartition(scriptExecutionContext.domainForCachePartition());
-
-    // MemoryCache::removeRequestFromSessionCaches(scriptExecutionContext, request);
-
-    // scriptExecutionContext.publicURLManager().revoke(url);
-    UNUSED_PARAM(scriptExecutionContext);
-    UNUSED_PARAM(urlString);
 }
 
 } // namespace WebCore

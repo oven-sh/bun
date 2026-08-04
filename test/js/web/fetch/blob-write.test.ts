@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { expectMaxObjectTypeCount, tempDirWithFiles } from "harness";
+import { expectMaxObjectTypeCount, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 test("blob.write() throws for data-backed blob", () => {
@@ -30,14 +30,14 @@ test("blob.delete() throws for data-backed blob", () => {
 });
 
 test("Bun.file(path).unlink() does not throw", async () => {
-  const dir = tempDirWithFiles("bun-unlink", { a: "Hello, world!" });
+  await using dir = tempDir("bun-unlink", { a: "Hello, world!" });
   const file = Bun.file(path.join(dir, "a"));
   expect(file.unlink()).resolves.toBeUndefined();
   expect(await Bun.file(path.join(dir, "a")).exists()).toBe(false);
 });
 
 test("Bun.file(path).delete() does not throw", async () => {
-  const dir = tempDirWithFiles("bun-unlink", { a: "Hello, world!" });
+  await using dir = tempDir("bun-unlink", { a: "Hello, world!" });
   const file = Bun.file(path.join(dir, "a"));
   expect(file.delete()).resolves.toBeUndefined();
   expect(await Bun.file(path.join(dir, "a")).exists()).toBe(false);
@@ -78,7 +78,7 @@ test("blob.stat() returns undefined for data-backed blob", async () => {
 });
 
 test("Bun.file(path).stat() returns stats", async () => {
-  const dir = tempDirWithFiles("bun-stat", { a: "Hello, world!" });
+  await using dir = tempDir("bun-stat", { a: "Hello, world!" });
   const file = Bun.file(path.join(dir, "a"));
   const stat = await file.stat();
   expect(stat).toBeDefined();

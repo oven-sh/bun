@@ -29,9 +29,10 @@
 #include "EventPath.h"
 #include "EventTarget.h"
 // #include "InspectorInstrumentation.h"
-// #include "Performance.h"
+#include "Performance.h"
 // #include "UserGestureIndicator.h"
 // #include "WorkerGlobalScope.h"
+#include "ZigGlobalObject.h"
 #include <wtf/HexNumber.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringBuilder.h>
@@ -162,18 +163,8 @@ void Event::setUnderlyingEvent(Event* underlyingEvent)
 
 DOMHighResTimeStamp Event::timeStampForBindings(ScriptExecutionContext& context) const
 {
-    // TODO:
-    return 0.0;
-    // Performance* performance = nullptr;
-    // if (is<WorkerGlobalScope>(context))
-    //     performance = &downcast<WorkerGlobalScope>(context).performance();
-    // else if (auto* window = downcast<Document>(context).domWindow())
-    //     performance = &window->performance();
-
-    // if (!performance)
-    //     return 0;
-
-    // return std::max(performance->relativeTimeFromTimeOriginInReducedResolution(m_createTime), 0.);
+    auto performance = defaultGlobalObject(context.jsGlobalObject())->performance();
+    return std::max((m_createTime - performance->monotonicTimeOrigin()).milliseconds(), 0.0);
 }
 
 void Event::resetBeforeDispatch()

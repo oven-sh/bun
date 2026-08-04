@@ -45,6 +45,7 @@
 #include <wtf/Seconds.h>
 
 extern "C" uint64_t Bun__readOriginTimer(void*);
+extern "C" uint64_t Bun__readOriginTimerRaw(void*);
 extern "C" double Bun__readOriginTimerStart(void*);
 
 namespace JSC {
@@ -111,6 +112,7 @@ public:
     static Seconds reduceTimeResolution(Seconds);
 
     MonotonicTime monotonicTimeFromRelativeTime(DOMHighResTimeStamp) const;
+    MonotonicTime monotonicTimeOrigin() const { return m_timeOrigin; }
 
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
 

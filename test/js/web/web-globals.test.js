@@ -112,6 +112,49 @@ test("MessageEvent", () => {
   expect(called).toBe(true);
 });
 
+test("Event.prototype.timeStamp", async () => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        while (performance.now() < 10) {}
+        const before = performance.now();
+        const samples = [];
+        samples.push(new Event("x").timeStamp);
+        samples.push(new CustomEvent("x").timeStamp);
+        samples.push(new MessageEvent("x").timeStamp);
+        samples.push(new ErrorEvent("x").timeStamp);
+        const target = new EventTarget();
+        target.addEventListener("go", e => samples.push(e.timeStamp));
+        target.dispatchEvent(new Event("go"));
+        const ac = new AbortController();
+        ac.signal.addEventListener("abort", e => samples.push(e.timeStamp));
+        ac.abort();
+        const after = performance.now();
+        const ev = new Event("stable");
+        const first = ev.timeStamp;
+        while (performance.now() < after + 5) {}
+        console.log(JSON.stringify({ before, after, samples, first, second: ev.timeStamp }));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { before, after, samples, first, second } = JSON.parse(stdout);
+  expect(samples.length).toBe(6);
+  // timeStamp is relative to performance.timeOrigin. 1ms of slack covers the
+  // one-time gap between the two clock samples that derive m_timeOrigin.
+  for (const ts of samples) {
+    expect(ts).toBeGreaterThan(before - 1);
+    expect(ts).toBeLessThan(after + 1);
+  }
+  expect(first).toBeGreaterThanOrEqual(samples[samples.length - 1]);
+  expect(second).toBe(first);
+  expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+});
+
 it("crypto.getRandomValues", () => {
   var foo = new Uint8Array(32);
 

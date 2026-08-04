@@ -268,9 +268,8 @@ pub struct RareData {
 
     pub(crate) temp_pipe_read_buffer: Option<Box<PipeReadBuffer>>,
 
-    /// `node:http2` assembles one PADDED DATA frame payload at a time here. Handed out by
-    /// value (see [`Self::take_h2_padded_frame_buffer`]) because the socket write it feeds
-    /// can re-enter JS and reach the same path again before the buffer comes back.
+    /// `node:http2` PADDED DATA scratch; handed out by value because the write it feeds
+    /// can re-enter JS and take again (see [`Self::take_h2_padded_frame_buffer`]).
     h2_padded_frame_buffer: Option<Box<H2PaddedFrameBuffer>>,
 
     // There is intentionally no `aws_signature_cache` field — storage lives in
@@ -388,8 +387,7 @@ impl PathBuf {
 // remains a stable path for existing callers.
 pub use bun_event_loop::PipeReadBuffer;
 
-/// One HTTP/2 PADDED DATA frame payload (pad-length byte + data + padding), at most one
-/// max-size frame.
+/// One max-size HTTP/2 PADDED DATA frame payload (pad-length byte + data + padding).
 pub type H2PaddedFrameBuffer = [u8; 16384];
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -671,18 +669,15 @@ impl RareData {
             .get_or_insert_with(bun_core::boxed_zeroed::<PipeReadBuffer>)
     }
 
-    /// Take the padded-frame scratch out of its slot (lazily allocated). Taken by value
-    /// rather than borrowed: the socket write it feeds can re-enter JS and reach this
-    /// path again, and that nested caller finds the slot empty and allocates its own.
+    /// Take the padded-frame scratch out of its slot (lazily allocated); a nested
+    /// caller finds the slot empty and allocates its own.
     pub fn take_h2_padded_frame_buffer(&mut self) -> Box<H2PaddedFrameBuffer> {
         self.h2_padded_frame_buffer
             .take()
             .unwrap_or_else(bun_core::boxed_zeroed::<H2PaddedFrameBuffer>)
     }
 
-    /// Hand the buffer from [`Self::take_h2_padded_frame_buffer`] back for reuse. With
-    /// nested takes in flight the slot keeps whichever buffer returns first and the
-    /// rest drop.
+    /// Hand a taken buffer back; the slot keeps the first one returned.
     pub fn put_back_h2_padded_frame_buffer(&mut self, buffer: Box<H2PaddedFrameBuffer>) {
         self.h2_padded_frame_buffer.get_or_insert(buffer);
     }

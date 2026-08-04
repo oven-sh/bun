@@ -6143,9 +6143,8 @@ impl DirectWriterStruct {
     /// The payload of a PADDED DATA frame (RFC 9113 6.1); the caller wrote the frame header.
     fn write_padded(&mut self, data: &[u8], padding: u8) -> bun_io::Result<()> {
         let payload_size = 1 + data.len() + padding as usize;
-        // The VM's shared scratch, taken by value: `write()` can re-enter this path
-        // through a JS transport mid-frame, and the nested call must not alias (or trip
-        // a borrow of) the buffer this one is still writing from.
+        // Taken by value: `write()` can re-enter this path through a JS transport
+        // mid-frame, and the nested call must not alias the buffer in use here.
         let global = self.writer.global();
         let mut buffer = global
             .bun_vm()

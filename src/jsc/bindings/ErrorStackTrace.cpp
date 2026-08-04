@@ -723,6 +723,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
 }
 }
 
+// Called from vendor/WebKit ErrorInstance.cpp::finalizeUnconditionally via weak ref.
 extern "C" void Bun__errorInstance__finalize(void* bunErrorData)
 {
     UNUSED_PARAM(bunErrorData);

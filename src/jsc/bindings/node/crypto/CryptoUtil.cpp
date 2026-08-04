@@ -495,12 +495,6 @@ JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, 
     return errorObject;
 }
 
-extern "C" EncodedJSValue Bun__NodeCrypto__createCryptoError(JSC::JSGlobalObject* globalObject, uint32_t err, const char* message)
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    return JSValue::encode(createCryptoError(globalObject, scope, err, message));
-}
-
 void throwCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, uint32_t err, const char* message)
 {
     JSValue errorObject = createCryptoError(globalObject, scope, err, message);

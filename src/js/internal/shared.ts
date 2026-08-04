@@ -353,6 +353,5 @@ export default {
   kHandle: Symbol("kHandle"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),
   kWeakHandler: Symbol("kWeak"),
-  kGetNativeReadableProto: Symbol("kGetNativeReadableProto"),
   kEmptyObject,
 };

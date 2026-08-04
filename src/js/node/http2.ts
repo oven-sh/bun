@@ -27,7 +27,7 @@
  * Modifications were made to the original code.
  */
 const { isTypedArray } = require("node:util/types");
-const { hideFromStack, throwNotImplemented } = require("internal/shared");
+const { hideFromStack } = require("internal/shared");
 const { STATUS_CODES } = require("internal/http");
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const tls = require("node:tls");
@@ -35,7 +35,6 @@ const net = require("node:net");
 const fs = require("node:fs");
 const { $data } = require("node:fs/promises");
 const FileHandle = $data.FileHandle;
-const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const kInfoHeaders = Symbol("sent-info-headers");
 const kStrictSingleValueFields = Symbol("strictSingleValueFields");
@@ -76,7 +75,6 @@ const { Duplex } = Stream;
 const { SafeArrayIterator, SafeSet } = require("internal/primordials");
 const { promisify } = require("internal/promisify");
 
-const RegExpPrototypeExec = RegExp.prototype.exec;
 const ObjectAssign = Object.assign;
 const ArrayIsArray = Array.isArray;
 const ObjectKeys = Object.keys;
@@ -87,22 +85,10 @@ const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const StringPrototypeIncludes = String.prototype.includes;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
-const DatePrototypeToUTCString = Date.prototype.toUTCString;
-const DatePrototypeGetMilliseconds = Date.prototype.getMilliseconds;
 
 const H2FrameParser = $rust("h2_frame_parser.rs", "H2FrameParserConstructor");
 const _nativeAssertSettings = $newRustFunction("h2_frame_parser.rs", "jsAssertSettings", 1);
 const { upgradeRawSocketToH2 } = require("node:_http2_upgrade");
-
-const kSettingNames = {
-  headerTableSize: 0x1,
-  enablePush: 0x2,
-  maxConcurrentStreams: 0x3,
-  initialWindowSize: 0x4,
-  maxFrameSize: 0x5,
-  maxHeaderListSize: 0x6,
-  enableConnectProtocol: 0x8,
-};
 
 const kSettingIds: Record<number, string> = {
   0x1: "headerTableSize",

@@ -616,8 +616,12 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
 
       // rescle-binding.cpp skips empty title/description but still clears
       // OriginalFilename unconditionally, so asserting on it proves the
-      // metadata pass ran (and that the output is a readable PE).
-      expect(await readVersionInfo(outfile)).toMatchObject({ OriginalFilename: "" });
+      // metadata pass ran (and that the output is a readable PE). No
+      // --windows-version was passed on the CLI path either, so bun.exe's own
+      // FileVersion must be preserved.
+      const info = await readVersionInfo(outfile);
+      expect(info).toMatchObject({ OriginalFilename: "" });
+      expect(info.FileVersion).toMatch(/^\d+\.\d+\.\d+/);
     });
   });
 
@@ -693,15 +697,17 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       });
 
       const outfile = join(String(dir), "icon-with-metadata.exe");
-      const tmpl = await writeTemplate(String(dir));
 
+      // Stays on real bun.exe: rescle's SetIcon() picks the langId/bundleId
+      // from the existing RT_GROUP_ICON/RT_ICON resources when present (bun.exe
+      // ships one via windows-app-info.rc), and Commit()'s icon loop overwrites
+      // those ids. The template has no .rsrc, so it would only exercise the
+      // empty-map defaults.
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "build",
           "--compile",
-          "--compile-executable-path",
-          tmpl,
           join(String(dir), "app.js"),
           "--outfile",
           outfile,

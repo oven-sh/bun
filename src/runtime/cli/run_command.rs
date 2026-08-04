@@ -1694,6 +1694,17 @@ pub extern "C" fn Bun__imageAdoptMainThreadVM() {
     assert!(!vm_ptr.is_null(), "image has no main-thread VM");
     bun_core::image::did_restore();
     bun_jsc::virtual_machine::VirtualMachine::adopt_on_current_thread(vm_ptr);
+    {
+        // SAFETY: main-thread VM.
+        let vm = unsafe { &mut *vm_ptr };
+        let msg = format!(
+            "[image] vm.is_shutting_down={} worker_terminated={}\n",
+            vm.is_shutting_down,
+            vm.worker_ref().is_some()
+        );
+        // SAFETY: writing a byte buffer to fd 2.
+        unsafe { libc::write(2, msg.as_ptr().cast(), msg.len()) };
+    }
     crate::jsc_hooks::adopt_main_thread_runtime_state();
     #[cfg(target_os = "macos")]
     {

@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/ErrorInstance.h>
 #include <wtf/text/AtomStringTable.h>
 #include <JavaScriptCore/VMInlines.h>
 #include <JavaScriptCore/StackAlignment.h>
@@ -131,7 +132,16 @@ extern "C" void Bun__imageMaybeRestore()
 extern "C" void Bun__imageSetBuilding(bool);
 extern "C" void Bun__requestSnapshot(JSC::VM*, const char* path);
 static void imageDump(JSC::VM& vm, const char* path);
-extern "C" void Bun__imageDumpNow(JSC::VM* vm, const char* path) { imageDump(*vm, path); }
+extern "C" void Bun__imageDumpNow(JSC::VM* vm, const char* path)
+{
+    { // the termination that unwound JS to get us here is done with; none of it may persist into the image (it would read as "terminating" forever on restore)
+        JSC::JSLockHolder lock(*vm);
+        vm->clearHasTerminationRequest();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*vm); scope.clearException();
+        vm->traps().clearTrap(JSC::VMTraps::NeedTermination);
+    }
+    imageDump(*vm, path);
+}
 extern "C" void Bun__memdebugInstall()
 {
     if (getenv("BUN_IMAGE_OUT")) Bun__imageSetBuilding(true);
@@ -837,6 +847,13 @@ static void imageDump(JSC::VM& vm, const char* path)
     JSC::JSLockHolder lock(vm);
     s_imageTermiosFd = -1;
     for (int fd = 0; fd < 3; fd++) if (isatty(fd) && !tcgetattr(fd, &s_imageTermios)) { s_imageTermiosFd = fd; break; }
+    { // Error objects keep raw StackFrames (CodeBlock pointers) until .stack is first read; resolve them now so nothing in the image points at code we drop or re-link
+        JSC::HeapIterationScope scope(vm.heap);
+        vm.heap.objectSpace().forEachLiveCell(scope, [&](JSC::HeapCell* heapCell, JSC::HeapCell::Kind kind) {
+            if (isJSCellKind(kind)) { if (auto* error = dynamicDowncast<JSC::ErrorInstance>(static_cast<JSC::JSCell*>(heapCell))) error->materializeErrorInfoIfNeeded(vm); }
+            return IterationStatus::Continue;
+        });
+    }
     if (getenv("BUN_IMAGE_DELETE_CODE")) { JSC::sanitizeStackForVM(vm); vm.deleteAllCode(JSC::DeleteAllCodeIfNotCollecting); } // linked CodeBlocks, metadata (value profiles/ICs) and JIT code are per-run hot state; leave them out of the image
     if (getenv("BUN_IMAGE_NOFREEZE")) vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     else vm.heap.freezeCurrentHeapAsImmortalImage(); // GC never writes image blocks again (frozen marks = liveness, side remembered set)
@@ -1041,7 +1058,9 @@ static void imageRestoreAndRun(const char* path)
     JSC::JSGlobalObject* globalObject = (JSC::JSGlobalObject*)hdr.globalObject;
     us_loop_reinit_for_image(uws_get_loop());
     Bun__imageAdoptMainThreadVM();
-    { JSC::JSLockHolder lock(*vm); vm->didRestoreFromImage(); }
+    { JSC::JSLockHolder lock(*vm); vm->didRestoreFromImage();
+      fprintf(stderr, "[image] termination state: request=%d pendingTermException=%d exception=%p trapsNeedTermination=%d\n", (int)vm->hasTerminationRequest(), (int)vm->hasPendingTerminationException(), vm->exceptionForInspection(), (int)vm->traps().needHandling(JSC::VMTraps::NeedTermination));
+      if (vm->hasPendingTerminationException() || vm->hasTerminationRequest()) { vm->clearHasTerminationRequest(); { auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*vm); scope.clearException(); } vm->traps().clearTrap(JSC::VMTraps::NeedTermination); fprintf(stderr, "[image] cleared stale termination state\n"); } }
     if (!getenv("BUN_IMAGE_NOEVACUATE")) {
         // Tables that take inserts on every run get fresh storage now, so the inserts don't COW image pages one by one.
         JSC::JSLockHolder lock(*vm);

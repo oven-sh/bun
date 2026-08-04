@@ -54,6 +54,11 @@ extern "C" StrongRefImpl* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject,
     unsigned index;
     auto* block = StrongRootBlock::acquire(clientDataFast(vm), vm, index);
     block->set(vm, index, JSC::JSValue::decode(encodedValue));
+    static const bool logIt = !!getenv("JSC_IMM_LOG_REMEMBER");
+    if (logIt) [[unlikely]] {
+        static unsigned n = 0, seenEpoch = 0; if (seenEpoch != vm.imageEpoch()) { seenEpoch = vm.imageEpoch(); n = 0; }
+        if (n++ < 8) fprintf(stderr, "[imm] StrongRef new: block=%p precise=%d image=%d cellState=%d index=%u barrierThreshold=%u\n", block, (int)block->isPreciseAllocation(), (int)(!block->isPreciseAllocation() && block->markedBlock().isImmortal()), (int)block->cellState(), index, vm.heap.barrierThreshold());
+    }
     return encodeStrongRef(block, index);
 }
 

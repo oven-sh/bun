@@ -9049,9 +9049,9 @@ impl H2FrameParser {
                     }
                     stream.attach_signal(this, signal_);
                 } else {
-                    return Err(global_object.throw_invalid_argument_type_value(
+                    return Err(global_object.throw_invalid_argument_type_list(
                         b"options.signal",
-                        b"AbortSignal",
+                        &[b"AbortSignal"],
                         signal_arg,
                     ));
                 }

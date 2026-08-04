@@ -111,7 +111,7 @@ describe("Bun.Terminal", () => {
       expect({ code: caught?.code, name: caught?.name, message: caught?.message }).toEqual({
         code: "ERR_INVALID_ARG_TYPE",
         name: "TypeError",
-        message: 'The "name" property must be of type string, got number',
+        message: 'The "name" argument must be of type string. Received type number (12345)',
       });
     });
   });

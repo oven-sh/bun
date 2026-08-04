@@ -48,6 +48,8 @@ const {
   generateKeyPairSync,
 
   X509Certificate,
+
+  nativeWebCrypto,
 } = $cpp("node_crypto_binding.cpp", "createNodeCryptoBinding");
 
 const {
@@ -130,7 +132,10 @@ function getArrayBufferOrView(buffer, name, encoding?) {
   return buffer;
 }
 
-const crypto = globalThis.crypto;
+// The native WebCrypto object, NOT `globalThis.crypto`: the global is
+// user-replaceable, and in `-e`/`-p` mode it resolves to this very module
+// (node's eval semantics), which would recurse into this initializer.
+const crypto = nativeWebCrypto;
 
 var crypto_exports: any = {};
 
@@ -330,10 +335,31 @@ crypto_exports.createHmac = function createHmac(hmac, key, options) {
 
 crypto_exports.getHashes = getHashes;
 
-crypto_exports.randomInt = randomInt;
-crypto_exports.randomFill = randomFill;
+// Node's MakeCallback runs async crypto callbacks inside the active domain; bridge
+// the trailing callback through the domain-aware guard when one is active.
+function wrapDomainCallbackLast(fn, name) {
+  function wrapper() {
+    if (process.domain != null) {
+      const n = arguments.length;
+      if (n > 0 && typeof arguments[n - 1] === "function") {
+        const args = new Array(n);
+        for (let i = 0; i < n - 1; i++) args[i] = arguments[i];
+        args[n - 1] = guardCallback(arguments[n - 1]);
+        return fn.$apply(this, args);
+      }
+    }
+    return fn.$apply(this, arguments);
+  }
+  Object.defineProperty(wrapper, "name", { __proto__: null, value: name, configurable: true });
+  Object.defineProperty(wrapper, "length", { __proto__: null, value: fn.length, configurable: true });
+  return wrapper;
+}
+const domainAwareRandomBytes = wrapDomainCallbackLast(randomBytes, "randomBytes");
+
+crypto_exports.randomInt = wrapDomainCallbackLast(randomInt, "randomInt");
+crypto_exports.randomFill = wrapDomainCallbackLast(randomFill, "randomFill");
 crypto_exports.randomFillSync = randomFillSync;
-crypto_exports.randomBytes = randomBytes;
+crypto_exports.randomBytes = domainAwareRandomBytes;
 crypto_exports.randomUUID = randomUUID;
 crypto_exports.randomUUIDv7 = randomUUIDv7;
 
@@ -364,7 +390,7 @@ Object.defineProperty(crypto_exports, "fips", {
 
 for (const rng of ["pseudoRandomBytes", "prng", "rng"]) {
   Object.defineProperty(crypto_exports, rng, {
-    value: deprecate(randomBytes, `crypto.${rng} is deprecated.`, "DEP0115"),
+    value: deprecate(domainAwareRandomBytes, `crypto.${rng} is deprecated.`, "DEP0115"),
     enumerable: false,
     configurable: true,
   });

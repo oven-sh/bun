@@ -482,10 +482,10 @@ describe("test invalid arguments", () => {
   it("dns.lookupService", async () => {
     expect(() => {
       dns.lookupService("", 443, (err, hostname, service) => {});
-    }).toThrow("Expected address to be a non-empty string for 'lookupService'.");
+    }).toThrow("The argument 'address' is invalid. Received ''");
     expect(() => {
       dns.lookupService("google.com", 443, (err, hostname, service) => {});
-    }).toThrow(`The "address" argument is invalid. Received type string ('google.com')`);
+    }).toThrow("The argument 'address' is invalid. Received 'google.com'");
   });
 });
 
@@ -550,14 +550,17 @@ describe("dns.lookupService", () => {
   });
 });
 
-// Deprecated reference: https://nodejs.org/api/deprecations.html#DEP0118
-describe("lookup deprecated behavior", () => {
-  it.each([undefined, false, null, NaN, ""])("dns.lookup", domain => {
-    dns.lookup(domain, (error, address, family) => {
-      expect(error).toBeNull();
-      expect(address).toBeNull();
-      expect(family).toBe(4);
-    });
+// node 26 removed DEP0118: an empty hostname is now rejected outright.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/dns.js#L180
+describe("lookup with an empty hostname", () => {
+  it.each([undefined, false, null, NaN, ""])("dns.lookup(%p) throws", domain => {
+    expect(() => dns.lookup(domain, () => {})).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+  });
+
+  it.each([undefined, false, null, NaN, ""])("dns.promises.lookup(%p) rejects", async domain => {
+    await expect(dns.promises.lookup(domain)).rejects.toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
   });
 });
 
@@ -585,9 +588,12 @@ describe("uses `dns.promises` implementations for `util.promisify` factory", () 
   });
 
   it("util.promisify(dns.lookup) acts like dns.promises.lookup", async () => {
-    // This test previously used example.com, but that domain has multiple A records, which can cause this test to fail.
-    // As of this writing, google.com has only one A record. If that changes, update this test with a domain that has only one A record.
-    expect(await util.promisify(dns.lookup)("google.com")).toEqual(await dns.promises.lookup("google.com"));
+    // The promisified version returns an {address, family} object, not positional
+    // callback arguments. Compare the shape, not the IP: public hostnames rotate
+    // through multiple A records so two independent lookups can disagree.
+    const result = await util.promisify(dns.lookup)("localhost");
+    expect(result).toEqual({ address: expect.any(String), family: expect.any(Number) });
+    expect(await dns.promises.lookup("localhost")).toEqual(result);
   });
 });
 

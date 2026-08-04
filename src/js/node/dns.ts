@@ -1,8 +1,61 @@
 // Hardcoded module "node:dns"
-const dns = Bun.dns;
+let dns = Bun.dns;
+const permission = require("internal/permission");
+if (permission.enabled) {
+  // cares_wrap.cc gates every query on the net scope per call, so swap the binding
+  // for a checking facade so every query path goes through one gate.
+  // https://github.com/nodejs/node/blob/main/src/cares_wrap.cc
+  dns = makePermissionCheckedDnsFacade(dns);
+}
+
+function makePermissionCheckedDnsFacade(native) {
+  const facade = { __proto__: null };
+  for (const key of ["ADDRCONFIG", "ALL", "V4MAPPED"]) {
+    if (key in native) {
+      facade[key] = native[key];
+    }
+  }
+  for (const key of ["getServers", "setServers", "cancel"]) {
+    if (typeof native[key] === "function") {
+      facade[key] = native[key].bind(native);
+    }
+  }
+  for (const key of [
+    "lookup",
+    "lookupService",
+    "resolve",
+    "resolve4",
+    "resolve6",
+    "resolveAny",
+    "resolveCaa",
+    "resolveCname",
+    "resolveMx",
+    "resolveNaptr",
+    "resolveNs",
+    "resolvePtr",
+    "resolveSoa",
+    "resolveSrv",
+    "resolveTxt",
+    "reverse",
+  ]) {
+    if (typeof native[key] === "function") {
+      facade[key] = makeCheckedDnsQuery(native, native[key]);
+    }
+  }
+  return facade;
+}
+
+function makeCheckedDnsQuery(native, query) {
+  return function checkedDnsQuery(...args) {
+    if (!permission.has("net")) {
+      return Promise.$reject(permission.accessDeniedError("net"));
+    }
+    return query.$apply(native, args);
+  };
+}
 const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
 const { isIP } = require("internal/net/isIP");
-const { guardCallback } = require("internal/shared");
+const { guardCallback, hasObserver, startPerf, stopPerf } = require("internal/shared");
 const {
   validateFunction,
   validateArray,
@@ -10,6 +63,8 @@ const {
   validateBoolean,
   validateNumber,
   validateInt32,
+  validateUint32,
+  validateOneOf,
   validatePort,
 } = require("internal/validators");
 
@@ -78,7 +133,11 @@ function newResolver(options) {
   if (!newResolver.native) {
     newResolver.native = $newRustFunction("runtime/dns_jsc/dns.rs", "Resolver.newResolver", 1);
   }
-  return newResolver.native(options);
+  const resolver = newResolver.native(options);
+  if (permission.enabled) {
+    return makePermissionCheckedDnsFacade(resolver);
+  }
+  return resolver;
 }
 
 function defaultResultOrder() {
@@ -164,10 +223,10 @@ function validateFlagsOption(options) {
   }
 }
 
+const validFamilies = [0, 4, 6];
+
 function validateFamily(family) {
-  if (family !== 6 && family !== 4 && family !== 0) {
-    throw $ERR_INVALID_ARG_VALUE("family", family, "must be one of 0, 4 or 6");
-  }
+  validateOneOf(family, "family", validFamilies);
 }
 
 function validateFamilyOption(options) {
@@ -180,7 +239,7 @@ function validateFamilyOption(options) {
         options.family = 6;
         break;
       default:
-        validateFamily(options.family);
+        validateOneOf(options.family, "options.family", validFamilies);
         break;
     }
   }
@@ -215,9 +274,9 @@ function validateOrderOption(options) {
 
 // Validates and returns the callback wrapped by guardCallback.
 // Callers must use the return value, not the argument.
-function validateResolve(hostname, callback) {
-  if (typeof hostname !== "string") {
-    throw $ERR_INVALID_ARG_TYPE("hostname", "string", hostname);
+function validateResolve(name, callback) {
+  if (typeof name !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("name", "string", name);
   }
 
   if (typeof callback !== "function") {
@@ -232,19 +291,6 @@ function validateLocalAddresses(first, second) {
   if (typeof second !== "undefined") {
     validateString(second);
   }
-}
-
-function invalidHostname(hostname) {
-  if (invalidHostname.warned) {
-    return;
-  }
-
-  invalidHostname.warned = true;
-  process.emitWarning(
-    `The provided hostname "${String(hostname)}" is not a valid hostname, and is supported in the dns module solely for compatibility.`,
-    "DeprecationWarning",
-    "DEP0118",
-  );
 }
 
 function translateLookupOptions(options) {
@@ -266,6 +312,84 @@ function translateLookupOptions(options) {
     all,
     order,
     verbatim,
+  };
+}
+
+// node reports a 'dns' performance entry for every successful lookup/lookupService/
+// resolver query; resolver entries are named after the c-ares binding (queryAny, …).
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/dns/callback_resolver.js#L38-L81
+const kPerfHooksDnsContext = Symbol("kPerfHooksDnsContext");
+
+const kQueryBindingNames = {
+  __proto__: null,
+  A: "queryA",
+  AAAA: "queryAaaa",
+  ANY: "queryAny",
+  CAA: "queryCaa",
+  CNAME: "queryCname",
+  MX: "queryMx",
+  NAPTR: "queryNaptr",
+  NS: "queryNs",
+  PTR: "queryPtr",
+  SOA: "querySoa",
+  SRV: "querySrv",
+  TLSA: "queryTlsa",
+  TXT: "queryTxt",
+};
+
+function startDnsPerf(name, detail) {
+  if (!hasObserver("dns")) return undefined;
+  const context = { __proto__: null };
+  startPerf(context, kPerfHooksDnsContext, { type: "dns", name, detail });
+  return context;
+}
+
+function stopDnsPerf(context, detail) {
+  if (context !== undefined) {
+    stopPerf(context, kPerfHooksDnsContext, { detail });
+  }
+}
+
+function startQueryPerf(rrtype, hostname, ttl) {
+  const name = kQueryBindingNames[rrtype];
+  if (name === undefined) return undefined;
+  return startDnsPerf(name, { host: hostname, ttl: !!ttl });
+}
+
+function withQueryPerf(rrtype, hostname, ttl, promise) {
+  const perf = startQueryPerf(rrtype, hostname, ttl);
+  if (perf === undefined) return promise;
+  return promise.then(result => {
+    stopDnsPerf(perf, { result });
+    return result;
+  });
+}
+
+function withLookupPerf(hostname, options, promise) {
+  const perf = startDnsPerf("lookup", lookupPerfDetail(hostname, options));
+  if (perf === undefined) return promise;
+  return promise.then(addresses => {
+    stopDnsPerf(perf, { addresses: $isJSArray(addresses) ? addresses : [addresses] });
+    return addresses;
+  });
+}
+
+function withLookupServicePerf(address, port, promise) {
+  const perf = startDnsPerf("lookupService", { host: address, port });
+  if (perf === undefined) return promise;
+  return promise.then(result => {
+    stopDnsPerf(perf, { hostname: result.hostname, service: result.service });
+    return result;
+  });
+}
+
+function lookupPerfDetail(hostname, options) {
+  return {
+    hostname,
+    family: options.family || 0,
+    hints: options.flags || 0,
+    verbatim: options.order === "verbatim",
+    order: options.order,
   };
 }
 
@@ -300,13 +424,7 @@ function lookup(hostname, options, callback) {
   validateLookupOptions(options);
 
   if (!hostname) {
-    invalidHostname(hostname);
-    if (options.all) {
-      callback(null, []);
-    } else {
-      callback(null, null, 4);
-    }
-    return;
+    throw $ERR_INVALID_ARG_VALUE("hostname", hostname, "must be a non-empty string");
   }
 
   const family = isIP(hostname);
@@ -320,6 +438,7 @@ function lookup(hostname, options, callback) {
   }
 
   callback = guardCallback(callback);
+  const perf = startDnsPerf("lookup", lookupPerfDetail(hostname, options));
   dns
     .lookup(hostname, options)
     .then(res => {
@@ -332,10 +451,13 @@ function lookup(hostname, options, callback) {
       }
 
       if (options?.all) {
-        callback(null, res.map(mapLookupAll));
+        const addresses = res.map(mapLookupAll);
+        callback(null, addresses);
+        stopDnsPerf(perf, { addresses });
       } else {
         const [{ address, family }] = res;
         callback(null, address, family);
+        stopDnsPerf(perf, { addresses: [{ address, family }] });
       }
     })
     .catch(err => {
@@ -361,12 +483,17 @@ function lookupService(address, port, callback) {
   }
 
   validateString(address);
+  if (isIP(address) === 0) {
+    throw $ERR_INVALID_ARG_VALUE("address", address);
+  }
   validatePort(port, "port");
 
   callback = guardCallback(callback);
+  const perf = startDnsPerf("lookupService", { host: address, port: +port });
   dns.lookupService(address, +port).then(
     results => {
       callback(null, ...results);
+      stopDnsPerf(perf, { hostname: results[0], service: results[1] });
     },
     error => {
       callback(withTranslatedError(error));
@@ -375,10 +502,11 @@ function lookupService(address, port, callback) {
 }
 
 function validateResolverOptions(options) {
-  const { timeout = -1, tries = 4 } = { ...options };
+  const { timeout = -1, tries = 4, maxTimeout = 0 } = { ...options };
   validateInt32(timeout, "options.timeout", -1);
   validateInt32(tries, "options.tries", 1);
-  return { timeout, tries };
+  validateUint32(maxTimeout, "options.maxTimeout");
+  return { timeout, tries, maxTimeout };
 }
 
 var InternalResolver = class Resolver {
@@ -412,6 +540,7 @@ var InternalResolver = class Resolver {
 
     callback = validateResolve(hostname, callback);
 
+    const perf = startQueryPerf(rrtype?.toUpperCase(), hostname, false);
     Resolver.#getResolver(this)
       .resolve(hostname, rrtype)
       .then(
@@ -419,12 +548,11 @@ var InternalResolver = class Resolver {
           switch (rrtype?.toLowerCase()) {
             case "a":
             case "aaaa":
-              callback(null, results.map(mapResolveX));
-              break;
-            default:
-              callback(null, results);
+              results = results.map(mapResolveX);
               break;
           }
+          callback(null, results);
+          stopDnsPerf(perf, { result: results });
         },
         error => {
           callback(withTranslatedError(error));
@@ -440,11 +568,14 @@ var InternalResolver = class Resolver {
 
     callback = validateResolve(hostname, callback);
 
+    const perf = startQueryPerf("A", hostname, options?.ttl);
     Resolver.#getResolver(this)
       .resolve(hostname, "A")
       .then(
         addresses => {
-          callback(null, options?.ttl ? addresses : addresses.map(mapResolveX));
+          const result = options?.ttl ? addresses : addresses.map(mapResolveX);
+          callback(null, result);
+          stopDnsPerf(perf, { result });
         },
         error => {
           callback(withTranslatedError(error));
@@ -460,11 +591,14 @@ var InternalResolver = class Resolver {
 
     callback = validateResolve(hostname, callback);
 
+    const perf = startQueryPerf("AAAA", hostname, options?.ttl);
     Resolver.#getResolver(this)
       .resolve(hostname, "AAAA")
       .then(
         addresses => {
-          callback(null, options?.ttl ? addresses : addresses.map(mapResolveX));
+          const result = options?.ttl ? addresses : addresses.map(mapResolveX);
+          callback(null, result);
+          stopDnsPerf(perf, { result });
         },
         error => {
           callback(withTranslatedError(error));
@@ -472,14 +606,19 @@ var InternalResolver = class Resolver {
       );
   }
 
-  resolveAny(hostname, callback) {
+  resolveAny(hostname, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
+    }
     callback = validateResolve(hostname, callback);
 
+    const perf = startQueryPerf("ANY", hostname, false);
     Resolver.#getResolver(this)
       .resolveAny(hostname)
       .then(
         results => {
           callback(null, results);
+          stopDnsPerf(perf, { result: results });
         },
         error => {
           callback(withTranslatedError(error));
@@ -487,14 +626,19 @@ var InternalResolver = class Resolver {
       );
   }
 
-  resolveCname(hostname, callback) {
+  resolveCname(hostname, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
+    }
     callback = validateResolve(hostname, callback);
 
+    const perf = startQueryPerf("CNAME", hostname, false);
     Resolver.#getResolver(this)
       .resolveCname(hostname)
       .then(
         results => {
           callback(null, results);
+          stopDnsPerf(perf, { result: results });
         },
         error => {
           callback(withTranslatedError(error));
@@ -502,14 +646,19 @@ var InternalResolver = class Resolver {
       );
   }
 
-  resolveMx(hostname, callback) {
+  resolveMx(hostname, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
+    }
     callback = validateResolve(hostname, callback);
 
+    const perf = startQueryPerf("MX", hostname, false);
     Resolver.#getResolver(this)
       .resolveMx(hostname)
       .then(
         results => {
           callback(null, results);
+          stopDnsPerf(perf, { result: results });
         },
         error => {
           callback(withTranslatedError(error));
@@ -517,14 +666,19 @@ var InternalResolver = class Resolver {
       );
   }
 
-  resolveNaptr(hostname, callback) {
+  resolveNaptr(hostname, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
+    }
     callback = validateResolve(hostname, callback);
 
+    const perf = startQueryPerf("NAPTR", hostname, false);
     Resolver.#getResolver(this)
       .resolveNaptr(hostname)
       .then(
         results => {
           callback(null, results);
+          stopDnsPerf(perf, { result: results });
         },
         error => {
           callback(withTranslatedError(error));
@@ -532,14 +686,19 @@ var InternalResolver = class Resolver {
       );
   }
 
-  resolveNs(hostname, callback) {
+  resolveNs(hostname, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
+    }
     callback = validateResolve(hostname, callback);
 
+    const perf = startQueryPerf("NS", hostname, false);
     Resolver.#getResolver(this)
       .resolveNs(hostname)
       .then(
         results => {
           callback(null, results);
+          stopDnsPerf(perf, { result: results });
         },
         error => {
           callback(withTranslatedError(error));
@@ -547,14 +706,19 @@ var InternalResolver = class Resolver {
       );
   }
 
-  resolvePtr(hostname, callback) {
+  resolvePtr(hostname, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
+    }
     callback = validateResolve(hostname, callback);
 
+    const perf = startQueryPerf("PTR", hostname, false);
     Resolver.#getResolver(this)
       .resolvePtr(hostname)
       .then(
         results => {
           callback(null, results);
+          stopDnsPerf(perf, { result: results });
         },
         error => {
           callback(withTranslatedError(error));
@@ -562,14 +726,19 @@ var InternalResolver = class Resolver {
       );
   }
 
-  resolveSrv(hostname, callback) {
+  resolveSrv(hostname, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
+    }
     callback = validateResolve(hostname, callback);
 
+    const perf = startQueryPerf("SRV", hostname, false);
     Resolver.#getResolver(this)
       .resolveSrv(hostname)
       .then(
         results => {
           callback(null, results);
+          stopDnsPerf(perf, { result: results });
         },
         error => {
           callback(withTranslatedError(error));
@@ -577,17 +746,19 @@ var InternalResolver = class Resolver {
       );
   }
 
-  resolveCaa(hostname, callback) {
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
+  resolveCaa(hostname, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
     }
-    callback = guardCallback(callback);
+    callback = validateResolve(hostname, callback);
 
+    const perf = startQueryPerf("CAA", hostname, false);
     Resolver.#getResolver(this)
       .resolveCaa(hostname)
       .then(
         results => {
           callback(null, results);
+          stopDnsPerf(perf, { result: results });
         },
         error => {
           callback(withTranslatedError(error));
@@ -595,34 +766,38 @@ var InternalResolver = class Resolver {
       );
   }
 
-  resolveTxt(hostname, callback) {
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
+  resolveTxt(hostname, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
     }
-    callback = guardCallback(callback);
+    callback = validateResolve(hostname, callback);
 
+    const perf = startQueryPerf("TXT", hostname, false);
     Resolver.#getResolver(this)
       .resolveTxt(hostname)
       .then(
         results => {
           callback(null, results);
+          stopDnsPerf(perf, { result: results });
         },
         error => {
           callback(withTranslatedError(error));
         },
       );
   }
-  resolveSoa(hostname, callback) {
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
+  resolveSoa(hostname, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
     }
-    callback = guardCallback(callback);
+    callback = validateResolve(hostname, callback);
 
+    const perf = startQueryPerf("SOA", hostname, false);
     Resolver.#getResolver(this)
       .resolveSoa(hostname)
       .then(
         results => {
           callback(null, results);
+          stopDnsPerf(perf, { result: results });
         },
         error => {
           callback(withTranslatedError(error));
@@ -636,11 +811,13 @@ var InternalResolver = class Resolver {
     }
     callback = guardCallback(callback);
 
+    const perf = startDnsPerf("getHostByAddr", { host: ip, ttl: false });
     Resolver.#getResolver(this)
       .reverse(ip)
       .then(
         results => {
           callback(null, results);
+          stopDnsPerf(perf, { result: results });
         },
         error => {
           callback(withTranslatedError(error));
@@ -750,16 +927,11 @@ const promises = {
     options = translateLookupOptions(options);
     validateLookupOptions(options);
 
+    // Unlike the callback form, the promise form reports an empty hostname by
+    // rejecting: node only reaches this check inside createLookupPromise().
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/dns/promises.js#L124
     if (!hostname) {
-      invalidHostname(hostname);
-      return Promise.$resolve(
-        options.all
-          ? []
-          : {
-              address: null,
-              family: 4,
-            },
-      );
+      return Promise.$reject($ERR_INVALID_ARG_VALUE("hostname", hostname, "must be a non-empty string"));
     }
 
     const family = isIP(hostname);
@@ -769,9 +941,17 @@ const promises = {
     }
 
     if (options.all) {
-      return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookupAll(options.order)));
+      return withLookupPerf(
+        hostname,
+        options,
+        translateErrorCode(dns.lookup(hostname, options).then(promisifyLookupAll(options.order))),
+      );
     }
-    return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookup(options.order)));
+    return withLookupPerf(
+      hostname,
+      options,
+      translateErrorCode(dns.lookup(hostname, options).then(promisifyLookup(options.order))),
+    );
   },
 
   lookupService(address, port) {
@@ -780,13 +960,20 @@ const promises = {
     }
 
     validateString(address);
+    if (isIP(address) === 0) {
+      throw $ERR_INVALID_ARG_VALUE("address", address);
+    }
     validatePort(port, "port");
 
     try {
-      return translateErrorCode(dns.lookupService(address, +port)).then(([hostname, service]) => ({
-        hostname,
-        service,
-      }));
+      return withLookupServicePerf(
+        address,
+        +port,
+        translateErrorCode(dns.lookupService(address, +port)).then(([hostname, service]) => ({
+          hostname,
+          service,
+        })),
+      );
     } catch (err) {
       if (err.name === "TypeError" || err.name === "RangeError") {
         throw err;
@@ -797,7 +984,7 @@ const promises = {
 
   resolve(hostname, rrtype) {
     if (typeof hostname !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("hostname", "string", hostname);
+      throw $ERR_INVALID_ARG_TYPE("name", "string", hostname);
     }
 
     if (typeof rrtype === "undefined") {
@@ -809,52 +996,67 @@ const promises = {
     switch (rrtype?.toLowerCase()) {
       case "a":
       case "aaaa":
-        return translateErrorCode(dns.resolve(hostname, rrtype).then(promisifyResolveX(false)));
+        return withQueryPerf(
+          rrtype.toUpperCase(),
+          hostname,
+          false,
+          translateErrorCode(dns.resolve(hostname, rrtype).then(promisifyResolveX(false))),
+        );
       default:
-        return translateErrorCode(dns.resolve(hostname, rrtype));
+        return withQueryPerf(rrtype?.toUpperCase(), hostname, false, translateErrorCode(dns.resolve(hostname, rrtype)));
     }
   },
 
   resolve4(hostname, options) {
-    return translateErrorCode(dns.resolve(hostname, "A").then(promisifyResolveX(options?.ttl)));
+    return withQueryPerf(
+      "A",
+      hostname,
+      options?.ttl,
+      translateErrorCode(dns.resolve(hostname, "A").then(promisifyResolveX(options?.ttl))),
+    );
   },
 
   resolve6(hostname, options) {
-    return translateErrorCode(dns.resolve(hostname, "AAAA").then(promisifyResolveX(options?.ttl)));
+    return withQueryPerf(
+      "AAAA",
+      hostname,
+      options?.ttl,
+      translateErrorCode(dns.resolve(hostname, "AAAA").then(promisifyResolveX(options?.ttl))),
+    );
   },
 
   resolveAny(hostname) {
-    return translateErrorCode(dns.resolveAny(hostname));
+    return withQueryPerf("ANY", hostname, false, translateErrorCode(dns.resolveAny(hostname)));
   },
   resolveSrv(hostname) {
-    return translateErrorCode(dns.resolveSrv(hostname));
+    return withQueryPerf("SRV", hostname, false, translateErrorCode(dns.resolveSrv(hostname)));
   },
   resolveTxt(hostname) {
-    return translateErrorCode(dns.resolveTxt(hostname));
+    return withQueryPerf("TXT", hostname, false, translateErrorCode(dns.resolveTxt(hostname)));
   },
   resolveSoa(hostname) {
-    return translateErrorCode(dns.resolveSoa(hostname));
+    return withQueryPerf("SOA", hostname, false, translateErrorCode(dns.resolveSoa(hostname)));
   },
   resolveNaptr(hostname) {
-    return translateErrorCode(dns.resolveNaptr(hostname));
+    return withQueryPerf("NAPTR", hostname, false, translateErrorCode(dns.resolveNaptr(hostname)));
   },
   resolveMx(hostname) {
-    return translateErrorCode(dns.resolveMx(hostname));
+    return withQueryPerf("MX", hostname, false, translateErrorCode(dns.resolveMx(hostname)));
   },
   resolveCaa(hostname) {
-    return translateErrorCode(dns.resolveCaa(hostname));
+    return withQueryPerf("CAA", hostname, false, translateErrorCode(dns.resolveCaa(hostname)));
   },
   resolveNs(hostname) {
-    return translateErrorCode(dns.resolveNs(hostname));
+    return withQueryPerf("NS", hostname, false, translateErrorCode(dns.resolveNs(hostname)));
   },
   resolvePtr(hostname) {
-    return translateErrorCode(dns.resolvePtr(hostname));
+    return withQueryPerf("PTR", hostname, false, translateErrorCode(dns.resolvePtr(hostname)));
   },
   resolveCname(hostname) {
-    return translateErrorCode(dns.resolveCname(hostname));
+    return withQueryPerf("CNAME", hostname, false, translateErrorCode(dns.resolveCname(hostname)));
   },
   reverse(ip) {
-    return translateErrorCode(dns.reverse(ip));
+    return withQueryPerf("PTR", ip, false, translateErrorCode(dns.reverse(ip)));
   },
 
   Resolver: class Resolver {
@@ -885,68 +1087,122 @@ const promises = {
       switch (rrtype?.toLowerCase()) {
         case "a":
         case "aaaa":
-          return translateErrorCode(
-            Resolver.#getResolver(this).resolve(hostname, rrtype).then(promisifyResolveX(false)),
+          return withQueryPerf(
+            rrtype.toUpperCase(),
+            hostname,
+            false,
+            translateErrorCode(Resolver.#getResolver(this).resolve(hostname, rrtype).then(promisifyResolveX(false))),
           );
         default:
-          return translateErrorCode(Resolver.#getResolver(this).resolve(hostname, rrtype));
+          return withQueryPerf(
+            rrtype?.toUpperCase(),
+            hostname,
+            false,
+            translateErrorCode(Resolver.#getResolver(this).resolve(hostname, rrtype)),
+          );
       }
     }
 
     resolve4(hostname, options) {
-      return translateErrorCode(
-        Resolver.#getResolver(this).resolve(hostname, "A").then(promisifyResolveX(options?.ttl)),
+      return withQueryPerf(
+        "A",
+        hostname,
+        options?.ttl,
+        translateErrorCode(Resolver.#getResolver(this).resolve(hostname, "A").then(promisifyResolveX(options?.ttl))),
       );
     }
 
     resolve6(hostname, options) {
-      return translateErrorCode(
-        Resolver.#getResolver(this).resolve(hostname, "AAAA").then(promisifyResolveX(options?.ttl)),
+      return withQueryPerf(
+        "AAAA",
+        hostname,
+        options?.ttl,
+        translateErrorCode(Resolver.#getResolver(this).resolve(hostname, "AAAA").then(promisifyResolveX(options?.ttl))),
       );
     }
 
     resolveAny(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveAny(hostname));
+      return withQueryPerf(
+        "ANY",
+        hostname,
+        false,
+        translateErrorCode(Resolver.#getResolver(this).resolveAny(hostname)),
+      );
     }
 
     resolveCname(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveCname(hostname));
+      return withQueryPerf(
+        "CNAME",
+        hostname,
+        false,
+        translateErrorCode(Resolver.#getResolver(this).resolveCname(hostname)),
+      );
     }
 
     resolveMx(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveMx(hostname));
+      return withQueryPerf("MX", hostname, false, translateErrorCode(Resolver.#getResolver(this).resolveMx(hostname)));
     }
 
     resolveNaptr(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveNaptr(hostname));
+      return withQueryPerf(
+        "NAPTR",
+        hostname,
+        false,
+        translateErrorCode(Resolver.#getResolver(this).resolveNaptr(hostname)),
+      );
     }
 
     resolveNs(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveNs(hostname));
+      return withQueryPerf("NS", hostname, false, translateErrorCode(Resolver.#getResolver(this).resolveNs(hostname)));
     }
 
     resolvePtr(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolvePtr(hostname));
+      return withQueryPerf(
+        "PTR",
+        hostname,
+        false,
+        translateErrorCode(Resolver.#getResolver(this).resolvePtr(hostname)),
+      );
     }
 
     resolveSoa(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveSoa(hostname));
+      return withQueryPerf(
+        "SOA",
+        hostname,
+        false,
+        translateErrorCode(Resolver.#getResolver(this).resolveSoa(hostname)),
+      );
     }
 
     resolveSrv(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveSrv(hostname));
+      return withQueryPerf(
+        "SRV",
+        hostname,
+        false,
+        translateErrorCode(Resolver.#getResolver(this).resolveSrv(hostname)),
+      );
     }
 
     resolveCaa(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveCaa(hostname));
+      return withQueryPerf(
+        "CAA",
+        hostname,
+        false,
+        translateErrorCode(Resolver.#getResolver(this).resolveCaa(hostname)),
+      );
     }
 
     resolveTxt(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveTxt(hostname));
+      return withQueryPerf(
+        "TXT",
+        hostname,
+        false,
+        translateErrorCode(Resolver.#getResolver(this).resolveTxt(hostname)),
+      );
     }
 
     reverse(ip) {
-      return translateErrorCode(Resolver.#getResolver(this).reverse(ip));
+      return withQueryPerf("PTR", ip, false, translateErrorCode(Resolver.#getResolver(this).reverse(ip)));
     }
 
     setLocalAddress(first, second) {

@@ -52,26 +52,34 @@ function warnNotImplementedOnce(feature: string, issue?: number) {
 
 let util: typeof import("node:util");
 class ExceptionWithHostPort extends Error {
-  errno: number;
+  errno: number | Error;
   syscall: string;
   port?: number;
   address: string;
 
-  constructor(err: number, syscall: string, address: string, port?: number, additional?: string) {
+  constructor(err: number | Error, syscall: string, address: string, port?: number, additional?: string) {
     // TODO(joyeecheung): We have to use the type-checked
     // getSystemErrorName(err) to guard against invalid arguments from users.
     // This can be replaced with [ code ] = errmap.get(err) when this method
     // is no longer exposed to user land.
     util ??= require("node:util");
-    const code = util.getSystemErrorName(err);
+    let code;
     let details = "";
-    if (port && port > 0) {
-      details = ` ${address}:${port}`;
-    } else if (address) {
-      details = ` ${address}`;
-    }
-    if (additional) {
-      details += ` - Local (${additional})`;
+    // True when the permission model is enabled: `err` is the ERR_ACCESS_DENIED
+    // object the native connect returned instead of an errno.
+    if (typeof err !== "number" && (err as any)?.code === "ERR_ACCESS_DENIED") {
+      code = (err as any).code;
+      details = ` ${err.message}`;
+    } else {
+      code = util.getSystemErrorName(err);
+      if (port && port > 0) {
+        details = ` ${address}:${port}`;
+      } else if (address) {
+        details = ` ${address}`;
+      }
+      if (additional) {
+        details += ` - Local (${additional})`;
+      }
     }
 
     super(`${syscall} ${code}${details}`);
@@ -156,6 +164,34 @@ const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionRep
 // callback keeps its place in the event loop; only the throw is rerouted. The
 // arity switch avoids materializing `arguments` for the shapes fs and dns use.
 function guardCallback(callback) {
+  // Node's MakeCallback runs async callbacks inside the domain active at dispatch
+  // and routes throws to its error handler; capture it at creation (== dispatch here).
+  const domain = (process as any).domain;
+  if (domain != null && typeof domain._errorHandler === "function") {
+    return function guardedInDomain(a, b, c) {
+      domain.enter();
+      try {
+        switch (arguments.length) {
+          case 0:
+            return callback();
+          case 1:
+            return callback(a);
+          case 2:
+            return callback(a, b);
+          case 3:
+            return callback(a, b, c);
+          default:
+            return callback.$apply(undefined, arguments);
+        }
+      } catch (e) {
+        if (!domain._errorHandler(e)) {
+          reportUncaughtException(e);
+        }
+      } finally {
+        domain.exit();
+      }
+    };
+  }
   return function guarded(a, b, c) {
     try {
       switch (arguments.length) {
@@ -395,7 +431,38 @@ const kInternalAssertionSuffix =
   "\nThis is caused by either a bug in Node.js or incorrect usage of Node.js internals.\n" +
   "Please open an issue with this stack trace at https://github.com/nodejs/node/issues\n";
 
-//
+// State behind `node:module`'s get/setSourceMapsSupport(); Bun always resolves source
+// maps for stack traces, so the initial state reports enabled.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L59
+var sourceMapsSupport = ObjectFreeze({
+  __proto__: null,
+  enabled: true,
+  nodeModules: false,
+  generatedCode: false,
+});
+
+function getSourceMapsSupport() {
+  return sourceMapsSupport;
+}
+
+function setSourceMapsSupport(enabled, options = kEmptyObject) {
+  const { validateBoolean, validateObject } = require("internal/validators");
+  validateBoolean(enabled, "enabled");
+  validateObject(options, "options");
+
+  const { nodeModules = false, generatedCode = false } = options;
+  validateBoolean(nodeModules, "options.nodeModules");
+  validateBoolean(generatedCode, "options.generatedCode");
+
+  process.setSourceMapsEnabled(enabled);
+
+  sourceMapsSupport = ObjectFreeze({
+    __proto__: null,
+    enabled,
+    nodeModules,
+    generatedCode,
+  });
+}
 
 export default {
   kInternalAssertionSuffix,
@@ -427,4 +494,6 @@ export default {
   kWeakHandler: Symbol("kWeak"),
   kGetNativeReadableProto: Symbol("kGetNativeReadableProto"),
   kEmptyObject,
+  getSourceMapsSupport,
+  setSourceMapsSupport,
 };

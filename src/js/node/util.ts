@@ -12,7 +12,14 @@ const {
 } = require("internal/validators");
 const { resistStopPropagation, ErrnoException } = require("internal/shared");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
-const { deprecate } = require("internal/util/deprecate");
+const { deprecate: internalDeprecate } = require("internal/util/deprecate");
+
+// Public util.deprecate API. Node takes modifyPrototype as an option bag here
+// and as a positional argument internally.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/util.js#L586
+function deprecate(fn, msg, code, { modifyPrototype } = { __proto__: null }) {
+  return internalDeprecate(fn, msg, code, modifyPrototype);
+}
 
 const internalErrorName = $newRustFunction("node_util_binding.rs", "internalErrorName", 1);
 const internalErrorEntries = $newRustFunction("node_util_binding.rs", "internalErrorEntries", 0);
@@ -45,7 +52,7 @@ const formatWithOptions = utl.formatWithOptions;
 const format = utl.format;
 const stripVTControlCharacters = utl.stripVTControlCharacters;
 
-var debugs = {};
+var debugs = { __proto__: null };
 var debugEnvRegex = /^$/;
 const NODE_DEBUG = process.env.NODE_DEBUG;
 if (NODE_DEBUG) {
@@ -73,21 +80,87 @@ function emitWarningIfNeeded(set) {
   }
 }
 
-function debuglog(set) {
-  set = set.toUpperCase();
-  if (!debugs[set]) {
-    if (debugEnvRegex.test(set)) {
-      var pid = process.pid;
+const debuglogNoop = () => {};
+
+// Port of node's debuglogImpl + debuglog (lib/internal/util/debuglog.js):
+// lazy init, an `enabled` accessor on the returned logger, and the optional
+// callback receiving the optimized debug function.
+function debuglogImpl(enabled, set) {
+  if (debugs[set] === undefined) {
+    if (enabled) {
+      const pid = process.pid;
       emitWarningIfNeeded(set);
-      debugs[set] = function () {
-        var msg = format.$apply(cjs_exports, arguments);
-        console.error("%s %d: %s", set, pid, msg);
+      debugs[set] = function debug(...args) {
+        lazyUtilColors ??= require("internal/util/colors");
+        const colors = lazyUtilColors.shouldColorize(process.stderr);
+        const msg = formatWithOptions({ colors }, ...args);
+        const coloredPID = inspect(pid, { colors });
+        process.stderr.write(format("%s %s: %s\n", set, coloredPID, msg));
       };
     } else {
-      debugs[set] = function () {};
+      debugs[set] = debuglogNoop;
     }
   }
   return debugs[set];
+}
+
+function debuglog(set, cb) {
+  function init() {
+    set = set.toUpperCase();
+    enabled = debugEnvRegex.test(set);
+  }
+  let debug = (...args) => {
+    init();
+    // Only invokes debuglogImpl() when the debug function is
+    // called for the first time.
+    debug = debuglogImpl(enabled, set);
+    if (typeof cb === "function") {
+      Object.defineProperty(debug, "enabled", {
+        __proto__: null,
+        get() {
+          return enabled;
+        },
+        configurable: true,
+        enumerable: true,
+      });
+      cb(debug);
+    }
+    switch (args.length) {
+      case 1:
+        return debug(args[0]);
+      case 2:
+        return debug(args[0], args[1]);
+      default:
+        return debug(...args);
+    }
+  };
+  let enabled;
+  let test = () => {
+    init();
+    test = () => enabled;
+    return enabled;
+  };
+  const logger = (...args) => {
+    // Improve performance when debug is disabled.
+    if (enabled === false) return;
+    switch (args.length) {
+      case 1:
+        return debug(args[0]);
+      case 2:
+        return debug(args[0], args[1]);
+      default:
+        return debug(...args);
+    }
+  };
+  Object.defineProperty(logger, "enabled", {
+    __proto__: null,
+    get() {
+      return test();
+    },
+    configurable: true,
+    enumerable: true,
+  });
+  return logger;
 }
 
 function isBoolean(arg) {
@@ -401,6 +474,60 @@ function styleText(format, text, options) {
   if (skipColorize) return text;
 
   return `${openCodes}${processedText}${closeCodes}`;
+}
+
+// Port of https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/diff.js.
+// Native `{ kind }` is Insert=0/Delete=1/Equal=2; node's `[op]` is INSERT=1/DELETE=-1/NOP=0.
+const kOperationForDiffKind = [1, -1, 0];
+let myersDiff;
+
+function validateDiffInput(value, name) {
+  if (!$isJSArray(value)) {
+    validateString(value, name);
+    return;
+  }
+  for (let i = 0; i < value.length; ++i) {
+    if (typeof value[i] !== "string") {
+      throw $ERR_INVALID_ARG_TYPE(`${name}[${i}]`, "string", value[i]);
+    }
+  }
+}
+
+// node's myersDiff indexes both operands uniformly, so a string paired with an
+// array is compared code-unit-to-element. The native comparator takes two
+// strings or two arrays, so widen the odd one out.
+function toDiffLines(value) {
+  if ($isJSArray(value)) return value;
+  const length = value.length;
+  const lines = $newArrayWithSize(length);
+  for (let i = 0; i < length; i++) {
+    lines[i] = value[i];
+  }
+  return lines;
+}
+
+function diff(actual, expected) {
+  if (actual === expected) {
+    return [];
+  }
+
+  validateDiffInput(actual, "actual");
+  validateDiffInput(expected, "expected");
+
+  myersDiff ??= require("internal/assert/myers_diff").myersDiff;
+  const raw =
+    $isJSArray(actual) === $isJSArray(expected)
+      ? myersDiff(actual, expected)
+      : myersDiff(toDiffLines(actual), toDiffLines(expected));
+
+  // myersDiff walks the edit path backwards; node reverses it before returning.
+  const length = raw.length;
+  const result = $newArrayWithSize(length);
+  for (let i = 0; i < length; i++) {
+    const { kind, value } = raw[length - 1 - i];
+    result[i] = [kOperationForDiffKind[kind], typeof value === "number" ? String.fromCharCode(value) : value];
+  }
+  return result;
 }
 
 function getSystemErrorName(err: any) {
@@ -722,6 +849,7 @@ cjs_exports = {
   TextEncoder,
   MIMEType,
   MIMEParams,
+  diff,
 
   // Deprecated in Node.js 22, removed in 23
   isArray: $isArray,

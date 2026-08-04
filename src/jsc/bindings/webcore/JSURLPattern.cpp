@@ -232,15 +232,15 @@ template<> void JSURLPatternDOMConstructor::initializeProperties(VM& vm, JSDOMGl
 
 static const std::array<HashTableValue, 12> JSURLPatternPrototypeTableValues {
     HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPatternConstructor, 0 } },
-    HashTableValue { "protocol"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPattern_protocol, 0 } },
-    HashTableValue { "username"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPattern_username, 0 } },
-    HashTableValue { "password"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPattern_password, 0 } },
-    HashTableValue { "hostname"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPattern_hostname, 0 } },
-    HashTableValue { "port"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPattern_port, 0 } },
-    HashTableValue { "pathname"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPattern_pathname, 0 } },
-    HashTableValue { "search"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPattern_search, 0 } },
-    HashTableValue { "hash"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPattern_hash, 0 } },
-    HashTableValue { "hasRegExpGroups"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPattern_hasRegExpGroups, 0 } },
+    HashTableValue { "protocol"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor, NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPattern_protocol, 0 } },
+    HashTableValue { "username"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor, NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPattern_username, 0 } },
+    HashTableValue { "password"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor, NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPattern_password, 0 } },
+    HashTableValue { "hostname"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor, NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPattern_hostname, 0 } },
+    HashTableValue { "port"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor, NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPattern_port, 0 } },
+    HashTableValue { "pathname"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor, NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPattern_pathname, 0 } },
+    HashTableValue { "search"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor, NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPattern_search, 0 } },
+    HashTableValue { "hash"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor, NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPattern_hash, 0 } },
+    HashTableValue { "hasRegExpGroups"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor, NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPattern_hasRegExpGroups, 0 } },
     HashTableValue { "test"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsURLPatternPrototypeFunction_test, 0 } },
     HashTableValue { "exec"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsURLPatternPrototypeFunction_exec, 0 } },
 };
@@ -304,7 +304,15 @@ static inline JSValue jsURLPattern_protocolGetter(JSGlobalObject& lexicalGlobalO
 
 JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_protocol, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
-    return IDLAttribute<JSURLPattern>::get<jsURLPattern_protocolGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
+    UNUSED_PARAM(attributeName);
+    // node throws a plain TypeError("Illegal invocation") for a foreign `this`.
+    auto* thisObject = dynamicDowncast<JSURLPattern>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        auto& vm = JSC::getVM(lexicalGlobalObject);
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Illegal invocation"_s);
+    }
+    return JSValue::encode(jsURLPattern_protocolGetter(*lexicalGlobalObject, *thisObject));
 }
 
 static inline JSValue jsURLPattern_usernameGetter(JSGlobalObject& lexicalGlobalObject, JSURLPattern& thisObject)
@@ -317,7 +325,15 @@ static inline JSValue jsURLPattern_usernameGetter(JSGlobalObject& lexicalGlobalO
 
 JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_username, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
-    return IDLAttribute<JSURLPattern>::get<jsURLPattern_usernameGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
+    UNUSED_PARAM(attributeName);
+    // node throws a plain TypeError("Illegal invocation") for a foreign `this`.
+    auto* thisObject = dynamicDowncast<JSURLPattern>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        auto& vm = JSC::getVM(lexicalGlobalObject);
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Illegal invocation"_s);
+    }
+    return JSValue::encode(jsURLPattern_usernameGetter(*lexicalGlobalObject, *thisObject));
 }
 
 static inline JSValue jsURLPattern_passwordGetter(JSGlobalObject& lexicalGlobalObject, JSURLPattern& thisObject)
@@ -330,7 +346,15 @@ static inline JSValue jsURLPattern_passwordGetter(JSGlobalObject& lexicalGlobalO
 
 JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_password, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
-    return IDLAttribute<JSURLPattern>::get<jsURLPattern_passwordGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
+    UNUSED_PARAM(attributeName);
+    // node throws a plain TypeError("Illegal invocation") for a foreign `this`.
+    auto* thisObject = dynamicDowncast<JSURLPattern>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        auto& vm = JSC::getVM(lexicalGlobalObject);
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Illegal invocation"_s);
+    }
+    return JSValue::encode(jsURLPattern_passwordGetter(*lexicalGlobalObject, *thisObject));
 }
 
 static inline JSValue jsURLPattern_hostnameGetter(JSGlobalObject& lexicalGlobalObject, JSURLPattern& thisObject)
@@ -343,7 +367,15 @@ static inline JSValue jsURLPattern_hostnameGetter(JSGlobalObject& lexicalGlobalO
 
 JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_hostname, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
-    return IDLAttribute<JSURLPattern>::get<jsURLPattern_hostnameGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
+    UNUSED_PARAM(attributeName);
+    // node throws a plain TypeError("Illegal invocation") for a foreign `this`.
+    auto* thisObject = dynamicDowncast<JSURLPattern>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        auto& vm = JSC::getVM(lexicalGlobalObject);
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Illegal invocation"_s);
+    }
+    return JSValue::encode(jsURLPattern_hostnameGetter(*lexicalGlobalObject, *thisObject));
 }
 
 static inline JSValue jsURLPattern_portGetter(JSGlobalObject& lexicalGlobalObject, JSURLPattern& thisObject)
@@ -356,7 +388,15 @@ static inline JSValue jsURLPattern_portGetter(JSGlobalObject& lexicalGlobalObjec
 
 JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_port, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
-    return IDLAttribute<JSURLPattern>::get<jsURLPattern_portGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
+    UNUSED_PARAM(attributeName);
+    // node throws a plain TypeError("Illegal invocation") for a foreign `this`.
+    auto* thisObject = dynamicDowncast<JSURLPattern>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        auto& vm = JSC::getVM(lexicalGlobalObject);
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Illegal invocation"_s);
+    }
+    return JSValue::encode(jsURLPattern_portGetter(*lexicalGlobalObject, *thisObject));
 }
 
 static inline JSValue jsURLPattern_pathnameGetter(JSGlobalObject& lexicalGlobalObject, JSURLPattern& thisObject)
@@ -369,7 +409,15 @@ static inline JSValue jsURLPattern_pathnameGetter(JSGlobalObject& lexicalGlobalO
 
 JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_pathname, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
-    return IDLAttribute<JSURLPattern>::get<jsURLPattern_pathnameGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
+    UNUSED_PARAM(attributeName);
+    // node throws a plain TypeError("Illegal invocation") for a foreign `this`.
+    auto* thisObject = dynamicDowncast<JSURLPattern>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        auto& vm = JSC::getVM(lexicalGlobalObject);
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Illegal invocation"_s);
+    }
+    return JSValue::encode(jsURLPattern_pathnameGetter(*lexicalGlobalObject, *thisObject));
 }
 
 static inline JSValue jsURLPattern_searchGetter(JSGlobalObject& lexicalGlobalObject, JSURLPattern& thisObject)
@@ -382,7 +430,15 @@ static inline JSValue jsURLPattern_searchGetter(JSGlobalObject& lexicalGlobalObj
 
 JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_search, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
-    return IDLAttribute<JSURLPattern>::get<jsURLPattern_searchGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
+    UNUSED_PARAM(attributeName);
+    // node throws a plain TypeError("Illegal invocation") for a foreign `this`.
+    auto* thisObject = dynamicDowncast<JSURLPattern>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        auto& vm = JSC::getVM(lexicalGlobalObject);
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Illegal invocation"_s);
+    }
+    return JSValue::encode(jsURLPattern_searchGetter(*lexicalGlobalObject, *thisObject));
 }
 
 static inline JSValue jsURLPattern_hashGetter(JSGlobalObject& lexicalGlobalObject, JSURLPattern& thisObject)
@@ -395,7 +451,15 @@ static inline JSValue jsURLPattern_hashGetter(JSGlobalObject& lexicalGlobalObjec
 
 JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_hash, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
-    return IDLAttribute<JSURLPattern>::get<jsURLPattern_hashGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
+    UNUSED_PARAM(attributeName);
+    // node throws a plain TypeError("Illegal invocation") for a foreign `this`.
+    auto* thisObject = dynamicDowncast<JSURLPattern>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        auto& vm = JSC::getVM(lexicalGlobalObject);
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Illegal invocation"_s);
+    }
+    return JSValue::encode(jsURLPattern_hashGetter(*lexicalGlobalObject, *thisObject));
 }
 
 static inline JSValue jsURLPattern_hasRegExpGroupsGetter(JSGlobalObject& lexicalGlobalObject, JSURLPattern& thisObject)
@@ -408,7 +472,15 @@ static inline JSValue jsURLPattern_hasRegExpGroupsGetter(JSGlobalObject& lexical
 
 JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_hasRegExpGroups, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
-    return IDLAttribute<JSURLPattern>::get<jsURLPattern_hasRegExpGroupsGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
+    UNUSED_PARAM(attributeName);
+    // node throws a plain TypeError("Illegal invocation") for a foreign `this`.
+    auto* thisObject = dynamicDowncast<JSURLPattern>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        auto& vm = JSC::getVM(lexicalGlobalObject);
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Illegal invocation"_s);
+    }
+    return JSValue::encode(jsURLPattern_hasRegExpGroupsGetter(*lexicalGlobalObject, *thisObject));
 }
 
 static inline JSC::EncodedJSValue jsURLPatternPrototypeFunction_testBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSURLPattern>::ClassParameter castedThis)
@@ -432,7 +504,13 @@ static inline JSC::EncodedJSValue jsURLPatternPrototypeFunction_testBody(JSC::JS
 
 JSC_DEFINE_HOST_FUNCTION(jsURLPatternPrototypeFunction_test, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSURLPattern>::call<jsURLPatternPrototypeFunction_testBody>(*lexicalGlobalObject, *callFrame, "test");
+    auto* castedThis = dynamicDowncast<JSURLPattern>(callFrame->thisValue());
+    if (!castedThis) [[unlikely]] {
+        auto& vm = JSC::getVM(lexicalGlobalObject);
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Illegal invocation"_s);
+    }
+    return jsURLPatternPrototypeFunction_testBody(lexicalGlobalObject, callFrame, castedThis);
 }
 
 static inline JSC::EncodedJSValue jsURLPatternPrototypeFunction_execBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSURLPattern>::ClassParameter castedThis)
@@ -456,7 +534,13 @@ static inline JSC::EncodedJSValue jsURLPatternPrototypeFunction_execBody(JSC::JS
 
 JSC_DEFINE_HOST_FUNCTION(jsURLPatternPrototypeFunction_exec, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSURLPattern>::call<jsURLPatternPrototypeFunction_execBody>(*lexicalGlobalObject, *callFrame, "exec");
+    auto* castedThis = dynamicDowncast<JSURLPattern>(callFrame->thisValue());
+    if (!castedThis) [[unlikely]] {
+        auto& vm = JSC::getVM(lexicalGlobalObject);
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Illegal invocation"_s);
+    }
+    return jsURLPatternPrototypeFunction_execBody(lexicalGlobalObject, callFrame, castedThis);
 }
 
 JSC::GCClient::IsoSubspace* JSURLPattern::subspaceForImpl(JSC::VM& vm)

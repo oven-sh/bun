@@ -1,8 +1,17 @@
 // Hardcoded module "node:v8"
 
 // This is a stub! None of this is actually implemented yet.
-const { hideFromStack, throwNotImplemented } = require("internal/shared");
-const { validateString, validateOneOf } = require("internal/validators");
+const { hideFromStack, throwNotImplemented, kEmptyObject } = require("internal/shared");
+const {
+  getValidatedFsPath,
+  validateBoolean,
+  validateInt32,
+  validateInteger,
+  validateNumber,
+  validateObject,
+  validateOneOf,
+  validateString,
+} = require("internal/validators");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
 
 function notimpl(message) {
@@ -21,9 +30,85 @@ class Serializer {
 }
 class DefaultDeserializer extends Deserializer {}
 class DefaultSerializer extends Serializer {}
+const startGCProfile = $newCppFunction("BunHeapProfiler.cpp", "jsFunction_startGCProfile", 0);
+const stopGCProfile = $newCppFunction("BunHeapProfiler.cpp", "jsFunction_stopGCProfile", 0);
+
+// One heapStatistics snapshot in GCProfiler's camelCase key set. `usedHeapSize`
+// comes from the per-GC native entry; the rest are current-process values (JSC
+// does not record them per collection).
+function gcProfileHeapStatistics(usedHeapSize: number) {
+  const stats = jsc.heapStats();
+  const memory = jsc.memoryUsage();
+  const total = require("node:os").totalmem();
+  return {
+    totalHeapSize: stats.heapCapacity,
+    totalHeapSizeExecutable: stats.heapCapacity >> 1,
+    totalPhysicalSize: memory.peak,
+    totalAvailableSize: total > usedHeapSize ? total - usedHeapSize : 0,
+    totalGlobalHandlesSize: 8192,
+    usedGlobalHandlesSize: 2208,
+    usedHeapSize,
+    heapSizeLimit: Math.min(memory.peak * 10, total),
+    mallocedMemory: stats.heapSize,
+    externalMemory: stats.extraMemorySize,
+    peakMallocedMemory: memory.peak,
+  };
+}
+
+function gcProfileHeapSpaceStatistics(usedHeapSize: number) {
+  const stats = jsc.heapStats();
+  const size = stats.heapCapacity;
+  return [
+    {
+      spaceName: "old_space",
+      spaceSize: size,
+      spaceUsedSize: usedHeapSize,
+      spaceAvailableSize: size > usedHeapSize ? size - usedHeapSize : 0,
+      physicalSpaceSize: size,
+    },
+  ];
+}
+
+function gcProfileSide(usedHeapSize: number) {
+  return {
+    heapStatistics: gcProfileHeapStatistics(usedHeapSize),
+    heapSpaceStatistics: gcProfileHeapSpaceStatistics(usedHeapSize),
+  };
+}
+
+// Deviation from node: the native recorder is one-per-JS-thread, so two
+// concurrently-started GCProfiler instances share it and the first stop()
+// wins; node registers per-instance isolate callbacks.
 class GCProfiler {
-  constructor() {
-    notimpl("GCProfiler");
+  #startTime: number | undefined;
+
+  start() {
+    if (this.#startTime !== undefined) return;
+    this.#startTime = Date.now();
+    startGCProfile();
+  }
+
+  stop() {
+    if (this.#startTime === undefined) return;
+    const entries = JSON.parse(stopGCProfile());
+    const startTime = this.#startTime;
+    this.#startTime = undefined;
+    const statistics = new Array(entries.length);
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      statistics[i] = {
+        gcType: entry.full ? "MarkSweepCompact" : "Scavenge",
+        beforeGC: gcProfileSide(entry.beforeSize),
+        cost: entry.cost,
+        afterGC: gcProfileSide(entry.afterSize),
+      };
+    }
+    return {
+      version: 1,
+      startTime,
+      statistics,
+      endTime: Date.now(),
+    };
   }
 }
 
@@ -37,7 +122,8 @@ function cachedDataVersionTag() {
   return versionTag;
 }
 var HeapSnapshotReadable_;
-function getHeapSnapshot() {
+function getHeapSnapshot(options) {
+  validateHeapSnapshotOptions(options);
   if (!HeapSnapshotReadable_) {
     const Readable = require("node:stream").Readable;
     class HeapSnapshotReadable extends Readable {
@@ -189,12 +275,11 @@ function deserialize(value) {
   }
   return jsc.deserialize(value);
 }
-function takeCoverage() {
-  notimpl("takeCoverage");
-}
-function stopCoverage() {
-  notimpl("stopCoverage");
-}
+// Bun does not run V8's coverage collector, so there is never a pending
+// coverage profile to flush or stop. Node's bindings are also no-ops when
+// coverage was never started, so these succeed silently.
+function takeCoverage() {}
+function stopCoverage() {}
 function serialize(arg1) {
   const tagged = require("internal/serialization_buffers").tagBuffers(arg1);
   if (tagged === null) {
@@ -207,6 +292,9 @@ function serialize(arg1) {
   return framed;
 }
 
+// Node's DiagnosticFilename: `Heap.<yyyymmdd>.<hhmmss>.<pid>.<threadId>.<seq>.heapsnapshot`
+// in local time: https://github.com/nodejs/node/blob/v26.3.0/src/util.cc#L318-L347
+let heapSnapshotSeq = 0;
 function getDefaultHeapSnapshotPath() {
   const date = new Date();
 
@@ -214,28 +302,34 @@ function getDefaultHeapSnapshotPath() {
   const thread_id = worker_threads.threadId;
 
   const yyyy = date.getFullYear();
-  const mm = date.getMonth().toString().padStart(2, "0");
+  const mm = (date.getMonth() + 1).toString().padStart(2, "0");
   const dd = date.getDate().toString().padStart(2, "0");
   const hh = date.getHours().toString().padStart(2, "0");
   const MM = date.getMinutes().toString().padStart(2, "0");
   const ss = date.getSeconds().toString().padStart(2, "0");
+  const seq = (++heapSnapshotSeq).toString().padStart(3, "0");
 
-  // 'Heap-${yyyymmdd}-${hhmmss}-${pid}-${thread_id}.heapsnapshot'
-  return `Heap-${yyyy}${mm}${dd}-${hh}${MM}${ss}-${process.pid}-${thread_id}.heapsnapshot`;
+  return `Heap.${yyyy}${mm}${dd}.${hh}${MM}${ss}.${process.pid}.${thread_id}.${seq}.heapsnapshot`;
+}
+
+// node's getHeapSnapshotOptions (lib/internal/heap_utils.js). The two flags
+// only change what V8 puts in the snapshot; Bun's generator has no equivalent
+// switches, so they are validated and then ignored.
+function validateHeapSnapshotOptions(options = kEmptyObject) {
+  validateObject(options, "options");
+  const { exposeInternals = false, exposeNumericValues = false } = options;
+  validateBoolean(exposeInternals, "options.exposeInternals");
+  validateBoolean(exposeNumericValues, "options.exposeNumericValues");
 }
 
 let fs;
 
-function writeHeapSnapshot(path, _options) {
+function writeHeapSnapshot(path, options) {
   if (path !== undefined) {
-    if (typeof path !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("path", "string", path);
-    }
-
-    if (!path) {
-      throw $ERR_INVALID_ARG_VALUE("path", path, "must be a non-empty string");
-    }
-  } else {
+    path = getValidatedFsPath(path, "path");
+  }
+  validateHeapSnapshotOptions(options);
+  if (path === undefined) {
     path = getDefaultHeapSnapshotPath();
   }
 
@@ -249,6 +343,119 @@ function writeHeapSnapshot(path, _options) {
 function setHeapSnapshotNearHeapLimit() {
   notimpl("setHeapSnapshotNearHeapLimit");
 }
+const cppStartCpuProfile = $newCppFunction("BunCPUProfiler.cpp", "jsFunction_startCpuProfile", 1) as (
+  samplingIntervalMicros: number,
+) => void;
+const cppStopCpuProfile = $newCppFunction("BunCPUProfiler.cpp", "jsFunction_stopCpuProfile", 0) as () => string;
+const cppTakeSamplingHeapProfile = $newCppFunction(
+  "BunHeapProfiler.cpp",
+  "jsFunction_takeSamplingHeapProfile",
+  0,
+) as () => string;
+
+const kMicrosPerMilli = 1_000;
+const kMaxSamplingIntervalMs = 0x7fffffff / kMicrosPerMilli;
+const kMaxSamplesUnlimited = 0xffff_ffff;
+
+// node's normalizeCpuProfileOptions (lib/internal/v8/cpu_profiler.js).
+// `maxBufferSize` is validated and dropped: JSC's sampling profiler has no
+// sample cap to configure.
+function normalizeCpuProfileOptions(options = kEmptyObject) {
+  validateObject(options, "options");
+  const { sampleInterval, maxBufferSize } = options;
+
+  let samplingIntervalMicros = 0;
+  if (sampleInterval !== undefined) {
+    validateNumber(sampleInterval, "options.sampleInterval", 0, kMaxSamplingIntervalMs);
+    samplingIntervalMicros = Math.floor(sampleInterval * kMicrosPerMilli);
+    if (sampleInterval > 0 && samplingIntervalMicros === 0) {
+      samplingIntervalMicros = 1;
+    }
+  }
+  if (maxBufferSize !== undefined) {
+    validateNumber(maxBufferSize, "options.maxBufferSize", 1, kMaxSamplesUnlimited);
+  }
+  return samplingIntervalMicros;
+}
+
+// node's normalizeHeapProfileOptions (lib/internal/v8/heap_profile.js). Every
+// option only tunes V8's allocation sampler, which JSC does not have, so they
+// are validated and then dropped.
+function normalizeHeapProfileOptions(options = kEmptyObject) {
+  validateObject(options, "options");
+  const {
+    sampleInterval = 512 * 1024,
+    stackDepth = 16,
+    forceGC = false,
+    includeObjectsCollectedByMajorGC = false,
+    includeObjectsCollectedByMinorGC = false,
+  } = options;
+
+  validateInteger(sampleInterval, "options.sampleInterval", 1);
+  validateInt32(stackDepth, "options.stackDepth", 0);
+  validateBoolean(forceGC, "options.forceGC");
+  validateBoolean(includeObjectsCollectedByMajorGC, "options.includeObjectsCollectedByMajorGC");
+  validateBoolean(includeObjectsCollectedByMinorGC, "options.includeObjectsCollectedByMinorGC");
+}
+
+// JSC has one VM-wide sampling profiler and one heap, so at most one profile
+// of each kind can be in flight; V8 allows several concurrent CPU profiles.
+let cpuProfileRunning = false;
+let heapProfileRunning = false;
+
+class SyncCPUProfileHandle {
+  #stopped = false;
+
+  stop() {
+    if (this.#stopped) {
+      return;
+    }
+    this.#stopped = true;
+    cpuProfileRunning = false;
+    return cppStopCpuProfile();
+  }
+
+  [Symbol.dispose]() {
+    this.stop();
+  }
+}
+
+class SyncHeapProfileHandle {
+  #stopped = false;
+
+  stop() {
+    if (this.#stopped) {
+      return;
+    }
+    this.#stopped = true;
+    heapProfileRunning = false;
+    return cppTakeSamplingHeapProfile();
+  }
+
+  [Symbol.dispose]() {
+    this.stop();
+  }
+}
+
+function startCpuProfile(options) {
+  const samplingIntervalMicros = normalizeCpuProfileOptions(options);
+  if (cpuProfileRunning) {
+    throw $ERR_CPU_PROFILE_TOO_MANY("There are too many CPU profiles");
+  }
+  cpuProfileRunning = true;
+  cppStartCpuProfile(samplingIntervalMicros);
+  return new SyncCPUProfileHandle();
+}
+
+function startHeapProfile(options) {
+  normalizeHeapProfileOptions(options);
+  if (heapProfileRunning) {
+    throw $ERR_HEAP_PROFILE_HAVE_BEEN_STARTED("Heap profile has been started");
+  }
+  heapProfileRunning = true;
+  return new SyncHeapProfileHandle();
+}
+
 function throwNotBuildingSnapshot() {
   throw $ERR_NOT_BUILDING_SNAPSHOT("Operation cannot be invoked when not building startup snapshot");
 }
@@ -293,12 +500,15 @@ export default {
   serialize,
   writeHeapSnapshot,
   setHeapSnapshotNearHeapLimit,
+  startCpuProfile,
+  startHeapProfile,
   promiseHooks,
   startupSnapshot,
   Deserializer,
   Serializer,
   DefaultDeserializer,
   DefaultSerializer,
+  GCProfiler,
 };
 
 hideFromStack(
@@ -317,6 +527,8 @@ hideFromStack(
   serialize,
   writeHeapSnapshot,
   setHeapSnapshotNearHeapLimit,
+  startCpuProfile,
+  startHeapProfile,
   Deserializer,
   Serializer,
   DefaultDeserializer,

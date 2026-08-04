@@ -24,6 +24,7 @@
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
+#include "ErrorCode.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
 #include "JSDOMConvertBase.h"
@@ -40,6 +41,7 @@
 #include "JSDOMIterator.h"
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
+#include "ErrorCode.h"
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
@@ -392,7 +394,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_appendBody(
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     if (callFrame->argumentCount() < 2) [[unlikely]]
-        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+        return Bun::ERR::MISSING_ARGS(throwScope, lexicalGlobalObject, "The \"name\" and \"value\" arguments must be specified"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -415,7 +417,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_deleteBody(
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     if (callFrame->argumentCount() < 1) [[unlikely]]
-        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+        return Bun::ERR::MISSING_ARGS(throwScope, lexicalGlobalObject, "The \"name\" argument must be specified"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -443,7 +445,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_getBody(JSC
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     if (callFrame->argumentCount() < 1) [[unlikely]]
-        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+        return Bun::ERR::MISSING_ARGS(throwScope, lexicalGlobalObject, "The \"name\" argument must be specified"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -463,7 +465,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_getAllBody(
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     if (callFrame->argumentCount() < 1) [[unlikely]]
-        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+        return Bun::ERR::MISSING_ARGS(throwScope, lexicalGlobalObject, "The \"name\" argument must be specified"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -483,7 +485,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_hasBody(JSC
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     if (callFrame->argumentCount() < 1) [[unlikely]]
-        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+        return Bun::ERR::MISSING_ARGS(throwScope, lexicalGlobalObject, "The \"name\" argument must be specified"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -511,7 +513,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_setBody(JSC
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     if (callFrame->argumentCount() < 2) [[unlikely]]
-        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+        return Bun::ERR::MISSING_ARGS(throwScope, lexicalGlobalObject, "The \"name\" and \"value\" arguments must be specified"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});

@@ -70,6 +70,9 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
             bun_core::Output::flush();
             bun_core::reload_process(should_clear_terminal, false);
         }
+        // node prints the `--print` result from its 'exit' handler even when
+        // the script calls `process.exit()` before a pending promise settles.
+        vm.print_eval_result_if_needed();
         vm.on_exit();
         vm.global_exit();
     }
@@ -77,9 +80,15 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
 
 // ───────────────────────────── misc exports ─────────────────────────────
 
+/// Set by `--no-warnings`. Node's `--warnings` is the default, so it needs no
+/// state of its own.
+pub static NO_WARNINGS_FLAG: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
 #[unsafe(no_mangle)]
 extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
-    env_var::NODE_NO_WARNINGS.get() == Some(b"1")
+    NO_WARNINGS_FLAG.load(core::sync::atomic::Ordering::Relaxed)
+        || env_var::NODE_NO_WARNINGS.get() == Some(b"1")
 }
 
 #[unsafe(no_mangle)]

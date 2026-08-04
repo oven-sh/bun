@@ -27,6 +27,30 @@ domain.createDomain = domain.create = function () {
     d.emit("error", e);
   }
 
+  // Node's Domain.prototype._errorHandler leaves the domain before the handler
+  // and clears the stack after: https://github.com/nodejs/node/blob/v26.3.0/lib/domain.js#L218-L300
+  function handleThrown(e) {
+    if (typeof e === "object" && e !== null) {
+      ObjectDefineProperty(e, "domain", {
+        __proto__: null,
+        configurable: true,
+        enumerable: false,
+        value: d,
+        writable: true,
+      });
+      e.domainThrown = true;
+    }
+    // Pop adjacent duplicates of this domain so the handler does not run
+    // inside the domain that raised.
+    while (domain.active === d) d.exit();
+    try {
+      d.emit("error", e);
+    } finally {
+      stack.length = 0;
+      domain.active = process.domain = null;
+    }
+  }
+
   d.add = function (emitter) {
     emitter.on("error", emitError);
   };
@@ -39,7 +63,7 @@ domain.createDomain = domain.create = function () {
       try {
         fn.$apply(null, args);
       } catch (err) {
-        emitError(err);
+        handleThrown(err);
       }
     };
   };
@@ -52,7 +76,7 @@ domain.createDomain = domain.create = function () {
         try {
           fn.$apply(null, args);
         } catch (err) {
-          emitError(err);
+          handleThrown(err);
         }
       }
     };
@@ -62,7 +86,7 @@ domain.createDomain = domain.create = function () {
     try {
       return fn.$apply(this, args);
     } catch (err) {
-      emitError(err);
+      handleThrown(err);
     } finally {
       this.exit();
     }
@@ -80,8 +104,55 @@ domain.createDomain = domain.create = function () {
     const index = stack.lastIndexOf(this);
     if (index === -1) return this;
     stack.splice(index, stack.length);
-    domain.active = process.domain = stack.length ? stack[stack.length - 1] : null;
+    // Node leaves `undefined` behind when the stack empties; only the
+    // uncaught-exception path resets it to null.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/domain.js#L313-L323
+    domain.active = process.domain = stack.length ? stack[stack.length - 1] : undefined;
     return this;
+  };
+  // Node's Domain.prototype._errorHandler: decorate, emit 'error' (not on a handlerless
+  // top-level domain), clear the domain stack, return whether a handler caught it.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/domain.js#L219
+  d._errorHandler = function (er) {
+    let caught = false;
+
+    if ((typeof er === "object" && er !== null) || typeof er === "function") {
+      ObjectDefineProperty(er, "domain", {
+        __proto__: null,
+        configurable: true,
+        enumerable: false,
+        value: d,
+        writable: true,
+      });
+      er.domainThrown = true;
+    }
+
+    if (stack.length === 1) {
+      if (d.listenerCount("error") > 0) {
+        caught = d.emit("error", er);
+      }
+    } else {
+      try {
+        caught = d.emit("error", er);
+      } catch (er2) {
+        // The domain error handler threw: see if an outer domain catches it.
+        stack.pop();
+        const { length } = stack;
+        if (length) {
+          domain.active = process.domain = stack[length - 1];
+          caught = process.domain._errorHandler(er2);
+        } else {
+          throw er2;
+        }
+      }
+    }
+
+    // Uncaught exceptions end the current tick; no domains stay entered
+    // between ticks.
+    stack.length = 0;
+    domain.active = process.domain = null;
+
+    return caught;
   };
   return d;
 };

@@ -90,8 +90,76 @@ function internalBinding(name: string) {
       return { UDP: require("internal/dgram").UDP };
     case "tcp_wrap":
       return { TCP: TestTCPWrap, constants: { SOCKET: 0, SERVER: 1 } };
+    // Just what vendored modules destructure at load; Bun always builds with ICU.
+    case "config":
+      return { hasIntl: true };
+    // node's C++ encoding binding, backed by the runtime's own encoders.
+    case "encoding_binding": {
+      const utf8Encoder = new TextEncoder();
+      const encodeIntoResults = new Uint32Array(2);
+      return {
+        encodeInto(source: string, dest: Uint8Array) {
+          const { read, written } = utf8Encoder.encodeInto(source, dest);
+          encodeIntoResults[0] = read;
+          encodeIntoResults[1] = written;
+        },
+        encodeIntoResults,
+        encodeUtf8String(source: string) {
+          return utf8Encoder.encode(source);
+        },
+        decodeUTF8(input: ArrayBufferView, ignoreBOM: boolean, fatal: boolean) {
+          return new TextDecoder("utf-8", { ignoreBOM, fatal }).decode(input);
+        },
+      };
+    }
     case "util":
-      return { isInsideNodeModules };
+      return {
+        isInsideNodeModules,
+        // node's util binding exposes engine-private symbols; vendored
+        // internal/errors.js stores its arrow message under this one.
+        privateSymbols: { arrow_message_private_symbol: Symbol("node:arrowMessage") },
+      };
+    // Vendored tls engine tests construct binding.SecureContext (or replace it)
+    // before requiring node:tls; Bun's SecureContext class is the equivalent
+    // native surface.
+    case "crypto":
+      return { SecureContext: require("node:tls").SecureContext };
+    // BoringSSL does not compile in OpenSSL's SSL_trace(), so a Node built
+    // against it reports HAVE_SSL_TRACE = false; --trace-tls tests skip.
+    case "tls_wrap":
+      return { HAVE_SSL_TRACE: false };
+    case "worker":
+      // node's env message port is the thread's control channel to its parent;
+      // bun's equivalent is the port to the main-thread messaging hub.
+      return { getEnvMessagePort: require("internal/worker/messaging").getMainThreadPort };
+    case "js_stream":
+      // Just enough of JSStream for tests that probe how a native handle
+      // behaves (the structured-clone serializer rejects it as a host object).
+      return {
+        JSStream: class JSStream {
+          constructor() {
+            return new TextEncoder();
+          }
+        },
+      };
+    case "fs": {
+      // Just writeBuffer (internal/net's module-level destructure); node's
+      // binding fills `ctx` on failure instead of throwing.
+      const { writeSync } = require("node:fs");
+      return {
+        writeBuffer(fd: number, buffer: Uint8Array, offset: number, length: number, position: number | null, ctx: any) {
+          try {
+            return writeSync(fd, buffer, offset, length, position);
+          } catch (err: any) {
+            ctx.errno = err.errno;
+            ctx.syscall = err.syscall;
+            ctx.code = err.code;
+            ctx.message = err.message;
+            return 0;
+          }
+        },
+      };
+    }
     case "cares_wrap":
       // Only the pure IP-normalizer the vendored tls/dns tests reach for; the
       // resolver surface lives in node:dns.

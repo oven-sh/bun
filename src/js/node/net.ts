@@ -39,7 +39,7 @@ const {
 import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
 import type { TLSSocket } from "node:tls";
-const { kTimeout, getTimerDuration } = require("internal/timers");
+const { kTimeout, getTimerDuration, setUnrefTimeout } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
 const { kArmHandshakeTimeout, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
@@ -48,6 +48,9 @@ const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
+const NumberParseInt = Number.parseInt;
+const StringPrototypeIndexOf = String.prototype.indexOf;
+const StringPrototypeSlice = String.prototype.slice;
 const MathMin = Math.min;
 
 const { UV_ECANCELED, UV_ENOBUFS, UV_ETIMEDOUT } = process.binding("uv");
@@ -110,6 +113,8 @@ const SocketAddress = $rust("node_net_binding.rs", "SocketAddress");
 const BlockList = $rust("node_net_binding.rs", "BlockList");
 const newDetachedSocket = $newRustFunction("node_net_binding.rs", "newDetachedSocket", 1);
 const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
+const permissionModelEnabled = $rust("permission.rs", "isPermissionModelEnabled");
+let netAccessDeniedError;
 
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
@@ -501,7 +506,7 @@ const SocketHandlers: SocketHandler = {
     }
 
     if (self[kSetKeepAlive]) {
-      socket.setKeepAlive(true, self[kSetKeepAliveInitialDelay]);
+      socket.setKeepAlive(true, self[kSetKeepAliveInitialDelay] * 1000);
     }
 
     // A TOS value set before the connection existed (setTypeOfService before
@@ -1190,7 +1195,7 @@ function onconnection(err, clientHandle) {
   if (self.keepAlive && clientHandle.setKeepAlive) {
     _socket[kSetKeepAlive] = true;
     _socket[kSetKeepAliveInitialDelay] = self.keepAliveInitialDelay;
-    clientHandle.setKeepAlive(true, self.keepAliveInitialDelay);
+    clientHandle.setKeepAlive(true, self.keepAliveInitialDelay * 1000);
   }
 
   self._connections++;
@@ -1496,6 +1501,14 @@ function kConnectPipe(self, req, address) {
 }
 
 function kConnectDispatch(self, req, opts) {
+  if (permissionModelEnabled) {
+    // TCPWrap::Connect / PipeWrap::Connect return the ERR_ACCESS_DENIED object
+    // rather than an errno; both callers below hand it to
+    // ExceptionWithHostPort, which special-cases it.
+    netAccessDeniedError ??= $newRustFunction("permission.rs", "netAccessDeniedError", 1);
+    const denied = netAccessDeniedError(opts.hostname);
+    if (denied) return denied;
+  }
   // Node's TCPWrap returns errno for sync uv_*_connect failure and defers
   // oncomplete; doConnect instead fires connectError inside this call. Bracket
   // it so connectError hands the errno back here instead of re-entering.
@@ -1561,9 +1574,9 @@ function Socket(options?) {
 
   this[kSetNoDelay] = Boolean(noDelay);
   this[kSetKeepAlive] = Boolean(keepAlive);
-  // Bun's native _handle.setKeepAlive takes milliseconds (it is the public
-  // Bun.Socket), so store ms here. Node stores seconds because libuv does.
-  this[kSetKeepAliveInitialDelay] = MathMax(0, ~~keepAliveInitialDelay);
+  // Node stores whole seconds here (libuv's unit); call sites convert back to
+  // milliseconds for Bun's native _handle.setKeepAlive.
+  this[kSetKeepAliveInitialDelay] = MathMax(0, ~~(keepAliveInitialDelay / 1000));
 
   this[khandlers] = SocketHandlers2;
   this.bytesRead = 0;
@@ -1681,7 +1694,7 @@ function Socket(options?) {
         if (dest === true) {
           let ret;
           try {
-            ret = onreadCallback(total - offset, true);
+            ret = onreadCallback.$call(self, total - offset, true);
             if (onreadBufferIsFn) {
               const next = onreadBuffer();
               if (isUint8Array(next)) self[kOnreadBuffer] = next;
@@ -1712,7 +1725,7 @@ function Socket(options?) {
         offset += n;
         let ret;
         try {
-          ret = onreadCallback(n, dest);
+          ret = onreadCallback.$call(self, n, dest);
           if (onreadBufferIsFn) {
             const next = onreadBuffer();
             if (isUint8Array(next)) self[kOnreadBuffer] = next;
@@ -1849,7 +1862,7 @@ Socket.prototype[kAttach] = function (port, socket) {
   }
 
   if (this[kSetKeepAlive]) {
-    socket.setKeepAlive(true, this[kSetKeepAliveInitialDelay]);
+    socket.setKeepAlive(true, this[kSetKeepAliveInitialDelay] * 1000);
   }
 
   if (!this[kupgraded]) {
@@ -2124,7 +2137,10 @@ Socket.prototype.connect = function connect(...args) {
 Socket.prototype[kReinitializeHandle] = function reinitializeHandle(handle) {
   this._handle?.close();
 
-  this._handle = handle;
+  // Node's TLSSocket override creates the replacement handle itself when none
+  // is passed (net.Socket's version requires one); Bun's TLS sockets share
+  // this method, so default it here for both flavors.
+  this._handle = handle ?? newDetachedSocket(typeof this[bunTlsSymbol] === "function");
   this._handle[owner_symbol] = this;
 
   initSocketHandle(this);
@@ -2580,10 +2596,10 @@ Socket.prototype.resetAndDestroy = function resetAndDestroy() {
 
 Socket.prototype.setKeepAlive = function setKeepAlive(enable = false, initialDelayMsecs = 0) {
   enable = Boolean(enable);
-  // Bun's native _handle.setKeepAlive takes milliseconds; the ms→seconds
-  // conversion for TCP_KEEPIDLE lives in the native binding. Clamp to 0 so
-  // negatives and ~~ overflow match Node's no-validate behavior.
-  const initialDelay = MathMax(0, ~~initialDelayMsecs);
+  // Node truncates to whole seconds (libuv's TCP_KEEPIDLE unit) and stores
+  // seconds in kSetKeepAliveInitialDelay; Bun's native setKeepAlive takes
+  // milliseconds, so call sites convert back with * 1000.
+  const initialDelay = MathMax(0, ~~(initialDelayMsecs / 1000));
 
   if (!this._handle) {
     this[kSetKeepAlive] = enable;
@@ -2596,7 +2612,7 @@ Socket.prototype.setKeepAlive = function setKeepAlive(enable = false, initialDel
   if (enable !== this[kSetKeepAlive] || (enable && this[kSetKeepAliveInitialDelay] !== initialDelay)) {
     this[kSetKeepAlive] = enable;
     this[kSetKeepAliveInitialDelay] = initialDelay;
-    this._handle.setKeepAlive(enable, initialDelay);
+    this._handle.setKeepAlive(enable, initialDelay * 1000);
   }
   return this;
 };
@@ -2675,7 +2691,7 @@ Socket.prototype.setTimeout = {
         this.removeListener("timeout", callback);
       }
     } else {
-      this[kTimeout] = setTimeout(this._onTimeout.bind(this), msecs).unref();
+      this[kTimeout] = setUnrefTimeout(this._onTimeout.bind(this), msecs);
 
       if (callback !== undefined) {
         validateFunction(callback, "callback");
@@ -3303,7 +3319,7 @@ function internalConnectMultiple(context, canceled?) {
     $debug("connect/multiple: setting the attempt timeout to %d ms", context.timeout);
 
     // If the attempt has not returned an error, start the connection timer
-    context[kTimeout] = setTimeout(internalConnectMultipleTimeout, context.timeout, context, req, self._handle).unref();
+    context[kTimeout] = setUnrefTimeout(internalConnectMultipleTimeout, context.timeout, context, req, self._handle);
   }
 }
 
@@ -3368,7 +3384,7 @@ function afterConnect(status, handle, req, readable, writable) {
     }
 
     if (self[kSetKeepAlive] && self._handle.setKeepAlive) {
-      self._handle.setKeepAlive(true, self[kSetKeepAliveInitialDelay]);
+      self._handle.setKeepAlive(true, self[kSetKeepAliveInitialDelay] * 1000);
     }
 
     self.emit("connect");
@@ -3504,14 +3520,14 @@ function Server(options?, connectionListener?) {
   this._usingWorkers = false;
   this.workers = [];
   this._unref = false;
-  this.listeningId = 1;
+  this._listeningId = 1;
 
   this[bunSocketServerOptions] = undefined;
   // Server option coercion matches Node's Server constructor:
   // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L1880
   this.allowHalfOpen = allowHalfOpen;
   this.keepAlive = Boolean(keepAlive);
-  this.keepAliveInitialDelay = MathMax(0, ~~keepAliveInitialDelay);
+  this.keepAliveInitialDelay = MathMax(0, ~~(keepAliveInitialDelay / 1000));
   this.highWaterMark = highWaterMark;
   this.pauseOnConnect = Boolean(pauseOnConnect);
   this.noDelay = Boolean(noDelay);
@@ -3548,6 +3564,7 @@ Server.prototype.unref = function unref() {
 };
 
 Server.prototype.close = function close(callback) {
+  this._listeningId++;
   if (typeof callback === "function") {
     if (!this._handle) {
       this.once("close", function close() {
@@ -3617,6 +3634,13 @@ Server.prototype.getConnections = function getConnections(callback) {
 };
 
 Server.prototype.listen = function listen(port, hostname, onListen) {
+  if (permissionModelEnabled) {
+    // TCPWrap/PipeWrap Bind+Listen throw synchronously under the permission
+    // model, before any argument handling can pick a different code path.
+    netAccessDeniedError ??= $newRustFunction("permission.rs", "netAccessDeniedError", 1);
+    const denied = netAccessDeniedError(undefined);
+    if (denied) throw denied;
+  }
   const argsLength = arguments.length;
   if (typeof port === "string") {
     const numPort = Number(port);
@@ -3685,8 +3709,6 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
         port = 0;
       }
 
-      const isLinux = process.platform === "linux" || process.platform === "android";
-
       // Match Node's listen() option normalization + validation.
       // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L2145
       if ((port === undefined && "port" in options) || port === null) {
@@ -3702,12 +3724,14 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
         path = undefined;
       } else if (isPipeName(path)) {
         const isAbstractPath = path.startsWith("\0");
-        if (isLinux && isAbstractPath && (options.writableAll || options.readableAll)) {
-          const message = `The argument 'options' can not set readableAll or writableAll to true when path is abstract unix socket. Received ${JSON.stringify(options)}`;
-
-          const error = new TypeError(message);
-          error.code = "ERR_INVALID_ARG_VALUE";
-          throw error;
+        if (isAbstractPath && (options.writableAll || options.readableAll)) {
+          // The "writableAllt" typo is node's, and the test matches it verbatim.
+          // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2182
+          throw $ERR_INVALID_ARG_VALUE(
+            "options",
+            options,
+            "can not set readableAll or writableAllt to true when path is abstract unix socket",
+          );
         }
 
         hostname = path;
@@ -3770,6 +3794,8 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     throw $ERR_SERVER_ALREADY_LISTEN();
   }
 
+  this._listeningId++;
+
   if (onListen != null) {
     this.once("listening", onListen);
   }
@@ -3790,6 +3816,25 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       }
     } else {
       options[kSocketClass] = Socket;
+    }
+
+    if (typeof hostname === "string" && hostname !== "" && path == null && fd == null && isIP(hostname) === 0) {
+      lookupAndListen(
+        this,
+        port,
+        hostname,
+        backlog,
+        exclusive,
+        ipv6Only,
+        reusePort,
+        readableAll,
+        writableAll,
+        fd,
+        tls,
+        contexts,
+        onListen,
+      );
+      return this;
     }
 
     listenInCluster(
@@ -3970,6 +4015,83 @@ function emitListeningNextTick(self) {
 }
 
 let cluster;
+// fe80::/10: first byte 0xfe, top two bits of the second byte 10.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2230
+function isIpv6LinkLocal(ip) {
+  if (!isIPv6(ip)) return false;
+  const firstColon = StringPrototypeIndexOf.$call(ip, ":");
+  if (firstColon === 0) return false; // "::..." - first group is zero
+  const firstGroup = NumberParseInt(StringPrototypeSlice.$call(ip, 0, firstColon), 16);
+  return (firstGroup & 0xffc0) === 0xfe80;
+}
+
+// Return the first non IPv6 link-local address if present, otherwise the
+// first address.
+function filterOnlyValidAddress(addresses) {
+  for (const address of addresses) {
+    if (!isIpv6LinkLocal(address.address)) {
+      return address;
+    }
+  }
+  return addresses[0];
+}
+
+// Node resolves a non-IP listen host through dns.lookup({ all: true }) and binds the
+// first non-link-local address: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2259
+function lookupAndListen(
+  server,
+  port,
+  hostname,
+  backlog,
+  exclusive,
+  ipv6Only,
+  reusePort,
+  readableAll,
+  writableAll,
+  fd,
+  tls,
+  contexts,
+  onListen,
+) {
+  if (dns === undefined) dns = require("node:dns");
+  const listeningId = server._listeningId;
+  dns.lookup(hostname, { all: true }, (err, addresses) => {
+    if (listeningId !== server._listeningId) {
+      return;
+    }
+    if (err) {
+      server.emit("error", err);
+      return;
+    }
+    const validAddress = filterOnlyValidAddress(addresses);
+    const family = validAddress?.family || 4;
+    try {
+      listenInCluster(
+        server,
+        validAddress.address,
+        port,
+        family,
+        backlog,
+        fd,
+        exclusive,
+        ipv6Only,
+        reusePort,
+        readableAll,
+        writableAll,
+        undefined,
+        undefined,
+        null,
+        validAddress.address,
+        tls,
+        contexts,
+        onListen,
+      );
+    } catch (listenErr) {
+      emitErrorNextTick(server, formatListenError(listenErr, validAddress.address, port));
+    }
+  });
+}
+
 function listenInCluster(
   server,
   address,

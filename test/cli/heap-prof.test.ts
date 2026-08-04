@@ -1,8 +1,11 @@
 import { expect, test } from "bun:test";
+import { existsSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
-const testScript = `const arr = []; for (let i = 0; i < 100; i++) arr.push({ x: i, y: "hello" + i }); console.log("done");`;
+// Spins ~50ms of JS so the sampling profiler (1ms interval) is guaranteed to
+// capture samples even on fast release builds.
+const testScript = `const arr = []; const end = Date.now() + 50; while (Date.now() < end) arr.push({ x: arr.length, y: "hello" + arr.length }); console.log("done");`;
 
 // Node's DiagnosticFilename format: Heap.<yyyymmdd>.<hhmmss>.<pid>.<tid>.<seq>.heapprofile
 const nodeFilenameRe = /^Heap\.\d{8}\.\d{6}\.\d+\.0\.\d{3}\.heapprofile$/;
@@ -12,15 +15,25 @@ async function readProfile(dir: string, file: string) {
   return JSON.parse(content);
 }
 
-function expectV8HeapSnapshotShape(profile: any) {
-  // V8 heap snapshot: { snapshot: { meta, node_count, edge_count }, nodes, edges, strings }
-  expect(profile).toHaveProperty("snapshot");
-  expect(profile.snapshot).toHaveProperty("meta");
-  expect(typeof profile.snapshot.node_count).toBe("number");
-  expect(profile.snapshot.node_count).toBeGreaterThan(0);
-  expect(Array.isArray(profile.nodes)).toBe(true);
-  expect(Array.isArray(profile.edges)).toBe(true);
-  expect(Array.isArray(profile.strings)).toBe(true);
+function expectSamplingHeapProfileShape(profile: any) {
+  // V8 sampling heap profile (what node's --heap-prof writes):
+  // { head: { callFrame, selfSize, id, children }, samples: [{ size, nodeId, ordinal }] }
+  expect(profile.head.callFrame).toEqual({
+    functionName: "(root)",
+    scriptId: "0",
+    url: "",
+    lineNumber: -1,
+    columnNumber: -1,
+  });
+  expect(profile.head.id).toBe(1);
+  expect(typeof profile.head.selfSize).toBe("number");
+  expect(Array.isArray(profile.head.children)).toBe(true);
+  expect(Array.isArray(profile.samples)).toBe(true);
+  for (const sample of profile.samples) {
+    expect(typeof sample.size).toBe("number");
+    expect(typeof sample.nodeId).toBe("number");
+    expect(typeof sample.ordinal).toBe("number");
+  }
 }
 
 test("--heap-prof writes a .heapprofile with node's filename format on exit", async () => {
@@ -45,9 +58,10 @@ test("--heap-prof writes a .heapprofile with node's filename format on exit", as
   expect(files[0]).toMatch(nodeFilenameRe);
 
   const profile = await readProfile(String(dir), files[0]);
-  expectV8HeapSnapshotShape(profile);
-  // The snapshot is real, so it always carries node data.
-  expect(profile.nodes.length).toBeGreaterThan(0);
+  expectSamplingHeapProfileShape(profile);
+  // The script spins ~50ms, so sampled call-tree data is always present.
+  expect(profile.samples.length).toBeGreaterThan(0);
+  expect(profile.head.children.length).toBeGreaterThan(0);
 });
 
 test("--heap-prof writes the profile when the script calls process.exit", async () => {
@@ -68,7 +82,7 @@ test("--heap-prof writes the profile when the script calls process.exit", async 
   const files = Array.from(glob.scanSync({ cwd: String(dir) }));
   expect(files.length).toBe(1);
   const profile = await readProfile(String(dir), files[0]);
-  expectV8HeapSnapshotShape(profile);
+  expectSamplingHeapProfileShape(profile);
 });
 
 test.skipIf(process.platform === "win32")(
@@ -92,7 +106,7 @@ test.skipIf(process.platform === "win32")(
     const files = Array.from(glob.scanSync({ cwd: String(dir) }));
     expect(files.length).toBe(1);
     const profile = await readProfile(String(dir), files[0]);
-    expectV8HeapSnapshotShape(profile);
+    expectSamplingHeapProfileShape(profile);
   },
 );
 
@@ -225,7 +239,7 @@ test("--heap-prof-name specifies output filename", async () => {
   expect(exitCode).toBe(0);
 
   const profile = await readProfile(String(dir), "my-profile.heapprofile");
-  expectV8HeapSnapshotShape(profile);
+  expectSamplingHeapProfileShape(profile);
 });
 
 test("--heap-prof-name and --heap-prof-dir work together", async () => {
@@ -256,7 +270,7 @@ test("--heap-prof-name and --heap-prof-dir work together", async () => {
   expect(exitCode).toBe(0);
 
   const profile = await readProfile(join(String(dir), "output"), "custom.heapprofile");
-  expectV8HeapSnapshotShape(profile);
+  expectSamplingHeapProfileShape(profile);
 });
 
 // Node parity: heap-profiler-scoped flags without --heap-prof exit 9 with
@@ -326,4 +340,48 @@ test("--heap-prof --heap-prof-interval is accepted", async () => {
   const glob = new Bun.Glob("*.heapprofile");
   const files = Array.from(glob.scanSync({ cwd: String(dir) }));
   expect(files.length).toBe(1);
+});
+
+test("--diagnostic-dir sets the heap profile directory, and --heap-prof-dir overrides it", async () => {
+  using dir = tempDir("heap-prof-diagnostic-dir-test", {});
+
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--heap-prof", "--diagnostic-dir", "diag", "-e", `console.log("hello");`],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("hello");
+    expect(exitCode).toBe(0);
+    const glob = new Bun.Glob("*.heapprofile");
+    expect(Array.from(glob.scanSync({ cwd: join(String(dir), "diag") }))).toHaveLength(1);
+  }
+
+  {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--heap-prof",
+        "--diagnostic-dir",
+        "ignored",
+        "--heap-prof-dir",
+        "prof",
+        "-e",
+        `console.log("hello");`,
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("hello");
+    expect(exitCode).toBe(0);
+    const glob = new Bun.Glob("*.heapprofile");
+    expect(Array.from(glob.scanSync({ cwd: join(String(dir), "prof") }))).toHaveLength(1);
+    expect(existsSync(join(String(dir), "ignored"))).toBe(false);
+  }
 });

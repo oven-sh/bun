@@ -311,6 +311,20 @@ function assignFunctionName(name, fn, descriptor = nodeKEmptyObject) {
   });
 }
 
+// Port of node's pendingDeprecate(); Bun never surfaces --pending-deprecation to JS,
+// so the emitter is a no-op but `length` is preserved.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util.js#L204
+function nodePendingDeprecate(fn) {
+  function deprecated(...args) {
+    return fn.$apply(this, args);
+  }
+  Object.defineProperty(deprecated, "length", {
+    __proto__: null,
+    ...Object.getOwnPropertyDescriptor(fn, "length"),
+  });
+  return deprecated;
+}
+
 function nodeIsError(e) {
   return require("node:util/types").isNativeError(e) || e instanceof Error;
 }
@@ -448,6 +462,7 @@ export const exposedInternals = {
   "internal/async_hooks": require("internal/async_hooks"),
   "internal/webstreams/adapters": require("internal/webstreams_adapters"),
   "internal/dgram": require("internal/dgram"),
+  "internal/timers": require("internal/timers"),
   // Bun's real implementations, under the names node's tests import them by.
   "internal/validators": require("internal/validators"),
   "internal/util/inspect": require("internal/util/inspect"),
@@ -467,6 +482,7 @@ export const exposedInternals = {
     assertCrypto() {},
     getCIDR,
     isError: nodeIsError,
+    pendingDeprecate: nodePendingDeprecate,
     assignFunctionName,
     kEnumerableProperty: Object.freeze({ __proto__: null, enumerable: true }),
     kEmptyObject: nodeKEmptyObject,
@@ -490,6 +506,10 @@ export const exposedInternals = {
       getValidStdio: nodeGetValidStdio,
     });
   },
+  // translatePeerCertificate lives in node:_tls_common in Bun; upstream keeps
+  // the implementation in internal/tls/common and re-exports it from
+  // _tls_common, which is where node's tests import it from.
+  "internal/tls/common": require("internal/tls/common"),
   "internal/fs/utils": {
     // Both are the REAL parsers the fs entry points use (FileSystemFlags::from_js
     // and args::Rm::from_js), not JS reimplementations -- vendored tests assert

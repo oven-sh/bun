@@ -23,7 +23,7 @@
 
 import assert from "assert";
 import { describe, expect, it } from "bun:test";
-import "harness";
+import { bunEnv, bunExe } from "harness";
 import util from "util";
 // const context = require('vm').runInNewContext; // TODO: Use a vm polyfill
 
@@ -394,6 +394,8 @@ describe("util", () => {
   });
 
   it("multiplecolors", () => {
+    // validateStream: false - otherwise styleText only colorizes when the
+    // target stream supports color, which a piped stdout does not.
     const noValidate = { validateStream: false };
     expect(util.styleText(["bold", "red"], "test", noValidate)).toBe("\u001b[1m\u001b[31mtest\u001b[39m\u001b[22m");
     expect(util.styleText("bold", "test", noValidate)).toBe("\u001b[1mtest\u001b[22m");
@@ -517,5 +519,102 @@ describe("util", () => {
 describe("util.parseEnv", () => {
   it("accepts a String object without crashing", () => {
     expect(util.parseEnv(new String("FOO=bar"))).toEqual({ FOO: "bar" });
+  });
+});
+
+describe("util.debuglog", () => {
+  it("exposes an `enabled` accessor and passes the optimized logger to the callback", async () => {
+    const code = `
+      const util = require("util");
+      const assert = require("assert");
+      let inner = null;
+      const debug = util.debuglog("tud", (fn) => {
+        assert.strictEqual(typeof fn, "function");
+        inner = fn;
+      });
+      assert.strictEqual(typeof Object.getOwnPropertyDescriptor(debug, "enabled").get, "function");
+      debug("this", { is: "a" }, /debugging/);
+      debug("num=%d str=%s obj=%j", 1, "a", { foo: "bar" });
+      assert.strictEqual(typeof Object.getOwnPropertyDescriptor(inner, "enabled").get, "function");
+      console.log(debug.enabled ? "outer enabled" : "outer disabled");
+      console.log(inner.enabled ? "inner enabled" : "inner disabled");
+    `;
+    const run = async env => {
+      const proc = Bun.spawn({
+        cmd: [process.execPath, "-e", code],
+        env: {
+          ...process.env,
+          BUN_DEBUG_QUIET_LOGS: "1",
+          NO_COLOR: undefined,
+          FORCE_COLOR: undefined,
+          NODE_DEBUG: env,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+
+    {
+      // Wildcard-enabled section: node's "SET PID: message" format on stderr.
+      const { stdout, stderr, exitCode } = await run("foo,tu*,bar");
+      expect(stdout).toBe("outer enabled\ninner enabled\n");
+      expect(stderr).toMatch(/^TUD \d+: this \{ is: 'a' \} \/debugging\/\nTUD \d+: num=1 str=a obj=\{"foo":"bar"\}\n$/);
+      expect(exitCode).toBe(0);
+    }
+    {
+      // Non-matching sections: nothing on stderr, enabled getters report false.
+      const { stdout, stderr, exitCode } = await run("foo,bar,test-*");
+      expect(stdout).toBe("outer disabled\ninner disabled\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    }
+  }, 20_000);
+});
+
+// https://nodejs.org/docs/latest-v26.x/api/util.html#utildebuglogsection-callback
+describe("util.debuglog section matching", () => {
+  const script = `
+    const assert = require("node:assert");
+    const util = require("node:util");
+    let inner = null;
+    const debug = util.debuglog(process.argv[1], cb => { inner = cb; });
+    assert.strictEqual(typeof Object.getOwnPropertyDescriptor(debug, "enabled").get, "function");
+    assert.strictEqual(inner, null, "the callback runs on the first call, not at creation");
+    debug("hello %s", "world");
+    assert.strictEqual(typeof inner, "function");
+    assert.strictEqual(typeof Object.getOwnPropertyDescriptor(inner, "enabled").get, "function");
+    console.log(JSON.stringify({ outer: debug.enabled, inner: inner.enabled }));
+  `;
+
+  async function run(section, nodeDebug) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script, section],
+      env: { ...bunEnv, NODE_DEBUG: nodeDebug },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  it("exposes `enabled` and passes the real logger to the callback", async () => {
+    const cases = [
+      ["tud", "foo,tud,bar", true],
+      ["tud", "foo,bar", false],
+      ["test-abc", "test-*", true],
+      // A section name is matched literally: `$` and `.` are not regexp syntax.
+      ["f.oo", "f$oo", false],
+    ];
+    const results = await Promise.all(cases.map(([section, env]) => run(section, env)));
+    for (let i = 0; i < cases.length; i++) {
+      const [section, env, expected] = cases[i];
+      expect({ section, env, stdout: results[i].stdout, exitCode: results[i].exitCode }).toEqual({
+        section,
+        env,
+        stdout: JSON.stringify({ outer: expected, inner: expected }),
+        exitCode: 0,
+      });
+    }
   });
 });

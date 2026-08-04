@@ -72,6 +72,14 @@ pub type ExceptionList = Vec<crate::schema_api::JsException>;
 pub struct EntryPointResult {
     pub value: crate::strong::Optional, // jsc.Strong.Optional
     pub cjs_set_value: bool,
+    /// `value` is the internal async-capability promise of a top-level-await
+    /// module (see `EvalGlobalObject::moduleLoaderEvaluate`), not the user's
+    /// completion value — `--print` unwraps it instead of logging it.
+    pub esm_capability: bool,
+    /// `--print` already emitted its output. The print must happen exactly
+    /// once, on the first of event-loop drain or `process.exit()` — mirrors
+    /// node's `runScriptInContext` (beforeExit/exit pair).
+    pub printed: bool,
 }
 
 /// Downstream-compat alias: lib.rs previously exposed `virtual_machine::InitOptions`.
@@ -133,6 +141,29 @@ impl Default for InitOptions {
     }
 }
 
+/// `performance.nodeTiming` startup milestones, stamped at the closest equivalent
+/// point of Bun's startup: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/nodetiming.js
+#[derive(Clone, Copy)]
+#[repr(u32)]
+pub enum NodeTimingMilestone {
+    /// The Bun runtime object finished initializing.
+    NodeStart = 0,
+    /// The JavaScriptCore VM and its global object exist.
+    V8Start = 1,
+    /// The JS environment (globals, `process`, module loader) is wired up.
+    Environment = 2,
+    /// Pre-execution bootstrap is done; the entry point is about to load.
+    BootstrapComplete = 3,
+    /// The event loop ran for the first time.
+    LoopStart = 4,
+    /// The event loop is done; `process.on("exit")` has not run yet.
+    LoopExit = 5,
+}
+
+impl NodeTimingMilestone {
+    pub const COUNT: usize = 6;
+}
+
 pub struct VirtualMachine {
     pub global: *mut JSGlobalObject,
     // allocator dropped per §Allocators (global mimalloc)
@@ -190,6 +221,9 @@ pub struct VirtualMachine {
     // `transpiler.resolver.standalone_module_graph` without a downcast.
     pub standalone_module_graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     pub smol: bool,
+    /// `--print` (`bun -p`): [`print_eval_result_if_needed`] logs the
+    /// entry-point completion value on drain or `process.exit()`.
+    pub eval_and_print: bool,
     // LAYERING: real type is `bun_runtime::api::dns::Resolver::Order` (forward
     // dep); stored as its `u8` repr.
     pub dns_result_order: u8,
@@ -267,6 +301,10 @@ pub struct VirtualMachine {
 
     pub origin_timer: std::time::Instant,
     pub(crate) origin_timestamp: u64,
+    /// `performance.nodeTiming` milestones, in nanoseconds since
+    /// `origin_timer`. `-1` means the milestone has not been reached yet;
+    /// indices are [`NodeTimingMilestone`].
+    pub(crate) node_timing_milestones: [i64; NodeTimingMilestone::COUNT],
     /// For fake timers: override performance.now() with a specific value (in nanoseconds).
     pub overridden_performance_now: Option<u64>,
     pub(crate) macro_event_loop: EventLoop,
@@ -1484,7 +1522,81 @@ impl VirtualMachine {
         }
     }
 
+    /// `--print`: log the entry-point completion value once without unwrapping promises,
+    /// per node's `runScriptInContext` (lib/internal/process/execution.js). CJS only;
+    /// ESM `--print` is a Bun extension (`Run::start` unwraps the capability promise).
+    pub fn print_eval_result_if_needed(&mut self) {
+        if !self.eval_and_print
+            || self.entry_point_result.printed
+            || self.entry_point_result.esm_capability
+            || !self.entry_point_result.value.has()
+        {
+            return;
+        }
+        self.entry_point_result.printed = true;
+        let result = self
+            .entry_point_result
+            .value
+            .get()
+            .unwrap_or(JSValue::UNDEFINED);
+
+        // node prints via console.log (strings verbatim, else util.inspect); route through
+        // the node util.inspect port for parity, except JSX which keeps Bun's native form.
+        if result.is_string() {
+            if let Ok(text) = crate::bun_string_jsc::from_js(result, self.global()) {
+                let utf8 = text.to_utf8();
+                bun_core::Output::println(format_args!("{}", bstr::BStr::new(utf8.slice())));
+                bun_core::Output::flush();
+                return;
+            }
+        }
+        let is_jsx = matches!(
+            crate::console_object::Tag::get_advanced(
+                result,
+                self.global(),
+                crate::console_object::TagOptions::HIDE_GLOBAL,
+            )
+            .map(|r| r.tag.tag()),
+            Ok(crate::console_object::Tag::JSX)
+        );
+        let inspected = if is_jsx {
+            JSValue::ZERO
+        } else {
+            crate::cpp::Bun__inspectEvalResultForPrint(
+                self.global(),
+                result,
+                bun_core::Output::enable_ansi_colors_stdout(),
+            )
+        };
+        if !inspected.is_empty_or_undefined_or_null() && inspected.is_string() {
+            if let Ok(text) = crate::bun_string_jsc::from_js(inspected, self.global()) {
+                let utf8 = text.to_utf8();
+                bun_core::Output::println(format_args!("{}", bstr::BStr::new(utf8.slice())));
+                bun_core::Output::flush();
+                return;
+            }
+        }
+
+        // Fallback (inspect unavailable or threw): the native console formatter.
+        // SAFETY: `&raw const result` is a single live stack slot; a null
+        // `ctype` routes to the per-VM console (stdout).
+        unsafe {
+            crate::console_object::message_with_type_and_level(
+                ::core::ptr::null_mut(),
+                crate::console_object::MessageType::Log,
+                crate::console_object::MessageLevel::Log,
+                self.global(),
+                &raw const result,
+                1,
+            );
+        }
+    }
+
     pub fn on_exit(&mut self) {
+        // Before `dispatch_on_exit` below: a `process.on("exit")` handler must
+        // observe a non-negative `performance.nodeTiming.loopExit`.
+        self.record_node_timing_milestone(NodeTimingMilestone::LoopExit);
+
         // Write CPU profile if profiling was enabled - do this FIRST before any
         // shutdown begins. Grab the config and null it out to make this
         // idempotent.
@@ -2114,7 +2226,9 @@ impl VirtualMachine {
                 .write(VirtualMachine::default_on_unhandled_rejection);
             addr_of_mut!((*vm).origin_timer).write(std::time::Instant::now());
             addr_of_mut!((*vm).origin_timestamp).write(get_origin_timestamp());
+            addr_of_mut!((*vm).node_timing_milestones).write([-1; NodeTimingMilestone::COUNT]);
             addr_of_mut!((*vm).smol).write(opts.smol);
+            addr_of_mut!((*vm).eval_and_print).write(opts.eval_mode);
             // `Option<{CPU,Heap}ProfilerConfig>` are NOT zero-valid: each
             // payload contains a `bool`, and rustc picks that field's invalid
             // range (not the `&[u8]` null-ptr) as the enum niche, so all-zero
@@ -2172,6 +2286,10 @@ impl VirtualMachine {
             (*addr_of_mut!((*vm).source_mappings)).map = addr_of_mut!((*vm).saved_source_map_table);
         }
 
+        // SAFETY: every non-zero-valid field is written by the block above, so
+        // `&mut *vm` is now a valid reference.
+        unsafe { &mut *vm }.record_node_timing_milestone(NodeTimingMilestone::NodeStart);
+
         // High-tier per-VM state — Transpiler / Timer::All / entry_point.
         // Note (init order): the transpiler and per-VM timer state must be
         // built BEFORE `JSGlobalObject` creation. The C++ body
@@ -2223,6 +2341,8 @@ impl VirtualMachine {
             jsc_vm
         };
         VMHolder::set_cached_global_object(Some(global));
+        // SAFETY: `vm` is fully initialised; the JSC VM and global now exist.
+        unsafe { &mut *vm }.record_node_timing_milestone(NodeTimingMilestone::V8Start);
 
         // `uws.Loop.get().internal_loop_data.jsc_vm
         // = vm.jsc_vm` — must run AFTER `jsc_vm` is set so C/uws callbacks can
@@ -2248,6 +2368,9 @@ impl VirtualMachine {
             // SAFETY: written once during init.
             IS_SMOL_MODE.store(true, core::sync::atomic::Ordering::Relaxed);
         }
+
+        // SAFETY: `vm` is fully initialised; see the `NodeStart` stamp above.
+        unsafe { &mut *vm }.record_node_timing_milestone(NodeTimingMilestone::Environment);
 
         Ok(vm)
     }
@@ -2301,7 +2424,19 @@ impl VirtualMachine {
     /// then route through the same `auto_tick` hook so drain loops in
     /// `on_before_exit` / `bun_main` still make forward progress.
     #[inline]
+    /// Stamp a `performance.nodeTiming` milestone. First write wins, so a
+    /// milestone on a path that runs repeatedly (the event loop) keeps the
+    /// time it was first reached.
+    pub fn record_node_timing_milestone(&mut self, milestone: NodeTimingMilestone) {
+        if self.node_timing_milestones[milestone as usize] >= 0 {
+            return;
+        }
+        let elapsed = self.origin_timer.elapsed().as_nanos() as i64;
+        self.node_timing_milestones[milestone as usize] = elapsed;
+    }
+
     pub fn auto_tick_active(&mut self) {
+        self.record_node_timing_milestone(NodeTimingMilestone::LoopStart);
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: `self` is the live per-thread VM (hook contract).
             unsafe { (hooks.auto_tick_active)(self) };
@@ -2342,7 +2477,9 @@ impl VirtualMachine {
         // execArgv. (The JS side re-reads `process.execArgv`, so an explicit
         // empty execArgv under a traced parent stays a no-op there.)
         fn is_bootstrap_flag(arg: &[u8]) -> bool {
-            arg.starts_with(b"--trace-") || arg.starts_with(b"--stack-trace-limit")
+            arg.starts_with(b"--trace-")
+                || arg.starts_with(b"--stack-trace-limit")
+                || arg.starts_with(b"--heapsnapshot-signal")
         }
         let needs_pre_execution = bun_core::argv().into_iter().any(is_bootstrap_flag)
             || self
@@ -2363,6 +2500,7 @@ impl VirtualMachine {
             // evaluating `internal/process/pre_execution`.
             crate::cpp::Bun__preExecutionBootstrap(self.global());
         }
+        self.record_node_timing_milestone(NodeTimingMilestone::BootstrapComplete);
 
         if !self.main_is_html_entrypoint {
             if let Some(hooks) = hooks {
@@ -4718,6 +4856,8 @@ impl VirtualMachine {
         self.overridden_main.deinit();
         self.entry_point_result.value.deinit();
         self.entry_point_result.cjs_set_value = false;
+        self.entry_point_result.esm_capability = false;
+        self.entry_point_result.printed = false;
         if let Some(promise) = self.pending_internal_promise {
             if self.pending_internal_promise_is_protected {
                 JSValue::from_cell(promise).unprotect();

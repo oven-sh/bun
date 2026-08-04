@@ -18,6 +18,9 @@
 #pragma push_macro("assert")
 #undef assert
 
+// For `-e`/`-p`, node exposes every require()-able builtin as a lazy re-assignable
+// global (addBuiltinLibsToObject in lib/internal/modules/helpers.js); `crypto` included
+// so the identifier resolves to node:crypto (like node's eval_string.js special-case).
 #define FOREACH_EXPOSED_BUILTIN_IMR(v)     \
     v(ffi,                    Bun::InternalModuleRegistry::BunFFI) \
     v(assert,                 Bun::InternalModuleRegistry::NodeAssert) \
@@ -56,6 +59,7 @@
     v(worker_threads,         Bun::InternalModuleRegistry::NodeWorkerThreads) \
     v(zlib,                   Bun::InternalModuleRegistry::NodeZlib) \
     v(constants,              Bun::InternalModuleRegistry::NodeConstants) \
+    v(crypto,                 Bun::InternalModuleRegistry::NodeCrypto) \
     v(string_decoder,         Bun::InternalModuleRegistry::NodeStringDecoder) \
     v(buffer,                 Bun::InternalModuleRegistry::NodeBuffer) \
     v(jsc,                    Bun::InternalModuleRegistry::BunJSC) \
@@ -91,6 +95,45 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::Global
 
     FOREACH_EXPOSED_BUILTIN_IMR(PUT_CUSTOM_GETTER_SETTER)
 #undef PUT_CUSTOM_GETTER_SETTER
+}
+
+// `--print` output: node logs via console.log (util.inspect); Bun's native console
+// differs, so route through the node util.inspect port. Returns the inspected string,
+// or empty (exception cleared) so the Rust caller falls back to the native formatter.
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__inspectEvalResultForPrint(
+    Zig::GlobalObject* globalObject, JSC::EncodedJSValue encodedValue, bool colors)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::JSValue util = globalObject->internalModuleRegistry()->requireId(
+        globalObject, vm, Bun::InternalModuleRegistry::NodeUtil);
+    if (scope.exception()) [[unlikely]] {
+        CLEAR_IF_EXCEPTION(scope);
+        return {};
+    }
+    if (!util.isObject())
+        return {};
+    JSC::JSValue inspect = util.get(globalObject, JSC::Identifier::fromString(vm, "inspect"_s));
+    if (scope.exception()) [[unlikely]] {
+        CLEAR_IF_EXCEPTION(scope);
+        return {};
+    }
+    auto callData = JSC::getCallData(inspect);
+    if (callData.type == JSC::CallData::Type::None)
+        return {};
+    auto* options = JSC::constructEmptyObject(globalObject);
+    options->putDirect(vm, JSC::Identifier::fromString(vm, "colors"_s), JSC::jsBoolean(colors));
+    JSC::MarkedArgumentBuffer args;
+    args.append(JSC::JSValue::decode(encodedValue));
+    args.append(options);
+    JSC::JSValue result = JSC::call(globalObject, inspect, callData, util, args);
+    if (scope.exception()) [[unlikely]] {
+        CLEAR_IF_EXCEPTION(scope);
+        return {};
+    }
+    if (!result.isString())
+        return {};
+    return JSC::JSValue::encode(result);
 }
 
 // Evaluate `internal/process/pre_execution` before any user code runs.

@@ -540,9 +540,46 @@ impl JSGlobalObject {
         .throw()
     }
 
-    /// "The {argname} argument must be of type {typename}. Received {value}"
-    ///
-    /// Accepts `&str`, `&[u8]`, or `b"..."` for `argname`/`typename`.
+    /// Renders Node's `ERR_INVALID_ARG_TYPE` message via the same C++ formatter the
+    /// C++ error paths use. Returns a +1-ref'd string wrapped in [`OwnedString`].
+    pub fn format_invalid_argument_type(
+        global: &Self,
+        argname: &[u8],
+        expected_types: &[&[u8]],
+        value: JSValue,
+    ) -> JsResult<OwnedString> {
+        crate::top_scope!(scope, global);
+        let types: Vec<BunString> = expected_types
+            .iter()
+            .map(|t| BunString::borrow_utf8(t))
+            .collect();
+        // SAFETY: `types` outlives the call; the C++ side copies each entry into
+        // a `WTF::String` before returning.
+        let str = OwnedString::new(unsafe {
+            Bun__ErrorCode__formatInvalidArgType(
+                global,
+                BunString::borrow_utf8(argname),
+                types.as_ptr(),
+                types.len(),
+                value,
+            )
+        });
+        scope.return_if_exception()?;
+        Ok(str)
+    }
+
+    /// Node renders `"<name>" argument` for a plain name and `"<name>" property`
+    /// for a dotted one. Returns a +1-ref'd string wrapped in [`OwnedString`].
+    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L1394
+    pub fn format_parameter_name(argname: &[u8]) -> OwnedString {
+        OwnedString::new(Bun__ErrorCode__formatParameterName(BunString::borrow_utf8(
+            argname,
+        )))
+    }
+
+    /// "The {argname} argument must be of type {typename}. Received {value}".
+    /// `typename` is used verbatim; for a list of type/class names use
+    /// [`Self::throw_invalid_argument_type_list`] so Node's grouping applies.
     pub fn throw_invalid_argument_type_value(
         &self,
         argname: impl AsRef<[u8]>,
@@ -556,13 +593,32 @@ impl JSGlobalObject {
         self.err(
             JscError::INVALID_ARG_TYPE,
             format_args!(
-                "The \"{}\" argument must be of type {}. Received {}",
-                bstr::BStr::new(argname.as_ref()),
+                "The {} must be of type {}. Received {}",
+                Self::format_parameter_name(argname.as_ref()),
                 bstr::BStr::new(typename.as_ref()),
                 actual_string_value
             ),
         )
         .throw()
+    }
+
+    /// `ERR_INVALID_ARG_TYPE` with several accepted types, rendered the way
+    /// Node renders an array of expected types (`of type string or an instance
+    /// of Buffer or URL`).
+    pub fn throw_invalid_argument_type_list(
+        &self,
+        argname: impl AsRef<[u8]>,
+        expected_types: &[&[u8]],
+        value: JSValue,
+    ) -> JsError {
+        let message =
+            match Self::format_invalid_argument_type(self, argname.as_ref(), expected_types, value)
+            {
+                Ok(s) => s,
+                Err(e) => return e,
+            };
+        self.err(JscError::INVALID_ARG_TYPE, format_args!("{}", message))
+            .throw()
     }
 
     pub fn throw_invalid_argument_type_value2(
@@ -578,8 +634,8 @@ impl JSGlobalObject {
         self.err(
             JscError::INVALID_ARG_TYPE,
             format_args!(
-                "The \"{}\" argument must be {}. Received {}",
-                bstr::BStr::new(argname.as_ref()),
+                "The {} must be {}. Received {}",
+                Self::format_parameter_name(argname.as_ref()),
                 bstr::BStr::new(typename.as_ref()),
                 actual_string_value
             ),
@@ -587,50 +643,25 @@ impl JSGlobalObject {
         .throw()
     }
 
-    /// `validators.throwErrInvalidArgType` —
-    /// `The "<name>" property must be of type <expected>, got <actual>`
-    /// where `<actual>` is the JS `typeof` (or `"array"` for arrays).
-    pub(crate) fn throw_invalid_property_type(
+    /// Node's `ERR_INVALID_ARG_TYPE`:
+    /// `The "<name>" <argument|property> must be of type <expected>. Received <specific type>`
+    pub fn throw_err_invalid_arg_type(
         &self,
         name: impl AsRef<[u8]>,
-        expected_type: &str,
+        expected_type: impl std::fmt::Display,
         value: JSValue,
     ) -> JsError {
-        let actual_type = if value.js_type().is_array() {
-            bun_core::ZigString::static_(b"array")
-        } else {
-            value.js_type_string(self).get_zig_string(self)
-        };
-        self.err(
-            JscError::INVALID_ARG_TYPE,
-            format_args!(
-                "The \"{}\" property must be of type {}, got {}",
-                bstr::BStr::new(name.as_ref()),
-                expected_type,
-                actual_type,
-            ),
-        )
-        .throw()
-    }
-
-    /// "The <argname> argument must be one of type <typename>. Received <value>"
-    pub fn throw_invalid_argument_type_value_one_of(
-        &self,
-        argname: impl AsRef<[u8]>,
-        typename: impl AsRef<[u8]>,
-        value: JSValue,
-    ) -> JsError {
-        let actual_string_value = match Self::determine_specific_type(self, value) {
+        let actual = match Self::determine_specific_type(self, value) {
             Ok(s) => s,
             Err(e) => return e,
         };
         self.err(
             JscError::INVALID_ARG_TYPE,
             format_args!(
-                "The \"{}\" argument must be one of type {}. Received {}",
-                bstr::BStr::new(argname.as_ref()),
-                bstr::BStr::new(typename.as_ref()),
-                actual_string_value
+                "The {} must be of type {}. Received {}",
+                ArgumentName(name.as_ref()),
+                expected_type,
+                actual,
             ),
         )
         .throw()
@@ -1548,6 +1579,19 @@ unsafe extern "C" {
         value: JSValue,
     ) -> BunString;
 
+    safe fn Bun__ErrorCode__formatParameterName(arg_name: BunString) -> BunString;
+
+    // `expected_types` is a `(ptr, len)` pair the C++ side dereferences, so this
+    // one stays `unsafe`; `JSGlobalObject::format_invalid_argument_type` is the
+    // only caller and passes a live slice.
+    fn Bun__ErrorCode__formatInvalidArgType(
+        global: &JSGlobalObject,
+        arg_name: BunString,
+        expected_types: *const BunString,
+        expected_types_length: usize,
+        value: JSValue,
+    ) -> BunString;
+
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to non-null `*const`); `Option<&BunString>` is ABI-identical
     // to a nullable `*const BunString` via the guaranteed null-pointer
@@ -1670,4 +1714,22 @@ impl ScriptExecutionContextIdentifier {
 unsafe extern "C" {
     // safe: by-value `u32` in, raw nullable pointer out (caller checks before deref).
     safe fn ScriptExecutionContextIdentifier__getGlobalObject(id: u32) -> *mut JSGlobalObject;
+}
+
+/// Renders an `ERR_INVALID_ARG_TYPE` parameter name per Node's `addParameter`:
+/// verbatim if ending in `" argument"`, else quoted `property`/`argument` by dot.
+/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L1407-L1414
+pub struct ArgumentName<'a>(pub &'a [u8]);
+
+impl std::fmt::Display for ArgumentName<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = bstr::BStr::new(self.0);
+        if self.0.ends_with(b" argument") {
+            write!(f, "{}", name)
+        } else if self.0.contains(&b'.') {
+            write!(f, "\"{}\" property", name)
+        } else {
+            write!(f, "\"{}\" argument", name)
+        }
+    }
 }

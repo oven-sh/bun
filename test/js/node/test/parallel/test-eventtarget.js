@@ -649,11 +649,7 @@ if (typeof Bun === "undefined") { // Node internal
   const evConstructorName = inspect(ev, {
     depth: -1,
   });
-  if (typeof Bun === "undefined") {
-    strictEqual(evConstructorName, 'Event');
-  } else {
-    strictEqual(evConstructorName, '[Event]');
-  }
+  strictEqual(evConstructorName, 'Event');
 
   const inspectResult = inspect(ev, {
     depth: 1,

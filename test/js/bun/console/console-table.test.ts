@@ -207,11 +207,11 @@ test.skip("console.table character widths", () => {
 });
 
 test("console.table repeat 50", () => {
-  const expected = `┌───┬───┐
-│   │ n │
-├───┼───┤
-│ 0 │ 8 │
-└───┴───┘
+  const expected = `┌─────────┬───┐
+│ (index) │ n │
+├─────────┼───┤
+│ 0       │ 8 │
+└─────────┴───┘
 `;
   for (let i = 0; i < 50; i++) {
     expect(renderTable([{ n: 8 }])).toBe(expected);
@@ -222,7 +222,7 @@ test("console.table repeat 50", () => {
 // two logical passes (column sizing, then rendering); re-reading in the second
 // pass doubles getter side effects and renders the second call's value.
 describe("console.table reads each cell once", () => {
-  const box = (v: string) => `┌───┬───┐\n│   │ x │\n├───┼───┤\n│ 0 │ ${v} │\n└───┴───┘\n`;
+  const box = (v: string) => `┌─────────┬───┐\n│ (index) │ x │\n├─────────┼───┤\n│ 0       │ ${v} │\n└─────────┴───┘\n`;
 
   test("enumerable getter on an array row", () => {
     let calls = 0;
@@ -253,7 +253,7 @@ describe("console.table reads each cell once", () => {
     const out = Bun.inspect.table(data);
     expect({ calls, out }).toEqual({
       calls: 1,
-      out: `┌───┬───┐\n│   │ a │\n├───┼───┤\n│ r │ 1 │\n└───┴───┘\n`,
+      out: `┌─────────┬───┐\n│ (index) │ a │\n├─────────┼───┤\n│ r       │ 1 │\n└─────────┴───┘\n`,
     });
   });
 
@@ -262,7 +262,9 @@ describe("console.table reads each cell once", () => {
       yield { a: 1 };
       yield { a: 2 };
     }
-    expect(Bun.inspect.table(rows())).toBe(`┌───┬───┐\n│   │ a │\n├───┼───┤\n│ 0 │ 1 │\n│ 1 │ 2 │\n└───┴───┘\n`);
+    expect(Bun.inspect.table(rows())).toBe(
+      `┌─────────┬───┐\n│ (index) │ a │\n├─────────┼───┤\n│ 0       │ 1 │\n│ 1       │ 2 │\n└─────────┴───┘\n`,
+    );
   });
 
   test("getter on a primitive routed to the Values column", () => {
@@ -272,7 +274,7 @@ describe("console.table reads each cell once", () => {
     const out = Bun.inspect.table(data);
     expect({ calls, out }).toEqual({
       calls: 1,
-      out: `┌───┬────────┐\n│   │ Values │\n├───┼────────┤\n│ a │ 1      │\n└───┴────────┘\n`,
+      out: `┌─────────┬────────┐\n│ (index) │ Values │\n├─────────┼────────┤\n│ a       │ 1      │\n└─────────┴────────┘\n`,
     });
   });
 
@@ -291,7 +293,7 @@ describe("console.table reads each cell once", () => {
     ]);
     expect({ calls, out }).toEqual({
       calls: 1,
-      out: `┌───┬────┐\n│   │ x  │\n├───┼────┤\n│ 0 │ C1 │\n└───┴────┘\n`,
+      out: `┌─────────┬────┐\n│ (index) │ x  │\n├─────────┼────┤\n│ 0       │ C1 │\n└─────────┴────┘\n`,
     });
   });
 
@@ -331,7 +333,7 @@ describe("console.table reads each cell once", () => {
   // truncate the cells it already captured.
   test("a row whose key order differs from the column order", () => {
     expect(Bun.inspect.table([{ a: 1 }, { b: 2, a: 3 }])).toBe(
-      `┌───┬───┬───┐\n│   │ a │ b │\n├───┼───┼───┤\n│ 0 │ 1 │   │\n│ 1 │ 3 │ 2 │\n└───┴───┴───┘\n`,
+      `┌─────────┬───┬───┐\n│ (index) │ a │ b │\n├─────────┼───┼───┤\n│ 0       │ 1 │   │\n│ 1       │ 3 │ 2 │\n└─────────┴───┴───┘\n`,
     );
   });
 
@@ -341,7 +343,7 @@ describe("console.table reads each cell once", () => {
   test("a Proxy row renders the [[Get]] value the width pass saw", () => {
     const p = new Proxy({ x: "FROM_TARGET" }, { get: () => "FROM_GET" });
     expect(Bun.inspect.table([p])).toBe(
-      `┌───┬──────────┐\n│   │ x        │\n├───┼──────────┤\n│ 0 │ FROM_GET │\n└───┴──────────┘\n`,
+      `┌─────────┬──────────┐\n│ (index) │ x        │\n├─────────┼──────────┤\n│ 0       │ FROM_GET │\n└─────────┴──────────┘\n`,
     );
   });
 

@@ -514,6 +514,92 @@ pub enum Flavor {
 // AsyncFSTask / UVFSRequest / NewAsyncCpTask / AsyncReaddirRecursiveTask are
 // the thread-pool wrappers that back every `fs.promises.*` call (and the shell
 // `cp` builtin).
+/// Node's fs permission checks (`THROW_IF_INSUFFICIENT_PERMISSIONS` in node_file.cc), keyed
+/// by argument struct. The denial `resource` is the path as passed (input path on POSIX).
+pub(crate) mod fs_perm {
+    use crate::node::types::{PathLike, PathOrFileDescriptor};
+    use crate::permission::{self, Scope};
+
+    pub struct Denied {
+        pub scope: Scope,
+        pub resource: Vec<u8>,
+    }
+
+    pub(crate) fn check(scope: Scope, path: &[u8]) -> Option<Denied> {
+        if permission::is_granted(scope, Some(path)) {
+            None
+        } else {
+            Some(Denied {
+                scope,
+                resource: path.to_vec(),
+            })
+        }
+    }
+
+    pub(crate) fn read(path: &PathLike) -> Option<Denied> {
+        check(Scope::FileSystemRead, path.slice())
+    }
+
+    pub(crate) fn write(path: &PathLike) -> Option<Denied> {
+        check(Scope::FileSystemWrite, path.slice())
+    }
+
+    /// `CheckOpenPermissions` in node_file.cc: the open flags decide which of
+    /// the two fs scopes the path needs.
+    pub(crate) fn open(path: &PathLike, flags: i32) -> Option<Denied> {
+        let rw = flags & (bun_sys::O::RDONLY | bun_sys::O::WRONLY | bun_sys::O::RDWR);
+        // Flags with write-like side effects even when opening read-only
+        // (O_TEMPORARY exists only on Windows libuv; Bun's flag parser maps it
+        // into these POSIX-shaped bits before this point).
+        let write_as_side_effect =
+            flags & (bun_sys::O::APPEND | bun_sys::O::CREAT | bun_sys::O::TRUNC) != 0;
+        if rw != bun_sys::O::WRONLY {
+            if let Some(denied) = read(path) {
+                return Some(denied);
+            }
+        }
+        if rw != bun_sys::O::RDONLY || write_as_side_effect {
+            if let Some(denied) = write(path) {
+                return Some(denied);
+            }
+        }
+        None
+    }
+
+    /// [`open`] when the argument may be an already-open fd, which Node does
+    /// not re-check.
+    pub(crate) fn open_path_or_fd(path: &PathOrFileDescriptor, flags: i32) -> Option<Denied> {
+        match path {
+            PathOrFileDescriptor::Path(path) => open(path, flags),
+            PathOrFileDescriptor::Fd(_) => None,
+        }
+    }
+
+    /// node's lib appends the `XXXXXX` template before the binding sees a
+    /// mkdtemp prefix, so both the grant lookup and the reported resource
+    /// carry it.
+    pub(crate) fn mkdtemp(prefix: &PathLike) -> Option<Denied> {
+        let mut tmpl = Vec::with_capacity(prefix.slice().len() + 6);
+        tmpl.extend_from_slice(prefix.slice());
+        tmpl.extend_from_slice(b"XXXXXX");
+        if permission::is_granted(Scope::FileSystemWrite, Some(&tmpl)) {
+            None
+        } else {
+            Some(Denied {
+                scope: Scope::FileSystemWrite,
+                resource: tmpl,
+            })
+        }
+    }
+
+    pub(crate) fn write_path_or_fd(path: &PathOrFileDescriptor) -> Option<Denied> {
+        match path {
+            PathOrFileDescriptor::Path(path) => write(path),
+            PathOrFileDescriptor::Fd(_) => None,
+        }
+    }
+}
+
 mod _async_tasks {
     use super::*;
 
@@ -1029,6 +1115,12 @@ mod _async_tasks {
     /// than a silent UAF/leak.
     pub trait FsArgument: Sized + Unprotect {
         const HAVE_ABORT_SIGNAL: bool = false;
+        /// The node_file.cc permission check for this operation; `None` when granted.
+        /// Callers gate on [`crate::permission::is_enabled`] first.
+        #[inline]
+        fn permission_denied(&self) -> Option<super::fs_perm::Denied> {
+            None
+        }
         /// `Arguments.fromJS(ctx, &slice)` — parse this argument set from a JS
         /// call frame. Every `args::*` struct already exposes an inherent
         /// `from_js`; the trait forwards to it so the generic `Bindings` in
@@ -1053,10 +1145,11 @@ mod _async_tasks {
     /// methods each `args::*` struct already defines.
     /// [`Unprotect`] is implemented per-type alongside.
     macro_rules! impl_fs_argument {
-    ( $( $ty:ty ),+ $(,)? ) => {
+    ( $( $ty:ty $( => |$a:ident| $check:expr )? ),+ $(,)? ) => {
         $( impl FsArgument for $ty {
             #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
             #[inline] fn to_thread_safe(&mut self) { <$ty>::to_thread_safe(self) }
+            $( #[inline] fn permission_denied(&self) -> Option<super::fs_perm::Denied> { let $a = self; $check } )?
         } )+
     };
     // Fd-only types — `to_thread_safe` is a no-op (these hold only `FD`/scalars).
@@ -1070,32 +1163,42 @@ mod _async_tasks {
         } )+
     };
 }
+    use super::fs_perm;
     impl_fs_argument!(
-        args::Rename,
-        args::Truncate,
+        // Check shapes mirror node_file.cc: Rename/Link guard read+write on
+        // the source and write on the destination; Symlink guards the target
+        // both ways plus write on the link path.
+        args::Rename => |a| fs_perm::read(&a.old_path)
+            .or_else(|| fs_perm::write(&a.old_path))
+            .or_else(|| fs_perm::write(&a.new_path)),
+        args::Truncate => |a| fs_perm::write_path_or_fd(&a.path),
         args::FdVectorIo,
         args::FTruncate,
-        args::Chown,
-        args::Lutimes,
-        args::Chmod,
-        args::StatFS,
-        args::Stat,
-        args::Link,
-        args::Symlink,
-        args::Readlink,
-        args::Realpath,
-        args::Unlink,
-        args::Rm,
-        args::RmDir,
-        args::Mkdir,
-        args::MkdirTemp,
-        args::Readdir,
-        args::Open,
+        args::Chown => |a| fs_perm::write(&a.path),
+        args::Lutimes => |a| fs_perm::write(&a.path),
+        args::Chmod => |a| fs_perm::write(&a.path),
+        args::StatFS => |a| fs_perm::read(&a.path),
+        args::Stat => |a| fs_perm::read(&a.path),
+        args::Link => |a| fs_perm::read(&a.old_path)
+            .or_else(|| fs_perm::write(&a.old_path))
+            .or_else(|| fs_perm::write(&a.new_path)),
+        args::Symlink => |a| fs_perm::read(&a.target_path)
+            .or_else(|| fs_perm::write(&a.target_path))
+            .or_else(|| fs_perm::write(&a.new_path)),
+        args::Readlink => |a| fs_perm::read(&a.path),
+        args::Realpath => |a| fs_perm::read(&a.path),
+        args::Unlink => |a| fs_perm::write(&a.path),
+        args::Rm => |a| fs_perm::write(&a.path),
+        args::RmDir => |a| fs_perm::write(&a.path),
+        args::Mkdir => |a| fs_perm::write(&a.path),
+        args::MkdirTemp => |a| fs_perm::mkdtemp(&a.prefix),
+        args::Readdir => |a| fs_perm::read(&a.path),
+        args::Open => |a| fs_perm::open(&a.path, a.flags.as_int()),
         args::Write,
         args::Read,
-        args::Exists,
-        args::Access,
-        args::CopyFile,
+        args::Exists => |a| a.path.as_ref().and_then(fs_perm::read),
+        args::Access => |a| fs_perm::read(&a.path),
+        args::CopyFile => |a| fs_perm::read(&a.src).or_else(|| fs_perm::write(&a.dest)),
     );
     impl_fs_argument!(@fd
         args::Fchown, args::FChmod, args::Fstat, args::Close, args::Futimes,
@@ -1106,6 +1209,10 @@ mod _async_tasks {
     // `signal()` exposes it to `AsyncFSTask::run_from_js_thread`.
     impl FsArgument for args::ReadFile {
         const HAVE_ABORT_SIGNAL: bool = true;
+        #[inline]
+        fn permission_denied(&self) -> Option<super::fs_perm::Denied> {
+            super::fs_perm::open_path_or_fd(&self.path, self.flag.as_int())
+        }
         #[inline]
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             args::ReadFile::from_js(ctx, arguments)
@@ -1121,6 +1228,10 @@ mod _async_tasks {
     }
     impl FsArgument for args::WriteFile {
         const HAVE_ABORT_SIGNAL: bool = true;
+        #[inline]
+        fn permission_denied(&self) -> Option<super::fs_perm::Denied> {
+            super::fs_perm::open_path_or_fd(&self.file, self.flag.as_int())
+        }
         #[inline]
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             args::WriteFile::from_js(ctx, arguments)
@@ -2796,17 +2907,17 @@ pub mod args {
     impl Rename {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Rename> {
             let old_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_argument_type_value(
+                ctx.throw_invalid_argument_type_list(
                     b"oldPath",
-                    b"string or an instance of Buffer or URL",
+                    &[b"string", b"Buffer", b"URL"],
                     arguments.next().unwrap_or(JSValue::UNDEFINED),
                 )
             })?;
             // `Drop for PathLike` runs on early return.
             let new_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_argument_type_value(
+                ctx.throw_invalid_argument_type_list(
                     b"newPath",
-                    b"string or an instance of Buffer or URL",
+                    &[b"string", b"Buffer", b"URL"],
                     arguments.next().unwrap_or(JSValue::UNDEFINED),
                 )
             })?;
@@ -2824,9 +2935,7 @@ pub mod args {
     fs_args_path_forwarders!(Truncate; path);
     impl Truncate {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Truncate> {
-            let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray"))
-            })?;
+            let path = PathOrFileDescriptor::from_js_required(ctx, arguments, "path")?;
             let len: u64 = 'brk: {
                 let Some(len_value) = arguments.next() else {
                     break 'brk 0;
@@ -3145,7 +3254,9 @@ pub mod args {
                             break 'brk false;
                         }
                         arguments.eat();
-                        if let Some(b) = next_val.get_boolean_strict(ctx, "bigint")? {
+                        if let Some(b) =
+                            next_val.get_boolean_strict_named(ctx, "bigint", "options.bigint")?
+                        {
                             break 'brk b;
                         }
                     }
@@ -3183,10 +3294,16 @@ pub mod args {
                             break 'brk false;
                         }
                         arguments.eat();
-                        if let Some(v) = next_val.get_boolean_strict(ctx, "throwIfNoEntry")? {
+                        if let Some(v) = next_val.get_boolean_strict_named(
+                            ctx,
+                            "throwIfNoEntry",
+                            "options.throwIfNoEntry",
+                        )? {
                             throw_if_no_entry = v;
                         }
-                        if let Some(b) = next_val.get_boolean_strict(ctx, "bigint")? {
+                        if let Some(b) =
+                            next_val.get_boolean_strict_named(ctx, "bigint", "options.bigint")?
+                        {
                             break 'brk b;
                         }
                     }
@@ -3216,7 +3333,9 @@ pub mod args {
                             break 'brk false;
                         }
                         arguments.eat();
-                        if let Some(b) = next_val.get_boolean_strict(ctx, "bigint")? {
+                        if let Some(b) =
+                            next_val.get_boolean_strict_named(ctx, "bigint", "options.bigint")?
+                        {
                             break 'brk b;
                         }
                     }
@@ -3555,7 +3674,9 @@ pub mod args {
             if let Some(val) = arguments.next() {
                 arguments.eat();
                 if val.is_object() {
-                    if let Some(b) = val.get_boolean_strict(ctx, "recursive")? {
+                    if let Some(b) =
+                        val.get_boolean_strict_named(ctx, "recursive", "options.recursive")?
+                    {
                         recursive = b;
                     }
                     if let Some(mode_) = val.get(ctx, "mode")? {
@@ -3601,9 +3722,9 @@ pub mod args {
             arguments: &mut ArgumentsSlice,
         ) -> JsResult<MkdirTemp> {
             let prefix = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_argument_type_value(
+                ctx.throw_invalid_argument_type_list(
                     b"prefix",
-                    b"string, Buffer, or URL",
+                    &[b"string", b"Buffer", b"URL"],
                     arguments.next().unwrap_or(JSValue::UNDEFINED),
                 )
             })?;
@@ -3648,10 +3769,16 @@ pub mod args {
                     _ => {
                         if val.is_object() {
                             encoding = get_encoding(val, ctx, encoding)?;
-                            if let Some(r) = val.get_boolean_strict(ctx, "recursive")? {
+                            if let Some(r) =
+                                val.get_boolean_strict_named(ctx, "recursive", "options.recursive")?
+                            {
                                 recursive = r;
                             }
-                            if let Some(w) = val.get_boolean_strict(ctx, "withFileTypes")? {
+                            if let Some(w) = val.get_boolean_strict_named(
+                                ctx,
+                                "withFileTypes",
+                                "options.withFileTypes",
+                            )? {
                                 with_file_types = w;
                             }
                         }
@@ -3817,12 +3944,16 @@ pub mod args {
             let bv = buffer_value
                 .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("data is required")))?;
             let buffer = StringOrBuffer::from_js(ctx, bv)?.ok_or_else(|| {
-                ctx.throw_invalid_argument_type_value(b"buffer", b"string or TypedArray", bv)
+                ctx.throw_invalid_argument_type_list(
+                    b"buffer",
+                    &[b"string", b"Buffer", b"TypedArray", b"DataView"],
+                    bv,
+                )
             })?;
             if bv.is_string() && !bv.is_string_literal() {
-                return Err(ctx.throw_invalid_argument_type_value(
+                return Err(ctx.throw_invalid_argument_type_list(
                     b"buffer",
-                    b"string or TypedArray",
+                    &[b"string", b"Buffer", b"TypedArray", b"DataView"],
                     bv,
                 ));
             }
@@ -3879,14 +4010,35 @@ pub mod args {
                                 },
                             ));
                         }
-                        let max_len = ((buf_len as u64 - args.offset) as i64).min(i32::MAX as i64);
-                        if length > max_len || length < 0 {
+                        // validateOffsetLengthWrite then validateInt32(length, 'length', 0),
+                        // in that order — each stage words its range differently.
+                        let remaining = (buf_len as u64 - args.offset) as i64;
+                        if length > remaining {
+                            return Err(ctx.throw_range_error(
+                                length as f64,
+                                bun_jsc::RangeErrorOptions {
+                                    field_name: b"length",
+                                    max: remaining,
+                                    ..Default::default()
+                                },
+                            ));
+                        }
+                        if length < 0 {
                             return Err(ctx.throw_range_error(
                                 length as f64,
                                 bun_jsc::RangeErrorOptions {
                                     field_name: b"length",
                                     min: 0,
-                                    max: max_len,
+                                    ..Default::default()
+                                },
+                            ));
+                        }
+                        if length > i32::MAX as i64 {
+                            return Err(ctx.throw_range_error(
+                                length as f64,
+                                bun_jsc::RangeErrorOptions {
+                                    field_name: b"length",
+                                    msg: b">= 0 && <= 2147483647",
                                     ..Default::default()
                                 },
                             ));
@@ -4015,7 +4167,11 @@ pub mod args {
                 0.0
             };
             let buffer = Buffer::from_js(ctx, buffer_value).ok_or_else(|| {
-                ctx.throw_invalid_argument_type_value(b"buffer", b"TypedArray", buffer_value)
+                ctx.throw_invalid_argument_type_list(
+                    b"buffer",
+                    &[b"Buffer", b"TypedArray", b"DataView"],
+                    buffer_value,
+                )
             })?;
 
             //   if (length === 0) {
@@ -4036,9 +4192,12 @@ pub mod args {
 
             let buf_len = buffer.slice().len();
             if buf_len == 0 {
+                let received = JSGlobalObject::inspect_for_error_message(ctx, buffer_value)?;
                 return Err(validators::throw_err_invalid_arg_value(
                     ctx,
-                    format_args!("The argument 'buffer' is empty and cannot be written."),
+                    format_args!(
+                        "The argument 'buffer' is empty and cannot be written. Received {received}"
+                    ),
                 ));
             }
             // validateOffsetLengthRead(offset, length, buffer.byteLength);
@@ -4218,11 +4377,7 @@ pub mod args {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<ReadFile> {
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
-            let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!(
-                    "path must be a string or a file descriptor"
-                ))
-            })?;
+            let path = PathOrFileDescriptor::from_js_required(ctx, arguments, "path")?;
             let mut encoding = Encoding::Buffer;
             let mut flag = FileSystemFlags::R;
             let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
@@ -4244,9 +4399,9 @@ pub mod args {
                             signal.pending_activity_ref();
                             *abort_signal = Some(signal);
                         } else {
-                            return Err(ctx.throw_invalid_argument_type_value(
+                            return Err(ctx.throw_invalid_argument_type_list(
                                 b"signal",
-                                b"AbortSignal",
+                                &[b"AbortSignal"],
                                 value,
                             ));
                         }
@@ -4316,11 +4471,7 @@ pub mod args {
         ) -> JsResult<WriteFile> {
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
-            let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!(
-                    "path must be a string or a file descriptor"
-                ))
-            })?;
+            let path = PathOrFileDescriptor::from_js_required(ctx, arguments, "path")?;
             let data_value = arguments
                 .next_eat()
                 .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("data is required")))?;
@@ -4353,9 +4504,9 @@ pub mod args {
                             signal.pending_activity_ref();
                             *abort_signal = Some(signal);
                         } else {
-                            return Err(ctx.throw_invalid_argument_type_value(
+                            return Err(ctx.throw_invalid_argument_type_list(
                                 b"signal",
-                                b"AbortSignal",
+                                &[b"AbortSignal"],
                                 value,
                             ));
                         }
@@ -10344,6 +10495,22 @@ pub enum NodeFSFunctionEnum {
 }
 
 impl NodeFSFunctionEnum {
+    /// Ops whose permission check sits before the sync/async split in
+    /// node_file.cc, so even the callback form throws synchronously instead of
+    /// delivering the denial through the callback.
+    pub const fn permission_check_throws_sync(self) -> bool {
+        matches!(
+            self,
+            Self::Chmod
+                | Self::Utimes
+                | Self::Lutimes
+                | Self::Mkdir
+                | Self::Rmdir
+                | Self::Readlink
+                | Self::Symlink
+        )
+    }
+
     /// Maps each async-FS function to its event-loop [`TaskTag`] (the `tags!`
     /// macro in `bun_event_loop::task_tag` declares one constant per variant).
     pub const fn task_tag(self) -> bun_event_loop::TaskTag {

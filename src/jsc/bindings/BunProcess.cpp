@@ -991,6 +991,17 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTimeBigInt, (JSC::JSGlobalObject * gl
     return JSC::JSValue::encode(JSValue(JSC::JSBigInt::createFrom(globalObject, Bun__readOriginTimer(globalObject->bunVM()))));
 }
 
+extern "C" bool Bun__Permission__isEnabled();
+extern "C" bool Bun__Permission__throwIfFsDenied(JSC::JSGlobalObject*, bool isWrite, const char* ptr, size_t len);
+
+/// The internal/permission builtin, for the diagnostics-channel publishes
+/// node's permission model does on denied checks and drops.
+extern "C" JSC::EncodedJSValue Bun__Permission__requireInternalPermissionModule(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    return JSValue::encode(globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::InternalPermission));
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1000,7 +1011,16 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObj
     Bun::V::validateString(scope, globalObject, value, "directory"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    ZigString str = Zig::toZigString(value.toWTFString(globalObject));
+    auto pathString = value.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (Bun__Permission__isEnabled()) [[unlikely]] {
+        // node_process_methods.cc Chdir: fs.read scope on the target.
+        auto utf8 = pathString.utf8();
+        if (Bun__Permission__throwIfFsDenied(globalObject, false, utf8.data(), utf8.length()))
+            return {};
+    }
+
+    ZigString str = Zig::toZigString(pathString);
     JSC::JSValue result = JSC::JSValue::decode(Bun__Process__setCwd(globalObject, &str));
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -1464,10 +1484,17 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     auto eventType = Identifier::fromString(vm, "unhandledRejection"_s);
     auto& wrapped = process->wrapped();
     if (wrapped.listenerCount(eventType) > 0) {
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        // Dispatch through a JS trampoline so listeners run with JS caller frames (as in
+        // node); Error.captureStackTrace(err, listener) must leave a non-empty stack.
+        JSC::JSFunction* emitter = JSC::JSFunction::create(vm, globalObject, processObjectInternalsEmitUnhandledRejectionFromNativeCodeGenerator(vm), globalObject);
         MarkedArgumentBuffer args;
         args.append(reason);
         args.append(promise);
-        wrapped.emit(eventType, args);
+        auto callData = JSC::getCallData(emitter);
+        JSC::profiledCall(globalObject, JSC::ProfilingReason::API, emitter, callData, process, args);
+        CLEAR_IF_EXCEPTION(scope);
         return true;
     }
 
@@ -1489,18 +1516,19 @@ extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalO
 
     auto eventType = Identifier::fromString(vm, "rejectionHandled"_s);
 
-    if (Bun__VM__allowRejectionHandledWarning(globalObject->bunVM())) {
-        Process::emitWarning(globalObject, jsString(vm, String("Promise rejection was handled asynchronously"_s)), jsString(vm, String("PromiseRejectionHandledWarning"_s)), jsUndefined(), jsUndefined());
-        CLEAR_IF_EXCEPTION(scope);
-        if (vm.hasPendingTerminationException()) [[unlikely]]
-            return true;
-    }
     auto& wrapped = process->wrapped();
     if (wrapped.listenerCount(eventType) > 0) {
         MarkedArgumentBuffer args;
         args.append(promise);
         wrapped.emit(eventType, args);
         return true;
+    }
+
+    // Node only warns when nothing handled the 'rejectionHandled' event
+    // (processPromiseRejections: `if (!process.emit('rejectionHandled', ...))`).
+    if (Bun__VM__allowRejectionHandledWarning(globalObject->bunVM())) {
+        Process::emitWarning(globalObject, jsString(globalObject->vm(), String("Promise rejection was handled asynchronously"_s)), jsString(globalObject->vm(), String("PromiseRejectionHandledWarning"_s)), jsUndefined(), jsUndefined());
+        CLEAR_IF_EXCEPTION(scope);
     }
 
     return false;
@@ -2062,6 +2090,24 @@ JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue w
         auto s = warning.getString(globalObject);
         errorInstance = createError(globalObject, !s.isEmpty() ? s : "Warning"_s);
         errorInstance->putDirect(vm, vm.propertyNames->name, type, JSC::PropertyAttribute::DontEnum | 0);
+        // With no JS frames on the stack (native emission) the created error
+        // has no `stack` at all; node always produces at least the
+        // "<name>: <message>" header line and warning handlers read it.
+        JSValue existingStack = errorInstance->get(globalObject, vm.propertyNames->stack);
+        RETURN_IF_EXCEPTION(scope, {});
+        bool stackMissing = existingStack.isUndefinedOrNull();
+        if (!stackMissing && existingStack.isString()) {
+            auto stackString = existingStack.getString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            stackMissing = stackString.isEmpty();
+        }
+        if (stackMissing) {
+            auto typeString = type.isString() ? type.getString(globalObject) : String("Warning"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            errorInstance->putDirect(vm, vm.propertyNames->stack,
+                jsString(vm, makeString(typeString, ": "_s, !s.isEmpty() ? s : String("Warning"_s))),
+                static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+        }
     } else if (warning.isCell() && warning.asCell()->type() == ErrorInstanceType) {
         errorInstance = warning.getObject();
     } else {
@@ -2561,6 +2607,21 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (Bun__Permission__isEnabled()) [[unlikely]] {
+        // node_report.cc WriteReport: fs.write on the filename as passed, or
+        // on the cwd when no filename is given.
+        auto filenameValue = callFrame->argument(0);
+        if (filenameValue.isString()) {
+            auto filename = filenameValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto utf8 = filename.utf8();
+            if (Bun__Permission__throwIfFsDenied(globalObject, true, utf8.data(), utf8.length()))
+                return {};
+        } else {
+            if (Bun__Permission__throwIfFsDenied(globalObject, true, nullptr, 0))
+                return {};
+        }
+    }
     // TODO:
     return JSValue::encode(callFrame->argument(0));
 }
@@ -2739,6 +2800,21 @@ enum class BunProcessStdinFdType : int32_t {
 extern "C" BunProcessStdinFdType Bun__Process__getStdinFdType(void*, int fd);
 
 extern "C" void Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(JSC::JSGlobalObject*, JSC::EncodedJSValue);
+// Resolves `name` via getDirect() along the prototype chain (never runs user code).
+// An exotic chain yields no slot and compares unequal to the recorded pristine value.
+static JSValue directPropertyValue(JSC::VM& vm, JSObject* object, const JSC::Identifier& name)
+{
+    for (JSObject* current = object; current;) {
+        if (JSValue value = current->getDirect(vm, name))
+            return value;
+        JSValue proto = current->getPrototypeDirect();
+        if (!proto.isObject())
+            return {};
+        current = asObject(proto);
+    }
+    return {};
+}
+
 static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -2785,7 +2861,49 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
         Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(resultObject->getIndex(globalObject, 1)));
     }
 
-    return resultObject->getIndex(globalObject, 0);
+    JSValue stream = resultObject->getIndex(globalObject, 0);
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
+    if (JSObject* streamObject = stream.getObject()) {
+        JSValue write = streamObject->get(globalObject, WebCore::builtinNames(vm).writePublicName());
+        RETURN_IF_EXCEPTION(scope, jsUndefined());
+        uncheckedDowncast<Process>(processObject)->setStdioWriteStream(vm, fd, streamObject, write);
+    }
+    return stream;
+}
+
+extern "C" void Bun__Console__onStdioWriteStreamCreated();
+
+void Process::setStdioWriteStream(JSC::VM& vm, int fd, JSObject* stream, JSValue pristineWrite)
+{
+    ASSERT(fd == 1 || fd == 2);
+    Bun__Console__onStdioWriteStreamCreated();
+    unsigned slot = static_cast<unsigned>(fd) - 1;
+    m_stdioWriteStream[slot].set(vm, this, stream);
+    m_pristineStdioWrite[slot].set(vm, this, pristineWrite);
+    // The console's getDirect() check only agrees with get() above while `write` is a
+    // plain data property on the chain, which is how Bun's stream classes declare it.
+    ASSERT(directPropertyValue(vm, stream, WebCore::builtinNames(vm).writePublicName()) == pristineWrite);
+}
+
+// Console write path (ConsoleObject.rs). Null when the stream was never created or
+// still has Bun's own `write`. No throw scope: nothing here can run user code.
+extern "C" JSC::EncodedJSValue Bun__Process__stdioStreamWithReplacedWrite(Zig::GlobalObject* globalObject, int32_t fd)
+{
+    if (!globalObject->hasProcessObject())
+        return JSValue::encode({});
+    auto& vm = JSC::getVM(globalObject);
+    return JSValue::encode(globalObject->processObject()->stdioStreamWithReplacedWrite(vm, fd));
+}
+
+JSObject* Process::stdioStreamWithReplacedWrite(JSC::VM& vm, int fd)
+{
+    ASSERT(fd == 1 || fd == 2);
+    unsigned slot = static_cast<unsigned>(fd) - 1;
+    JSObject* stream = m_stdioWriteStream[slot].get();
+    if (!stream)
+        return nullptr;
+    JSValue current = directPropertyValue(vm, stream, WebCore::builtinNames(vm).writePublicName());
+    return current == m_pristineStdioWrite[slot].get() ? nullptr : stream;
 }
 
 static JSValue constructStdout(VM& vm, JSObject* processObject)
@@ -3372,6 +3490,28 @@ JSValue createCryptoX509Object(JSGlobalObject* globalObject)
     return cryptoX509;
 }
 
+// Bun's own builtins call process.binding() where node's internals would call
+// internalBinding(), so neither the DEP0111 warning nor the permission-model
+// denial applies to them.
+static bool processBindingCallerIsInternal(JSC::VM& vm, CallFrame* callFrame)
+{
+    String callerURL;
+    JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+        if (Zig::isImplementationVisibilityPrivate(visitor))
+            return WTF::IterationStatus::Continue;
+        if (visitor->hasLineAndColumnInfo()) {
+            callerURL = Zig::sourceURL(visitor);
+            return WTF::IterationStatus::Done;
+        }
+        return WTF::IterationStatus::Continue;
+    });
+    return callerURL.startsWith("node:"_s) || callerURL.startsWith("bun:"_s) || callerURL.startsWith("internal"_s);
+}
+
+extern "C" bool Bun__Permission__isEnabled();
+extern "C" void Bun__Permission__throwProcessBindingDenied(JSC::JSGlobalObject*);
+extern "C" JSC::EncodedJSValue Bun__Permission__createObject(JSC::JSGlobalObject*);
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(jsGlobalObject);
@@ -3379,21 +3519,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     auto globalObject = uncheckedDowncast<Zig::GlobalObject>(jsGlobalObject);
     auto process = globalObject->processObject();
 
+    if (Bun__Permission__isEnabled() && !processBindingCallerIsInternal(vm, callFrame)) [[unlikely]] {
+        Bun__Permission__throwProcessBindingDenied(jsGlobalObject);
+        return {};
+    }
+
     if (Bun__Node__ProcessPendingDeprecation && !process->m_warnedProcessBinding) {
-        // Node latches DEP0111 once per Environment via deprecate(). Bun's own builtins call
-        // process.binding() too (node uses internalBinding), so internal callers don't warn/latch.
-        String callerURL;
-        JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-            if (Zig::isImplementationVisibilityPrivate(visitor))
-                return WTF::IterationStatus::Continue;
-            if (visitor->hasLineAndColumnInfo()) {
-                callerURL = Zig::sourceURL(visitor);
-                return WTF::IterationStatus::Done;
-            }
-            return WTF::IterationStatus::Continue;
-        });
-        bool isInternalCaller = callerURL.startsWith("node:"_s) || callerURL.startsWith("bun:"_s) || callerURL.startsWith("internal"_s);
-        if (!isInternalCaller) {
+        // Node latches DEP0111 through its deprecate() wrapper, once per
+        // Environment (each worker warns once).
+        if (!processBindingCallerIsInternal(vm, callFrame)) {
             process->m_warnedProcessBinding = true;
             Process::emitWarning(globalObject,
                 jsString(vm, String("process.binding() is deprecated. Please use public APIs instead."_s)),
@@ -3477,6 +3611,10 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_cachedCwd);
     visitor.append(thisObject->m_argv);
     visitor.append(thisObject->m_execArgv);
+    for (unsigned i = 0; i < 2; ++i) {
+        visitor.append(thisObject->m_stdioWriteStream[i]);
+        visitor.append(thisObject->m_pristineStdioWrite[i]);
+    }
 
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_resourceUsageStructure.visit(visitor);
@@ -3953,6 +4091,14 @@ JSC_DEFINE_HOST_FUNCTION(Process_unref, (JSGlobalObject * globalObject, CallFram
         RETURN_IF_EXCEPTION(scope, {});
     }
 
+    return JSValue::encode(jsUndefined());
+}
+
+extern "C" void Bun__Process__rawDebug(JSC::JSGlobalObject*, const JSC::EncodedJSValue* values, size_t count);
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionRawDebug, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    Bun__Process__rawDebug(globalObject, reinterpret_cast<const JSC::EncodedJSValue*>(callFrame->addressOfArgumentsStart()), callFrame->argumentCount());
     return JSValue::encode(jsUndefined());
 }
 
@@ -4558,7 +4704,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   _kill                            Process_functionReallyKill                          Function 2
   _linkedBinding                   Process_stubEmptyFunction                           Function 0
   _preload_modules                 Process_stubEmptyArray                              PropertyCallback
-  _rawDebug                        Process_stubEmptyFunction                           Function 0
+  _rawDebug                        Process_functionRawDebug                            Function 0
   _startProfilerIdleNotifier       Process_stubEmptyFunction                           Function 0
   _stopProfilerIdleNotifier        Process_stubEmptyFunction                           Function 0
   _tickCallback                    Process_stubEmptyFunction                           Function 0
@@ -4675,6 +4821,13 @@ void Process::finishCreation(JSC::VM& vm)
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
+
+    // Node only defines process.permission when the permission model is on.
+    if (Bun__Permission__isEnabled()) [[unlikely]] {
+        putDirect(vm, Identifier::fromString(vm, "permission"_s),
+            JSValue::decode(Bun__Permission__createObject(globalObject())),
+            PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    }
 }
 
 } // namespace Bun

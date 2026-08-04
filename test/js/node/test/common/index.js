@@ -59,6 +59,22 @@ const hasCrypto = Boolean(process.versions.openssl) &&
 
 const hasSQLite = Boolean(process.versions.sqlite);
 
+const usesSharedLibrary = process.config.variables.node_shared;
+const hasInspector = Boolean(process.features.inspector);
+// Bun has `bun:ffi` but not Node's `node:ffi`, which is what this gates.
+const hasFFI = Boolean(process.config.variables.node_use_ffi);
+
+// small-icu doesn't support non-English locales
+const hasFullICU = (() => {
+  try {
+    const january = new Date(9e8);
+    const spanish = new Intl.DateTimeFormat('es', { month: 'long' });
+    return spanish.format(january) === 'enero';
+  } catch {
+    return false;
+  }
+})();
+
 // Node gates these on build variables (v8_enable_temporal_support and
 // --localstorage-file). Bun has no equivalent knobs, so feature-detect.
 const hasTemporal = typeof globalThis.Temporal === 'object' && globalThis.Temporal !== null;
@@ -176,7 +192,9 @@ if (process.argv.length === 2 &&
         const { onGCSweepSync } = require('./gc');
         const { releaseWeakRefs } = require('bun:jsc');
         globalThis.gc ??= () => { Bun.gc(true); onGCSweepSync(releaseWeakRefs, Bun.gc); };
-        break;
+        // Keep scanning: a later --expose-internals on the same Flags line
+        // (e.g. `--expose-gc --expose-internals`) still needs its shim.
+        continue;
       }
       if ((flag === "--expose-externalize-string" || flag === "--expose_externalize_string") && process.versions.bun) {
         // V8's externalized-string test helpers. JavaScriptCore has no string
@@ -192,7 +210,8 @@ if (process.argv.length === 2 &&
           }
           return true;
         };
-        break;
+        // Keep scanning for the same reason as --expose-gc above.
+        continue;
       }
       if ((flag === "--experimental-sqlite" || flag === "--no-experimental-sqlite") && process.versions.bun) {
         // node:sqlite is always available in Bun; the Node experimental gate
@@ -247,6 +266,19 @@ if (process.versions.bun &&
   installBunExposeInternalsRequireInterceptor();
 }
 
+// Bun: worker_threads workers likewise skip the flag-check block (isMainThread
+// gate); node workers inherit --expose-gc via the re-spawned parent's
+// execArgv. Install the same gc shim the main thread gets.
+if (process.versions.bun &&
+    !isMainThread &&
+    typeof process.argv[1] === 'string' &&
+    fs.existsSync(process.argv[1]) &&
+    parseTestMetadata().flags.some((f) => f === '--expose-gc' || f === '--expose_gc')) {
+  const { onGCSweepSync } = require('./gc');
+  const { releaseWeakRefs } = require('bun:jsc');
+  globalThis.gc ??= () => { Bun.gc(true); onGCSweepSync(releaseWeakRefs, Bun.gc); };
+}
+
 // Serve require("internal/*") from bun's internal module registry
 // (via bun:internal-for-testing, which is expose-internals-gated:
 // always available in debug builds, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
@@ -288,10 +320,40 @@ function installBunExposeInternalsRequireInterceptor() {
       }
       const vendored = requireVendoredNodeInternal(id);
       if (vendored !== undefined) {
+        // Some vendored internals export freshly-minted look-alike symbols;
+        // anything Bun holds module-private must be recovered from the live
+        // objects and override key-for-key, or prototype lookups miss.
+        const override = harnessInternalOverrides[id];
+        if (override !== undefined) {
+          const cached = mergedInternals[id];
+          if (cached !== undefined) return cached;
+          return (mergedInternals[id] = { ...vendored, ...override() });
+        }
         return vendored;
       }
     }
     return originalRequire.apply(this, arguments);
+  };
+  const harnessInternalOverrides = {
+    __proto__: null,
+    // internal/net: the per-socket option symbols are module-private in Bun's
+    // node:net; recover the real ones from a probe socket (the constructor
+    // always sets them) and the prototype.
+    'internal/net': () => {
+      const net = originalRequire.call(module, 'node:net');
+      const probe = net._normalizeArgs([]);
+      const socketProbe = new net.Socket();
+      const bySymbolName = name =>
+        Object.getOwnPropertySymbols(socketProbe).find(s => s.description === name) ??
+        Object.getOwnPropertySymbols(net.Socket.prototype).find(s => s.description === name);
+      return {
+        normalizedArgsSymbol: Object.getOwnPropertySymbols(probe).find(s => s.description === 'normalizedArgs'),
+        kSetNoDelay: bySymbolName('kSetNoDelay'),
+        kSetKeepAlive: bySymbolName('kSetKeepAlive'),
+        kSetKeepAliveInitialDelay: bySymbolName('kSetKeepAliveInitialDelay'),
+        kReinitializeHandle: bySymbolName('kReinitializeHandle'),
+      };
+    },
   };
   // http2-specific internal modules (internal/http2/util, …) are
   // served separately via Bun.plugin module shims backed by the
@@ -937,6 +999,12 @@ function skipIfSQLiteMissing() {
   }
 }
 
+function skipIfFFIMissing() {
+  if (!hasFFI) {
+    skip('missing FFI');
+  }
+}
+
 function getArrayBufferViews(buf) {
   const { buffer, byteOffset, byteLength } = buf;
 
@@ -1185,10 +1253,28 @@ function expectRequiredModule(mod, expectation, checkESModule = true) {
   assert.deepStrictEqual(clone, { ...expectation });
 }
 
+function expectRequiredTLAError(err) {
+  const message = /require\(\) cannot be used on an ESM graph with top-level await/;
+  if (typeof err === 'string') {
+    assert.match(err, /ERR_REQUIRE_ASYNC_MODULE/);
+    assert.match(err, message);
+  } else {
+    assert.strictEqual(err.code, 'ERR_REQUIRE_ASYNC_MODULE');
+    assert.match(err.message, message);
+  }
+}
+
 function sleepSync(ms) {
   const sab = new SharedArrayBuffer(4);
   const i32 = new Int32Array(sab);
   Atomics.wait(i32, 0, 0, ms);
+}
+
+function resolveBuiltBinary(binary) {
+  if (isWindows) {
+    binary += '.exe';
+  }
+  return path.join(path.dirname(process.execPath), binary);
 }
 
 const common = {
@@ -1201,6 +1287,7 @@ const common = {
   escapePOSIXShell,
   expectsError,
   expectRequiredModule,
+  expectRequiredTLAError,
   expectWarning,
   gcUntil,
   getArrayBufferViews,
@@ -1210,6 +1297,9 @@ const common = {
   getTTYfd,
   hasIntl,
   hasCrypto,
+  hasFFI,
+  hasFullICU,
+  hasInspector,
   hasOpenSSL,
   hasQuic,
   hasSQLite,
@@ -1227,6 +1317,7 @@ const common = {
   isOpenBSD,
   isMacOS,
   isPi,
+  isRiscv64,
   isSunOS,
   isWindows,
   localIPv6Hosts,
@@ -1244,15 +1335,18 @@ const common = {
   pwdCommand,
   requireNoPackageJSONAbove,
   runWithInvalidFD,
+  resolveBuiltBinary,
   skip,
   skipIf32Bits,
   skipIfDumbTerminal,
   skipIfEslintMissing,
   skipIfInspectorDisabled,
+  skipIfFFIMissing,
   skipIfSQLiteMissing,
   skipIfWorker,
   sleepSync,
   spawnPromisified,
+  usesSharedLibrary,
 
   get enoughTestMem() {
     return require('os').totalmem() > 0x70000000; /* 1.75 Gb */
@@ -1451,12 +1545,6 @@ function installBunExposeInternalsShim() {
         loader: "object",
         exports: { ...(http2Internals.core ?? {}) },
       }));
-      build.module("internal/timers", () => ({
-        loader: "object",
-        // TIMEOUT_MAX mirrors Node's internal/timers (2 ** 31 - 1) so vendored
-        // tests exercising the > TIMEOUT_MAX clamp use the real threshold.
-        exports: { kTimeout: Symbol.for("::buntimeout::"), TIMEOUT_MAX: 2 ** 31 - 1 },
-      }));
       build.module("internal/webstreams/util", () => ({
         loader: "object",
         exports: {
@@ -1479,19 +1567,6 @@ function installBunExposeInternalsShim() {
         loader: "object",
         exports: { getDefaultHighWaterMark: require("node:stream").getDefaultHighWaterMark },
       }));
-      // node's internal/net: normalizedArgsSymbol is a module-private symbol in
-      // Bun's node:net. Recover the real one from a real _normalizeArgs result
-      // rather than minting a look-alike.
-      build.module("internal/net", () => {
-        const net = require("node:net");
-        const probe = net._normalizeArgs([]);
-        const normalizedArgsSymbol = Object.getOwnPropertySymbols(probe).find(
-          s => s.description === "normalizedArgs",
-        );
-        return { loader: "object", exports: { normalizedArgsSymbol } };
-      });
-      // node's internal/options: map the few CLI options vendored http tests ask
-      // about onto the equivalent runtime values. Unknown options return undefined.
       build.module("internal/options", () => ({
         loader: "object",
         exports: {

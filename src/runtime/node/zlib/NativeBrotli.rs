@@ -204,16 +204,16 @@ mod _impl {
             // caller-supplied array must hold at least 2 elements.
             let write_result_value = arguments.ptr[1];
             let Some(mut write_result_buf) = write_result_value.as_array_buffer(global_this) else {
-                return Err(global_this.throw_invalid_argument_type_value(
+                return Err(global_this.throw_invalid_argument_type_list(
                     "writeResult",
-                    "Uint32Array",
+                    &[b"Uint32Array"],
                     write_result_value,
                 ));
             };
             if write_result_buf.typed_array_type != bun_jsc::JSType::Uint32Array {
-                return Err(global_this.throw_invalid_argument_type_value(
+                return Err(global_this.throw_invalid_argument_type_list(
                     "writeResult",
-                    "Uint32Array",
+                    &[b"Uint32Array"],
                     write_result_value,
                 ));
             }
@@ -234,16 +234,16 @@ mod _impl {
             // bytes, so the element type must actually be Uint32Array.
             let params_value = arguments.ptr[0];
             let Some(mut params_buf) = params_value.as_array_buffer(global_this) else {
-                return Err(global_this.throw_invalid_argument_type_value(
+                return Err(global_this.throw_invalid_argument_type_list(
                     "params",
-                    "Uint32Array",
+                    &[b"Uint32Array"],
                     params_value,
                 ));
             };
             if params_buf.typed_array_type != bun_jsc::JSType::Uint32Array {
-                return Err(global_this.throw_invalid_argument_type_value(
+                return Err(global_this.throw_invalid_argument_type_list(
                     "params",
-                    "Uint32Array",
+                    &[b"Uint32Array"],
                     params_value,
                 ));
             }
@@ -258,9 +258,9 @@ mod _impl {
                 dictionary_buf = match dictionary_value.as_array_buffer(global_this) {
                     Some(buf) => buf,
                     None => {
-                        return Err(global_this.throw_invalid_argument_type_value(
+                        return Err(global_this.throw_invalid_argument_type_list(
                             "dictionary",
-                            "Buffer, TypedArray, or DataView",
+                            &[b"Buffer", b"TypedArray", b"DataView"],
                             dictionary_value,
                         ));
                     }

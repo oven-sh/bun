@@ -3,9 +3,9 @@
 //! Bun stores state per process (Node: per Environment), so worker `drop()` is global.
 
 use core::sync::atomic::{AtomicBool, Ordering};
-use std::sync::RwLock;
 
 use bun_core::ZigString;
+use bun_threading::RwLock;
 use bun_jsc::{
     CallFrame, ErrorCode, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, ZigStringJsc as _,
 };
@@ -112,7 +112,7 @@ impl FsGrants {
     /// `FSPermission::GrantAccess`.
     fn grant(&mut self, resolved: Vec<u8>) {
         let path = wildcard_if_dir(resolved);
-        if self.granted.iter().any(|g| *g == path) {
+        if self.granted.contains(&path) {
             return;
         }
         self.granted.push(path);
@@ -266,12 +266,7 @@ pub fn init_from_cli(grants: &CliGrants<'_>) {
         }
     }
 
-    match STATE.write() {
-        Ok(mut guard) => *guard = st,
-        // A poisoned lock this early means a panic already unwound through a
-        // permission check; refuse to run rather than run unsandboxed.
-        Err(_) => bun_core::Output::panic(format_args!("permission model state is unrecoverable")),
-    }
+    *STATE.write() = st;
     ENABLED.store(true, Ordering::Release);
 }
 
@@ -294,11 +289,7 @@ pub fn is_granted(scope: Scope, reference: Option<&[u8]>) -> bool {
         // Node reports (`process.permission` does not even exist there).
         return true;
     }
-    let Ok(st) = STATE.read() else {
-        // Fail closed: a poisoned lock means we cannot prove the access is
-        // allowed.
-        return false;
-    };
+    let st = STATE.read();
     match scope {
         // Node: `has('fs')` is true only when both directions are fully open.
         Scope::FileSystem => st.fs_read.allow_all && st.fs_write.allow_all,
@@ -324,9 +315,7 @@ fn drop_scope(scope: Scope, reference: Option<&[u8]>) {
     if !is_enabled() {
         return;
     }
-    let Ok(mut st) = STATE.write() else {
-        return;
-    };
+    let mut st = STATE.write();
     let reference = reference.filter(|r| !r.is_empty());
     match (scope, reference) {
         (Scope::FileSystem, None) => {
@@ -466,9 +455,7 @@ pub fn emit_startup_warnings(global: &JSGlobalObject) {
         return;
     }
     let (bypass_flags, net_granted, comma_flags) = {
-        let Ok(st) = STATE.read() else {
-            return;
-        };
+        let st = STATE.read();
         // Order matches Node's `warnFlags`. `--allow-ffi` is omitted: Bun does
         // not build with `node_use_ffi`, so Node would not warn for it either.
         (
@@ -705,8 +692,9 @@ pub struct NodeOptionsGrants {
 }
 
 pub fn grants_from_node_options() -> Option<NodeOptionsGrants> {
-    let value = std::env::var("NODE_OPTIONS").ok()?;
-    if !value.contains("--permission") {
+    use bstr::ByteSlice as _;
+    let value = bun_core::env_var::NODE_OPTIONS::get()?;
+    if !value.contains_str("--permission") {
         return None;
     }
     let mut grants = NodeOptionsGrants {
@@ -722,24 +710,23 @@ pub fn grants_from_node_options() -> Option<NodeOptionsGrants> {
     };
     // Node splits NODE_OPTIONS on whitespace with no quoting; the flags Node
     // itself injects are always in `--flag=value` form.
-    for token in value.split_ascii_whitespace() {
+    for token in value
+        .split(|b| b.is_ascii_whitespace())
+        .filter(|s| !s.is_empty())
+    {
         match token {
-            "--permission" => grants.permission = true,
-            "--allow-child-process" => grants.child = true,
-            "--allow-worker" => grants.worker = true,
-            "--allow-inspector" => grants.inspector = true,
-            "--allow-wasi" => grants.wasi = true,
-            "--allow-net" => grants.net = true,
-            "--allow-addons" => grants.addon = true,
+            b"--permission" => grants.permission = true,
+            b"--allow-child-process" => grants.child = true,
+            b"--allow-worker" => grants.worker = true,
+            b"--allow-inspector" => grants.inspector = true,
+            b"--allow-wasi" => grants.wasi = true,
+            b"--allow-net" => grants.net = true,
+            b"--allow-addons" => grants.addon = true,
             _ => {
-                if let Some(value) = token.strip_prefix("--allow-fs-read=") {
-                    grants
-                        .fs_read
-                        .push(&*Box::leak(Box::<[u8]>::from(value.as_bytes())));
-                } else if let Some(value) = token.strip_prefix("--allow-fs-write=") {
-                    grants
-                        .fs_write
-                        .push(&*Box::leak(Box::<[u8]>::from(value.as_bytes())));
+                if let Some(value) = token.strip_prefix(b"--allow-fs-read=") {
+                    grants.fs_read.push(value);
+                } else if let Some(value) = token.strip_prefix(b"--allow-fs-write=") {
+                    grants.fs_write.push(value);
                 }
             }
         }

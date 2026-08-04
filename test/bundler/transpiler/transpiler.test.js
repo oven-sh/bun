@@ -4795,7 +4795,9 @@ it("deeply nested statement blocks error instead of crashing the process", () =>
 });
 
 it("running a file with deeply nested unary operators does not crash the process", () => {
-  const code = Buffer.alloc(2 * 4000, "- ").toString() + "1";
+  // Leading space so the argument doesn't start with '-'; Node-style -e
+  // parsing treats a '-'-leading separate arg as a missing value.
+  const code = " " + Buffer.alloc(2 * 4000, "- ").toString() + "1";
   const { exitCode, signalCode } = Bun.spawnSync({
     cmd: [bunExe(), "-e", code],
     stdout: "pipe",

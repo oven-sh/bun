@@ -143,8 +143,11 @@ export function write(this: Console, input) {
 // TODO: probably could extract `getStringWidth`; probably make that a native function. note how it is copied from `readline.js`
 export function createConsoleConstructor(console: typeof globalThis.console) {
   const { inspect, formatWithOptions } = require("node:util");
-  const { isBuffer } = require("node:buffer");
+  const {
+    Buffer: { isBuffer },
+  } = require("node:buffer");
   const { isMapIterator, isSetIterator } = require("node:util/types");
+  const { previewEntries } = require("internal/util/inspect");
 
   const { validateObject, validateInteger, validateArray, validateOneOf } = require("internal/validators");
   const kMaxGroupIndentation = 1000;
@@ -191,11 +194,8 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     for (let i = 0; i < row.length; i++) {
       const cell = row[i];
       const len = getStringWidth(cell);
-      const needed = (columnWidths[i] - len) / 2;
-      // round(needed) + ceil(needed) will always add up to the amount
-      // of spaces we need while also left justifying the output.
-      out +=
-        (StringPrototypeRepeat as any).$call(" ", needed) + cell + StringPrototypeRepeat.$call(" ", Math.ceil(needed));
+      const needed = columnWidths[i] - len;
+      out += cell + StringPrototypeRepeat.$call(" ", Math.ceil(needed));
       if (i !== row.length - 1) out += tableChars.middle;
     }
     out += tableChars.right;
@@ -666,11 +666,11 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       const mapIter = isMapIterator(tabularData);
       let isKeyValue = false;
       let i = 0;
-      // if (mapIter) {
-      //   const res = previewEntries(tabularData, true);
-      //   tabularData = res[0];
-      //   isKeyValue = res[1];
-      // }
+      if (mapIter) {
+        const res = previewEntries(tabularData, true);
+        tabularData = res[0];
+        isKeyValue = res[1];
+      }
 
       if (isKeyValue || $isMap(tabularData)) {
         const keys = [];
@@ -693,7 +693,9 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       }
 
       const setIter = isSetIterator(tabularData);
-      // if (setIter) tabularData = previewEntries(tabularData);
+      // Node passes only the iterator; V8's previewEntries infers it. Bun's
+      // helper needs the flag, and returns [entries, isKeyValue].
+      if (setIter) tabularData = previewEntries(tabularData, true)[0];
 
       const setlike = setIter || mapIter || $isSet(tabularData);
       if (setlike) {

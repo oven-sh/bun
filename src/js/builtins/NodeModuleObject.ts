@@ -24,3 +24,13 @@ export function _initPaths() {
   const M = require("node:module");
   M.globalPaths = paths;
 }
+
+// Implementation for `require('node:module').getSourceMapsSupport`.
+export function getSourceMapsSupport() {
+  return require("internal/shared").getSourceMapsSupport();
+}
+
+// Implementation for `require('node:module').setSourceMapsSupport`.
+export function setSourceMapsSupport(enabled, options) {
+  return require("internal/shared").setSourceMapsSupport(enabled, options);
+}

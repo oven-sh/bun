@@ -333,7 +333,8 @@ export function initializeNextTickQueue(
   reportUncaughtExceptionFn,
 ) {
   var queue;
-  var tickInitHooks;
+  var asyncHooks;
+  var asyncHooksState;
   var process;
   var nextTickQueue = nextTickQueue;
   var drainMicrotasks = drainMicrotasksFn;
@@ -345,7 +346,8 @@ export function initializeNextTickQueue(
   setup = () => {
     const { FixedQueue } = require("internal/fixed_queue");
     queue = new FixedQueue();
-    tickInitHooks = require("internal/async_hooks_tick").tickInitHooks;
+    asyncHooks = require("internal/async_hooks");
+    asyncHooksState = asyncHooks.state;
 
     function processTicksAndRejections() {
       var tock;
@@ -356,6 +358,9 @@ export function initializeNextTickQueue(
           var frame = tock.frame;
           var restore = $getInternalField($asyncContext, 0);
           $putInternalField($asyncContext, 0, frame);
+          // Ticks queued before async_hooks was activated carry no id.
+          var asyncId = asyncHooksState.active ? tock.asyncId : undefined;
+          if (asyncId !== undefined) asyncHooks.emitBefore(asyncId, tock.triggerAsyncId, tock);
           try {
             if (args === undefined) {
               callback();
@@ -382,6 +387,10 @@ export function initializeNextTickQueue(
             reportUncaughtException(e);
           } finally {
             $putInternalField($asyncContext, 0, restore);
+            if (asyncId !== undefined) {
+              asyncHooks.emitDestroy(asyncId);
+              asyncHooks.emitAfter(asyncId);
+            }
           }
         }
 
@@ -410,28 +419,14 @@ export function initializeNextTickQueue(
       args: $argumentCount() > 1 ? args : undefined,
       frame: $getInternalField($asyncContext, 0),
     };
-    if (tickInitHooks.length !== 0) {
-      // node fires one TickObject init per process.nextTick() call, at
-      // construction time (before the callback runs).
-      const asyncHooksTick = require("internal/async_hooks_tick");
-      const asyncId = asyncHooksTick.newAsyncId();
-      // Snapshot: enable()/disable() from inside a hook must not affect the
-      // in-flight dispatch (node stages such mutations in tmp_array until
-      // the emit completes).
-      const hooks = tickInitHooks.slice();
-      for (let i = 0; i < hooks.length; i++) {
-        try {
-          hooks[i](asyncId, "TickObject", 0, tock);
-        } catch (err) {
-          // node: a throwing init hook is fatal (fatalError: print + exit 1),
-          // never surfaced to the process.nextTick() caller. console is a
-          // user-mutable global, so shield the print; exit regardless.
-          try {
-            console.error(typeof err?.stack === "string" ? err.stack : err);
-          } catch {}
-          process.exit(1);
-        }
-      }
+    if (asyncHooksState.active) {
+      // node mints the TickObject's ids and fires init at process.nextTick()
+      // time, before the callback runs.
+      const asyncId = asyncHooks.newAsyncId();
+      const triggerAsyncId = asyncHooks.getDefaultTriggerAsyncId();
+      tock.asyncId = asyncId;
+      tock.triggerAsyncId = triggerAsyncId;
+      asyncHooks.emitInit(asyncId, "TickObject", triggerAsyncId, tock);
     }
     queue.push(tock);
     $putInternalField(nextTickQueue, 0, 1);

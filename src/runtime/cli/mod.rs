@@ -1221,8 +1221,7 @@ pub mod command {
         //  * the version check is exact-argv-shape (`len == 2`) so it cannot
         //    intercept `bun <bin> --version`, where the flag belongs to
         //    `<bin>` (the bug the old argv-scan shim had — see the
-        //    NOTE below). The empty-eval check is likewise exact-shape, falling
-        //    through to `HelpCommand.exec`.
+        //    NOTE below).
         {
             let argv = bun::argv();
             let argv0 = argv.get(0).map(bun_core::ZStr::as_bytes).unwrap_or(b"");
@@ -1233,25 +1232,6 @@ pub mod command {
                         Some(b"--revision") => print_revision_and_exit(),
                         _ => {}
                     }
-                }
-
-                let empty_eval = match argv.len() {
-                    2 => matches!(
-                        argv.get(1).map(bun_core::ZStr::as_bytes),
-                        Some(b"-e=" | b"-p=" | b"--eval=" | b"--print=")
-                    ),
-                    3 => {
-                        argv.get(2).is_some_and(|a| a.as_bytes().is_empty())
-                            && matches!(
-                                argv.get(1).map(bun_core::ZStr::as_bytes),
-                                Some(b"-e" | b"-p" | b"--eval" | b"--print")
-                            )
-                    }
-                    _ => false,
-                };
-                if empty_eval {
-                    Output::flush();
-                    return HelpCommand::exec();
                 }
 
                 // `bun <path>` / `bun .` — the dominant run shape. argv[1] is
@@ -1438,6 +1418,13 @@ pub mod command {
             Global::exit(1);
         }
 
+        if matches!(tag, Tag::AutoCommand | Tag::RunCommand) && ctx.runtime_options.check_syntax {
+            // `--check` / `-c`: syntax-check the entry point (or stdin) without
+            // executing it. `--check` together with `--eval` already errored
+            // during argument parsing.
+            return run_command::RunCommand::exec_check(ctx);
+        }
+
         // Node: `-i foo.js` runs the script; `-i -e code` evals then enters the
         // REPL (via process._eval). `-i -p` is not yet threaded through the
         // bootstrap (Node prints AND enters the REPL), so `-p` currently
@@ -1457,7 +1444,7 @@ pub mod command {
             }
         }
 
-        if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
+        if tag == Tag::AutoCommand && ctx.runtime_options.eval.provided {
             return run_command::RunCommand::exec_eval(ctx);
         }
 

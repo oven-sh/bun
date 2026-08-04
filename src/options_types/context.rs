@@ -551,6 +551,10 @@ pub struct RuntimeOptions {
     /// `--expose-gc` makes `globalThis.gc()` available. Added for Node
     /// compatibility.
     pub expose_gc: bool,
+    /// `--disallow-code-generation-from-strings` makes `eval()` and the
+    /// `Function` constructor throw `EvalError`, matching the V8 flag node
+    /// exposes under the same name.
+    pub disallow_code_generation_from_strings: bool,
     /// `--interactive` starts the Node.js-compatible REPL (node:repl), like
     /// `node --interactive`. (`-i` is taken by `--install=fallback`.)
     pub interactive: bool,
@@ -560,16 +564,35 @@ pub struct RuntimeOptions {
     pub cron_period: Box<[u8]>,
     pub cpu_prof: CpuProf,
     pub heap_prof: HeapProf,
+    /// `--check` / `-c`: parse the entry point (or stdin) without executing it,
+    /// like Node.js.
+    pub check_syntax: bool,
 }
 
 #[derive(Default)]
 pub struct Eval {
     pub script: Box<[u8]>,
     pub eval_and_print: bool,
+    /// True when `-e`/`--eval`/`-p`/`--print` was passed (Node's `[has_eval_string]`).
+    /// Distinguishes an empty script from an absent one: `bun -e ""` runs an empty
+    /// program and bare `bun -p` prints undefined, rather than falling through to help.
+    pub provided: bool,
+    /// `--input-type`: module type for string input (stdin / `--eval`),
+    /// "module" or "commonjs". Empty when not passed.
+    pub input_type: Box<[u8]>,
     /// Under `--interactive`, `script` holds the node:repl bootstrap; this
     /// holds the user's actual `-e` bytes so `process._eval` reports them
     /// (or `undefined` when empty). `None` = not `--interactive`.
     pub interactive_script: Option<Box<[u8]>>,
+}
+
+impl Eval {
+    /// Whether an eval entry point should run: `-e`/`-p` was passed (`provided`, even
+    /// for an empty script), or an internal path staged a script instead of a file
+    /// (piped stdin, or the no-op entry `--check` uses to reach the syntax checker).
+    pub fn has_entry(&self) -> bool {
+        self.provided || !self.script.is_empty()
+    }
 }
 
 pub struct CpuProf {
@@ -620,6 +643,7 @@ impl Default for RuntimeOptions {
             experimental_http3_fetch: false,
             dns_result_order: Box::from(&b"verbatim"[..]),
             expose_gc: false,
+            disallow_code_generation_from_strings: false,
             interactive: false,
             preserve_symlinks_main: false,
             console_depth: None,
@@ -627,6 +651,7 @@ impl Default for RuntimeOptions {
             cron_period: Box::default(),
             cpu_prof: CpuProf::default(),
             heap_prof: HeapProf::default(),
+            check_syntax: false,
         }
     }
 }

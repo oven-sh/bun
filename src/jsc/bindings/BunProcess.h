@@ -32,8 +32,18 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSString> m_cachedCwd;
     WriteBarrier<Unknown> m_argv;
     WriteBarrier<Unknown> m_execArgv;
+    // process.stdout/stderr from their lazy properties, paired with the `write` each had
+    // at creation so the native console can notice when user code replaces it.
+    // Index 0 = fd 1, index 1 = fd 2; empty until first touched.
+    WriteBarrier<JSObject> m_stdioWriteStream[2];
+    WriteBarrier<Unknown> m_pristineStdioWrite[2];
 
 public:
+    // fd is 1 or 2. Called once per stream, from the lazy property.
+    void setStdioWriteStream(JSC::VM&, int fd, JSObject* stream, JSValue pristineWrite);
+    // The stream for `fd` if its `write` is no longer the one Bun installed,
+    // otherwise null. Never runs user code.
+    JSObject* stdioStreamWithReplacedWrite(JSC::VM&, int fd);
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
         : Base(structure, globalObject, WTF::move(impl))
     {

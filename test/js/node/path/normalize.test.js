@@ -74,6 +74,40 @@ describe("path.normalize", () => {
     assert.strictEqual(path.posix.normalize("/bb../../x"), "/x");
   });
 
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L438-L475
+  test("win32 reserved device names", () => {
+    // A reserved name is its own root and the result is made explicitly relative.
+    assert.strictEqual(path.win32.normalize("CON:"), ".\\CON:.");
+    assert.strictEqual(path.win32.normalize("con:"), ".\\con:.");
+    assert.strictEqual(path.win32.normalize("CON:foo"), ".\\CON:foo");
+    assert.strictEqual(path.win32.normalize("CON:..\\..\\foo"), ".\\CON:..\\..\\foo");
+    assert.strictEqual(path.win32.normalize("AUX:/foo\\bar/baz"), ".\\AUX:foo\\bar\\baz");
+    assert.strictEqual(path.win32.normalize("LPT9:"), ".\\LPT9:.");
+    assert.strictEqual(path.win32.normalize("COM\u00b9:"), ".\\COM\u00b9:.");
+    assert.strictEqual(path.win32.normalize("LPT\u00b3:"), ".\\LPT\u00b3:.");
+    // JS `slice(0, -1)` drops the last character when there is no colon.
+    assert.strictEqual(path.win32.normalize("PRNX"), ".\\PRNX");
+    // Not reserved.
+    assert.strictEqual(path.win32.normalize("CON"), "CON");
+    assert.strictEqual(path.win32.normalize("COM10:"), ".\\COM10:");
+    assert.strictEqual(path.win32.normalize("CONNINGTOWER:"), ".\\CONNINGTOWER:");
+    assert.strictEqual(path.win32.normalize("C:\\COM9"), "C:\\COM9");
+    // Reserved names after a UNC share are left alone.
+    assert.strictEqual(path.win32.normalize("\\\\server\\share\\COM1:"), "\\\\server\\share\\COM1:");
+    // Device roots.
+    assert.strictEqual(path.win32.normalize("\\\\?\\COM1:"), "\\\\?\\COM1:\\");
+    assert.strictEqual(path.win32.normalize("\\\\.\\PHYSICALDRIVE0"), "\\\\.\\PHYSICALDRIVE0");
+  });
+
+  // A relative path must not come back as something Windows reads as absolute.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L455-L471 (CVE-2024-36139)
+  test("win32 relative paths containing a colon", () => {
+    assert.strictEqual(path.win32.normalize("foo:/bar"), ".\\foo:\\bar");
+    assert.strictEqual(path.win32.normalize("foo:"), ".\\foo:");
+    assert.strictEqual(path.win32.normalize("foo:bar"), "foo:bar");
+    assert.strictEqual(path.win32.normalize("x:y/z"), "x:y\\z");
+  });
+
   test("very long paths", () => {
     // Regression test: buffer overflow with paths longer than PATH_SIZE
     // This used to panic with "index out of bounds" because the buffer

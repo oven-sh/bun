@@ -224,6 +224,14 @@ pub enum Values {
     One,
     Many,
     OneOptional,
+    /// Like [`Values::One`], but a separate following argument that starts
+    /// with '-' is never consumed as the value (Node's behavior for `-e`):
+    /// the parse fails with a missing value instead.
+    OneNoDashValue,
+    /// Like [`Values::OneOptional`], but a following arg not starting with '-'
+    /// is consumed as the value (Node's `-p`), and in a short cluster the
+    /// attached remainder stays in the cluster (`-pe` → `-p` then `-e`).
+    OneOptionalNoDashValue,
 }
 
 /// Represents a parameter for the command line.
@@ -290,9 +298,9 @@ fn expect_param(expect: Param<Help>, actual: Param<Help>) {
 // is flattened to `short`/`long` because `Names.long` is `&'static`.
 #[derive(Default)]
 pub struct Diagnostic {
-    pub(crate) arg: Vec<u8>,
-    pub(crate) short: Option<u8>,
-    pub(crate) long: Option<Vec<u8>>,
+    pub arg: Vec<u8>,
+    pub short: Option<u8>,
+    pub long: Option<Vec<u8>>,
 }
 
 impl Diagnostic {
@@ -378,6 +386,9 @@ pub struct ParseOptions<'a> {
     /// flag, never to an option's value or a `--` target. Node keeps its own
     /// aliases on exactly that branch (node_options-inl.h).
     pub short_aliases: &'static [(&'static [u8], &'static [u8])],
+    /// Reject `--no-<x>` shapes Node rejects instead of ignoring them as an
+    /// unrecognized flag. Only the commands that stand in for `node` set this.
+    pub reject_bad_negations: bool,
 }
 
 // Help/usage/error rendering — none of this is on the cold-start hot chain
@@ -460,6 +471,7 @@ pub fn parse<Id: 'static>(
             diagnostic: opt.diagnostic,
             stop_after_positional_at: opt.stop_after_positional_at,
             short_aliases: opt.short_aliases,
+            reject_bad_negations: opt.reject_bad_negations,
         },
     )?;
     Ok(Args { clap })
@@ -480,6 +492,7 @@ pub fn parse_with_table<Id: 'static>(
             diagnostic: opt.diagnostic,
             stop_after_positional_at: opt.stop_after_positional_at,
             short_aliases: opt.short_aliases,
+            reject_bad_negations: opt.reject_bad_negations,
         },
     )?;
     Ok(Args { clap })

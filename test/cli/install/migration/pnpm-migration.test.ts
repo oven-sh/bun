@@ -132,10 +132,20 @@ test.concurrent("version is number with dot", async () => {
   const { out, err, exitCode } = await install(packageDir);
   expect(err).toContain("pnpm-lock.yaml version is too old (< v7)");
   expect(err).toContain("failed to migrate lockfile: 'pnpm-lock.yaml'");
-  expect(out).toContain("done");
+  // The too-old lockfile is ignored, not fatal: install falls through to a
+  // fresh resolve and writes its own bun.lock.
+  expect(err).toContain("Ignoring lockfile");
+  expect(err).toContain("Saved lockfile");
+  expect(normalizeBunSnapshot(out, packageDir)).toMatchInlineSnapshot(`
+    "bun install <version> (<revision>)
+
+    + no-deps@1.0.0 (v2.0.0 available)
+
+    1 package installed"
+  `);
   expect(exitCode).toBe(0);
-  // Migration was refused, so no bun.lock should have been written.
-  expect(existsSync(join(packageDir, "bun.lock"))).toBe(false);
+  expect(existsSync(join(packageDir, "bun.lock"))).toBe(true);
+  expect(nodeModulesPackages(packageDir)).toMatchInlineSnapshot(`"node_modules/no-deps/no-deps@1.0.0"`);
 });
 
 test.concurrent("folder dependencies: links to the root package are resolved correctly", async () => {

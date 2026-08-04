@@ -337,6 +337,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("external utf16 empty: length=0");
       expect(result).toContain("external utf16 nonempty: copied=0");
     });
+
+    it("accepts (NULL, 0) and rejects length > INT_MAX", async () => {
+      const output = await checkSameOutput("test_napi_external_string_args", []);
+      expect(output).toContain("ext_string_latin1(NULL,0): status=0 pending=0");
+      expect(output).toContain("ext_string_latin1(ptr,INT_MAX+1): status=1 pending=0");
+      expect(output).toContain("ext_string_utf16(ptr,INT_MAX+1): status=1 pending=0");
+    });
   });
 
   describe("napi_create_external_buffer", () => {

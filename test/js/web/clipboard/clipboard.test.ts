@@ -426,6 +426,35 @@ describe("read / write", () => {
     await expectDOMException(first, "AbortError");
   });
 
+  // collectDataForWriting() calls the realm's Promise.all, which user JS can
+  // tamper to synchronously re-enter write([sameItem]); the outer frame must
+  // not then touch the newer writer's armed state when it resumes.
+  test("a write re-entered from a tampered Promise.all does not clobber the inner one", async () => {
+    const realAll = Promise.all;
+    let inner: Promise<void> | null = null;
+    const item = new ClipboardItem({ "text/plain": "ok" });
+    (Promise as any).all = function () {
+      Promise.all = realAll;
+      inner = navigator.clipboard.write([item]);
+      return undefined;
+    };
+    try {
+      await expectDOMException(navigator.clipboard.write([item]), "AbortError");
+      expect(inner).not.toBeNull();
+      const outcome = await inner!.then(
+        () => "ok",
+        (e: Error) => e.message,
+      );
+      // Without the generation guard the outer frame fires the inner writer's
+      // completion with nullopt, which rejects with this exact message.
+      expect(outcome).not.toContain("representation could not be read");
+    } finally {
+      Promise.all = realAll;
+      // Retire the tail write so nothing is in flight for the next test.
+      await navigator.clipboard.write([]);
+    }
+  });
+
   // Regression: a superseded writer must retire the collect still armed on its
   // items. The collect completion holds a Ref back to the writer, so dropping
   // the items without retiring leaves writer, item and the GC-guarded

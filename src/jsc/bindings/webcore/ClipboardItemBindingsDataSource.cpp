@@ -204,11 +204,17 @@ void ClipboardItemBindingsDataSource::collectDataForWriting(Clipboard&, CollectC
         }
     }
 
+    auto generation = m_collectGeneration;
     // One reaction for the whole item: everything is settled before anything is
     // converted, so no state has to be carried between reactions.
     auto* allPromise = promiseAll(*globalObject, promises);
     if (catchScope.exception()) [[unlikely]]
         catchScope.clearException();
+    // promiseAll() calls the realm's Promise.all, which can run user JS that
+    // re-enters this collect via write([sameItem]); that path already retired
+    // this generation's completion, so bail without touching the newer one's.
+    if (generation != m_collectGeneration)
+        return;
     if (!allPromise) {
         invokeCompletionHandler(std::nullopt);
         return;
@@ -218,7 +224,7 @@ void ClipboardItemBindingsDataSource::collectDataForWriting(Clipboard&, CollectC
     // (guardedObjects roots the aggregate, whose reaction would own the item)
     // that never-settling user data would make uncollectable.
     m_allTypesSettled = DOMPromise::create(*globalObject, *allPromise);
-    m_allTypesSettled->whenSettled([this, weakItem = WeakPtr { m_item.get() }, generation = m_collectGeneration] {
+    m_allTypesSettled->whenSettled([this, weakItem = WeakPtr { m_item.get() }, generation] {
         RefPtr protectedItem = weakItem.get();
         if (!protectedItem || generation != m_collectGeneration)
             return;

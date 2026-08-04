@@ -516,6 +516,8 @@ describe("Bun.build", () => {
           writeFileSync(sub, "");
           const second = await Bun.build({ entrypoints: [entry], throw: false });
           if (second.success) throw new Error("second build should have failed to resolve ./sub/mod.js");
+          if (!second.logs.some(l => String(l.message ?? l).includes("./sub/mod.js")))
+            throw new AggregateError(second.logs, "second build failed for an unrelated reason");
           rmSync(sub, { force: true });
           mkdirSync(sub);
           writeFileSync(join(sub, "mod.js"), "export const value = 2;\\n");

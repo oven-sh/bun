@@ -722,16 +722,6 @@ fn throw_codec_error(global: &JSGlobalObject, e: CodecError) {
     let _ = global.throw_value(codec_error_to_js(global, &e));
 }
 
-unsafe extern "C" {
-    fn Bun__JSSink__writeBytesById(
-        sink_id: u8,
-        sink_ptr: *mut core::ffi::c_void,
-        global: &JSGlobalObject,
-        ptr: *const u8,
-        len: usize,
-    ) -> JSValue;
-}
-
 /// Runs one transform step and writes the output straight to a native JSSink
 /// (`m_sinkPtr`), so the chunk never becomes a `JSUint8Array`. Returns the
 /// sink's `write_bytes` result (see nativeSinkWriteIsBackpressure for the
@@ -762,11 +752,20 @@ pub extern "C" fn CompressionStreamCoder__transformInto(
             if out.is_empty() {
                 return JSValue::UNDEFINED;
             }
+            let Some(sink_ptr) = NonNull::new(sink_ptr) else {
+                return JSValue::UNDEFINED;
+            };
             // SAFETY: `sink_ptr` is a live JSSink of type `sink_id`; the sink
             // copies what it needs before returning.
-            unsafe {
-                Bun__JSSink__writeBytesById(sink_id, sink_ptr, global, out.as_ptr(), out.len())
+            let handle = unsafe { crate::webcore::sink::sink_handle_from_id(sink_id, sink_ptr) };
+            if handle.is_none() {
+                return JSValue::UNDEFINED;
             }
+            handle
+                .write(&crate::webcore::streams::Result::Temporary(
+                    bun_ptr::RawSlice::new(out),
+                ))
+                .to_js(global)
         }
         Err(e) => {
             throw_codec_error(global, e);

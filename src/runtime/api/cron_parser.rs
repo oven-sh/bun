@@ -220,9 +220,7 @@ impl CronExpression {
                 }
             }
         }
-        // NaN here means `dt` maps past the ECMAScript Date range (the Named
-        // tz path returns NaN for out-of-range epochs). Surface it so `next()`
-        // stops walking instead of treating it like a DST-skipped minute.
+        // NaN = past the Date range: surface it so next() stops, don't treat as DST-skipped.
         Ok(if result.is_nan() || result > from_ms {
             Some(result)
         } else {

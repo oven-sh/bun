@@ -386,6 +386,7 @@ For a suite with thousands of test files, `bun test` has several knobs that stac
 jobs:
   test:
     strategy:
+      fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
     steps:
@@ -403,11 +404,13 @@ jobs:
             --timings=.bun-test-timings/next/${{ matrix.shard }}.json \
             $(ls .bun-test-timings/*.json 2>/dev/null | sed 's/^/--timings=/')
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
         with:
           name: timings-${{ matrix.shard }}
           path: .bun-test-timings/next/${{ matrix.shard }}.json
   save-timings:
     needs: test
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

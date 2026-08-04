@@ -1111,11 +1111,6 @@ void NodeVMGlobalObject::setContextifiedObject(JSC::JSObject* contextifiedObject
     m_sandbox.set(vm(), this, contextifiedObject);
 }
 
-void NodeVMGlobalObject::sigintReceived()
-{
-    vm().notifyNeedTermination();
-}
-
 void NodeVMGlobalObject::drainOwnMicrotasks()
 {
     if (!m_contextOptions.ownMicrotaskQueue)

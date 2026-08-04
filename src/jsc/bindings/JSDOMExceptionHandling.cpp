@@ -115,7 +115,7 @@ String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue
     return errorMessage;
 }
 
-JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec, const String& message)
+JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec, const String& message, const String& extra)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     if (vm.hasPendingTerminationException()) [[unlikely]]
@@ -156,12 +156,16 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
 
     case ExceptionCode::InvalidURLError: {
         // Node's ERR_INVALID_URL: plain TypeError (`${err}` has no [code]
-        // suffix), message "Invalid URL" (nodejs/node#38614), and the
-        // offending input — carried in the Exception message — on `error.input`.
+        // suffix), message "Invalid URL" (nodejs/node#38614), the offending
+        // input on `error.input`, and — only when a base argument was passed —
+        // the raw base string on `error.base`. `extra` carries the base; a
+        // null String means the one-arg constructor was used.
         auto& vm = JSC::getVM(lexicalGlobalObject);
         auto* error = JSC::createTypeError(lexicalGlobalObject, "Invalid URL"_s);
         error->putDirect(vm, JSC::Identifier::fromString(vm, "code"_s), JSC::jsString(vm, WTF::String("ERR_INVALID_URL"_s)), 0);
         error->putDirect(vm, vm.propertyNames->input, JSC::jsString(vm, message));
+        if (!extra.isNull())
+            error->putDirect(vm, JSC::Identifier::fromString(vm, "base"_s), JSC::jsString(vm, extra));
         return error;
     }
 
@@ -189,7 +193,7 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
 
 JSValue createDOMException(JSGlobalObject& lexicalGlobalObject, Exception&& exception)
 {
-    return createDOMException(&lexicalGlobalObject, exception.code(), exception.releaseMessage());
+    return createDOMException(&lexicalGlobalObject, exception.code(), exception.releaseMessage(), exception.releaseExtra());
 }
 
 void propagateExceptionSlowPath(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& throwScope, Exception&& exception)

@@ -7314,7 +7314,7 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
     let opts: u32 = if follow {
         blocking_flag
     } else {
-        w::FILE_OPEN_REPARSE_POINT
+        blocking_flag | w::FILE_OPEN_REPARSE_POINT
     };
 
     let mut attributes: u32 = w::FILE_ATTRIBUTE_NORMAL;

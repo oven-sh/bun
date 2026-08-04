@@ -916,7 +916,16 @@ it(
     });
     const entry = join(String(dir), "entry.ts");
 
-    const reloads = isDebug ? 60 : 200;
+    // The `refStrings <= codeBlocks` invariant is only falsifiable once
+    // CodeCache's prune has evicted some `SourceProvider`s (at which point a
+    // leaked `ref_strings` entry survives the eviction while a balanced one
+    // drains). `CodeCacheMap::prune()` fires on >16 MB of accumulated source
+    // since the last prune, and `pruneSlowCase()` only evicts on the second
+    // call, so the test crosses ~32 MB of transpiled source: each entry body
+    // carries a large string literal that survives transpilation.
+    const reloads = isDebug ? 50 : 150;
+    const perReloadSourceBytes = Math.ceil((34 * 1024 * 1024) / reloads);
+    const sourcePad = Buffer.alloc(perReloadSourceBytes, "x").toString();
     const samples: { i: number; rss: number; refStrings: number; codeBlocks: number }[] = [];
 
     // Heavy probes (heapStats, the internal diagnostic) run only at the
@@ -940,7 +949,7 @@ it(
             "}));",
           ]
         : [`console.log(JSON.stringify({i: ${i}}));`];
-      writeFileSync(entry, [`var x${i} = ${i};`, "Bun.gc(true);", ...probe].join("\n"));
+      writeFileSync(entry, [`var x${i} = ${i};`, `var big = "${sourcePad}";`, "Bun.gc(true);", ...probe].join("\n"));
     };
     writeEntry(0);
 
@@ -1004,7 +1013,11 @@ it(
     // is removed in the external-string finalizer. So `ref_strings` count must
     // never exceed live `UnlinkedModuleProgramCodeBlock` count by more than a
     // small constant. Without the balance the +1 from `create_external` is
-    // never released and `ref_strings` only grows.
+    // never released and `ref_strings` only grows past evictions.
+    // `codeCachePruned` guards the invariant from being vacuous: without an
+    // eviction both counters climb together and the difference is ~0 either
+    // way; `perReloadSourceBytes` is sized so the final sample is past the
+    // second prune.
     // `--expose-internals` + bunEnv's BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING
     // make the hook resolve; a -1 sample means the probe silently failed.
     // (The resolver's per-reload `DirEntry` / `EntryStore` orphaning is
@@ -1013,12 +1026,14 @@ it(
     // bound tightly; `bytesPerReload` is reported as context only.)
     expect({
       refStringDiagnosticAvailable: minRefStrings >= 0,
+      codeCachePruned: last.codeBlocks < reloads * 0.9,
       refStringsNeverExceedCodeCache: maxRefOverCode <= 5,
       // Carried for context on failure:
       samples,
       bytesPerReload,
     }).toMatchObject({
       refStringDiagnosticAvailable: true,
+      codeCachePruned: true,
       refStringsNeverExceedCodeCache: true,
     });
   },

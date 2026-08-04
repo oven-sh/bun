@@ -2448,11 +2448,6 @@ describe("binaries", () => {
     expect(binPath).toBeValidBin(join("..", "what-bin", "what-bin.js"));
     const before = lstatSync(binPath, { bigint: true });
 
-    // Emulate the `./:/app:ro` Docker-compose mount from the issue: an
-    // already-populated node_modules that cannot be written to. With the link
-    // already pointing at the right target, a second install must be a no-op
-    // rather than unlink+re-symlink (the unlink would fail, and the retry
-    // symlink would then surface EEXIST as "Failed to link what-bin").
     chmodSync(binDir, 0o555);
     let err: string, exitCode: number;
     try {

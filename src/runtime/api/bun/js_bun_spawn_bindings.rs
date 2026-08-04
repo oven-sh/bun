@@ -1826,7 +1826,6 @@ fn spawn_maybe_sync<const IS_SYNC: bool, const BUFFERED_ASYNC: bool>(
             // Balanced by the `deref()` in `maybe_resolve_spawn_and_wait`.
             subprocess.ref_();
             subprocess.update_has_pending_activity();
-            subprocess.maybe_resolve_spawn_and_wait();
             return Ok(promise);
         }
 

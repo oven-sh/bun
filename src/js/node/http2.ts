@@ -3478,9 +3478,13 @@ class ServerHttp2Stream extends Http2Stream {
     }
     if (pushResult === -1) {
       // Block not encodable: session failing with COMPRESSION_ERROR. Node still delivers the
-      // reserved stream to the callback and lets session teardown error it. PUSH_PROMISE never
-      // reached the wire, so teardown must not RST the reserved id.
-      if (pushedStream) pushedStream[kNeverAnnounced] = true;
+      // reserved stream to the callback and lets session teardown error it (so it is Delivered:
+      // the session error must reach its 'error' listener). PUSH_PROMISE never reached the wire,
+      // so teardown must not RST the reserved id.
+      if (pushedStream) {
+        pushedStream[kNeverAnnounced] = true;
+        pushedStream[bunHTTP2StreamStatus] |= StreamState.Delivered;
+      }
       process.nextTick(callback, null, pushedStream, headers);
       return;
     }

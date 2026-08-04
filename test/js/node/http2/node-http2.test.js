@@ -3703,16 +3703,23 @@ it("delivers a session error from the event loop, not inside the call that detec
 it("delivers the reserved push stream and fails the session when its headers cannot be encoded", async () => {
   // Verified against node v26.3.0: pushStream's callback still receives the reserved
   // stream (so the caller can attach handlers), and the session then dies with
-  // COMPRESSION_ERROR (9); the callback never sees an error.
+  // COMPRESSION_ERROR (9); the callback never sees an error, the pushed stream's
+  // 'error' listener receives the session error.
   const server = http2.createServer({ maxSendHeaderBlockLength: 100000 });
   try {
     const sessionError = new Promise(resolve => server.on("sessionError", resolve));
     const pushCallback = Promise.withResolvers();
+    const pushStreamError = Promise.withResolvers();
     server.on("stream", stream => {
       stream.on("error", () => {});
       stream.pushStream({ ":path": "/pushed", "x-big": Buffer.alloc(90000, "A").toString() }, (err, push) => {
-        push?.on("error", () => {});
         pushCallback.resolve(err ?? null);
+        if (push) {
+          push.on("error", pushStreamError.resolve);
+          push.on("close", () => pushStreamError.reject(new Error("pushed stream closed without an error")));
+        } else {
+          pushStreamError.reject(new Error("callback received no pushed stream"));
+        }
       });
       stream.respond();
       stream.end("x");
@@ -3725,10 +3732,12 @@ it("delivers the reserved push stream and fails the session when its headers can
     req.resume();
     req.end();
 
-    const [cbErr, err] = await Promise.all([pushCallback.promise, sessionError]);
+    const [cbErr, err, pushErr] = await Promise.all([pushCallback.promise, sessionError, pushStreamError.promise]);
     expect(cbErr).toBeNull();
     expect(err.code).toBe("ERR_HTTP2_SESSION_ERROR");
     expect(err.message).toBe("Session closed with error code 9");
+    expect(pushErr.code).toBe("ERR_HTTP2_SESSION_ERROR");
+    expect(pushErr.message).toBe("Session closed with error code 9");
     client.destroy();
   } finally {
     server.close();

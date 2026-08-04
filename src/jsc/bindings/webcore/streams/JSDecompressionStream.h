@@ -36,7 +36,6 @@ public:
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
 
     void* m_coder { nullptr };
-    Bun::WebStreams::CompressionFormat m_format { Bun::WebStreams::CompressionFormat::Deflate };
 
 private:
     JSDecompressionStream(JSC::VM&, JSC::Structure*);

@@ -39,7 +39,6 @@ public:
     // error / cancel); a vm.heap.addFinalizer registered in the constructor is the
     // idempotent fallback for an abandoned stream.
     void* m_coder { nullptr };
-    Bun::WebStreams::CompressionFormat m_format { Bun::WebStreams::CompressionFormat::Deflate };
 
 private:
     JSCompressionStream(JSC::VM&, JSC::Structure*);

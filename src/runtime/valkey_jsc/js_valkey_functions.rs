@@ -657,8 +657,24 @@ impl JSValkeyClient {
             return Err(global.throw_invalid_argument_type("expire", "key", "string or buffer"));
         };
 
+        let seconds_value = frame.argument(1);
+        if seconds_value.is_undefined() {
+            return Err(global.throw_invalid_property_type_value(
+                b"seconds",
+                b"number",
+                seconds_value,
+            ));
+        }
+        if seconds_value.is_number() && seconds_value.as_number().is_nan() {
+            return Err(global.throw_invalid_property_type_value(
+                b"seconds",
+                b"integer",
+                seconds_value,
+            ));
+        }
+
         let seconds = global.validate_integer_range::<i32>(
-            frame.argument(1),
+            seconds_value,
             0,
             jsc::IntegerRange {
                 min: 0,

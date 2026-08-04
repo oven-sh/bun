@@ -3960,6 +3960,10 @@ DeserializationResult CloneDeserializer::deserialize()
     WalkerState state = StateUnknown;
     JSValue outValue;
 
+    // Each serialized (index, value) pair is at least a uint32 index plus a 1-byte value tag,
+    // so the whole payload can encode at most this many array entries in total.
+    uint64_t arrayEntryBudget = static_cast<uint64_t>(m_end - m_ptr) / (sizeof(uint32_t) + 1);
+
     while (1) {
         switch (state) {
         arrayStartState:
@@ -3970,17 +3974,17 @@ DeserializationResult CloneDeserializer::deserialize()
             if (!read(length)) {
                 goto error;
             }
-            // Each indexed entry is at least a uint32 index plus a 1-byte value tag, so the
-            // remaining input bounds how many entries can exist; setLength() restores .length.
-            uint32_t initialCapacity = static_cast<uint32_t>(std::min<uint64_t>(length, static_cast<uint64_t>(m_end - m_ptr) / (sizeof(uint32_t) + 1)));
-            JSArray* outArray = constructEmptyArray(m_globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), initialCapacity);
+            JSArray* outArray;
+            if (static_cast<uint64_t>(length) <= arrayEntryBudget) {
+                arrayEntryBudget -= length;
+                outArray = constructEmptyArray(m_globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), length);
+            } else {
+                outArray = JSArray::tryCreate(vm, m_globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithArrayStorage), length);
+                if (!outArray) [[unlikely]]
+                    throwOutOfMemoryError(m_lexicalGlobalObject, scope);
+            }
             if (scope.exception()) [[unlikely]]
                 goto error;
-            if (initialCapacity != length) {
-                outArray->setLength(m_lexicalGlobalObject, length);
-                if (scope.exception()) [[unlikely]]
-                    goto error;
-            }
             addToObjectPool(outArray);
             outputObjectStack.append(outArray);
         }

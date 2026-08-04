@@ -24,7 +24,7 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBuildKite, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isBuildKite, isDebug, isWindows } from "harness";
 
 describe("bun:jsc", () => {
   function count() {
@@ -342,9 +342,36 @@ it("deserialize does not pre-allocate array storage from an untrusted length fie
       zero: out[0],
       isArray: Array.isArray(out),
     }));
+    // Nested variant: every nested ArrayTag is counted against the same shared
+    // budget, so 2000 nested arrays whose lengths each equal floor(remaining/5)
+    // cannot re-spend the same input bytes 2000 times.
+    const header = new Uint8Array(serialize(undefined)).slice(0, -1);
+    const depth = 2000;
+    const nest = Buffer.alloc(header.length + 5 + (depth - 1) * 9 + depth * 4);
+    nest.set(header, 0);
+    let p = header.length;
+    nest[p++] = 1; // ArrayTag
+    nest.writeUInt32LE(Math.floor((nest.length - (p + 4)) / 5), p); p += 4;
+    for (let k = 1; k < depth; k++) {
+      nest.writeUInt32LE(0, p); p += 4; // index
+      nest[p++] = 1; // ArrayTag
+      nest.writeUInt32LE(Math.floor((nest.length - (p + 4)) / 5), p); p += 4;
+    }
+    for (let k = 0; k < depth; k++) { nest.writeUInt32LE(0xffffffff, p); p += 4; }
+    const nestRssBefore = process.memoryUsage().rss;
+    const nestOut = deserialize(nest);
+    const nestRssDeltaMB = (process.memoryUsage().rss - nestRssBefore) / (1024 * 1024);
+    let d = nestOut, measuredDepth = 1;
+    while (Array.isArray(d[0])) { d = d[0]; measuredDepth++; }
+    console.log(JSON.stringify({
+      bytes: nest.length,
+      rssDeltaMB: Math.round(nestRssDeltaMB),
+      depth: measuredDepth,
+      outerLength: nestOut.length,
+    }));
     // Legitimate arrays still round-trip. The sparse case is short enough that
-    // the declared length exceeds (remaining bytes)/5, so it exercises the
-    // clamp + setLength path; the dense case exercises the unchanged fast path.
+    // the declared length exceeds the entry budget, so it exercises the
+    // ArrayStorage path; the dense case exercises the unchanged fast path.
     const sparse = new Array(10);
     sparse[3] = "x";
     const dense = [1, 2, 3, 4, 5];
@@ -363,10 +390,11 @@ it("deserialize does not pre-allocate array storage from an untrusted length fie
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  const [forged, roundTrip] = stdout
+  const [forged, nested, roundTrip] = stdout
     .trim()
     .split("\n")
     .map(line => JSON.parse(line));
+  const rssLimitMB = isASAN || isDebug ? 40 : 20;
   expect({ ...forged, rssDeltaMB: undefined }).toEqual({
     rssDeltaMB: undefined,
     length: 100_000_000,
@@ -375,7 +403,15 @@ it("deserialize does not pre-allocate array storage from an untrusted length fie
     isArray: true,
   });
   // Without the clamp this allocates ~800 MB of contiguous storage.
-  expect(forged.rssDeltaMB).toBeLessThan(100);
+  expect(forged.rssDeltaMB).toBeLessThan(rssLimitMB);
+  expect({ ...nested, rssDeltaMB: undefined }).toEqual({
+    rssDeltaMB: undefined,
+    bytes: 26000,
+    depth: 2000,
+    outerLength: 5198,
+  });
+  // Without the shared budget every level re-spends the same input bytes.
+  expect(nested.rssDeltaMB).toBeLessThan(rssLimitMB);
   expect(roundTrip).toEqual({
     sparse: { length: 10, keys: ["3"], three: "x", hole: false },
     dense: { length: 5, values: [1, 2, 3, 4, 5] },

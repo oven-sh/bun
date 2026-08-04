@@ -1525,3 +1525,25 @@ test("Bun.build can be called thousands of times in one process without crashing
   expect(stdout.trim()).toBe("OK 400");
   expect(exitCode).toBe(0);
 }, 180_000);
+
+test("sourcemap sourcesContent is valid JSON when source contains C0 control chars", async () => {
+  // RFC 8259 only allows \" \\ \/ \b \f \n \r \t and six-char \u escapes; \v
+  // and \xNN are JavaScript-only. A VT (0x0B) or BEL (0x07) in the input used
+  // to leak through as \v / \x07 and break JSON.parse on the .map file.
+  const controls = Array.from({ length: 0x20 }, (_, i) => String.fromCharCode(i)).join("");
+  const source = `/* ctrl: [${controls}] */\nexport const x = 1;\n`;
+  using dir = tempDir("sourcemap-json-ctrl", { "in.js": source });
+
+  const res = await Bun.build({
+    entrypoints: [join(String(dir), "in.js")],
+    sourcemap: "external",
+    outdir: String(dir),
+  });
+  expect(res.success).toBe(true);
+
+  const map = res.outputs.find(o => o.kind === "sourcemap")!;
+  const text = await map.text();
+  expect(text).not.toMatch(/\\v|\\x[0-9A-Fa-f]{2}/);
+  const parsed = JSON.parse(text);
+  expect(parsed.sourcesContent[0]).toBe(source);
+});

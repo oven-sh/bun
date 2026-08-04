@@ -602,12 +602,8 @@ impl Subprocess<'_> {
     fn build_spawn_and_wait_result(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let signal_code = self.get_signal_code(global_this);
         let exit_code = self.get_exit_code(global_this);
-        let stdout = self
-            .stdout
-            .with_mut(|s| s.to_buffered_value(global_this))?;
-        let stderr = self
-            .stderr
-            .with_mut(|s| s.to_buffered_value(global_this))?;
+        let stdout = self.stdout.with_mut(|s| s.to_buffered_value(global_this))?;
+        let stderr = self.stderr.with_mut(|s| s.to_buffered_value(global_this))?;
         let resource_usage = self.create_resource_usage_object(global_this)?;
         let result_pid = JSValue::js_number_from_int32(self.pid());
 

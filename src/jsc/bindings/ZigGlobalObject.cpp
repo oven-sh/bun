@@ -894,7 +894,10 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
     }
 
     JSMock__resetSpies(globalObject);
-    scope.clearException();
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return swap();
+    }
     globalObject->mockModule.activeMocks.clear();
     globalObject->globalEventScope->removeAllEventListeners();
     // The Rust side already restored the OS cwd; drop the JS-side cache so the

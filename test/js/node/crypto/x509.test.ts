@@ -118,7 +118,7 @@ s4nGv40lYuU/gOeeCnTPm0tXztCtR+aWb1dXArVI8KXZ/7Ri9jQXfmDnMgo=
         try {
           return "value=" + typeof cert.publicKey;
         } catch (e) {
-          return "threw=" + e.constructor.name;
+          return e.constructor.name + ":" + e.code;
         }
       };
       console.log(JSON.stringify([read(), read(), read()]));
@@ -128,12 +128,11 @@ s4nGv40lYuU/gOeeCnTPm0tXztCtR+aWb1dXArVI8KXZ/7Ri9jQXfmDnMgo=
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
-      stdout: JSON.stringify(["threw=Error", "threw=Error", "threw=Error"]),
-      exitCode: 0,
-      signalCode: null,
-    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode, signalCode: proc.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+    const reads = JSON.parse(stdout);
+    expect(reads[0]).toMatch(/^Error:ERR_OSSL_\w+$/);
+    expect(reads).toEqual([reads[0], reads[0], reads[0]]);
   });
 });
 

@@ -1227,10 +1227,8 @@ pub mod fs {
                 },
             };
 
-            // A freshly-opened handle is ours to close on every exit path until it
-            // is published into the returned DirEntry; `handle_published` flips
-            // once that happens so the `store_fd` success path keeps the fd while
-            // the `?`/error returns below still close it.
+            // Close a freshly-opened handle on every exit path until it is
+            // published into the returned DirEntry (the `store_fd` success path).
             let close_even_if_published = !store_fd || self.need_to_close_files();
             let handle_published = core::cell::Cell::new(false);
             let _close_guard = scopeguard::guard((), |()| {
@@ -1263,8 +1261,6 @@ pub mod fs {
             let mut entries = match self.readdir(store_fd, prev, dir, generation, handle, iterator)
             {
                 Ok(e) => {
-                    // `e.fd == handle` when `store_fd`; every remaining path moves
-                    // `e` into long-lived storage before the next `?`.
                     handle_published.set(true);
                     e
                 }

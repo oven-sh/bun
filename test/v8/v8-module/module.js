@@ -3,6 +3,73 @@ module.exports = debugMode => {
   return {
     ...nativeModule,
 
+    test_v8_return_value_set_uint32() {
+      for (const n of [0, 70000, 2147483647, 2147483648, 4000000000, 4294967295]) {
+        console.log(n, "=>", nativeModule.test_v8_return_value_set_uint32(n));
+      }
+    },
+
+    test_v8_return_value_set_int32() {
+      for (const n of [0, 70000, 2147483647, -1, -70000, -2147483648]) {
+        console.log(n, "=>", nativeModule.test_v8_return_value_set_int32(n));
+      }
+    },
+
+    test_v8_object_has_delete() {
+      const obj = { present: 1, 0: "zero" };
+      nativeModule.test_v8_object_has_delete(obj);
+      console.log("after:", JSON.stringify(obj));
+    },
+
+    test_v8_function_call() {
+      nativeModule.test_v8_function_call((a, b) => a + b);
+    },
+
+    test_v8_value_coercions() {
+      for (const v of [42, "42", true, " 7.5 "]) {
+        console.log("--", JSON.stringify(v));
+        nativeModule.test_v8_value_coercions(v);
+      }
+    },
+
+    test_v8_string_utf8value() {
+      const throwing = {
+        toString() {
+          throw new Error("nope");
+        },
+      };
+      for (const v of ["hello", 123, "caf\u00e9", "\u{1f600}", Symbol("s"), throwing]) {
+        try {
+          nativeModule.test_v8_string_utf8value(v);
+          console.log("did not throw");
+        } catch (e) {
+          console.log("threw:", e.constructor.name);
+        }
+      }
+    },
+
+    test_v8_integer_value_out_of_range() {
+      for (const v of [Infinity, -Infinity, 1e300, -1e300, NaN, 0, 42]) {
+        nativeModule.test_v8_integer_value_out_of_range(v);
+      }
+    },
+
+    test_v8_throw_exception() {
+      try {
+        nativeModule.test_v8_throw_exception();
+        console.log("did not throw");
+      } catch (e) {
+        console.log(e.constructor.name, e.message);
+      }
+    },
+
+    test_v8_exception_constructors() {
+      const errs = nativeModule.test_v8_exception_constructors();
+      for (const e of errs) {
+        console.log(e.constructor.name, e.message);
+      }
+    },
+
     test_v8_global() {
       console.log("global initial value =", nativeModule.global_get());
 

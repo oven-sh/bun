@@ -1,5 +1,11 @@
 #include "V8Value.h"
 #include "V8Isolate.h"
+#include "V8HandleScope.h"
+#include "V8Boolean.h"
+#include "V8Number.h"
+#include "V8Integer.h"
+#include "V8String.h"
+#include "V8Object.h"
 #include "v8_compatibility_assertions.h"
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSArray.h>
@@ -122,6 +128,139 @@ Maybe<uint32_t> Value::Uint32Value(Local<Context> context) const
         return Just(value);
     }
     return Nothing<uint32_t>();
+}
+
+Maybe<int32_t> Value::Int32Value(Local<Context> context) const
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    int32_t result = localToJSValue().toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, Nothing<int32_t>());
+    return Just(result);
+}
+
+Maybe<int64_t> Value::IntegerValue(Local<Context> context) const
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    double d = localToJSValue().toIntegerPreserveNaN(globalObject);
+    RETURN_IF_EXCEPTION(scope, Nothing<int64_t>());
+    // Match V8's NumberToInt64: clamp before the cast so Infinity/1e300 don't
+    // hit undefined behavior in static_cast<int64_t>.
+    if (std::isnan(d)) {
+        return Just(static_cast<int64_t>(0));
+    }
+    if (d >= static_cast<double>(std::numeric_limits<int64_t>::max())) {
+        return Just(std::numeric_limits<int64_t>::max());
+    }
+    if (d <= static_cast<double>(std::numeric_limits<int64_t>::min())) {
+        return Just(std::numeric_limits<int64_t>::min());
+    }
+    return Just(static_cast<int64_t>(d));
+}
+
+Maybe<double> Value::NumberValue(Local<Context> context) const
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    double result = localToJSValue().toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, Nothing<double>());
+    return Just(result);
+}
+
+bool Value::BooleanValue(Isolate* isolate) const
+{
+    return localToJSValue().toBoolean(isolate->globalObject());
+}
+
+Local<Boolean> Value::ToBoolean(Isolate* isolate) const
+{
+    bool b = localToJSValue().toBoolean(isolate->globalObject());
+    return isolate->currentHandleScope()->createLocal<Boolean>(isolate->vm(), JSC::jsBoolean(b));
+}
+
+MaybeLocal<String> Value::ToString(Local<Context> context) const
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSString* result = localToJSValue().toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, MaybeLocal<String>());
+    return context->currentHandleScope()->createLocal<String>(vm, result);
+}
+
+MaybeLocal<String> Value::ToDetailString(Local<Context> context) const
+{
+    // V8 routes this through NoSideEffectsToString, which never throws and
+    // handles Symbol / throwing toString(). Approximate that: try toString,
+    // and on failure fall back to the value's typeof string rather than
+    // leaving an exception pending or returning empty.
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    JSC::JSValue value = localToJSValue();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::JSString* result = value.toString(globalObject);
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        result = JSC::jsTypeStringForValue(globalObject, value);
+    }
+    return context->currentHandleScope()->createLocal<String>(vm, result);
+}
+
+MaybeLocal<Number> Value::ToNumber(Local<Context> context) const
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    double result = localToJSValue().toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, MaybeLocal<Number>());
+    return context->currentHandleScope()->createLocal<Number>(vm, JSC::jsNumber(JSC::purifyNaN(result)));
+}
+
+MaybeLocal<Object> Value::ToObject(Local<Context> context) const
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSObject* result = localToJSValue().toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, MaybeLocal<Object>());
+    return context->currentHandleScope()->createLocal<Object>(vm, result);
+}
+
+MaybeLocal<Integer> Value::ToInteger(Local<Context> context) const
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    double d = localToJSValue().toIntegerPreserveNaN(globalObject);
+    RETURN_IF_EXCEPTION(scope, MaybeLocal<Integer>());
+    if (std::isnan(d)) {
+        d = 0;
+    }
+    return context->currentHandleScope()->createLocal<Integer>(vm, JSC::jsNumber(d));
+}
+
+MaybeLocal<Int32> Value::ToInt32(Local<Context> context) const
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    int32_t result = localToJSValue().toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, MaybeLocal<Int32>());
+    return context->currentHandleScope()->createLocal<Int32>(vm, JSC::jsNumber(result));
+}
+
+MaybeLocal<Uint32> Value::ToUint32(Local<Context> context) const
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    uint32_t result = localToJSValue().toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, MaybeLocal<Uint32>());
+    return context->currentHandleScope()->createLocal<Uint32>(vm, JSC::jsNumber(result));
 }
 
 bool Value::StrictEquals(Local<Value> that) const

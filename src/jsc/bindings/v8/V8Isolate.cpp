@@ -1,5 +1,7 @@
 #include "V8Isolate.h"
 #include "V8HandleScope.h"
+#include "V8Value.h"
+#include "V8String.h"
 #include "shim/GlobalInternals.h"
 #include "ZigGlobalObject.h"
 #include "real_v8.h"
@@ -57,6 +59,22 @@ Isolate::Isolate(shim::GlobalInternals* globalInternals)
 HandleScope* Isolate::currentHandleScope()
 {
     return m_globalInternals->currentHandleScope();
+}
+
+Local<Value> Isolate::ThrowException(Local<Value> exception)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm());
+    JSC::throwException(globalObject(), scope, exception->localToJSValue());
+    return Local<Value>(undefinedSlot());
+}
+
+Local<Value> Isolate::ThrowError(Local<String> message)
+{
+    auto& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    WTF::String wtfString = message->localToJSString()->getString(globalObject());
+    JSC::throwException(globalObject(), scope, JSC::createError(globalObject(), wtfString));
+    return Local<Value>(undefinedSlot());
 }
 
 } // namespace v8

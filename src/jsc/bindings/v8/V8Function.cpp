@@ -2,10 +2,47 @@
 #include "shim/Function.h"
 #include "V8HandleScope.h"
 #include "v8_compatibility_assertions.h"
+#include "JavaScriptCore/CallData.h"
+#include "JavaScriptCore/ArgList.h"
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Function)
 
 namespace v8 {
+
+MaybeLocal<Value> Function::Call(Isolate* isolate, Local<Context> context, Local<Value> recv, int argc, Local<Value> argv[])
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue callee = localToJSValue();
+    auto callData = JSC::getCallData(callee);
+    if (callData.type == JSC::CallData::Type::None) [[unlikely]] {
+        return MaybeLocal<Value>();
+    }
+
+    JSC::JSValue thisValue = recv.IsEmpty() ? JSC::jsUndefined() : recv->localToJSValue();
+
+    JSC::MarkedArgumentBuffer args;
+    args.ensureCapacity(argc);
+    for (int i = 0; i < argc; i++) {
+        args.append(argv[i]->localToJSValue());
+    }
+    if (args.hasOverflowed()) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return MaybeLocal<Value>();
+    }
+
+    JSC::JSValue result = JSC::call(globalObject, callee, callData, thisValue, args);
+    RETURN_IF_EXCEPTION(scope, MaybeLocal<Value>());
+
+    return isolate->currentHandleScope()->createLocal<Value>(vm, result);
+}
+
+MaybeLocal<Value> Function::Call(Local<Context> context, Local<Value> recv, int argc, Local<Value> argv[])
+{
+    return Call(context->GetIsolate(), context, recv, argc, argv);
+}
 
 void Function::SetName(Local<String> name)
 {

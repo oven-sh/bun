@@ -7,6 +7,8 @@ namespace v8 {
 
 class HandleScope;
 class Context;
+class Value;
+class String;
 
 namespace shim {
 class GlobalInternals;
@@ -33,6 +35,9 @@ public:
     BUN_EXPORT static Isolate* GetCurrent();
 
     BUN_EXPORT Local<Context> GetCurrentContext();
+
+    BUN_EXPORT Local<Value> ThrowException(Local<Value> exception);
+    BUN_EXPORT Local<Value> ThrowError(Local<String> message);
 
     Zig::GlobalObject* globalObject() { return m_globalObject; }
     JSC::VM& vm() { return globalObject()->vm(); }

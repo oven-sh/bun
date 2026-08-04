@@ -201,6 +201,18 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     });
   });
 
+  describe("Integer", () => {
+    it("can create signed and unsigned integers and read them back", async () => {
+      await checkSameOutput("test_v8_integer");
+    });
+    it("ReturnValue::Set(uint32_t) works for values above INT32_MAX", async () => {
+      await checkSameOutput("test_v8_return_value_set_uint32");
+    });
+    it("ReturnValue::Set(int32_t) works for values outside the Smi range", async () => {
+      await checkSameOutput("test_v8_return_value_set_int32");
+    });
+  });
+
   describe("String", () => {
     it("can create and read back strings with only ASCII characters", async () => {
       await checkSameOutput("test_v8_string_ascii");
@@ -250,6 +262,9 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("correctly handles exceptions from get and set", async () => {
       await checkSameOutput("test_v8_object_get_set_exceptions");
     });
+    it("can check for and delete properties by key and index", async () => {
+      await checkSameOutput("test_v8_object_has_delete");
+    });
   });
   describe("Array", () => {
     it("can create an array from a C array of Locals", async () => {
@@ -289,6 +304,31 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
 
     it("correctly receives the this value from JS", async () => {
       await checkSameOutput("call_function_with_weird_this_values");
+    });
+
+    it("can call a JS function from native code via Function::Call", async () => {
+      await checkSameOutput("test_v8_function_call");
+    });
+  });
+
+  describe("Value coercion", () => {
+    it("ToString/ToNumber/ToObject/ToBoolean and friends match Node", async () => {
+      await checkSameOutput("test_v8_value_coercions");
+    });
+    it("String::Utf8Value converts values to UTF-8", async () => {
+      await checkSameOutput("test_v8_string_utf8value");
+    });
+    it("IntegerValue clamps Infinity and out-of-range doubles like V8", async () => {
+      await checkSameOutput("test_v8_integer_value_out_of_range");
+    });
+  });
+
+  describe("Exception", () => {
+    it("Isolate::ThrowException surfaces as a JS exception", async () => {
+      await checkSameOutput("test_v8_throw_exception");
+    });
+    it("Exception::Error/TypeError/etc. create the right error classes", async () => {
+      await checkSameOutput("test_v8_exception_constructors");
     });
   });
 
@@ -520,6 +560,194 @@ async function runStandaloneAddon(cwd: string) {
     .filter(Boolean);
   return { lines, err, exitCode };
 }
+
+describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("core V8 symbols", () => {
+  // An addon that calls everyday V8 APIs (Object::Has, Function::Call, Value::ToString,
+  // String::Utf8Value, Exception::Error, Isolate::ThrowException, and the out-of-line targets
+  // of the inline ReturnValue::Set(uint32_t)/Set(int32_t)) must be able to call them without
+  // the dynamic linker killing the process on an unresolved PLT entry. Previously these
+  // symbols were not exported at all, so dlopen(RTLD_LAZY) let the module load and the first
+  // call died with `symbol lookup error` / exit 127.
+  it(
+    "are exported so addons can call them without a linker fatal",
+    async () => {
+      using dir = tempDir(
+        "v8-missing-symbols",
+        standaloneAddonFiles(
+          "v8miss",
+          `#include <node.h>
+#include <cstdio>
+
+using namespace v8;
+
+namespace v8miss {
+
+void set_uint32(const FunctionCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(
+      static_cast<uint32_t>(info[0].As<Number>()->Value()));
+}
+
+void set_int32(const FunctionCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(
+      static_cast<int32_t>(info[0].As<Number>()->Value()));
+}
+
+void has(const FunctionCallbackInfo<Value> &info) {
+  Isolate *iso = info.GetIsolate();
+  Local<Context> ctx = iso->GetCurrentContext();
+  printf("has=%d\\n",
+         info[0].As<Object>()->Has(ctx, info[1]).FromJust() ? 1 : 0);
+  fflush(stdout);
+}
+
+void call(const FunctionCallbackInfo<Value> &info) {
+  Isolate *iso = info.GetIsolate();
+  Local<Context> ctx = iso->GetCurrentContext();
+  Local<Value> r = info[0]
+                       .As<Function>()
+                       ->Call(ctx, Undefined(iso), 0, nullptr)
+                       .ToLocalChecked();
+  printf("call=%d\\n", static_cast<int>(r.As<Number>()->Value()));
+  fflush(stdout);
+}
+
+void to_string(const FunctionCallbackInfo<Value> &info) {
+  Isolate *iso = info.GetIsolate();
+  String::Utf8Value utf8(iso, info[0]);
+  printf("str=%s\\n", *utf8);
+  fflush(stdout);
+}
+
+void throw_type_error(const FunctionCallbackInfo<Value> &info) {
+  Isolate *iso = info.GetIsolate();
+  iso->ThrowException(Exception::TypeError(
+      String::NewFromUtf8(iso, "nope").ToLocalChecked()));
+}
+
+void initialize(Local<Object> exports, Local<Value> module,
+                Local<Context> context) {
+  NODE_SET_METHOD(exports, "set_uint32", set_uint32);
+  NODE_SET_METHOD(exports, "set_int32", set_int32);
+  NODE_SET_METHOD(exports, "has", has);
+  NODE_SET_METHOD(exports, "call", call);
+  NODE_SET_METHOD(exports, "to_string", to_string);
+  NODE_SET_METHOD(exports, "throw_type_error", throw_type_error);
+}
+
+NODE_MODULE_CONTEXT_AWARE(NODE_GYP_MODULE_NAME, initialize)
+
+} // namespace v8miss
+`,
+          `const m = require("./build/Release/v8miss");
+// ReturnValue::Set(uint32_t): small values take the inline Smi path, values above
+// INT32_MAX call Integer::NewFromUnsigned out of line.
+console.log("u", m.set_uint32(70000));
+console.log("u", m.set_uint32(4000000000));
+// ReturnValue::Set(int32_t): INT32_MIN is outside the Smi range so it calls Integer::New.
+console.log("i", m.set_int32(-2147483648));
+m.has({ k: 1 }, "k");
+m.call(() => 42);
+m.to_string(123);
+try {
+  m.throw_type_error();
+  console.log("did not throw");
+} catch (e) {
+  console.log(e.constructor.name, e.message);
+}
+`,
+        ),
+      );
+      const cwd = String(dir);
+      await buildStandaloneAddon(cwd);
+      const { lines, err, exitCode } = await runStandaloneAddon(cwd);
+      expect(lines, `stderr:\n${err}`).toEqual([
+        "u 70000",
+        "u 4000000000",
+        "i -2147483648",
+        "has=1",
+        "call=42",
+        "str=123",
+        "TypeError nope",
+      ]);
+      expect(exitCode).toBe(0);
+    },
+    10 * 60 * 1000,
+  );
+
+  // TryCatch, ArrayBuffer::New and api_internal::MakeWeak are not implemented yet, but they
+  // must be exported so calling them routes to the loud V8_UNIMPLEMENTED panic rather than an
+  // uncatchable dynamic-linker fatal.
+  it(
+    "that are not yet implemented panic with V8_UNIMPLEMENTED instead of a linker fatal",
+    async () => {
+      using dir = tempDir(
+        "v8-unimplemented-symbols",
+        standaloneAddonFiles(
+          "v8unimpl",
+          `#include <node.h>
+
+using namespace v8;
+
+namespace v8unimpl {
+
+void try_catch(const FunctionCallbackInfo<Value> &info) {
+  TryCatch tc(info.GetIsolate());
+}
+
+void array_buffer(const FunctionCallbackInfo<Value> &info) {
+  ArrayBuffer::New(info.GetIsolate(), 16);
+}
+
+void make_weak(const FunctionCallbackInfo<Value> &info) {
+  Global<Value> g(info.GetIsolate(), info[0]);
+  g.SetWeak();
+}
+
+void initialize(Local<Object> exports, Local<Value> module,
+                Local<Context> context) {
+  NODE_SET_METHOD(exports, "try_catch", try_catch);
+  NODE_SET_METHOD(exports, "array_buffer", array_buffer);
+  NODE_SET_METHOD(exports, "make_weak", make_weak);
+}
+
+NODE_MODULE_CONTEXT_AWARE(NODE_GYP_MODULE_NAME, initialize)
+
+} // namespace v8unimpl
+`,
+          `const m = require("./build/Release/v8unimpl");
+m[process.argv[2]]({});
+`,
+        ),
+      );
+      const cwd = String(dir);
+      await buildStandaloneAddon(cwd);
+      for (const name of ["try_catch", "array_buffer", "make_weak"]) {
+        await using proc = spawn({
+          cmd: [bunExe(), join(cwd, "run.js"), name],
+          cwd,
+          env: bunEnv,
+          stdin: "inherit",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const combined = out + err;
+        expect(combined, `${name}: should panic via V8_UNIMPLEMENTED, not die on a missing symbol`).not.toContain(
+          "symbol lookup error",
+        );
+        expect(combined, `${name}: should panic via V8_UNIMPLEMENTED, not die on a missing symbol`).not.toContain(
+          "undefined symbol",
+        );
+        expect(
+          combined,
+          `${name}: should mention the unimplemented V8 function\nexit=${exitCode}\nstdout=${out}\nstderr=${err}`,
+        ).toContain("V8 function");
+        expect(combined).toContain("https://github.com/oven-sh/bun/issues/4290");
+      }
+    },
+    10 * 60 * 1000,
+  );
+});
 
 describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("String::Utf8Length surrogates", () => {
   it(

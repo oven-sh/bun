@@ -1297,6 +1297,10 @@ pub mod fs {
                         entries.fd = prev_fd;
                     }
                 }
+                if should_close_handle && entries.fd == handle {
+                    // `_close_guard` will close `handle`; do not cache a closed fd.
+                    entries.fd = Fd::INVALID;
+                }
 
                 // SAFETY: `entries_ptr` is either a live BSSMap slot (`in_place`) or a fresh
                 // leaked Box; exclusively owned here under `entries_mutex`.

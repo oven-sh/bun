@@ -5,10 +5,10 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::ZigString;
+use bun_threading::RwLock;
 use bun_jsc::{
     CallFrame, ErrorCode, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, ZigStringJsc as _,
 };
-use bun_threading::RwLock;
 
 unsafe extern "C" {
     safe fn Bun__Permission__requireInternalPermissionModule(global: &JSGlobalObject) -> JSValue;
@@ -692,7 +692,7 @@ pub struct NodeOptionsGrants {
 }
 
 pub fn grants_from_node_options() -> Option<NodeOptionsGrants> {
-    use bstr::ByteSlice;
+    use bstr::ByteSlice as _;
     let value = bun_core::env_var::NODE_OPTIONS::get()?;
     if !value.contains_str("--permission") {
         return None;
@@ -710,7 +710,10 @@ pub fn grants_from_node_options() -> Option<NodeOptionsGrants> {
     };
     // Node splits NODE_OPTIONS on whitespace with no quoting; the flags Node
     // itself injects are always in `--flag=value` form.
-    for token in value.fields_with(|c| c.is_ascii_whitespace()) {
+    for token in value
+        .split(|b| b.is_ascii_whitespace())
+        .filter(|s| !s.is_empty())
+    {
         match token {
             b"--permission" => grants.permission = true,
             b"--allow-child-process" => grants.child = true,
@@ -720,10 +723,10 @@ pub fn grants_from_node_options() -> Option<NodeOptionsGrants> {
             b"--allow-net" => grants.net = true,
             b"--allow-addons" => grants.addon = true,
             _ => {
-                if let Some(value) = token.strip_prefix(b"--allow-fs-read=".as_slice()) {
-                    grants.fs_read.push(&*Box::leak(Box::<[u8]>::from(value)));
-                } else if let Some(value) = token.strip_prefix(b"--allow-fs-write=".as_slice()) {
-                    grants.fs_write.push(&*Box::leak(Box::<[u8]>::from(value)));
+                if let Some(value) = token.strip_prefix(b"--allow-fs-read=") {
+                    grants.fs_read.push(value);
+                } else if let Some(value) = token.strip_prefix(b"--allow-fs-write=") {
+                    grants.fs_write.push(value);
                 }
             }
         }

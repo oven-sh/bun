@@ -1,14 +1,14 @@
 #pragma once
 
 #include "root.h"
-#include <JavaScriptCore/JSGlobalObject.h>
 
 namespace Bun {
 
-// v8.GCProfiler recorder (JSC::HeapObserver-backed); see BunHeapProfiler.cpp.
+// node:v8 GCProfiler start/stop (JSC HeapObserver-backed).
 JSC_DECLARE_HOST_FUNCTION(jsFunction_startGCProfile);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_stopGCProfile);
-// Backs node:v8's v8.startHeapProfile()/handle.stop().
+
+// node:v8 sampling heap profile (--heap-prof / v8.writeHeapSnapshot helper).
 JSC_DECLARE_HOST_FUNCTION(jsFunction_takeSamplingHeapProfile);
 
 } // namespace Bun

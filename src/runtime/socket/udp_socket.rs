@@ -2004,9 +2004,7 @@ impl UDPSocket {
         Ok(JSValue::js_number(f64::from(value)))
     }
 
-    /// Underlying socket descriptor as a `bun_sys::Fd`, or `None` once closed.
-    /// IPC send uses this to dup/export the descriptor for a `dgram.Socket`
-    /// handle without knowing the uws wrapper shape.
+    /// Underlying socket descriptor, or `None` once closed. IPC send dups/exports this for a `dgram.Socket` handle.
     pub(crate) fn native_fd(&self) -> Option<bun_sys::Fd> {
         if self.closed.get() {
             return None;

@@ -71,8 +71,7 @@ export function parseHandle(target, serialized, fd) {
       return;
     }
     case "dgram.Socket": {
-      // Node's handleConversion['dgram.Socket'].got: wrap the received
-      // descriptor in a fresh dgram.Socket and emit once it is listening.
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js handleConversion['dgram.Socket'].got
       const dgram = require("node:dgram");
       const socket = new dgram.Socket(serialized.dgramType || "udp4");
       socket.bind({ fd, exclusive: true }, () => {

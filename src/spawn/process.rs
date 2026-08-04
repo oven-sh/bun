@@ -2182,6 +2182,11 @@ mod spawn_process_body {
             pub use_execve_on_macos: bool,
             pub argv0: Option<*const c_char>,
 
+            /// POSIX: arm the process-wide SIGINT/SIGTERM forwarder and publish
+            /// `Bun__currentSyncPID`. Off-main-thread callers that would race the
+            /// global handlers and pid (clipboard helpers on the work pool) opt out.
+            pub forward_signals: bool,
+
             #[cfg(windows)]
             pub windows: WindowsOptions,
             #[cfg(not(windows))]
@@ -2249,6 +2254,7 @@ mod spawn_process_body {
                     envp: None,
                     use_execve_on_macos: false,
                     argv0: None,
+                    forward_signals: true,
                     #[cfg(windows)]
                     windows: Default::default(),
                     #[cfg(not(windows))]
@@ -3018,9 +3024,10 @@ mod spawn_process_body {
                 }
             }
 
-            // Signal forwarding rewires process-wide handlers and writes a global pid, so only
-            // the main thread may arm it; work-pool callers (e.g. clipboard helpers) must not.
-            let forward_signals = bun_crash_handler::cli_state::is_main_thread();
+            // Signal forwarding rewires process-wide handlers and writes a single global pid.
+            // Off-main-thread callers that would race those (clipboard helpers on the work
+            // pool) opt out explicitly; the default leaves Worker spawnSync behavior as-is.
+            let forward_signals = options.forward_signals;
             if forward_signals {
                 Bun__currentSyncPID.store(0, core::sync::atomic::Ordering::Relaxed);
             }

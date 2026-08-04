@@ -904,6 +904,9 @@ mod platform {
             stdout: stdio(capture_stdout),
             stderr: spawn_sync::SyncStdio::Ignore,
             envp: None,
+            // This runs on the work pool; arming the process-wide signal
+            // forwarder from here would race the main thread's handlers and pid.
+            forward_signals: false,
             ..Default::default()
         })
         .ok()

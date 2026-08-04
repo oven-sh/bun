@@ -1168,6 +1168,9 @@ pub mod fs {
         // https://twitter.com/jarredsumner/status/1655464485245845506
         /// Caller borrows the returned `EntriesOption`. When `FeatureFlags::ENABLE_ENTRY_CACHE`
         /// is `false`, it is not safe to store this pointer past the current function call.
+        ///
+        /// `maybe_handle` is owned: on success it is published into the cached
+        /// `DirEntry.fd` when `store_fd`; on any error before that it is closed.
         pub fn read_directory_with_iterator<I: DirEntryIterator>(
             &mut self,
             dir_maybe_trail_slash: &[u8],
@@ -1230,7 +1233,7 @@ pub mod fs {
             let close_even_if_published = !store_fd || self.need_to_close_files();
             let handle_published = core::cell::Cell::new(false);
             let _close_guard = scopeguard::guard((), |()| {
-                if !had_handle && (close_even_if_published || !handle_published.get()) {
+                if !handle_published.get() || (!had_handle && close_even_if_published) {
                     let _ = bun_sys::close(handle);
                 }
             });

@@ -106,14 +106,20 @@ afterAll(() => {
 
 // LD_PRELOAD interposition requires a dynamic libc; the musl build links libc
 // statically, so the shim cannot intercept syscall() there.
-test.skipIf(!isLinux || isMusl || !cc)(
-  "resolver closes the directory fd when readdir fails after a successful open (store_fd)",
+const skip = !isLinux || isMusl || !cc;
+
+function shimEnv() {
+  const existing = bunEnv.LD_PRELOAD;
+  return { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath };
+}
+
+test.skipIf(skip)(
+  "resolver closes the directory fd when readdir fails after a successful open (store_fd, fresh handle)",
   async () => {
-    const existing = bunEnv.LD_PRELOAD;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--hot", "inner.ts"],
       cwd: String(dir),
-      env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath },
+      env: shimEnv(),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -123,6 +129,48 @@ test.skipIf(!isLinux || isMusl || !cc)(
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
       stdout: `FAILED=${DIR_COUNT} LEAKED=0`,
       stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
+// The `bun test` scanner opens each subdirectory itself and hands the fd to
+// read_directory_with_iterator(Some(fd)), which is the had_handle=true arm of
+// the same guard. The scanner's Dir guard is disarmed via into_raw(), so the
+// function owns the fd on that path too.
+test.skipIf(skip)(
+  "resolver closes a caller-supplied directory fd when readdir fails (bun test scanner)",
+  async () => {
+    const files: Record<string, string> = {
+      "package.json": "{}",
+      "count.test.ts": /* ts */ `
+        import { test } from "bun:test";
+        import { readdirSync, readlinkSync } from "node:fs";
+        test("count", () => {
+          let leaked = 0;
+          for (const name of readdirSync("/proc/self/fd")) {
+            try {
+              if (readlinkSync("/proc/self/fd/" + name).includes("${MARKER}")) leaked++;
+            } catch {}
+          }
+          console.log("LEAKED=" + leaked);
+        });
+      `,
+    };
+    for (let i = 0; i < DIR_COUNT; i++) files[`d${i}${MARKER}/noop.txt`] = "";
+    using scanDir = tempDir("resolver-readdir-scanner-leak", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "."],
+      cwd: String(scanDir),
+      env: shimEnv(),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const m = stdout.match(/LEAKED=(\d+)/);
+    expect({ leaked: m?.[0], stderr: stderr.includes("1 pass"), exitCode }).toEqual({
+      leaked: "LEAKED=0",
+      stderr: true,
       exitCode: 0,
     });
   },

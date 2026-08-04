@@ -886,8 +886,14 @@ impl RewriterPipe {
     #[inline]
     fn output_backpressured(&self) -> bool {
         if let Some(out) = self.output.get() {
-            return out.sink_paused.get()
-                || out.buffer.get().len() as BlobSizeType > self.high_water_mark.get();
+            if out.sink_paused.get() {
+                return true;
+            }
+            // A body-mixin collector grows `buffer` deliberately until Done.
+            if out.buffer_action.get().is_some() {
+                return false;
+            }
+            return out.buffer.get().len() as BlobSizeType > self.high_water_mark.get();
         }
         // No output ByteStream yet: the pre-stream buffer has no drain signal
         // (only `on_start_streaming`/`finish` consume it), so backpressuring

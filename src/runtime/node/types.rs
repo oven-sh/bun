@@ -940,7 +940,6 @@ pub(crate) trait PathOrFdExt {
 /// (`['string', 'Buffer', 'URL']`), pre-rendered the way `errors.js` formats it.
 pub(crate) const PATH_EXPECTED_TYPES: &str = "of type string or an instance of Buffer or URL";
 
-
 impl PathLikeExt for PathLike {
     // Const-generics can't change return mutability, so this always returns
     // `&ZStr`. A future force=true caller that needs `&mut ZStr` will need a

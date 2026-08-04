@@ -3254,7 +3254,9 @@ pub mod args {
                             break 'brk false;
                         }
                         arguments.eat();
-                        if let Some(b) = next_val.get_boolean_strict(ctx, "bigint")? {
+                        if let Some(b) =
+                            next_val.get_boolean_strict_named(ctx, "bigint", "options.bigint")?
+                        {
                             break 'brk b;
                         }
                     }
@@ -3292,10 +3294,16 @@ pub mod args {
                             break 'brk false;
                         }
                         arguments.eat();
-                        if let Some(v) = next_val.get_boolean_strict(ctx, "throwIfNoEntry")? {
+                        if let Some(v) = next_val.get_boolean_strict_named(
+                            ctx,
+                            "throwIfNoEntry",
+                            "options.throwIfNoEntry",
+                        )? {
                             throw_if_no_entry = v;
                         }
-                        if let Some(b) = next_val.get_boolean_strict(ctx, "bigint")? {
+                        if let Some(b) =
+                            next_val.get_boolean_strict_named(ctx, "bigint", "options.bigint")?
+                        {
                             break 'brk b;
                         }
                     }
@@ -3325,7 +3333,9 @@ pub mod args {
                             break 'brk false;
                         }
                         arguments.eat();
-                        if let Some(b) = next_val.get_boolean_strict(ctx, "bigint")? {
+                        if let Some(b) =
+                            next_val.get_boolean_strict_named(ctx, "bigint", "options.bigint")?
+                        {
                             break 'brk b;
                         }
                     }
@@ -3759,10 +3769,16 @@ pub mod args {
                     _ => {
                         if val.is_object() {
                             encoding = get_encoding(val, ctx, encoding)?;
-                            if let Some(r) = val.get_boolean_strict(ctx, "recursive")? {
+                            if let Some(r) =
+                                val.get_boolean_strict_named(ctx, "recursive", "options.recursive")?
+                            {
                                 recursive = r;
                             }
-                            if let Some(w) = val.get_boolean_strict(ctx, "withFileTypes")? {
+                            if let Some(w) = val.get_boolean_strict_named(
+                                ctx,
+                                "withFileTypes",
+                                "options.withFileTypes",
+                            )? {
                                 with_file_types = w;
                             }
                         }

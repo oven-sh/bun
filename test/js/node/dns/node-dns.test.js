@@ -480,16 +480,18 @@ describe("test invalid arguments", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/36892
-  it.each([
+  describe.each([
     ["dns.resolve", hostname => dns.resolve(hostname, undefined, () => {})],
     ["Resolver#resolve", hostname => new dns.Resolver().resolve(hostname, undefined, () => {})],
-  ])("%s with undefined rrtype throws ERR_INVALID_ARG_TYPE", (_, fn) => {
-    expect(() => fn("localhost")).toThrow(
-      expect.objectContaining({
-        code: "ERR_INVALID_ARG_TYPE",
-        message: expect.stringContaining('The "rrtype" argument must be of type string'),
-      }),
-    );
+  ])("%s", (_, fn) => {
+    it("with undefined rrtype throws ERR_INVALID_ARG_TYPE", () => {
+      expect(() => fn("localhost")).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: expect.stringContaining('The "rrtype" argument must be of type string'),
+        }),
+      );
+    });
   });
 
   it("dns.promises.resolve with undefined rrtype does not throw", async () => {

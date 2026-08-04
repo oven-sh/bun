@@ -85,7 +85,10 @@ void JSNodeHTTPServerSocket::close()
                 flushPartialResponseBeforeClose<false>(socket);
             }
         }
-        us_socket_close(socket, 0, nullptr);
+        /* socket.destroy() → forceful close: CLEAN_SHUTDOWN would wait on the
+         * peer's close_notify, which an allowHalfOpen peer never sends, pinning
+         * the fd and event loop. */
+        us_socket_close(socket, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
     }
 }
 

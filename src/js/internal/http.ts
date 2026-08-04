@@ -10,6 +10,8 @@ const {
   webRequestOrResponseHasBodyValue,
   setServerCustomOptions,
   setServerAppFlags,
+  setServerSecureContext,
+  enableServerKeylog,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
   drainMicrotasks,
   setServerIdleTimeout,
@@ -37,6 +39,8 @@ const {
     insecureHTTPParser: boolean,
     httpAllowHalfOpen: boolean,
   ) => void;
+  setServerSecureContext: (server: any, tls: any) => void;
+  enableServerKeylog: (server: any) => void;
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
   drainMicrotasks: () => void;
   setServerIdleTimeout: (server: any, timeout: number) => void;
@@ -605,6 +609,7 @@ export {
   emitCloseNTAndComplete,
   emitEOFIncomingMessage,
   emitErrorNextTickIfErrorListenerNT,
+  enableServerKeylog,
   eofInProgress,
   fakeSocketSymbol,
   filterEnvForProxies,
@@ -670,6 +675,7 @@ export {
   setServerAppFlags,
   setServerCustomOptions,
   setServerIdleTimeout,
+  setServerSecureContext,
   statusCodeSymbol,
   statusMessageSymbol,
   timeoutTimerSymbol,

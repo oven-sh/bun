@@ -1010,6 +1010,8 @@ impl<'a> Parser<'a> {
                     options::Format::Iife => {
                         b"Top-level await is currently not supported with the \"iife\" output format"
                     }
+                    // Currently unreachable: ParseTask enables top_level_await
+                    // for InternalBakeDev; kept as a defensive fallback.
                     options::Format::InternalBakeDev => {
                         b"Top-level await is currently not supported with the \"internal_bake_dev\" output format"
                     }

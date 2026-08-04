@@ -569,7 +569,8 @@ impl WebWorker {
                 // Inherited execArgv means inherited profiling flags; snapshot
                 // the parent's config here on the parent thread (the only
                 // thread that mutates it, in `on_exit`/self-kill).
-                parent_ref.heap_profiler_config.clone()
+                // SAFETY: `parent` is the calling thread's live VM; see above.
+                unsafe { (*parent).heap_profiler_config.clone() }
             } else {
                 // SAFETY: caller passed valid (ptr,len) (or `(null,0)`);
                 // strings live as long as the C++ `WorkerOptions`.

@@ -490,6 +490,11 @@ pub struct Resolver<'a> {
     pub debug_logs: Option<DebugLogs>,
     pub elapsed: u64, // tracing
 
+    /// Advisory capture of the first Node-shaped resolution failure. Never
+    /// changes the resolution outcome; the runtime's resolve hooks clear it
+    /// before each resolve and read it only after a failure.
+    pub node_module_error: Option<Box<crate::NodeModuleError>>,
+
     pub watcher: Option<AnyResolveWatcher>,
 
     pub caches: CacheSet,
@@ -627,6 +632,7 @@ impl<'a> Resolver<'a> {
             // `DebugLogs` owns Vecs — per-worker fresh.
             debug_logs: None,
             elapsed: 0,
+            node_module_error: None,
             watcher: from.watcher,
             caches: CacheSet::init(),
             generation: from.generation,
@@ -927,6 +933,7 @@ impl<'a> Resolver<'a> {
             care_about_scripts: false,
             debug_logs: None,
             elapsed: 0,
+            node_module_error: None,
             watcher: None,
             generation: 0,
             package_manager: None,
@@ -2526,6 +2533,20 @@ impl<'a> Resolver<'a> {
         out: &mut MatchResult,
     ) -> MatchStatus {
         let mut dir_info: DirInfoRef = _dir_info;
+        // Node validates the package name before any lookup (parsePackageName);
+        // record the Node-shaped error but keep resolving — only surfaces on failure.
+        // https://github.com/nodejs/node/blob/main/lib/internal/modules/esm/resolve.js
+        if matches!(kind, ast::ImportKind::Stmt | ast::ImportKind::Dynamic)
+            && !import_path.starts_with(b"#")
+            && self.node_module_error.is_none()
+            && node_invalid_package_name(import_path)
+        {
+            self.node_module_error = Some(crate::NodeModuleError::invalid_module_specifier(
+                import_path,
+                format_args!("is not a valid package name"),
+                false,
+            ));
+        }
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "Searching for {} in \"node_modules\" directories starting from \"{}\"",
@@ -2669,6 +2690,28 @@ impl<'a> Resolver<'a> {
                                 _ => self.opts.extension_order.kind(kind, true),
                             };
 
+                            // A candidate package whose package.json exists
+                            // but didn't parse is Node's
+                            // ERR_INVALID_PACKAGE_CONFIG.
+                            if pkg_dir_info.package_json().is_none()
+                                && self.node_module_error.is_none()
+                                && pkg_dir_info
+                                    .get_entries_ref(self.generation)
+                                    .is_some_and(|entries| entries.get(b"package.json").is_some())
+                            {
+                                // Cold path: owned join (the shared path
+                                // buffers still hold `abs_path` /
+                                // `abs_package_path`).
+                                let mut pkg_json_path =
+                                    Vec::with_capacity(abs_package_path.len() + 14);
+                                pkg_json_path.extend_from_slice(abs_package_path);
+                                pkg_json_path.push(SEP);
+                                pkg_json_path.extend_from_slice(b"package.json");
+                                self.node_module_error = Some(
+                                    crate::NodeModuleError::invalid_package_config(&pkg_json_path),
+                                );
+                            }
+
                             if let Some(package_json) = pkg_dir_info.package_json() {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
@@ -2710,6 +2753,7 @@ impl<'a> Resolver<'a> {
                                                 kind,
                                                 package_json,
                                                 esm.subpath,
+                                                false,
                                                 out,
                                             )
                                             .is_success()
@@ -2769,6 +2813,7 @@ impl<'a> Resolver<'a> {
                                                 kind,
                                                 package_json,
                                                 esm.subpath,
+                                                false,
                                                 out,
                                             )
                                             .is_success()
@@ -3204,6 +3249,7 @@ impl<'a> Resolver<'a> {
                                                 kind,
                                                 package_json,
                                                 esm.subpath,
+                                                false,
                                                 out,
                                             )
                                             .is_success()
@@ -3246,6 +3292,7 @@ impl<'a> Resolver<'a> {
                                                 kind,
                                                 package_json,
                                                 esm.subpath,
+                                                false,
                                                 out,
                                             )
                                             .is_success()
@@ -3640,6 +3687,125 @@ impl<'a> Resolver<'a> {
         unreachable!("TODO: implement enqueueDependencyToResolve for non-root packages")
     }
 
+    /// Set-if-empty: the first Node-shaped failure encountered during a
+    /// resolve wins (matching Node, which throws at the first failing step).
+    fn capture_node_module_error(&mut self, err: Box<crate::NodeModuleError>) {
+        if self.node_module_error.is_none() {
+            self.node_module_error = Some(err);
+        }
+    }
+
+    /// Map a failed `exports`/`imports` `Resolution` to Node's error shape.
+    fn capture_esm_resolution_failure(
+        &mut self,
+        esm_resolution: &crate::package_json::Resolution,
+        package_json: &PackageJSON,
+        request: &[u8],
+        is_imports: bool,
+        kind: ast::ImportKind,
+    ) {
+        use crate::NodeModuleError;
+        use crate::package_json::{ResolutionDetail, Status};
+        if self.node_module_error.is_some() {
+            return;
+        }
+        // Path-length overflows are a Bun-only limit; Node resolves the huge
+        // path and reports module-not-found, so keep the generic shape.
+        if matches!(
+            esm_resolution.detail.as_deref(),
+            Some(ResolutionDetail::PathTooLong)
+        ) {
+            return;
+        }
+        let pkg_json_path: &[u8] = package_json.source.path.text;
+        let err = match esm_resolution.status {
+            // Bun-only intermediate statuses all correspond to Node's
+            // "not exported" / "not defined" outcomes.
+            Status::PackagePathNotExported
+            | Status::PackagePathDisabled
+            | Status::Null
+            | Status::Undefined
+            | Status::UndefinedNoConditionsMatch => {
+                if is_imports {
+                    NodeModuleError::package_import_not_defined(request, pkg_json_path)
+                } else {
+                    NodeModuleError::package_path_not_exported(pkg_json_path, request)
+                }
+            }
+            Status::PackageImportNotDefined => {
+                NodeModuleError::package_import_not_defined(request, pkg_json_path)
+            }
+            Status::InvalidPackageTarget => {
+                let (key, target, bare) = match esm_resolution.detail.as_deref() {
+                    Some(ResolutionDetail::InvalidTarget {
+                        key,
+                        target,
+                        bare_string_target,
+                    }) => (key.as_deref(), target.as_deref(), *bare_string_target),
+                    _ => (None, None, false),
+                };
+                NodeModuleError::invalid_package_target(
+                    pkg_json_path,
+                    key,
+                    target,
+                    is_imports,
+                    bare,
+                )
+            }
+            Status::InvalidModuleSpecifier => match esm_resolution.detail.as_deref() {
+                Some(ResolutionDetail::EncodedSeparator) => {
+                    // Node reports the resolved path — as a file URL for
+                    // require(), as a filesystem path for import.
+                    let pkg_dir = bun_paths::dirname(pkg_json_path).unwrap_or(pkg_json_path);
+                    let mut resolved = Vec::new();
+                    if matches!(
+                        kind,
+                        ast::ImportKind::Require | ast::ImportKind::RequireResolve
+                    ) {
+                        resolved.extend_from_slice(b"file://");
+                    }
+                    resolved.extend_from_slice(pkg_dir);
+                    resolved.extend_from_slice(&esm_resolution.path);
+                    NodeModuleError::invalid_module_specifier(
+                        &resolved,
+                        format_args!("must not include encoded \"/\" or \"\\\" characters"),
+                        is_imports,
+                    )
+                }
+                Some(ResolutionDetail::PatternMismatch { pattern }) => {
+                    NodeModuleError::invalid_module_specifier(
+                        request,
+                        format_args!(
+                            "request is not a valid match in pattern \"{}\" for the \"{}\" resolution of {}",
+                            bstr::BStr::new(pattern),
+                            if is_imports { "imports" } else { "exports" },
+                            bstr::BStr::new(pkg_json_path),
+                        ),
+                        is_imports,
+                    )
+                }
+                _ => NodeModuleError::invalid_module_specifier(
+                    request,
+                    format_args!(
+                        "is not a valid match for the \"{}\" resolution of {}",
+                        if is_imports { "imports" } else { "exports" },
+                        bstr::BStr::new(pkg_json_path),
+                    ),
+                    is_imports,
+                ),
+            },
+            Status::InvalidPackageConfiguration => {
+                let message = match esm_resolution.detail.as_deref() {
+                    Some(ResolutionDetail::ConfigMessage { message }) => Some(&**message),
+                    _ => None,
+                };
+                NodeModuleError::invalid_package_config_structure(pkg_json_path, message)
+            }
+            _ => return,
+        };
+        self.node_module_error = Some(err);
+    }
+
     fn handle_esm_resolution(
         &mut self,
         esm_resolution_: crate::package_json::Resolution,
@@ -3647,6 +3813,7 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         package_json: &PackageJSON,
         package_subpath: &[u8],
+        is_imports: bool,
         out: &mut MatchResult,
     ) -> MatchStatus {
         let mut esm_resolution = esm_resolution_;
@@ -3657,6 +3824,13 @@ impl<'a> Resolver<'a> {
         )) && !esm_resolution.path.is_empty()
             && esm_resolution.path[0] == SEP)
         {
+            self.capture_esm_resolution_failure(
+                &esm_resolution,
+                package_json,
+                package_subpath,
+                is_imports,
+                kind,
+            );
             return MatchStatus::NotFound;
         }
 
@@ -3707,6 +3881,9 @@ impl<'a> Resolver<'a> {
                 let entry_query = match entries.get(base) {
                     Some(q) => q,
                     None => {
+                        self.capture_node_module_error(crate::NodeModuleError::module_not_found(
+                            abs_esm_path,
+                        ));
                         let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                         esm_resolution.status = Status::ModuleNotFound;
 
@@ -3744,6 +3921,9 @@ impl<'a> Resolver<'a> {
                 if unsafe { entry_query.entry().kind(self.rfs_ptr(), self.store_fd) }
                     == Fs::file_system::EntryKind::Dir
                 {
+                    self.capture_node_module_error(crate::NodeModuleError::unsupported_dir_import(
+                        abs_esm_path,
+                    ));
                     let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                     esm_resolution.status = Status::UnsupportedDirectoryImport;
 
@@ -3845,6 +4025,9 @@ impl<'a> Resolver<'a> {
                         .or_else(|| Some(std::ptr::from_ref(package_json)));
                     return MatchStatus::Success;
                 }
+                self.capture_node_module_error(crate::NodeModuleError::module_not_found(
+                    abs_esm_path,
+                ));
                 esm_resolution.status = Status::ModuleNotFound;
                 MatchStatus::NotFound
             }
@@ -4853,6 +5036,11 @@ impl<'a> Resolver<'a> {
                     bstr::BStr::new(import_path)
                 ));
             }
+            self.capture_node_module_error(crate::NodeModuleError::invalid_module_specifier(
+                import_path,
+                format_args!("is not a valid internal imports specifier name"),
+                true,
+            ));
             return MatchStatus::NotFound;
         }
         let mut module_type = options::ModuleType::Unknown;
@@ -4906,6 +5094,19 @@ impl<'a> Resolver<'a> {
                 }
             }
 
+            // Node rejects URL-like imports targets outright (resolvePackageTargetString's
+            // URLCanParse branch); Bun hands them to package resolution, so only shape
+            // the error in case that fails.
+            if has_url_scheme(&esm_resolution.path) {
+                self.capture_node_module_error(crate::NodeModuleError::invalid_package_target(
+                    package_json.source.path.text,
+                    Some(import_path),
+                    Some(&esm_resolution.path),
+                    true,
+                    false,
+                ));
+            }
+
             return self.load_node_modules(
                 &esm_resolution.path,
                 kind,
@@ -4921,7 +5122,8 @@ impl<'a> Resolver<'a> {
             package_json.source.path.name().dir,
             kind,
             package_json,
-            b"",
+            import_path,
+            true,
             out,
         )
     }
@@ -6676,4 +6878,46 @@ impl Dirname {
 
         &path[0..end_index + 1]
     }
+}
+
+/// Whether `s` starts with a URL scheme (`ALPHA *( ALPHA / DIGIT / "+" /
+/// "-" / "." )` followed by `:`), the shape `URLCanParse` accepts.
+fn has_url_scheme(s: &[u8]) -> bool {
+    if !s.first().is_some_and(u8::is_ascii_alphabetic) {
+        return false;
+    }
+    for &b in &s[1..] {
+        match b {
+            b':' => return true,
+            b if b.is_ascii_alphanumeric() || b == b'+' || b == b'.' || b == b'-' => {}
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// Node's `parsePackageName` validity check: non-empty, no leading `.`, no `%`/`\`.
+/// https://github.com/nodejs/node/blob/main/lib/internal/modules/esm/resolve.js
+fn node_invalid_package_name(specifier: &[u8]) -> bool {
+    let mut sep = strings::index_of_char(specifier, b'/').map(|i| i as usize);
+    if specifier.first() == Some(&b'@') {
+        match sep {
+            None => return true,
+            Some(s) => {
+                sep = specifier[s + 1..]
+                    .iter()
+                    .position(|&b| b == b'/')
+                    .map(|i| s + 1 + i);
+            }
+        }
+    }
+    let name = match sep {
+        Some(s) => &specifier[..s],
+        None => specifier,
+    };
+    if name.is_empty() {
+        return true;
+    }
+    // invalidPackageNameRegEx = /^\.|%|\\/
+    name[0] == b'.' || name.iter().any(|&b| b == b'%' || b == b'\\')
 }

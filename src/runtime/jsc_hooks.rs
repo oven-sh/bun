@@ -5296,6 +5296,13 @@ unsafe fn resolve_hook(
         return true;
     }
 
+    let import_kind = mode.import_kind();
+
+    // Drop any capture left over from an earlier resolve so a failure below
+    // is attributed to this specifier only.
+    // SAFETY: `vm` is the live per-thread VM.
+    unsafe { (*vm).transpiler.resolver.node_module_error = None };
+
     // Swap `vm.log` (and resolver/linker/pm logs) to a fresh
     // local Log so resolver diagnostics don't leak into the VM log. Note:
     // `Resolver.log` is `NonNull<Log>` and `Linker.log` is `*mut Log` (see
@@ -5349,16 +5356,24 @@ unsafe fn resolve_hook(
             &mut result_query,
         )
     } {
-        // Synthesise a `ResolveMessage` from the first
-        // `.resolve`-tagged log msg, or fall back to `ResolveMessage::fmt`.
+        // Prefer the resolver's Node-shaped capture, else the first
+        // `.resolve`-tagged log msg, else `ResolveMessage::fmt`.
+        // SAFETY: `vm` is the live per-thread VM.
+        let captured = unsafe { (*vm).transpiler.resolver.node_module_error.take() };
         let msg: bun_ast::Msg = 'brk: {
+            if let Some(captured) = captured {
+                break 'brk ResolveMessage::msg_from_node_module_error(
+                    &captured,
+                    import_kind,
+                    specifier_utf8.slice(),
+                    source_utf8.slice(),
+                );
+            }
             for m in log.msgs.iter() {
                 if let bun_ast::Metadata::Resolve(_) = &m.metadata {
                     break 'brk m.clone();
                 }
             }
-
-            let import_kind = mode.import_kind();
 
             let printed = ResolveMessage::fmt(
                 specifier_utf8.slice(),

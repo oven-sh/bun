@@ -640,6 +640,10 @@ Server.prototype.listen = function () {
     //   server[kRealListen](port, host, socketPath, onListen);
     // });
 
+    // The disconnect protocol (`worker.disconnect()`) closes every server it
+    // knows about; without this the http server keeps the worker alive forever.
+    cluster._trackServer(server);
+
     server.once("listening", () => {
       cluster.worker.state = "listening";
       const address = server.address();

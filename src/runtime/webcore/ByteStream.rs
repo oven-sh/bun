@@ -687,12 +687,18 @@ impl ByteStream {
     /// installed `self.sink` must use [`flush_to_sink`] instead so the bytes
     /// are written before the producer is woken.
     pub(crate) fn drain(&self) -> Vec<u8> {
-        debug_assert!(self.sink.get().is_none());
         if self.buffer.get().is_empty() {
             return Vec::<u8>::default();
         }
         let drained = Vec::<u8>::move_from_list(self.buffer.replace(Vec::new()));
-        self.signal_drained();
+        // `materializeNativeSource` can reach here with a sink already wired
+        // (getReader() on a natively-locked stream materialises before the
+        // lock check throws); signalling then would let a synchronous producer
+        // emit newer bytes to that sink ahead of `drained`, so only signal on
+        // the intended JS-reader path.
+        if self.sink.get().is_none() {
+            self.signal_drained();
+        }
         drained
     }
 

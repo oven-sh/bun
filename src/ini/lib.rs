@@ -120,14 +120,14 @@ pub struct ConfigItem {
 
 impl ConfigItem {
     /// Duplicate ConfigIterator.Item
-    pub(crate) fn dupe(&self) -> OOM<Option<ConfigItem>> {
-        Ok(Some(ConfigItem {
+    pub(crate) fn dupe(&self) -> OOM<ConfigItem> {
+        Ok(ConfigItem {
             registry_url: Box::<[u8]>::from(&*self.registry_url),
             optname: self.optname,
             value: Box::<[u8]>::from(&*self.value),
             loc: self.loc,
             source_idx: self.source_idx,
-        }))
+        })
     }
 
     /// Duplicate the value, decoding it if it is base64 encoded. Decoding
@@ -1557,9 +1557,7 @@ mod draft {
             }
             let mut normalized: Vec<ConfigItem> = Vec::with_capacity(configs.len());
             for conf_item in configs.iter() {
-                let Some(mut dup) = conf_item.dupe()? else {
-                    continue;
-                };
+                let mut dup = conf_item.dupe()?;
                 dup.registry_url = normalize_conf_key(&conf_item.registry_url, default_port);
                 normalized.push(dup);
             }
@@ -1938,9 +1936,7 @@ mod draft {
                         }
                         _ => {}
                     }
-                    if let Some(x) = conf_item_.dupe()? {
-                        configs.push(x);
-                    }
+                    configs.push(conf_item_.dupe()?);
                 }
             }
         }

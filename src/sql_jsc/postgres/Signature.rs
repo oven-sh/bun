@@ -19,9 +19,8 @@ impl Signature {
 
     // No explicit `Drop` impl needed: the `Box<[T]>` fields free the four owned slices automatically.
 
-    /// (Re)build the server-side prepared-statement name from `self.name` and
-    /// a fresh id. `P` + 40 bytes of the signature + `$` + up to 20 digits
-    /// stays within Postgres' 63-byte identifier limit.
+    /// `P` + 40 bytes of `name` + `$` + up to 20 digits ≤ Postgres' 63-byte
+    /// identifier limit.
     pub(crate) fn set_prepared_statement_name(&mut self, prepared_statement_id: u64) {
         use std::io::Write;
         let mut v: Vec<u8> = Vec::new();

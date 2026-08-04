@@ -124,10 +124,9 @@ pub struct PostgresSQLConnection {
     // so `vm_mut()`'s `&mut *as_ptr()` is sound.
     pub(crate) vm: BackRef<VirtualMachine>,
     pub(crate) statements: JsCell<PreparedStatementsMap>,
-    /// The transaction status byte from the most recent ReadyForQuery. Used to
-    /// suppress the transparent re-prepare retry inside an open or aborted
-    /// transaction block, where the retry Parse would be rejected with 25P02
-    /// and mask the original 0A000/26000 (pgjdbc's `willHealOnRetry` guard).
+    /// Transaction status byte from the last ReadyForQuery; gates the
+    /// re-prepare retry (a retry inside a transaction block masks 0A000/26000
+    /// with 25P02).
     pub(crate) tx_status: Cell<protocol::TransactionStatusIndicator>,
     pub(crate) prepared_statement_id: Cell<u64>,
     pub(crate) pending_activity_count: AtomicU32,
@@ -3036,33 +3035,20 @@ impl PostgresSQLConnection {
                         && invalidates
                         && !stmt.signature.prepared_statement_name.is_empty()
                     {
-                        // 26000 / 0A000 on a named statement we already
-                        // prepared: the server-side object is gone or its
-                        // cached plan is stale. Evict it so the next query
-                        // with this signature re-prepares instead of binding
-                        // the dead name forever. Unnamed statements Parse on
-                        // every execution and are never cached, so nothing to
-                        // evict or retry there.
+                        // Server-side named statement gone or stale: evict so
+                        // later queries with this signature re-prepare.
                         if let Some(removed) = self
                             .statements
                             .with_mut(|m| m.remove(&stmt.signature.name[..]))
                         {
-                            // SAFETY: `removed` is the pointer the map held
-                            // and this releases exactly the map's ref on it.
-                            // It is usually `stmt`, but a user `.catch()` that
-                            // ran between pipelined siblings' ErrorResponses
-                            // may have inserted a different statement under
-                            // the same key; deref'ing `removed` keeps both
-                            // refcounts balanced either way.
+                            // SAFETY: releases exactly the map's ref. `removed`
+                            // may differ from `stmt` if user JS inserted a new
+                            // entry between pipelined siblings' ErrorResponses.
                             unsafe { PostgresSQLStatement::deref(removed) };
                         }
-                        // Re-prepare transparently when this is the only
-                        // exchange in flight (no later Bind/Execute already on
-                        // the wire whose responses would be misattributed to
-                        // the reset request), we have not retried already, and
-                        // the session is not inside a transaction block (where
-                        // the retry Parse would be rejected with 25P02 and
-                        // mask the original error; pgjdbc's willHealOnRetry).
+                        // Retry only when no other Bind/Execute responses are
+                        // already on the wire and the session is idle (inside a
+                        // transaction the retry Parse would be rejected 25P02).
                         if !request.flags.get().reprepared
                             && self.tx_status.get() == protocol::TransactionStatusIndicator::I
                             && self.pipelined_requests.get() <= 1
@@ -3081,13 +3067,9 @@ impl PostgresSQLConnection {
                             });
                             if let Ok(slot) = slot {
                                 stmt.ref_();
-                                // SAFETY: `slot` points into `self.statements`
-                                // and the map has not been mutated since
-                                // `get_or_put`; the `ref_()` above is its ref.
-                                // Store the allocation's root `heap::into_raw`
-                                // pointer the request holds (same provenance
-                                // discipline as `do_run`), not a
-                                // `&mut`-derived one.
+                                // SAFETY: map not mutated since `get_or_put`;
+                                // store the root pointer (same provenance as
+                                // `do_run`), not a `&mut`-derived one.
                                 unsafe { *slot = request.statement.get().expect("statement set") };
                             }
                             request.status.set(QueryStatus::Pending);
@@ -3100,12 +3082,8 @@ impl PostgresSQLConnection {
                             self.update_ref();
                             return Ok(());
                         }
-                        // Not retrying this one: already retried once, inside
-                        // a transaction block, or other Bind/Execute for the
-                        // same stale name are still on the wire. Leave the
-                        // statement Prepared so the last pipelined sibling's
-                        // ErrorResponse can still re-prepare it; the cache
-                        // entry is already gone.
+                        // Leave the statement Prepared so the last pipelined
+                        // sibling's ErrorResponse can still re-prepare it.
                     }
                 }
                 // If `err` was not moved into stmt above, it drops here automatically.

@@ -96,9 +96,7 @@ pub struct Flags {
     /// `finish_request` consumes that contribution. Makes the decrement
     /// idempotent across the three `finish_request` call sites.
     pub(crate) counted: bool,
-    /// Set once the ErrorResponse handler has transparently re-prepared this
-    /// request's statement after a 26000/0A000 invalidation, so a second
-    /// invalidation on the retry is surfaced instead of looping.
+    /// Set after one transparent re-prepare on 26000/0A000; caps retries at 1.
     pub(crate) reprepared: bool,
     pub(crate) result_mode: PostgresSQLQueryResultMode,
 }

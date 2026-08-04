@@ -711,8 +711,12 @@ public:
     // node_modules-keeping only applies to what the test file loaded on top.
     WTF::UncheckedKeyHashSet<WTF::RefPtr<WTF::UniquedStringImpl>> preloadModuleKeys;
     WTF::UncheckedKeyHashSet<WTF::String> preloadRequireKeys;
+    JSC::Strong<JSC::Unknown> prepareStackTraceValue;
     unsigned lexicalSymbolTableSize { 0 };
     unsigned varSymbolTableSize { 0 };
+    bool hasOverriddenModuleWrapper { false };
+    bool hasOverriddenModuleResolveFilename { false };
+    bool hasOverriddenModuleRunMain { false };
     Zig::GlobalObject* capturedGlobal { nullptr };
     unsigned reuseCount { 0 };
     unsigned swapCount { 0 };
@@ -749,6 +753,10 @@ extern "C" void Zig__GlobalObject__captureTestIsolationBaseline(Zig::GlobalObjec
     }
 
     baseline.varSymbolTableSize = globalObject->symbolTable()->size();
+    baseline.hasOverriddenModuleWrapper = globalObject->hasOverriddenModuleWrapper;
+    baseline.hasOverriddenModuleResolveFilename = globalObject->hasOverriddenModuleResolveFilenameFunction;
+    baseline.hasOverriddenModuleRunMain = globalObject->hasOverriddenModuleRunMain;
+    baseline.prepareStackTraceValue.set(vm, globalObject->m_errorConstructorPrepareStackTraceValue.get());
 
     globalObject->structure()->forEachProperty(vm, [&](const auto& entry) -> bool {
         baseline.ownProperties.add(entry.key(),
@@ -815,10 +823,10 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
     if (globalObject->symbolTable()->size() != baseline->varSymbolTableSize)
         return swap();
 
-    if (globalObject->hasOverriddenModuleWrapper
-        || globalObject->hasOverriddenModuleResolveFilenameFunction
-        || globalObject->hasOverriddenModuleRunMain
-        || globalObject->m_errorConstructorPrepareStackTraceValue.get())
+    if (globalObject->hasOverriddenModuleWrapper != baseline->hasOverriddenModuleWrapper
+        || globalObject->hasOverriddenModuleResolveFilenameFunction != baseline->hasOverriddenModuleResolveFilename
+        || globalObject->hasOverriddenModuleRunMain != baseline->hasOverriddenModuleRunMain
+        || globalObject->m_errorConstructorPrepareStackTraceValue.get() != baseline->prepareStackTraceValue.get())
         return swap();
 
     // Restore spies before the own-property compare so a spyOn(globalThis, ...)
@@ -913,6 +921,8 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
     globalObject->mockModule.activeMocks.clear();
     globalObject->globalEventScope->removeAllEventListeners();
     globalObject->overridenDateNow = JSC::PNaN;
+    globalObject->onLoadPlugins = {};
+    globalObject->onResolvePlugins = {};
     if (globalObject->hasProcessObject()) {
         auto* process = globalObject->processObject();
         process->wrapped().removeAllListeners();

@@ -220,6 +220,79 @@ describe("clear", () => {
   });
 });
 
+describe("_idleStart", () => {
+  // https://github.com/oven-sh/bun/issues/26508
+  // Next.js 16 Cache Components writes `t2._idleStart = t1._idleStart` so two
+  // `setTimeout(fn)` calls share a deadline and both fire before any
+  // `setImmediate` scheduled from `t1`'s callback.
+  it("reschedules the timer when written (Next.js pattern)", async () => {
+    const script = `
+      async function once() {
+        let immediateRan = false;
+        let order = [];
+        const t1 = setTimeout(() => {
+          order.push("t1");
+          setImmediate(() => { immediateRan = true; });
+        });
+        // Force the monotonic clock past a millisecond boundary so t2 would
+        // land in a later event-loop turn without the _idleStart assignment.
+        { const s = performance.now(); while (performance.now() - s < 2) {} }
+        const { promise, resolve } = Promise.withResolvers();
+        const t2 = setTimeout(() => {
+          order.push("t2");
+          resolve({ immediateRan, order: order.join(",") });
+        });
+        t2._idleStart = t1._idleStart;
+        return promise;
+      }
+      for (let i = 0; i < 50; i++) {
+        const { immediateRan, order } = await once();
+        if (immediateRan) {
+          console.log("FAIL: immediate ran before t2 on iteration " + i);
+          process.exit(1);
+        }
+        if (order !== "t1,t2") {
+          console.log("FAIL: wrong order " + order + " on iteration " + i);
+          process.exit(1);
+        }
+      }
+      console.log("ok");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
+  });
+
+  it("ignores non-finite values and cleared timers", async () => {
+    const t1 = setTimeout(() => {}, 10) as any;
+    t1._idleStart = "not a number";
+    expect(t1._idleStart).toBe("not a number");
+    t1._idleStart = NaN;
+    expect(Number.isNaN(t1._idleStart)).toBeTrue();
+    t1._idleStart = Infinity;
+    expect(t1._idleStart).toBe(Infinity);
+    clearTimeout(t1);
+    t1._idleStart = 0;
+    expect(t1._idleStart).toBe(0);
+  });
+
+  it("does not overflow for extreme finite values", () => {
+    const t1 = setTimeout(() => {}, 10) as any;
+    t1._idleStart = Number.MAX_VALUE;
+    expect(t1._idleStart).toBe(Number.MAX_VALUE);
+    t1._idleStart = -Number.MAX_VALUE;
+    expect(t1._idleStart).toBe(-Number.MAX_VALUE);
+    clearTimeout(t1);
+  });
+});
+
 describe.each(["with", "without"])("setImmediate %s timers running", mode => {
   // TODO(@190n) #17901 did not fix this for Windows
   it.todoIf(isWindows && mode == "with")(

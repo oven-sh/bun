@@ -169,9 +169,10 @@ inline DOMURL::DOMURL(URL&& completeURL)
     ASSERT(m_url.isValid());
 }
 
-// The Exception message carries the input; the JS error's message stays
-// "Invalid URL" and the input surfaces as `error.input` like Node's
-// ERR_INVALID_URL (see createDOMException).
+// The Exception message carries the input and its extra the raw base string
+// (null if none was given); the JS error's message stays "Invalid URL" and
+// they surface as `error.input` / `error.base` like Node's ERR_INVALID_URL
+// (see createDOMException).
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url)
 {
     auto mapped = applyIDNADeltaToURLAuthority(url);
@@ -181,13 +182,13 @@ ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url)
     return adoptRef(*new DOMURL(WTF::move(completeURL)));
 }
 
-ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const URL& base)
+ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const URL& base, const String& baseInput)
 {
     ASSERT(base.isValid() || base.isNull());
     auto mapped = applyIDNADeltaToURLAuthority(url, base.hasSpecialScheme() ? base.protocol() : StringView {});
     URL completeURL { base, mapped.isNull() ? url : mapped };
     if (!completeURL.isValid() || !hasValidParsedHost(completeURL))
-        return Exception { InvalidURLError, url };
+        return Exception { InvalidURLError, url, baseInput };
     return adoptRef(*new DOMURL(WTF::move(completeURL)));
 }
 
@@ -196,8 +197,8 @@ ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const String& base)
     auto mappedBase = applyIDNADeltaToURLAuthority(base);
     URL baseURL { mappedBase.isNull() ? base : mappedBase };
     if (!base.isNull() && (!baseURL.isValid() || !hasValidParsedHost(baseURL)))
-        return Exception { InvalidURLError, url };
-    return create(url, baseURL);
+        return Exception { InvalidURLError, url, base };
+    return create(url, baseURL, base);
 }
 
 DOMURL::~DOMURL() = default;

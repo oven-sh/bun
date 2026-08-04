@@ -8,13 +8,12 @@ describe("bundler", () => {
   // The core use case: `packages: "external"` externalizes every package,
   // `internal` keeps the listed ones bundled.
   itBundled("internal/OverridesPackagesExternal", {
+    entryPoints: ["/entry.js"],
     files: {
       "/entry.js": /* js */ `
         import { a } from "foo";
         console.log(a);
       `,
-    },
-    runtimeFiles: {
       "/node_modules/foo/index.js": /* js */ `
         export const a = "Hello World";
       `,
@@ -38,13 +37,12 @@ describe("bundler", () => {
 
   // `internal` takes precedence over a positive `external` entry.
   itBundled("internal/OverridesExternal", {
+    entryPoints: ["/entry.js"],
     files: {
       "/entry.js": /* js */ `
         import { a } from "foo";
         console.log(a);
       `,
-    },
-    runtimeFiles: {
       "/node_modules/foo/index.js": /* js */ `
         export const a = "Hello World";
       `,
@@ -67,13 +65,12 @@ describe("bundler", () => {
   // Subpaths of an internal package are bundled too (same subpath-walking
   // semantics as the positive `node_modules` externals).
   itBundled("internal/Subpath", {
+    entryPoints: ["/entry.js"],
     files: {
       "/entry.js": /* js */ `
         import { a } from "foo/sub";
         console.log(a);
       `,
-    },
-    runtimeFiles: {
       "/node_modules/foo/sub.js": /* js */ `
         export const a = "Hello Subpath";
       `,
@@ -93,13 +90,12 @@ describe("bundler", () => {
 
   // Wildcards are supported.
   itBundled("internal/Wildcard", {
+    entryPoints: ["/entry.js"],
     files: {
       "/entry.js": /* js */ `
         import { a } from "@scope/pkg";
         console.log(a);
       `,
-    },
-    runtimeFiles: {
       "/node_modules/@scope/pkg/index.js": /* js */ `
         export const a = "Hello Scope";
       `,
@@ -121,13 +117,12 @@ describe("bundler", () => {
   // Sanity control: without `internal`, `packages: "external"` leaves the
   // import as-is — proving the tests above exercise the new behavior.
   itBundled("internal/ControlExternal", {
+    entryPoints: ["/entry.js"],
     files: {
       "/entry.js": /* js */ `
         import { a } from "foo";
         console.log(a);
       `,
-    },
-    runtimeFiles: {
       "/node_modules/foo/index.js": /* js */ `
         export const a = "Hello World";
       `,

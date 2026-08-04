@@ -1025,7 +1025,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool, const BUFFERED_ASYNC: bool>(
     env_array.push(core::ptr::null());
     argv.push(core::ptr::null());
 
-    if IS_SYNC {
+    if IS_SYNC || BUFFERED_ASYNC {
         for (i, io) in stdio.iter_mut().enumerate() {
             io.to_sync(i as u32);
         }
@@ -1778,7 +1778,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool, const BUFFERED_ASYNC: bool>(
     // paths the caller never receives the Subprocess, so the OwnedFd slot
     // must remain for the GC'd wrapper's finalize_streams to close.
     #[cfg(not(windows))]
-    if !socket_fd_indices.is_empty() {
+    if !BUFFERED_ASYNC && !socket_fd_indices.is_empty() {
         subprocess.stdio_pipes.with_mut(|pipes| {
             for j in &socket_fd_indices {
                 if let Some(slot @ ExtraPipe::OwnedFd(_)) = pipes.get_mut(*j) {

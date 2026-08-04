@@ -129,6 +129,16 @@ describe.concurrent("Bun.spawnAndWait basics", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  test("stdin: 'pipe' is treated as ignore (matches spawnSync)", async () => {
+    const result = await Bun.spawnAndWait({
+      cmd: [bunExe(), "-e", "process.stdout.write(await Bun.stdin.text())"],
+      env: bunEnv,
+      stdin: "pipe",
+    });
+    expect(result.stdout.toString()).toBe("");
+    expect(result.exitCode).toBe(0);
+  });
+
   test("stdout: 'ignore' yields undefined", async () => {
     const result = await Bun.spawnAndWait({
       cmd: [bunExe(), "-e", "console.log('discarded')"],

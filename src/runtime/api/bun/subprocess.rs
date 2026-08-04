@@ -1420,7 +1420,11 @@ impl Subprocess<'_> {
         // access it after it's been freed We cannot call any methods which
         // access GC'd values during the finalizer
         this.this_value.with_mut(|v| v.finalize());
+        let spawn_and_wait_pending = this.spawn_and_wait_promise.get().has();
         this.spawn_and_wait_promise.with_mut(|p| p.deinit());
+        if spawn_and_wait_pending {
+            this.deref();
+        }
 
         this.clear_abort_signal();
 

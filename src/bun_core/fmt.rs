@@ -1976,19 +1976,6 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                     break 'try_redact;
                                 }
 
-                                // An ini credential key may be quoted:
-                                // `"//host/:_authToken"=secret`. The identifier path
-                                // never sees it, so arm the value redaction here, at
-                                // least as loosely as the ini parser matches options.
-                                let mut rest: &[u8] = inner;
-                                while let Some(colon) = strings::index_of_char(rest, b':') {
-                                    rest = &rest[colon as usize + 1..];
-                                    if RedactedKeywords::has_prefix(rest) {
-                                        should_redact_value = true;
-                                        break;
-                                    }
-                                }
-
                                 if inner.len() == 36 && strings::is_uuid(inner) {
                                     write!(writer, "{}\x1b[32m{}", Output::RESET, char_ as char)?;
                                     splat_byte_all(writer, b'*', 36)?;
@@ -2024,6 +2011,22 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                     )?;
                                     text = &text[i..];
                                     continue 'outer;
+                                }
+
+                                // An ini credential key may be quoted:
+                                // `"//host/:_authToken"=secret`. The identifier path
+                                // never sees it, so arm the value redaction here, at
+                                // least as loosely as the ini parser matches options.
+                                // Runs after the value redactors above so a URL whose
+                                // userinfo happens to start with a keyword does not
+                                // carry an armed flag across `continue 'outer`.
+                                let mut rest: &[u8] = inner;
+                                while let Some(colon) = strings::index_of_char(rest, b':') {
+                                    rest = &rest[colon as usize + 1..];
+                                    if RedactedKeywords::has_prefix(rest) {
+                                        should_redact_value = true;
+                                        break;
+                                    }
                                 }
                             }
 

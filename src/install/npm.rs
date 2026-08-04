@@ -68,12 +68,8 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         headers.count("accept", "*/*");
         headers.count("accept-encoding", "gzip,deflate");
 
-        write!(
-            &mut print_buf,
-            "Bearer {}",
-            bstr::BStr::new(&registry.token)
-        )
-        .expect("infallible: in-memory write");
+        print_buf.extend_from_slice(b"Bearer ");
+        print_buf.extend_from_slice(&registry.token);
         headers.count("authorization", &print_buf);
         print_buf.clear();
 
@@ -104,12 +100,8 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         headers.append("accept", "*/*");
         headers.append("accept-encoding", "gzip/deflate");
 
-        write!(
-            &mut print_buf,
-            "Bearer {}",
-            bstr::BStr::new(&registry.token)
-        )
-        .expect("infallible: in-memory write");
+        print_buf.extend_from_slice(b"Bearer ");
+        print_buf.extend_from_slice(&registry.token);
         headers.append("authorization", &print_buf);
         print_buf.clear();
 

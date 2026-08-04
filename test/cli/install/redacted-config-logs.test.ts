@@ -82,6 +82,15 @@ describe.concurrent("redact", async () => {
       expected: `"https://user:****@registry.org`,
     },
     {
+      // A userinfo password that happens to start with a redacted keyword must not
+      // arm value redaction for the rest of the line; the quoted-key scan runs only
+      // on the fall-through path after the URL/UUID/npm-secret redactors.
+      title: "url password starting with a redacted keyword",
+      bunfig: `install.scopes.x = { url = "https://user:token123@registry.org/", username = "alice" };bad`,
+      expected: `, username = `,
+      secret: "token123",
+    },
+    {
       title: "empty url password",
       bunfig: `install.registry = "https://user:@registry.org`,
       expected: `"https://user:@registry.org`,

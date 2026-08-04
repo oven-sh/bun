@@ -321,11 +321,8 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\""
     ),
-    // Node's permission model. Hidden from `--help` (empty description) until
-    // every scope is enforced: today only `net` is, so advertising
-    // `--allow-fs-read` as a filesystem guard would promise a sandbox that
-    // does not exist. The flags are still parsed so `process.permission`
-    // reports what was granted.
+    // Node's permission model. Hidden from `--help` until every scope is enforced
+    // (today only `net` is); still parsed so `process.permission` reports grants.
     parse_param!("--permission"),
     parse_param!("--allow-fs-read <STR>..."),
     parse_param!("--allow-fs-write <STR>..."),
@@ -663,6 +660,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--isolate                        Run each test file in a fresh global object. Leaked handles from one file cannot affect another."
     ),
     parse_param!(
+        "--no-isolate                     With --parallel: let each worker keep one global and module registry across the files it runs (faster; files can see each other's leftovers)."
+    ),
+    parse_param!(
         "--parallel <NUMBER>?             Run test files in parallel using N worker processes. Implies --isolate. Defaults to CPU core count."
     ),
     parse_param!(
@@ -673,6 +673,12 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     ),
     parse_param!(
         "--shard <STR>                    Run a subset of test files, e.g. '--shard=1/3' runs the first of three shards. Useful for splitting tests across multiple CI jobs."
+    ),
+    parse_param!(
+        "--timings <STR>...               JSON file(s) of per-file durations (ms); several are merged, e.g. one per CI shard. Balances --shard by total time and makes --parallel start the slowest files first."
+    ),
+    parse_param!(
+        "--update-timings                 After the run, write measured per-file durations to the first --timings file (only this shard's files under --shard; merged with what was read otherwise)."
     ),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(
@@ -934,12 +940,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                     CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
                 )
             {
-                // `diag.arg` is the argument as written with its leading
-                // dashes stripped. Node echoes it verbatim, so the long form
-                // keeps a trailing '=' (`node --eval=` reports
-                // "--eval= requires an argument"); the short form reports the
-                // single flag that wanted the value, not the cluster it
-                // arrived in.
+                // Node echoes `diag.arg` verbatim (long form keeps trailing `=`); short
+                // form reports the single flag that wanted the value, not its cluster.
                 let node_flag: Option<Vec<u8>> = match (diag.short, diag.long.as_deref()) {
                     (Some(short @ (b'e' | b'p')), _) => Some(vec![b'-', short]),
                     (_, Some(b"eval" | b"print" | b"inspect-port" | b"debug-port")) => {
@@ -1424,14 +1426,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             }
         }
 
-        // Node registers `--print` as a boolean and `--print <arg>` as an alias
-        // for `-pe`, i.e. `--print --eval <arg>`, so -p turns on print mode and
-        // may also carry the script (`bun -p 42`, `bun -pe 42`, `bun -p -e 42`).
-        //
-        // Divergence: because both spellings feed one upstream `--eval` string,
-        // Node takes whichever came last, so `node -p 7 -e 9` prints 9. Bun's
-        // parser keeps the two options in separate slots with no relative
-        // order, so a script on -p wins and it prints 7.
+        // Node's `--print <arg>` aliases `-pe`, so -p may carry the script. Divergence:
+        // `node -p 7 -e 9` prints 9 (last wins); Bun keeps separate slots so -p wins (7).
         let print_arg = args.option(b"--print");
         let eval_arg = args.option(b"--eval");
         if print_arg.is_some() || eval_arg.is_some() {
@@ -1558,10 +1554,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             }
         }
 
-        // `--inspect-port` / `--debug-port` (Node alias) set the default
-        // debugger target used when --inspect/--inspect-wait/--inspect-brk is
-        // passed without its own [host:]port. They do not activate the
-        // debugger on their own, matching Node.
+        // `--inspect-port` / `--debug-port` set the default debugger target for --inspect*
+        // without its own [host:]port; they do not activate the debugger on their own.
         let inspect_port_value: Option<&[u8]> =
             match (args.option(b"--inspect-port"), args.option(b"--debug-port")) {
                 (Some(value), _) => {
@@ -1628,9 +1622,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             };
         }
 
-        // Node's --diagnostic-dir is the fallback output directory for every
-        // diagnostic artifact; the profiler-specific --cpu-prof-dir /
-        // --heap-prof-dir override it.
+        // --diagnostic-dir is the fallback output dir; --cpu-prof-dir/--heap-prof-dir override.
         // https://github.com/nodejs/node/blob/v26.3.0/src/node_options.cc#L542-L546
         let diagnostic_dir = args.option(b"--diagnostic-dir");
 
@@ -2263,13 +2255,30 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         }
         ctx.test_options.shard = Some(Shard { index, count });
     }
+    for path in args.options(b"--timings") {
+        if path.is_empty() {
+            bun_core::pretty_errorln!("<r><red>error<r>: --timings expects a file path");
+            Global::exit(1);
+        }
+        if !ctx.test_options.timings_files.iter().any(|p| &**p == *path) {
+            ctx.test_options.timings_files.push((*path).into());
+        }
+    }
+    ctx.test_options.update_timings = args.flag(b"--update-timings");
+    if ctx.test_options.update_timings && ctx.test_options.timings_files.is_empty() {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: --update-timings requires --timings, e.g. --timings=.bun-test-timings.json --update-timings"
+        );
+        Global::exit(1);
+    }
     ctx.test_options.update_snapshots = args.flag(b"--update-snapshots");
     ctx.test_options.run_todo = args.flag(b"--todo");
     ctx.test_options.only = args.flag(b"--only");
     ctx.test_options.pass_with_no_tests = args.flag(b"--pass-with-no-tests");
     ctx.test_options.concurrent = args.flag(b"--concurrent");
     ctx.test_options.randomize = args.flag(b"--randomize");
-    ctx.test_options.isolate = args.flag(b"--isolate");
+    let no_isolate = args.flag(b"--no-isolate");
+    ctx.test_options.isolate = args.flag(b"--isolate") && !no_isolate;
     ctx.test_options.test_worker = args.flag(b"--test-worker");
 
     if let Some(parallel_str) = args.option(b"--parallel") {
@@ -2294,8 +2303,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             Global::exit(1);
         }
         ctx.test_options.parallel = parsed;
-        // --parallel implies --isolate inside each worker.
-        ctx.test_options.isolate = true;
+        ctx.test_options.isolate = !no_isolate;
     }
 
     if let Some(delay_str) = args.option(b"--parallel-delay") {

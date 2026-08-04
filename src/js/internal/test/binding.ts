@@ -63,11 +63,9 @@ function internalBinding(name: string) {
     case "quic":
       return require("internal/quic/binding");
     case "uv": {
-      // process.binding("uv") carries libuv's own codes on every platform
-      // (including Windows' synthetic ones), same as node's uv binding —
-      // but not getErrorMessage, which node's binding also exposes. Derive
-      // it from the same native uv_e table (util.getSystemErrorMap) so the
-      // messages can never diverge. Cached: node returns a stable object.
+      // Add getErrorMessage (which node's uv binding exposes) derived from the same native uv_e
+      // table so messages can never diverge. Cached: node returns a stable object.
+      // https://github.com/nodejs/node/blob/main/src/uv.cc
       if (cachedUvBinding === undefined) {
         const errmap: Map<number, [string, string]> = require("node:util").getSystemErrorMap();
         cachedUvBinding = {

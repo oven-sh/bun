@@ -877,13 +877,6 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
     return wrap(lexicalGlobalObject, globalObject, impl);
 }
 
-SubtleCrypto* JSSubtleCrypto::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSSubtleCrypto>(value))
-        return &wrapper->wrapped();
-    return nullptr;
-}
-
 }
 
 #endif // ENABLE(WEB_CRYPTO)

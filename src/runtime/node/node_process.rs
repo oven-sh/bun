@@ -58,12 +58,9 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
         // instead to terminate the worker sooner
         worker.exit();
     } else {
-        // A watch-reload kill-signal handler may call process.exit; node
-        // restarts the watched child regardless. `process.exit()` must never
-        // return control to JS (code after it would run, and remaining signal
-        // listeners would fire), so replace the process here instead of
-        // unwinding back through the emit loop — the 'exit' event has already
-        // been dispatched by the caller.
+        // A watch-reload kill-signal handler may call process.exit; node restarts the child
+        // regardless. `process.exit()` must never return control to JS, so replace the process
+        // here instead of unwinding — the 'exit' event has already been dispatched by the caller.
         if bun_jsc::posix_signal_handle::is_emitting_watch_kill_signal() {
             let should_clear_terminal =
                 !vm.env_loader().has_set_no_clear_terminal_on_reload(

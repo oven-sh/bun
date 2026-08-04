@@ -442,6 +442,10 @@ pub struct TestOptions {
     /// and only every Nth file (starting from M-1) is run. index is
     /// 1-based; both are validated at parse time so `1 <= index <= count`.
     pub shard: Option<Shard>,
+    /// `bun test --timings=<path>...`: per-file durations (ms), merged across files; the first is where `--update-timings` writes.
+    pub timings_files: Vec<Box<[u8]>>,
+    /// `bun test --update-timings`: merge this run's measured per-file durations into `timings_file`.
+    pub update_timings: bool,
 
     pub reporters: Reporters,
     pub reporter_outfile: Option<Box<[u8]>>,
@@ -506,6 +510,8 @@ impl Default for TestOptions {
             test_worker: false,
             changed: None,
             shard: None,
+            timings_files: Vec::new(),
+            update_timings: false,
             reporters: Reporters::default(),
             reporter_outfile: None,
         }
@@ -567,10 +573,8 @@ pub struct RuntimeOptions {
 pub struct Eval {
     pub script: Box<[u8]>,
     pub eval_and_print: bool,
-    /// True when `-e`/`--eval`/`-p`/`--print` was passed at all. Node tracks
-    /// the same fact as `[has_eval_string]`, and it is what distinguishes an
-    /// empty script from an absent one: `bun -e ""` runs an empty program and
-    /// bare `bun -p` prints undefined, rather than falling through to help.
+    /// True when `-e`/`--eval`/`-p`/`--print` was passed at all (node's `[has_eval_string]`);
+    /// distinguishes an empty script (`bun -e ""`) from an absent one (falls through to help).
     pub provided: bool,
     /// `--input-type`: module type for string input (stdin / `--eval`),
     /// "module" or "commonjs". Empty when not passed.
@@ -582,10 +586,8 @@ pub struct Eval {
 }
 
 impl Eval {
-    /// Whether an eval entry point should run. Either the user asked for one
-    /// with `-e`/`-p` (`provided`, which holds even for an empty script), or an
-    /// internal path staged a script to run instead of a file: piped stdin, or
-    /// the no-op entry `--check` uses to reach the syntax checker.
+    /// Whether an eval entry point should run: `-e`/`-p` was provided (even empty),
+    /// or an internal path staged a script (piped stdin, `--check`'s no-op entry).
     pub fn has_entry(&self) -> bool {
         self.provided || !self.script.is_empty()
     }

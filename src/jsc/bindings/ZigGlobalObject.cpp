@@ -284,11 +284,11 @@ extern "C" void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject*);
 extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 #endif
 
-extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup)
+extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals)
 {
     static std::once_flag jsc_init_flag;
     // NOLINTBEGIN
-    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, envp, envc, onCrash]() {
+    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, envp, envc, onCrash]() {
         JSC::Config::enableRestrictedOptions();
 
         std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
@@ -350,6 +350,11 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                 // either knob back on for debugging.
                 JSC::Options::useConcurrentJIT() = false;
                 JSC::Options::numberOfGCMarkers() = 1;
+            }
+
+            // `bun test --isolate`: FTL code dies with each file's global, so only tier up code hot enough to pay that back within one file.
+            if (shortLivedGlobals) {
+                JSC::Options::thresholdForFTLOptimizeAfterWarmUp() = 1000000;
             }
 
             if (envc > 0) [[likely]] {
@@ -3238,12 +3243,8 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSC__JSGlobalObject__addGc(JSC::JSGlobal
     globalObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "gc"_s), 0, functionJsGc, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
 }
 
-/// `--disallow-code-generation-from-strings`. V8's flag makes both `eval()` and
-/// the `Function` constructor throw `EvalError: Code generation from strings
-/// disallowed for this context`; JSC's `setEvalEnabled` gates the same two
-/// entry points and throws the same error type, so the message is spelled to
-/// match V8's verbatim. node:vm's `codeGeneration: { strings: false }` already
-/// uses this mechanism (NodeVM.cpp).
+/// `--disallow-code-generation-from-strings`: JSC's `setEvalEnabled` gates the same
+/// entry points V8's flag does and throws the same error type; message matches V8's.
 extern "C" [[ZIG_EXPORT(nothrow)]] void JSC__JSGlobalObject__disallowCodeGenerationFromStrings(JSC::JSGlobalObject* globalObject)
 {
     globalObject->setEvalEnabled(false, "Code generation from strings disallowed for this context"_s);

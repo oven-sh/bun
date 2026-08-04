@@ -121,11 +121,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsSymbolObject,
     return JSValue::encode(jsBoolean(cell->inherits<JSC::SymbolObject>()));
 }
 
-// assert.partialDeepStrictEqual typed-array/ArrayBuffer branch: expected's
-// elements must appear in actual's elements in order, allowing gaps (node's
-// kPartial mode). Element equality follows Object.is at storage width — all
-// NaNs equal, +0 and -0 distinct. The JS caller has already matched the two
-// values' tags, so both sides are the same kind.
+// assert.partialDeepStrictEqual typed-array/ArrayBuffer branch (node's kPartial): expected's
+// elements as an ordered-with-gaps subsequence of actual's, Object.is equality at storage width.
+// https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
 template<typename T, typename EqualFn>
 static bool partialSequenceContains(std::span<const T> actual, std::span<const T> expected, EqualFn equal)
 {
@@ -267,18 +265,9 @@ static bool partialBufferContentsEquiv(JSC::JSGlobalObject* globalObject, JSC::T
 
 extern "C" bool JSC__JSValue__strictDeepEquals(JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::JSGlobalObject*);
 
-// ============================================================================
-// assert.partialDeepStrictEqual (node's kPartial mode), fully native.
-//
-// `expected` must be recursively contained in `actual`: objects match on
-// expected's own enumerable properties only, arrays and buffer contents as
-// ordered-with-gaps subsequences, Maps/Sets as subsets, Errors leniently on
-// name/message/errors/cause. Cycles are accepted only when both sides revisit
-// simultaneously. Ported from the previous JS implementation in
-// src/js/node/assert.ts, which was verified case-by-case against node
-// v26.3.0; the vendored upstream suite pins the behavior.
-// ============================================================================
-
+// assert.partialDeepStrictEqual (node's kPartial mode), fully native. `expected` must be
+// recursively contained in `actual`; cycles are accepted only when both sides revisit together.
+// https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
 namespace PartialDeepEqual {
 
 struct CycleState {
@@ -346,19 +335,15 @@ static bool objectSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentB
     return true;
 }
 
-// Expected's own enumerable non-index string and symbol properties only —
-// index keys are covered by the subsequence/contents comparison of the
-// caller (arrays and typed arrays), and enforcing them positionally here
-// would break the ordered-with-gaps semantics.
+// Expected's own enumerable non-index string+symbol properties only — index keys are covered
+// by the caller's subsequence/contents comparison (enforcing them here would break with-gaps).
 static bool nonIndexObjectSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     auto& vm = globalObject->vm();
     JSC::JSObject* actualObject = actual.getObject();
     JSC::JSObject* expectedObject = expected.getObject();
-    // getOwnNonIndexPropertyNames skips integer indexes at the source — a
-    // typed array would otherwise materialize one Identifier per element
-    // just for the filter to discard. Array `length` is non-enumerable and
-    // typed-array `length` is a prototype accessor, so neither appears.
+    // getOwnNonIndexPropertyNames skips integer indexes at the source (no per-element Identifier
+    // for typed arrays). Array/typed-array `length` is non-enumerable/prototype so neither appears.
     JSC::PropertyNameArrayBuilder names(vm, JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
     expectedObject->getOwnNonIndexPropertyNames(globalObject, names, JSC::DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, false);
@@ -445,10 +430,8 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
     auto identityKeyUsed = [&](JSValue key) -> bool {
         for (size_t i = 0; i < usedIdentityKeys.size(); i++) {
             bool same = JSC::sameValue(globalObject, usedIdentityKeys.at(i), key);
-            // sameValue can resolve rope strings and throw; stop scanning so
-            // no further VM-entering call runs with the exception pending.
-            // (Plain check: the macro cannot live inside a lambda; callers
-            // RETURN_IF_EXCEPTION right after this returns.)
+            // sameValue can resolve ropes and throw; plain check because the macro can't live
+            // inside a lambda — callers RETURN_IF_EXCEPTION right after this returns.
             if (scope.exception()) [[unlikely]]
                 return false;
             if (same)
@@ -788,10 +771,8 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
         return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, setSubsetAndProps);
     }
 
-    // Dates and RegExps: internal value compared strictly, own enumerable
-    // properties with subset semantics (node's partial mode; a straight
-    // strict comparison would be exact-props and prototype-sensitive, and
-    // the blind fallback below would skip the properties entirely).
+    // Dates and RegExps: internal value compared strictly, own enumerable properties with subset
+    // semantics (node's partial mode; straight strict compare would be prototype-sensitive).
     const bool actualIsDate = actualType == JSC::JSDateType;
     const bool expectedIsDate = expectedType == JSC::JSDateType;
     if (actualIsDate || expectedIsDate) {
@@ -822,12 +803,9 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
         return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
     }
 
-    // Boxed primitives (Number/Boolean/BigInt/Symbol/String objects): the
-    // internal value compares with Object.is semantics, then own enumerable
-    // properties as a subset — node unwraps the [[*Data]] slot before the
-    // property walk, which the plain-object fallback below never sees.
-    // Concrete classes only: JSWrapperObject itself has no discriminating
-    // ClassInfo, so a base-class downcast would match every object.
+    // Boxed primitives: [[*Data]] compared via Object.is, then own props as a subset — node
+    // unwraps the slot before the property walk. Concrete classes only (JSWrapperObject has no
+    // discriminating ClassInfo, so a base-class downcast would match every object).
     auto* actualWrapper = asBoxedPrimitive(actual);
     auto* expectedWrapper = asBoxedPrimitive(expected);
     if (actualWrapper || expectedWrapper) {
@@ -888,10 +866,9 @@ extern "C" bool Bun__deepEqualsNodeStrict(JSC::EncodedJSValue a, JSC::EncodedJSV
 extern "C" bool Bun__deepEqualsNodeStrictSkipProto(JSC::EncodedJSValue a, JSC::EncodedJSValue b, JSC::JSGlobalObject* globalObject);
 extern "C" bool Bun__deepEqualsNodeLoose(JSC::EncodedJSValue a, JSC::EncodedJSValue b, JSC::JSGlobalObject* globalObject);
 
-// util.isDeepStrictEqual / assert.deepStrictEqual: node semantics, including
-// the [[Prototype]] identity check that Bun.deepEquals(a, b, true) omits.
-// argument(2) truthy = Assert class skipPrototype option (node's
-// kStrictWithoutPrototypes: same node semantics, prototype identity skipped).
+// util.isDeepStrictEqual / assert.deepStrictEqual: node semantics including the [[Prototype]]
+// identity check Bun.deepEquals omits. argument(2) truthy = node's kStrictWithoutPrototypes.
+// https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsDeepStrictEqual,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callframe))

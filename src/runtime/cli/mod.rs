@@ -279,6 +279,10 @@ pub mod test {
     #[path = "ChangedFilesFilter.rs"]
     pub mod changed_files_filter;
 
+    /// `bun test --timings` / `--update-timings`: per-file duration table.
+    #[path = "Timings.rs"]
+    pub mod timings;
+
     /// `bun test --parallel`: process-pool coordinator/worker entry points.
     /// Thin façade re-exporting from `parallel::runner`.
     #[path = "ParallelRunner.rs"]
@@ -937,11 +941,9 @@ pub mod command {
             && first_arg_name[0] == b'-'
             && !(first_arg_name.len() > 1 && first_arg_name[1] == b'e')
         {
-            // `--interactive` stays on AutoCommand: Arguments.rs parses it
-            // into runtime_options.interactive and the no-target check in
-            // exec routes to RunCommand::exec_node_repl (node's REPL). An
-            // early ReplCommand return here would bypass that and boot the
-            // legacy `bun repl` implementation instead.
+            // `--interactive` stays on AutoCommand: Arguments.rs parses it and the no-target check
+            // routes to RunCommand::exec_node_repl. An early ReplCommand return here would bypass
+            // that and boot the legacy `bun repl` implementation instead.
             match iter.next() {
                 Some(n) => first_arg_name = n,
                 None => return Tag::AutoCommand,

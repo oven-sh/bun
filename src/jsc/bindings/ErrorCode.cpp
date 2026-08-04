@@ -748,10 +748,8 @@ extern "C" BunString Bun__ErrorCode__formatParameterName(BunString argName)
     return Bun::toStringRef(result.toString());
 }
 
-// Renders Node's ERR_INVALID_ARG_TYPE message for a list of expected types so
-// the Rust error paths use the same renderer as the C++ ones: "argument" vs
-// "property" for dotted names, "of type" for primitive type names, and "an
-// instance of" for class names.
+// Renders Node's ERR_INVALID_ARG_TYPE for a list of expected types so Rust error paths
+// share the C++ renderer: https://github.com/nodejs/node/blob/main/lib/internal/errors.js
 extern "C" BunString Bun__ErrorCode__formatInvalidArgType(JSC::JSGlobalObject* globalObject, BunString argName, const BunString* expectedTypes, size_t expectedTypesLength, EncodedJSValue value)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));

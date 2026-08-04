@@ -16,6 +16,42 @@ describe("url", () => {
     expect(() => new URL("boop", "https!!username:password@example.com")).toThrow("Invalid URL");
   });
 
+  it("ERR_INVALID_URL carries input and, when given, base", () => {
+    try {
+      new URL("//[", "http://x");
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.code).toBe("ERR_INVALID_URL");
+      expect(e.input).toBe("//[");
+      expect(e.base).toBe("http://x");
+    }
+    // base itself invalid: both still surface, base is the raw string.
+    try {
+      new URL("boop", "http!/example.com");
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.input).toBe("boop");
+      expect(e.base).toBe("http!/example.com");
+    }
+    // One-arg form: .base must be absent, not undefined-valued.
+    try {
+      new URL("::");
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.input).toBe("::");
+      expect("base" in e).toBe(false);
+    }
+    // href setter has no base argument, so no .base either.
+    const u = new URL("http://x");
+    try {
+      u.href = "::";
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.input).toBe("::");
+      expect("base" in e).toBe(false);
+    }
+  });
+
   it("should have correct origin and protocol", () => {
     var url = new URL("https://example.com");
     expect(url.protocol).toBe("https:");

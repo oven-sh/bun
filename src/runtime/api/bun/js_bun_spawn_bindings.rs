@@ -1678,18 +1678,20 @@ fn spawn_maybe_sync<const IS_SYNC: bool, const BUFFERED_ASYNC: bool>(
 
         debug_assert!(out != JSValue::ZERO);
 
-        if on_exit_callback.is_cell() {
-            Subprocess::js::on_exit_callback_set_cached(out, global_this, on_exit_callback);
-        }
-        if on_disconnect_callback.is_cell() {
-            Subprocess::js::on_disconnect_callback_set_cached(
-                out,
-                global_this,
-                on_disconnect_callback,
-            );
-        }
-        if ipc_callback.is_cell() {
-            Subprocess::js::ipc_callback_set_cached(out, global_this, ipc_callback);
+        if !BUFFERED_ASYNC {
+            if on_exit_callback.is_cell() {
+                Subprocess::js::on_exit_callback_set_cached(out, global_this, on_exit_callback);
+            }
+            if on_disconnect_callback.is_cell() {
+                Subprocess::js::on_disconnect_callback_set_cached(
+                    out,
+                    global_this,
+                    on_disconnect_callback,
+                );
+            }
+            if ipc_callback.is_cell() {
+                Subprocess::js::ipc_callback_set_cached(out, global_this, ipc_callback);
+            }
         }
 
         if let Stdio::ReadableStream(rs) = &stdio[0] {
@@ -2030,65 +2032,14 @@ fn spawn_maybe_sync<const IS_SYNC: bool, const BUFFERED_ASYNC: bool>(
 
     subprocess.update_has_pending_activity();
 
-    let signal_code = SubprocessT::get_signal_code(subprocess, global_this);
-    let exit_code = SubprocessT::get_exit_code(subprocess, global_this);
-    let stdout = subprocess
-        .stdout
-        .with_mut(|s| s.to_buffered_value(global_this))?;
-    let stderr = subprocess
-        .stderr
-        .with_mut(|s| s.to_buffered_value(global_this))?;
-    let resource_usage: JSValue = if !global_this.has_exception() {
-        subprocess.create_resource_usage_object(global_this)?
-    } else {
-        JSValue::ZERO
-    };
-    let exited_due_to_timeout = did_timeout;
-    let exited_due_to_max_buffer = subprocess.exited_due_to_maxbuf.get();
-    let result_pid = JSValue::js_number_from_int32(subprocess.pid());
+    let sync_value =
+        subprocess.build_sync_result(global_this, timeout.is_some(), did_timeout, max_buffer.is_some());
     // SAFETY: `subprocess_ptr` was produced by `heap::into_raw(Box::new(...))`
     // above (spawnSync path: never handed to a JS wrapper); reclaim ownership.
     // `subprocess` (`&mut *subprocess_ptr`) is not used after this line.
     SubprocessT::finalize(unsafe { Box::from_raw(subprocess_ptr) });
 
-    let sync_value = JSValue::create_empty_object(global_this, 0);
-    sync_value.put(global_this, b"exitCode", exit_code);
-    if !signal_code.is_empty_or_undefined_or_null() {
-        sync_value.put(global_this, b"signalCode", signal_code);
-    }
-    sync_value.put(global_this, b"stdout", stdout);
-    sync_value.put(global_this, b"stderr", stderr);
-    sync_value.put(
-        global_this,
-        b"success",
-        JSValue::from(exit_code.is_int32() && exit_code.as_int32() == 0),
-    );
-    sync_value.put(global_this, b"resourceUsage", resource_usage);
-    if timeout.is_some() {
-        sync_value.put(
-            global_this,
-            b"exitedDueToTimeout",
-            if exited_due_to_timeout {
-                JSValue::TRUE
-            } else {
-                JSValue::FALSE
-            },
-        );
-    }
-    if max_buffer.is_some() {
-        sync_value.put(
-            global_this,
-            b"exitedDueToMaxBuffer",
-            if exited_due_to_max_buffer.is_some() {
-                JSValue::TRUE
-            } else {
-                JSValue::FALSE
-            },
-        );
-    }
-    sync_value.put(global_this, b"pid", result_pid);
-
-    Ok(sync_value)
+    sync_value
 }
 
 fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsError {

@@ -574,7 +574,12 @@ impl Subprocess<'_> {
         // SAFETY: event_loop points into the live VM and outlives this scope.
         let _guard = unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
 
-        match self.build_spawn_and_wait_result(global_this) {
+        match self.build_sync_result(
+            global_this,
+            self.spawn_and_wait_had_timeout.get(),
+            self.event_loop_timer.get().state == EventLoopTimerState::FIRED,
+            self.spawn_and_wait_had_max_buffer.get(),
+        ) {
             Ok(result) => {
                 let _ = promise.resolve(global_this, result);
             }
@@ -590,13 +595,23 @@ impl Subprocess<'_> {
         self.deref();
     }
 
-    /// Build the `SyncSubprocess`-shaped result object for `Bun.spawnAndWait()`.
-    fn build_spawn_and_wait_result(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    /// Build the `SyncSubprocess`-shaped result for `Bun.spawnSync` / `Bun.spawnAndWait`.
+    pub(crate) fn build_sync_result(
+        &self,
+        global_this: &JSGlobalObject,
+        had_timeout: bool,
+        did_timeout: bool,
+        had_max_buffer: bool,
+    ) -> JsResult<JSValue> {
         let signal_code = self.get_signal_code(global_this);
         let exit_code = self.get_exit_code(global_this);
         let stdout = self.stdout.with_mut(|s| s.to_buffered_value(global_this))?;
         let stderr = self.stderr.with_mut(|s| s.to_buffered_value(global_this))?;
-        let resource_usage = self.create_resource_usage_object(global_this)?;
+        let resource_usage = if !global_this.has_exception() {
+            self.create_resource_usage_object(global_this)?
+        } else {
+            JSValue::ZERO
+        };
         let result_pid = JSValue::js_number_from_int32(self.pid());
 
         let sync_value = JSValue::create_empty_object(global_this, 0);
@@ -612,18 +627,18 @@ impl Subprocess<'_> {
             JSValue::from(exit_code.is_int32() && exit_code.as_int32() == 0),
         );
         sync_value.put(global_this, b"resourceUsage", resource_usage);
-        if self.spawn_and_wait_had_timeout.get() {
+        if had_timeout {
             sync_value.put(
                 global_this,
                 b"exitedDueToTimeout",
-                if self.event_loop_timer.get().state == EventLoopTimerState::FIRED {
+                if did_timeout {
                     JSValue::TRUE
                 } else {
                     JSValue::FALSE
                 },
             );
         }
-        if self.spawn_and_wait_had_max_buffer.get() {
+        if had_max_buffer {
             sync_value.put(
                 global_this,
                 b"exitedDueToMaxBuffer",

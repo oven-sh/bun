@@ -180,6 +180,22 @@ test("ENOENT throws synchronously", () => {
   ).toThrow(expect.objectContaining({ code: "ENOENT" }));
 });
 
+test("onExit is ignored and does not leak the internal Subprocess", async () => {
+  let called = false;
+  const result = await Bun.spawnAndWait({
+    cmd: [bunExe(), "-e", "console.log('hi')"],
+    env: bunEnv,
+    // @ts-expect-error - onExit is not in SpawnSyncOptions; must be a silent no-op at runtime
+    onExit(proc: any) {
+      called = true;
+      proc.stdout;
+    },
+  });
+  expect(called).toBe(false);
+  expect(result.stdout.toString()).toBe("hi\n");
+  expect(result.exitCode).toBe(0);
+});
+
 test("terminal option is rejected", () => {
   expect(() =>
     Bun.spawnAndWait({

@@ -33,8 +33,10 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <algorithm>
 #include <cstddef>
+#include <wtf/FastMalloc.h>
 #include <wtf/FileSystem.h>
 #include <wtf/MemoryFootprint.h>
+#include <wtf/SharedTask.h>
 #include <wtf/text/WTFString.h>
 
 #include "BunProcess.h"
@@ -197,6 +199,37 @@ JSC_DEFINE_HOST_FUNCTION(functionHeapSize,
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
     return JSValue::encode(jsNumber(vm.heap.size()));
+}
+
+JSC_DECLARE_HOST_FUNCTION(functionIdleDecommitSync);
+JSC_DEFINE_HOST_FUNCTION(functionIdleDecommitSync,
+    (JSGlobalObject * globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    vm.heap.deleteAllUnlinkedCodeBlocks(JSC::DeleteAllCodeIfNotCollecting);
+    vm.heap.collectNow(Sync, CollectionScope::Full);
+    WTF::releaseFastMallocFreeMemory();
+    mi_collect(true);
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DECLARE_HOST_FUNCTION(functionIdleDecommitAsync);
+JSC_DEFINE_HOST_FUNCTION(functionIdleDecommitAsync,
+    (JSGlobalObject * globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    vm.heap.deleteAllUnlinkedCodeBlocks(JSC::DeleteAllCodeIfNotCollecting);
+    JSC::GCRequest request(CollectionScope::Full);
+    JSC::VM* vmPtr = &vm;
+    request.didFinishEndPhase = createSharedTask<void()>([vmPtr] {
+        vmPtr->heap.sweepSynchronously();
+        WTF::releaseFastMallocFreeMemory();
+        mi_collect(true);
+    });
+    vm.heap.collectAsync(request);
+    return JSValue::encode(jsUndefined());
 }
 
 JSC::Structure*
@@ -1017,7 +1050,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * 
 namespace Zig {
 DEFINE_NATIVE_MODULE(BunJSC)
 {
-    INIT_NATIVE_MODULE(36);
+    INIT_NATIVE_MODULE(38);
 
     putNativeFn(Identifier::fromString(vm, "callerSourceOrigin"_s), functionCallerSourceOrigin);
     putNativeFn(Identifier::fromString(vm, "jscDescribe"_s), functionDescribe);
@@ -1026,6 +1059,8 @@ DEFINE_NATIVE_MODULE(BunJSC)
     putNativeFn(Identifier::fromString(vm, "edenGC"_s), functionEdenGC);
     putNativeFn(Identifier::fromString(vm, "fullGC"_s), functionFullGC);
     putNativeFn(Identifier::fromString(vm, "gcAndSweep"_s), functionGCAndSweep);
+    putNativeFn(Identifier::fromString(vm, "idleDecommitSync"_s), functionIdleDecommitSync);
+    putNativeFn(Identifier::fromString(vm, "idleDecommitAsync"_s), functionIdleDecommitAsync);
     putNativeFn(Identifier::fromString(vm, "getRandomSeed"_s), functionGetRandomSeed);
     putNativeFn(Identifier::fromString(vm, "heapSize"_s), functionHeapSize);
     putNativeFn(Identifier::fromString(vm, "heapStats"_s), functionMemoryUsageStatistics);

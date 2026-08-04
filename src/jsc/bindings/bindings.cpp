@@ -2797,6 +2797,27 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
+// Full collection + allocator scavenge, without deleting JIT code.
+// Sync variant: blocks the caller until the full GC and scavenge finish.
+void JSC__VM__idleDecommitSync(JSC::VM* vm)
+{
+    JSC::JSLockHolder lock(*vm);
+    vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+    WTF::releaseFastMallocFreeMemory();
+}
+
+// Async variant: requests a full collection and scavenges once it completes.
+// Uses GCRequest::didFinishEndPhase so no long-lived HeapObserver is needed.
+void JSC__VM__idleDecommitAsync(JSC::VM* vm)
+{
+    JSC::JSLockHolder lock(*vm);
+    JSC::GCRequest request(JSC::CollectionScope::Full);
+    request.didFinishEndPhase = createSharedTask<void()>([] {
+        WTF::releaseFastMallocFreeMemory();
+    });
+    vm->heap.collectAsync(request);
+}
+
 extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)
 {
     JSC::JSLockHolder locker(vm);

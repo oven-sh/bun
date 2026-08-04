@@ -41,10 +41,6 @@ let nodeFsForIter; // lazy value for require("node:fs") (sync read/write/close f
 
 let Interface; // lazy value for require("node:readline").Interface.
 
-// An async generator (like node) so the iterator protocol is correct by
-// construction: concurrent next() calls queue, and return()/throw() come from
-// %AsyncGeneratorPrototype%. The body runs (and opens the native handle) on
-// the first next(), so an unconsumed watch() never pins the event loop.
 async function* watch(
   filename: string | Buffer | URL,
   options: {
@@ -110,8 +106,7 @@ async function* watch(
 
   try {
     while (true) {
-      // The abort check must run between every yield: resuming from `yield`
-      // lands mid-loop, and abort may have fired while suspended there.
+      // Checked between every yield: abort may fire while suspended there.
       if (signal?.aborted) {
         throw makeAbortError();
       }
@@ -131,8 +126,7 @@ async function* watch(
       await promise;
     }
   } finally {
-    // {once: true} only auto-removes when the event fires; detach explicitly
-    // on the other exit paths so a long-lived signal doesn't retain this closure.
+    // {once: true} doesn't detach on the non-abort exit paths.
     signal?.removeEventListener("abort", onAbort);
     closeWatcher();
   }

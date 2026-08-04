@@ -1,12 +1,14 @@
 // Receive-side backpressure: a stalled `res.body.getReader()` must stop the
 // HTTP thread from buffering the entire response in memory.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tls } from "harness";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { createSecureServer } from "node:http2";
 import { createServer as createHttpsServer } from "node:https";
+import { Readable, Writable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { gzipSync } from "node:zlib";
 
 const CHUNK = 64 * 1024;
@@ -140,12 +142,13 @@ async function spawnClient(url: string, kind: Kind, script: string) {
 }
 
 const SETTLE_RSS = /* js */ `
+  const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
   async function settleRss() {
-    const before = process.memoryUsage.rss();
+    const before = rss();
     let last = before, stable = 0;
     while (stable < 3) {
       await Bun.sleep(20);
-      const now = process.memoryUsage.rss();
+      const now = rss();
       stable = Math.abs(now - last) < (1 << 20) ? stable + 1 : 0;
       last = now;
     }
@@ -253,6 +256,111 @@ for (const kind of ["h1", "h1-chunked", "h1-gzip", "h1-tls", "h2", "h3"] as Kind
     }
   });
 }
+
+describe.concurrent("fetch() receive backpressure — Readable.fromWeb bridge", () => {
+  // `Readable.fromWeb(res.body)` takes the native handle off the ReadableStream
+  // (NativeReadable fast path) and hands chunks to node streams. A stalled
+  // pipe must keep the HTTP-thread socket paused just like `getReader()` does;
+  // when the pipe resumes, the body must drain to completion.
+  test("server stops writing while Readable.fromWeb is piped to a stalled Writable, then drains", async () => {
+    const big = 16384;
+    await using server = await serve("h1", big);
+    const res = await fetch(server.url);
+    let release!: () => void;
+    let got = 0;
+    const sink = new Writable({
+      write(chunk, _enc, cb) {
+        got += chunk.length;
+        if (release) return cb();
+        release = cb;
+      },
+    });
+    const readable = Readable.fromWeb(res.body!);
+    const done = pipeline(readable, sink).then(
+      () => null,
+      e => e,
+    );
+
+    let last = -1;
+    let stable = 0;
+    while (stable < 2) {
+      await Bun.sleep(10);
+      const now = server.sent();
+      stable = now === last ? stable + 1 : 0;
+      last = now;
+    }
+    expect(server.sent()).toBeLessThan(CHUNK * big);
+
+    release();
+    expect({ err: await done, sent: server.sent(), got }).toEqual({ err: null, sent: CHUNK * big, got: CHUNK * big });
+  }, 60_000);
+
+  // The buffered window between the HTTP-thread recv and `res.write()` is a
+  // chain of native Vecs (FetchTasklet staging + ByteStream overflow) that are
+  // invisible to the JSC heap. ASAN quarantine and debug allocation tracking
+  // both dwarf and invert the ~2 MB/conn gap this asserts, so the bound is
+  // release-only; the drain test above covers the path on every lane. The
+  // threshold is tuned for Linux loopback recv sizing.
+  test.skipIf(isASAN || isDebug || process.platform !== "linux")(
+    "download-proxy memory window stays bounded under concurrency",
+    async () => {
+      const script = /* js */ `
+        import http from "node:http";
+        import net from "node:net";
+        import { Readable } from "node:stream";
+        import { pipeline } from "node:stream/promises";
+        const C = 40, MB = 32;
+        const CHUNK = Buffer.alloc(64 * 1024, 0x41), COUNT = MB * 16, TOTAL = CHUNK.length * COUNT;
+        let peak = process.memoryUsage.rss();
+        const sampler = setInterval(() => { const r = process.memoryUsage.rss(); if (r > peak) peak = r; }, 10);
+        async function one() {
+          const source = net.createServer(sock => {
+            sock.write("HTTP/1.1 200 OK\\r\\ncontent-length: " + TOTAL + "\\r\\nconnection: close\\r\\n\\r\\n");
+            let n = 0;
+            const pump = () => { while (n < COUNT) { n++; if (!sock.write(CHUNK)) return sock.once("drain", pump); } sock.end(); };
+            pump();
+            sock.on("error", () => {});
+          });
+          await new Promise(r => source.listen(0, "127.0.0.1", r));
+          const proxy = http.createServer(async (req, res) => {
+            res.writeHead(200);
+            await pipeline(Readable.fromWeb((await fetch("http://127.0.0.1:" + source.address().port + "/")).body), res).catch(() => {});
+          });
+          await new Promise(r => proxy.listen(0, "127.0.0.1", r));
+          const got = await new Promise(resolve => {
+            let got = 0;
+            const c = net.connect(proxy.address().port, "127.0.0.1", () => c.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n"));
+            c.on("data", d => { got += d.length; if (got >= TOTAL) c.destroy(); });
+            c.on("error", () => {});
+            c.on("close", () => resolve(got));
+          });
+          proxy.close(); source.close();
+          return got;
+        }
+        const gots = await Promise.all(Array.from({ length: C }, () => one()));
+        clearInterval(sampler);
+        const short = gots.filter(g => g < TOTAL).length;
+        process.stdout.write(JSON.stringify({ peakMB: Math.round(peak / 1048576), short }));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (!stdout) throw new Error(`exited ${exitCode}: ${stderr}`);
+      const { peakMB, short } = JSON.parse(stdout);
+      // 40 connections × 32 MB each (1.25 GB total). Before the window fix the
+      // per-connection staging/overflow capacity pushed peak RSS to ~247–272 MB
+      // on Linux; with it the same run sits at ~158–187 MB.
+      expect({ short, peakMB }).toEqual({ short: 0, peakMB: expect.any(Number) });
+      expect(peakMB).toBeLessThan(225);
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+});
 
 // h2 advertises a 16 MiB initial per-stream window (LOCAL_INITIAL_WINDOW_SIZE),
 // so withholding WINDOW_UPDATE only takes effect past that. Asserting a tight

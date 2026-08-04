@@ -478,7 +478,7 @@ test("no assertion failures", () => {
 
   assert.strictEqual(
     util.format(new SharedArrayBuffer(4)),
-    "SharedArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4 }",
+    "SharedArrayBuffer { [Uint8Contents]: <00 00 00 00>, [byteLength]: 4 }",
   );
 
   assert.strictEqual(util.formatWithOptions({ colors: true, compact: 3 }, "%s", [1, { a: true }]), "[ 1, [Object] ]");

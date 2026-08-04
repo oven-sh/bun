@@ -1150,7 +1150,6 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile,
-        loaded_from_binary_lockfile: false,
         migrated: lockfile::Migrated::Pnpm,
         serializer_result: Default::default(),
         format: lockfile::Format::Text,

@@ -1,12 +1,8 @@
-// Error-code shims for Node.js sources ported into Bun (node:repl stack).
-// All codes route to Bun's native $ERR_* constructors (registered in
-// ErrorCode.ts), which give the Node-compatible `err.name` (bare "TypeError",
-// with `[CODE]` only in toString()). `instanceof ERR_X` is keyed on `.code`.
+// Error-code shims for the ported node:repl stack, routed to Bun's native
+// $ERR_* constructors. https://github.com/nodejs/node/blob/main/lib/internal/errors.js
 
-// Bun's native $ERR_* gives Node-compatible `.name` and `.toString()`, but
-// JSC materializes `.stack` from `.name + ": " + msg` at construction, so the
-// `[CODE]` (which Node's prepareStackTrace injects) is missing there. Node's
-// stacks always carry it, and the REPL prints stacks verbatim.
+// JSC materializes `.stack` at construction without `[CODE]`; Node injects it
+// via prepareStackTrace. Re-head the stack to `.toString()` so it matches.
 function decorateNodeErrorStack(e) {
   if (typeof e?.stack === "string") {
     const nl = e.stack.indexOf("\n");

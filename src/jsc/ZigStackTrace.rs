@@ -12,21 +12,21 @@ use crate::ZigStackFrame;
 /// Represents a JavaScript stack trace
 #[repr(C)]
 pub struct ZigStackTrace {
-    pub source_lines_ptr: *mut BunString,
-    pub source_lines_numbers: *mut i32,
-    pub source_lines_len: u8,
-    pub source_lines_to_collect: u8,
+    pub(crate) source_lines_ptr: *mut BunString,
+    pub(crate) source_lines_numbers: *mut i32,
+    pub(crate) source_lines_len: u8,
+    pub(crate) source_lines_to_collect: u8,
 
-    pub frames_ptr: *mut ZigStackFrame,
+    pub(crate) frames_ptr: *mut ZigStackFrame,
     pub frames_len: u8,
-    pub frames_cap: u8,
+    pub(crate) frames_cap: u8,
 
     /// Non-null if `source_lines_*` points into data owned by a JSC::SourceProvider.
     /// If so, then .deref must be called on it to release the memory.
     ///
     /// `Option<NonNull<_>>` niche-optimizes to a single thin pointer, so the
     /// FFI layout is exactly one nullable pointer.
-    pub referenced_source_provider: Option<NonNull<SourceProvider>>,
+    pub(crate) referenced_source_provider: Option<NonNull<SourceProvider>>,
 }
 
 impl ZigStackTrace {
@@ -45,7 +45,7 @@ impl ZigStackTrace {
         }
     }
 
-    pub fn to_api(
+    pub(crate) fn to_api(
         &self,
         root_path: &[u8],
         origin: Option<&ZigURL<'_>>,
@@ -59,17 +59,9 @@ impl ZigStackTrace {
             if source_line_len > 0 {
                 let n_lines = usize::try_from((source_lines_iter.i + 1).max(0)).expect("int cast");
                 let mut source_lines: Vec<api::SourceLine> = Vec::with_capacity(n_lines);
-                // `api::SourceLine.text` is `Box<[u8]>` (owns its bytes), so each
-                // line gets its own allocation rather than sub-slices of one shared
-                // buffer. One alloc per line — profile if this ever shows up hot.
                 source_lines_iter = self.source_line_iterator();
                 while let Some(source) = source_lines_iter.next() {
-                    let text = source.text.slice();
-                    source_lines.push(api::SourceLine {
-                        text: Box::<[u8]>::from(text),
-                        line: source.line,
-                    });
-                    // `source.text` is released by `ZigStringSlice`'s Drop at end of scope.
+                    source_lines.push(api::SourceLine { line: source.line });
                 }
                 stack_trace.source_lines = source_lines;
             }
@@ -95,14 +87,14 @@ impl ZigStackTrace {
         unsafe { bun_core::ffi::slice(self.frames_ptr, self.frames_len as usize) }
     }
 
-    pub fn frames_mutable(&mut self) -> &mut [ZigStackFrame] {
+    pub(crate) fn frames_mutable(&mut self) -> &mut [ZigStackFrame] {
         // SAFETY: frames_ptr points to a caller-owned buffer of at least frames_len elements.
         unsafe { bun_core::ffi::slice_mut(self.frames_ptr, self.frames_len as usize) }
     }
 
     /// Mutable view of the populated source-line strings (`[0..source_lines_len]`).
     #[inline]
-    pub fn source_lines_mut(&mut self) -> &mut [BunString] {
+    pub(crate) fn source_lines_mut(&mut self) -> &mut [BunString] {
         // SAFETY: `source_lines_ptr` points to a caller-owned buffer of at least
         // `source_lines_len` initialized elements (populated by C++ via FFI).
         // The borrow is tied to `&mut self`.
@@ -111,13 +103,13 @@ impl ZigStackTrace {
 
     /// Immutable view of the populated source-line numbers (`[0..source_lines_len]`).
     #[inline]
-    pub fn source_line_numbers(&self) -> &[i32] {
+    pub(crate) fn source_line_numbers(&self) -> &[i32] {
         // SAFETY: `source_lines_numbers` points to a caller-owned buffer of at
         // least `source_lines_len` initialized elements (populated by C++ via FFI).
         unsafe { bun_core::ffi::slice(self.source_lines_numbers, self.source_lines_len as usize) }
     }
 
-    pub fn source_line_iterator(&self) -> SourceLineIterator<'_> {
+    pub(crate) fn source_line_iterator(&self) -> SourceLineIterator<'_> {
         let mut i: i32 = -1;
         let nums = self.source_line_numbers();
         for (j, &num) in nums.iter().enumerate() {
@@ -129,9 +121,9 @@ impl ZigStackTrace {
     }
 }
 
-pub struct SourceLineIterator<'a> {
-    pub trace: &'a ZigStackTrace,
-    pub i: i32,
+pub(crate) struct SourceLineIterator<'a> {
+    pub(crate) trace: &'a ZigStackTrace,
+    pub(crate) i: i32,
 }
 
 pub(crate) struct SourceLine {
@@ -140,7 +132,7 @@ pub(crate) struct SourceLine {
 }
 
 impl<'a> SourceLineIterator<'a> {
-    pub(crate) fn get_length(&mut self) -> usize {
+    fn get_length(&mut self) -> usize {
         let mut count: usize = 0;
         let n = usize::try_from(self.i + 1).expect("int cast");
         // SAFETY: source_lines_ptr points to a caller-owned buffer of at least

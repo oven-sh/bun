@@ -1,8 +1,6 @@
-// Entry script for `bun --interactive` (`-i` is taken by `--install=fallback`): starts the Node.js-compatible
-// REPL (the ported node:repl) the way Node's internal/main/repl.js does. This
-// file runs as a regular entrypoint (not a builtin), so it reaches
-// createInternalRepl via a Symbol.for hook on node:repl and never re-implements
-// the NODE_REPL_* env parsing that internal/repl.js already owns.
+// Entry script for `bun --interactive`: starts the Node.js-compatible REPL via a Symbol.for
+// hook on node:repl (runs as a regular entrypoint, not a builtin).
+// https://github.com/nodejs/node/blob/main/lib/internal/main/repl.js
 
 // exec_node_repl stashes the user's `-e` bytes on `process._eval` (undefined
 // when no `-e`), so no source splicing — a syntax error or unterminated
@@ -52,10 +50,8 @@ if (ext) {
   }
 }
 
-// Mirrors node's runScriptInContext: it does NOT wrap the body as a CJS
-// module — it publishes the bindings onto the global and runs the body in
-// global scope, so `var`/`function` still land on globalThis while
-// require/module/exports/__dirname/__filename resolve.
+// Mirrors node's evalScript: publishes CJS bindings onto globalThis and runs the body in global
+// scope (not a CJS wrapper). https://github.com/nodejs/node/blob/main/lib/internal/process/execution.js
 function evalWithNodeBindings(code: string) {
   const Module = require("node:module");
   // process.cwd() throws when the working directory has been deleted; node's
@@ -86,10 +82,8 @@ function evalWithNodeBindings(code: string) {
   try {
     require("node:vm").runInThisContext(code, { filename: name, displayErrors: true });
   } catch (e) {
-    // An -e error is fatal in node even with the REPL up. Report and exit here
-    // rather than rethrowing: the REPL is already live, so an uncaught throw
-    // races its EOF-driven exit and the process can leave 0 with the error
-    // unreported (empty stdin loses that race every time).
+    // An -e error is fatal in node even with the REPL up. Rethrowing races the REPL's
+    // EOF-driven exit and can leave 0 with the error unreported, so report and exit here.
     try {
       process.setUncaughtExceptionCaptureCallback(null);
     } catch {}

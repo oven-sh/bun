@@ -341,8 +341,6 @@ function getPriority() {
 /**
  * @typedef {Object} Ec2Options
  * @property {string} instanceType
- * @property {number} cpuCount
- * @property {number} threadsPerCore
  * @property {boolean} dryRun
  */
 
@@ -354,7 +352,7 @@ function getPriority() {
  */
 function getEc2Agent(platform, options, ec2Options) {
   const { os, arch, abi, distro, release, crossCompile } = platform;
-  const { instanceType, cpuCount, threadsPerCore } = ec2Options;
+  const { instanceType } = ec2Options;
   // Cross-compiled targets run on a Linux EC2 box; the agent tag must match
   // the host (`linux`), not the target.
   const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
@@ -368,8 +366,6 @@ function getEc2Agent(platform, options, ec2Options) {
     robobun2: true,
     "image-name": getImageName(platform, options),
     "instance-type": instanceType,
-    "cpu-count": cpuCount,
-    "threads-per-core": threadsPerCore,
     "preemptible": false,
   };
 }
@@ -428,8 +424,6 @@ function getTestAgent(platform, options) {
   if (os === "windows") {
     return getEc2Agent(platform, options, {
       instanceType: getAzureVmSize(os, arch, "test"),
-      cpuCount: 2,
-      threadsPerCore: 1,
     });
   }
 
@@ -446,14 +440,10 @@ function getTestAgent(platform, options) {
       // agent. r-family has 4× the RAM at the same vCPU.
       return getEc2Agent(platform, options, {
         instanceType: "r8g.2xlarge",
-        cpuCount: 2,
-        threadsPerCore: 1,
       });
     }
     return getEc2Agent(platform, options, {
       instanceType: musl ? "m8g.xlarge" : "c8g.xlarge",
-      cpuCount: 2,
-      threadsPerCore: 1,
     });
   }
 
@@ -461,14 +451,10 @@ function getTestAgent(platform, options) {
     // Same rationale as the aarch64 asan branch above.
     return getEc2Agent(platform, options, {
       instanceType: "r7i.2xlarge",
-      cpuCount: 2,
-      threadsPerCore: 1,
     });
   }
   return getEc2Agent(platform, options, {
     instanceType: musl ? "m7i.xlarge" : "c7i.xlarge",
-    cpuCount: 2,
-    threadsPerCore: 1,
   });
 }
 

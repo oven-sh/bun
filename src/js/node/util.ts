@@ -3,7 +3,13 @@ const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
 const { promisify } = require("internal/promisify");
-const { validateString, validateOneOf, validateBoolean } = require("internal/validators");
+const {
+  validateString,
+  validateOneOf,
+  validateBoolean,
+  validateObject,
+  validateInteger,
+} = require("internal/validators");
 const { resistStopPropagation } = require("internal/shared");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
 const { deprecate } = require("internal/util/deprecate");
@@ -13,6 +19,9 @@ const parseEnv = $newRustFunction("node_util_binding.rs", "parseEnv", 1);
 
 const NumberIsSafeInteger = Number.isSafeInteger;
 const ObjectKeys = Object.keys;
+const ObjectGetOwnPropertyNames = Object.getOwnPropertyNames;
+const { uncurryThis, SafeMap } = require("internal/primordials");
+const RegExpPrototypeExec = uncurryThis(RegExp.prototype.exec);
 
 var cjs_exports;
 
@@ -24,7 +33,9 @@ function isFunction(value) {
 }
 
 const deepEquals = Bun.deepEquals;
-const isDeepStrictEqual = (a, b) => deepEquals(a, b, true);
+function isDeepStrictEqual(a, b, skipPrototype) {
+  return deepEquals(a, b, true, skipPrototype);
+}
 
 const parseArgs = $newRustFunction("parse_args.rs", "parseArgs", 1);
 
@@ -214,36 +225,270 @@ var toUSVString = input => {
   return (input + "").toWellFormed();
 };
 
-function styleText(format, text) {
-  validateString(text, "text");
+const kEscape = "\u001b[";
+const kEscapeEnd = "m";
+const kDimCode = 2;
+const kBoldCode = 1;
+const kHexCloseSeq = kEscape + "39" + kEscapeEnd;
+const kHexStyleCacheMax = 256;
 
-  if ($isJSArray(format)) {
-    let left = "";
-    let right = "";
-    for (const key of format) {
-      const formatCodes = inspect.colors[key];
-      if (formatCodes == null) {
-        validateOneOf(key, "format", ObjectKeys(inspect.colors));
+// Matches #RGB or #RRGGBB
+const hexColorRegExp = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+
+let styleCache;
+let hexStyleCache;
+let lazyStreamUtils;
+let lazyUtilColors;
+
+function getHexStyleCache() {
+  hexStyleCache ??= new SafeMap();
+  return hexStyleCache;
+}
+
+function getStyleCache() {
+  if (styleCache === undefined) {
+    styleCache = { __proto__: null };
+    const colors = inspect.colors;
+    for (const key of ObjectGetOwnPropertyNames(colors)) {
+      const codes = colors[key];
+      if (codes) {
+        const openNum = codes[0];
+        const closeNum = codes[1];
+        styleCache[key] = {
+          __proto__: null,
+          openSeq: kEscape + openNum + kEscapeEnd,
+          closeSeq: kEscape + closeNum + kEscapeEnd,
+          keepClose: openNum === kDimCode || openNum === kBoldCode,
+        };
       }
-      left += `\u001b[${formatCodes[0]}m`;
-      right = `\u001b[${formatCodes[1]}m${right}`;
+    }
+  }
+  return styleCache;
+}
+
+function hexToRgb(hex) {
+  let hexStr;
+  if (hex.length === 4) {
+    hexStr = hex[1] + hex[1] + hex[2] + hex[2] + hex[3] + hex[3];
+  } else if (hex.length === 7) {
+    hexStr = hex.slice(1);
+  } else {
+    throw $ERR_OUT_OF_RANGE("hex", "#RGB or #RRGGBB", hex);
+  }
+
+  return Buffer.from(hexStr, "hex");
+}
+
+function getHexStyle(hex) {
+  const cache = getHexStyleCache();
+  const cached = cache.get(hex);
+  if (cached !== undefined) return cached;
+  const rgb = hexToRgb(hex);
+  const style = {
+    __proto__: null,
+    openSeq: kEscape + `38;2;${rgb[0]};${rgb[1]};${rgb[2]}` + kEscapeEnd,
+    closeSeq: kHexCloseSeq,
+  };
+  if (cache.size >= kHexStyleCacheMax) {
+    cache.delete(cache.keys().next().value);
+  }
+  cache.set(hex, style);
+  return style;
+}
+
+function replaceCloseCode(str, closeSeq, openSeq, keepClose) {
+  const closeLen = closeSeq.length;
+  let index = str.indexOf(closeSeq);
+  if (index === -1) return str;
+
+  let result = "";
+  let lastIndex = 0;
+  const replacement = keepClose ? closeSeq + openSeq : openSeq;
+
+  do {
+    const afterClose = index + closeLen;
+    if (afterClose < str.length) {
+      result += str.slice(lastIndex, index) + replacement;
+      lastIndex = afterClose;
+    } else {
+      break;
+    }
+    index = str.indexOf(closeSeq, lastIndex);
+  } while (index !== -1);
+
+  return result + str.slice(lastIndex);
+}
+
+function styleText(format, text, options) {
+  const validateStream = options?.validateStream ?? true;
+  const cache = getStyleCache();
+
+  // Fast path: single format string with validateStream=false
+  if (!validateStream && typeof format === "string" && typeof text === "string") {
+    if (format === "none") return text;
+    const style = cache[format];
+    if (style !== undefined) {
+      const processed = replaceCloseCode(text, style.closeSeq, style.openSeq, style.keepClose);
+      return style.openSeq + processed + style.closeSeq;
     }
 
-    return `${left}${text}${right}`;
+    if (format[0] === "#") {
+      let hexStyle = getHexStyleCache().get(format);
+      if (hexStyle === undefined && RegExpPrototypeExec(hexColorRegExp, format) !== null) {
+        hexStyle = getHexStyle(format);
+      }
+      if (hexStyle !== undefined) {
+        const processed = replaceCloseCode(text, hexStyle.closeSeq, hexStyle.openSeq, false);
+        return hexStyle.openSeq + processed + hexStyle.closeSeq;
+      }
+    }
   }
 
-  let formatCodes = inspect.colors[format];
-
-  if (formatCodes == null) {
-    validateOneOf(format, "format", ObjectKeys(inspect.colors));
+  validateString(text, "text");
+  if (options !== undefined) {
+    validateObject(options, "options");
   }
-  return `\u001b[${formatCodes[0]}m${text}\u001b[${formatCodes[1]}m`;
+  validateBoolean(validateStream, "options.validateStream");
+
+  let skipColorize;
+  if (validateStream) {
+    const stream = options?.stream ?? process.stdout;
+    lazyStreamUtils ??= require("internal/streams/utils");
+    const { isNodeStream, isReadableStream, isWritableStream } = lazyStreamUtils;
+    if (!isReadableStream(stream) && !isWritableStream(stream) && !isNodeStream(stream)) {
+      throw $ERR_INVALID_ARG_TYPE("stream", ["ReadableStream", "WritableStream", "Stream"], stream);
+    }
+    lazyUtilColors ??= require("internal/util/colors");
+    skipColorize = !lazyUtilColors.shouldColorize(stream);
+  }
+
+  const formatArray = $isJSArray(format) ? format : [format];
+
+  let openCodes = "";
+  let closeCodes = "";
+  let processedText = text;
+
+  for (const key of formatArray) {
+    if (key === "none") continue;
+
+    if (typeof key === "string" && key[0] === "#") {
+      let hexStyle = getHexStyleCache().get(key);
+      if (hexStyle === undefined) {
+        if (RegExpPrototypeExec(hexColorRegExp, key) === null) {
+          throw $ERR_INVALID_ARG_VALUE("format", key, "must be a valid hex color (#RGB or #RRGGBB)");
+        }
+        if (skipColorize) continue;
+        hexStyle = getHexStyle(key);
+      } else if (skipColorize) {
+        continue;
+      }
+      openCodes += hexStyle.openSeq;
+      closeCodes = hexStyle.closeSeq + closeCodes;
+      processedText = replaceCloseCode(processedText, hexStyle.closeSeq, hexStyle.openSeq, false);
+      continue;
+    }
+
+    const style = cache[key];
+    if (style === undefined) {
+      validateOneOf(key, "format", ObjectGetOwnPropertyNames(inspect.colors));
+    }
+    openCodes += style.openSeq;
+    closeCodes = style.closeSeq + closeCodes;
+    processedText = replaceCloseCode(processedText, style.closeSeq, style.openSeq, style.keepClose);
+  }
+
+  if (skipColorize) return text;
+
+  return `${openCodes}${processedText}${closeCodes}`;
 }
 
 function getSystemErrorName(err: any) {
   if (typeof err !== "number") throw $ERR_INVALID_ARG_TYPE("err", "number", err);
   if (err >= 0 || !NumberIsSafeInteger(err)) throw $ERR_OUT_OF_RANGE("err", "a negative integer", err);
   return internalErrorName(err);
+}
+
+function prepareCallSites(_err, callSites) {
+  const result = [];
+  for (let i = 0; i < callSites.length; i++) {
+    const callSite = callSites[i];
+    // CallSite#getColumnNumber() is 0-based here but 1-based in V8, and node
+    // exposes the column under both names.
+    const columnNumber = (callSite.getColumnNumber() ?? 0) + 1;
+    result.push({
+      functionName: callSite.getFunctionName() ?? "",
+      scriptId: `${callSite.getScriptId()}`,
+      scriptName: callSite.getFileName() ?? "",
+      lineNumber: callSite.getLineNumber() ?? 0,
+      columnNumber,
+      column: columnNumber,
+    });
+  }
+  return result;
+}
+
+function validateSourceMapOption(options) {
+  const { sourceMap } = options;
+  if (sourceMap !== undefined) {
+    validateBoolean(sourceMap, "options.sourceMap");
+  }
+}
+
+function getCallSites(frameCount = 10, options) {
+  // If options is not provided check if frameCount is an object
+  if (options === undefined) {
+    if (typeof frameCount === "object" && frameCount !== null) {
+      // If frameCount is an object, it is the options object
+      options = frameCount;
+      validateObject(options, "options");
+      validateSourceMapOption(options);
+      frameCount = 10;
+    } else {
+      options = {};
+    }
+  } else {
+    validateObject(options, "options");
+    validateSourceMapOption(options);
+  }
+
+  // Using kDefaultMaxCallStackSizeToCapture as reference
+  validateInteger(frameCount, "frameCount", 1, 200);
+
+  // Capture with our own prepareStackTrace so a user-installed
+  // Error.prepareStackTrace is never invoked, and so Error.stackTraceLimit
+  // does not influence the number of frames returned.
+  const target = {};
+  const savedPrepareStackTrace = Error.prepareStackTrace;
+  const savedStackTraceLimit = Error.stackTraceLimit;
+  try {
+    Error.prepareStackTrace = prepareCallSites;
+    // User code may have made stackTraceLimit non-writable; best-effort so the
+    // capture still runs and prepareStackTrace is always restored.
+    try {
+      Error.stackTraceLimit = frameCount;
+    } catch {}
+    Error.captureStackTrace(target, getCallSites);
+    return target.stack;
+  } finally {
+    Error.prepareStackTrace = savedPrepareStackTrace;
+    try {
+      Error.stackTraceLimit = savedStackTraceLimit;
+    } catch {}
+  }
+}
+
+let lazySignals;
+function getSignals() {
+  lazySignals ??= require("node:os").constants.signals;
+  return lazySignals;
+}
+
+function convertProcessSignalToExitCode(signalCode) {
+  const signals = getSignals();
+  validateOneOf(signalCode, "signalCode", ObjectKeys(signals));
+
+  // POSIX standard: exit code for signal termination is 128 + signal number.
+  return 128 + signals[signalCode];
 }
 
 let lazyAbortedRegistry: FinalizationRegistry<{
@@ -320,14 +565,14 @@ cjs_exports = {
   // _exceptionWithHostPort,
   _extend,
   callbackify,
+  convertProcessSignalToExitCode,
   debug: debuglog,
   debuglog,
   deprecate,
   format,
   styleText,
   formatWithOptions,
-  // getCallSite,
-  // getCallSites,
+  getCallSites,
   // getSystemErrorMap,
   getSystemErrorName,
   // getSystemErrorMessage,

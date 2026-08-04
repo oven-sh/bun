@@ -647,8 +647,8 @@ pub struct PackageJSONVersionChecker<'a> {
     source: &'a bun_ast::Source,
     log: &'a mut bun_ast::Log,
 
-    pub found_version_buf: [u8; 1024],
-    pub found_name_buf: [u8; 1024],
+    pub(crate) found_version_buf: [u8; 1024],
+    pub(crate) found_name_buf: [u8; 1024],
     found_name_len: usize,
     found_version_len: usize,
     pub has_found_name: bool,
@@ -735,7 +735,7 @@ pub fn property_value_loc(contents: &[u8], key_loc: bun_ast::Loc) -> Option<bun_
 
 /// [`property_value_loc`] with the key's location as the fallback.
 #[inline]
-pub fn property_value_loc_or_key(contents: &[u8], key_loc: bun_ast::Loc) -> bun_ast::Loc {
+pub(crate) fn property_value_loc_or_key(contents: &[u8], key_loc: bun_ast::Loc) -> bun_ast::Loc {
     property_value_loc(contents, key_loc).unwrap_or(key_loc)
 }
 
@@ -1849,7 +1849,12 @@ mod tests {
                 out.push('\n');
             }
 
-            writeln!(out, "bool={:?}", Expr::get_boolean(&root, b"private")).unwrap();
+            writeln!(
+                out,
+                "bool={:?}",
+                root.get(b"private").and_then(|e| e.as_bool())
+            )
+            .unwrap();
             writeln!(out, "num={:?}", root.get_number(b"count").map(|(n, _)| n)).unwrap();
             writeln!(
                 out,

@@ -47,15 +47,15 @@ pub enum Yield {
 
 impl Yield {
     #[inline]
-    pub const fn suspended() -> Yield {
+    pub(crate) const fn suspended() -> Yield {
         Yield::Suspended
     }
     #[inline]
-    pub const fn done() -> Yield {
+    pub(crate) const fn done() -> Yield {
         Yield::Done
     }
     #[inline]
-    pub const fn failed() -> Yield {
+    pub(crate) const fn failed() -> Yield {
         Yield::Failed
     }
 }
@@ -98,7 +98,7 @@ impl Drop for DbgDepthGuard {
 
 impl Yield {
     /// Trampoline: drive the interpreter until it suspends/finishes.
-    pub fn run(self, interp: &Interpreter) {
+    pub(crate) fn run(self, interp: &Interpreter) {
         let tag: &'static str = (&self).into();
         let _depth = DbgDepthGuard::enter(tag);
 

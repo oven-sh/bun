@@ -81,7 +81,7 @@ use bun_jsc::{
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
 use bun_core::{String as BunString, ZigString, strings};
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
 #[cfg(not(windows))]
 use bun_paths::PathBuffer;
@@ -114,62 +114,29 @@ mod static_adapters {
     use super::*;
 
     pub(super) fn listener_connect(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let args = cf.arguments_old::<1>();
-        let opts = if args.len >= 1 {
-            args.ptr[0]
-        } else {
-            JSValue::UNDEFINED
-        };
+        let [opts] = cf.arguments_as_array::<1>();
         crate::socket::Listener::connect(g, opts)
     }
 
     pub(super) fn listener_listen(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let args = cf.arguments_old::<1>();
-        let opts = if args.len >= 1 {
-            args.ptr[0]
-        } else {
-            JSValue::UNDEFINED
-        };
+        let [opts] = cf.arguments_as_array::<1>();
         crate::socket::Listener::listen(g, opts)
     }
 
     pub(super) fn udp_socket(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let args = cf.arguments_old::<1>();
-        let opts = if args.len >= 1 {
-            args.ptr[0]
-        } else {
-            JSValue::UNDEFINED
-        };
+        let [opts] = cf.arguments_as_array::<1>();
         crate::socket::udp_socket_draft::UDPSocket::udp_socket(g, opts)
     }
 
     pub(super) fn subprocess_spawn(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let args = cf.arguments_old::<2>();
-        let a0 = if args.len >= 1 {
-            args.ptr[0]
-        } else {
-            JSValue::UNDEFINED
-        };
-        let a1 = if args.len >= 2 {
-            Some(args.ptr[1])
-        } else {
-            None
-        };
+        let [a0] = cf.arguments_as_array::<1>();
+        let a1 = cf.arguments().get(1).copied();
         crate::api::js_bun_spawn_bindings::spawn(g, a0, a1)
     }
 
     pub(super) fn subprocess_spawn_sync(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let args = cf.arguments_old::<2>();
-        let a0 = if args.len >= 1 {
-            args.ptr[0]
-        } else {
-            JSValue::UNDEFINED
-        };
-        let a1 = if args.len >= 2 {
-            Some(args.ptr[1])
-        } else {
-            None
-        };
+        let [a0] = cf.arguments_as_array::<1>();
+        let a1 = cf.arguments().get(1).copied();
         crate::api::js_bun_spawn_bindings::spawn_sync(g, a0, a1)
     }
 
@@ -198,31 +165,24 @@ mod static_adapters {
     /// `wrapStaticMethod` would emit, with auto-protect on each argument.
     pub(super) fn sha(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         use crate::node::types::{BlobOrStringOrBuffer, StringOrBuffer};
-        let args = cf.arguments_old::<2>();
-        let a0 = if args.len >= 1 {
-            args.ptr[0]
-        } else {
-            JSValue::UNDEFINED
-        };
-        let a1 = if args.len >= 2 {
-            args.ptr[1]
-        } else {
-            JSValue::UNDEFINED
-        };
+        let [a0, a1] = cf.arguments_as_array::<2>();
         // Protect each arg across the call (Blob materialization
         // re-enters the VM).
         let _a0_guard = a0.protected();
         let _a1_guard = a1.protected();
+        let mut output = if a1.is_undefined_or_null() {
+            None
+        } else {
+            StringOrBuffer::from_js(g, a1)?
+        };
         let Some(input) = BlobOrStringOrBuffer::from_js(g, a0)? else {
             return Err(g.throw_invalid_arguments(format_args!(
                 "expected string, buffer, TypedArray, or Blob",
             )));
         };
-        let output = if a1.is_undefined_or_null() {
-            None
-        } else {
-            StringOrBuffer::from_js(g, a1)?
-        };
+        if let Some(StringOrBuffer::Buffer(buffer)) = &mut output {
+            buffer.buffer = ArrayBuffer::from_typed_array(g, buffer.buffer.value);
+        }
         Crypto::SHA512_256::hash_(g, &input, output)
     }
 }
@@ -403,11 +363,9 @@ pub mod bun_object {
     // --- Lazy property callbacks ---
 
     // --- Getters ---
-    pub use super::get_main as main;
     // --- Getters ---
 
     // --- Setters ---
-    pub use super::set_main;
     // --- Setters ---
 
     // The export names
@@ -429,22 +387,18 @@ pub mod bun_object {
     // --- Getters / Setters ---
 }
 
-pub(crate) fn get_cron_object(global_this: &JSGlobalObject, obj: &JSObject) -> JSValue {
+fn get_cron_object(global_this: &JSGlobalObject, obj: &JSObject) -> JSValue {
     crate::api::cron::get_cron_object(global_this, obj)
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn shell_escape(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     use bun_jsc::StringJsc as _;
-    let arguments = callframe.arguments_old::<1>();
-    if arguments.len < 1 {
+    let [jsval] = callframe.arguments_as_array::<1>();
+    if callframe.arguments_count() < 1 {
         return Err(global_this.throw(format_args!("shell escape expected at least 1 argument")));
     }
 
-    let jsval = arguments.ptr[0];
     let bunstr = jsval.to_bun_string(global_this)?;
     if global_this.has_exception() {
         return Ok(JSValue::ZERO);
@@ -570,12 +524,11 @@ pub(crate) fn braces(
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old::<2>();
+fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let mut path_buf = bun_paths::path_buffer_pool::get();
     // SAFETY: bun_vm() returns the live per-thread singleton VM for a Bun-owned global.
     let vm = global_this.bun_vm();
-    let mut arguments = ArgumentsSlice::init(vm, arguments_.slice());
+    let mut arguments = ArgumentsSlice::init(vm, callframe.arguments());
     let Some(path_arg) = arguments.next_eat() else {
         return Err(global_this.throw(format_args!("which: expected 1 argument, got 0")));
     };
@@ -627,10 +580,7 @@ pub(crate) fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn inspect_table(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let mut args_buf = callframe.arguments_undef::<5>();
     let all_arguments = args_buf.mut_();
     if all_arguments[0].is_undefined_or_null() || !all_arguments[0].is_object() {
@@ -701,18 +651,18 @@ pub(crate) fn inspect_table(
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let args_buf = callframe.arguments_old::<4>();
-    if args_buf.len == 0 {
+fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let arguments = callframe.arguments();
+    if arguments.is_empty() {
         return BunString::empty().to_js(global_this);
     }
 
-    for arg in args_buf.slice() {
+    for arg in arguments {
         arg.protect();
     }
     // Each arg is unprotected on scope exit.
-    // `arguments_old::<4>` is a stack `[JSValue; 4]`; move it into the guard
-    // and re-slice instead of heap-allocating a `Vec` per call.
+    // `arguments()` borrows the call-frame slot array; wrap the borrowed slice
+    // in the guard instead of heap-allocating a `Vec` per call.
     //
     // NOTE: this is *not* the fix for error-gc-test.test.js timing out under
     // debug+ASAN — that test does 100k `Bun.inspect(new Error)` and the cost
@@ -720,12 +670,12 @@ pub(crate) fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
     // and the source-file re-read in `remap_zig_exception`, none of which a
     // 32-byte alloc elision can recover. The test is classified `[TIMEOUT]`
     // for ASAN in test/expectations.txt instead.
-    let args_buf = scopeguard::guard(args_buf, |buf| {
-        for arg in buf.slice() {
+    let args_buf = scopeguard::guard(arguments, |buf| {
+        for arg in buf {
             arg.unprotect();
         }
     });
-    let arguments = args_buf.slice();
+    let arguments = *args_buf;
 
     let mut format_options = ConsoleObject::FormatOptions {
         enable_colors: false,
@@ -805,7 +755,7 @@ pub fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValue) -> B
     BunString::clone_utf8(&array)
 }
 
-pub(crate) fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
     let fun = JSFunction::create(
         global_object,
         "inspect",
@@ -834,13 +784,9 @@ pub(crate) fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSVal
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn register_macro(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old::<2>();
-    let arguments = arguments_.slice();
-    if arguments.len() != 2 || !arguments[0].is_number() {
+fn register_macro(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let arguments = callframe.arguments();
+    if arguments.len() < 2 || !arguments[0].is_number() {
         return Err(global_object.throw_invalid_arguments(format_args!(
             "Internal error registering macros: invalid args"
         )));
@@ -873,16 +819,16 @@ pub(crate) fn register_macro(
     Ok(JSValue::UNDEFINED)
 }
 
-pub(crate) fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     ZigString::init(bun_resolver::fs::FileSystem::get().top_level_dir).to_js(global_this)
 }
 
-pub(crate) fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
     ZigString::init(VirtualMachine::get().origin.origin).to_js(global_this)
 }
 
-pub(crate) fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     JSValue::from(Output::enable_ansi_colors_stdout() || Output::enable_ansi_colors_stderr())
 }
 
@@ -974,7 +920,7 @@ pub fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {
     true
 }
 
-pub(crate) fn get_argv(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_argv(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     node::process::get_argv(global_this)
 }
 
@@ -1005,14 +951,10 @@ thread_local! {
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn open_in_editor(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let args = callframe.arguments_old::<4>();
+fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: bun_vm() returns the live per-thread singleton.
     let vm = global_this.bun_vm();
-    let mut arguments = ArgumentsSlice::init(vm, args.slice());
+    let mut arguments = ArgumentsSlice::init(vm, callframe.arguments());
     let mut path = ZigStringSlice::EMPTY;
     let mut editor_choice: Option<Editor> = None;
     let mut line: Option<ZigStringSlice> = None;
@@ -1110,18 +1052,14 @@ pub(crate) fn open_in_editor(
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn sleep_sync(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old::<1>();
+fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let [arg] = callframe.arguments_as_array::<1>();
 
     // Expect at least one argument.  We allow more than one but ignore them; this
     //  is useful for supporting things like `[1, 2].map(sleepSync)`
-    if arguments.len < 1 {
+    if callframe.arguments_count() < 1 {
         return Err(global_object.throw_not_enough_arguments("sleepSync", 1, 0));
     }
-    let arg = arguments.slice()[0];
 
     // The argument must be a number
     if !arg.is_number() {
@@ -1152,7 +1090,7 @@ pub fn gc(vm: &mut VirtualMachine, sync: bool) -> usize {
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn shrink(global_object: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+fn shrink(global_object: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
     global_object.vm().shrink_footprint();
     Ok(JSValue::UNDEFINED)
 }
@@ -1178,10 +1116,14 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
         return Err(global_this.throw_invalid_arguments(format_args!("from must be a string")));
     }
 
-    let mut is_esm = true;
+    let mut mode = ResolveMode::Esm;
     if let Some(next) = args.next_eat() {
         if next.is_boolean() {
-            is_esm = next.to_boolean();
+            mode = if next.to_boolean() {
+                ResolveMode::Esm
+            } else {
+                ResolveMode::Require
+            };
         } else {
             return Err(global_this.throw_invalid_arguments(format_args!("esm must be a boolean")));
         }
@@ -1191,7 +1133,7 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
     let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
     let from_str = from.to_bun_string(global_this)?;
     let from_str = scopeguard::guard(from_str, |s| s.deref());
-    do_resolve_with_args::<false>(global_this, *specifier_str, *from_str, is_esm, false)
+    do_resolve_with_args::<false>(global_this, *specifier_str, *from_str, mode)
 }
 
 /// Single Drop point for the three `BunString`s `do_resolve_with_args` may own.
@@ -1221,8 +1163,7 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     ctx: &JSGlobalObject,
     specifier: BunString,
     from: BunString,
-    is_esm: bool,
-    is_user_require_resolve: bool,
+    mode: ResolveMode,
 ) -> JsResult<JSValue> {
     let mut errorable: ErrorableString = ErrorableString::ok(BunString::empty());
     let mut owned = ResolveDerefOnDrop {
@@ -1247,8 +1188,7 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
         specifier_for_resolve,
         from,
         Some(&mut owned.query_string),
-        is_esm,
-        is_user_require_resolve,
+        mode,
     )?;
 
     if !errorable.success {
@@ -1274,17 +1214,13 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn resolve_sync(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn resolve_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     do_resolve(global_object, callframe.arguments())
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn resolve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old::<3>();
-    let value = match do_resolve(global_object, arguments.slice()) {
+fn resolve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let value = match do_resolve(global_object, callframe.arguments()) {
         Ok(v) => v,
         Err(e) => {
             let err = global_object.take_error(e);
@@ -1316,16 +1252,20 @@ pub fn bun_resolve(
     };
     let source_str = scopeguard::guard(source_str, |s| s.deref());
 
-    let value =
-        match do_resolve_with_args::<true>(global, *specifier_str, *source_str, is_esm, false) {
-            Ok(v) => v,
-            Err(_) => {
-                let err = global.try_take_exception().unwrap();
-                return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global, err,
-                );
-            }
-        };
+    let value = match do_resolve_with_args::<true>(
+        global,
+        *specifier_str,
+        *source_str,
+        ResolveMode::from_ffi_bools(is_esm, false),
+    ) {
+        Ok(v) => v,
+        Err(_) => {
+            let err = global.try_take_exception().unwrap();
+            return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                global, err,
+            );
+        }
+    };
 
     JSPromise::resolved_promise_value(global, value)
 }
@@ -1363,8 +1303,7 @@ pub fn bun_resolve_sync(
             global,
             *specifier_str,
             *source_str,
-            is_esm,
-            is_user_require_resolve,
+            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
         )
     })
 }
@@ -1431,8 +1370,7 @@ pub fn bun_resolve_sync_with_paths(
             global,
             *specifier_str,
             *source_str,
-            is_esm,
-            is_user_require_resolve,
+            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
         )
     })
 }
@@ -1453,7 +1391,12 @@ pub fn bun_resolve_sync_with_strings(
         specifier
     );
     jsc::to_js_host_call(global, || {
-        do_resolve_with_args::<true>(global, *specifier, *source, is_esm, false)
+        do_resolve_with_args::<true>(
+            global,
+            *specifier,
+            *source,
+            ResolveMode::from_ffi_bools(is_esm, false),
+        )
     })
 }
 
@@ -1483,32 +1426,27 @@ pub fn bun_resolve_sync_with_source(
             global,
             *specifier_str,
             *source,
-            is_esm,
-            is_user_require_resolve,
+            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
         )
     })
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn index_of_line(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old::<2>();
-    let arguments = arguments_.slice();
+fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let arguments = callframe.arguments();
     if arguments.is_empty() {
         return Ok(JSValue::js_number_from_int32(-1));
     }
-
-    let Some(buffer) = arguments[0].as_array_buffer(global_this) else {
-        return Ok(JSValue::js_number_from_int32(-1));
-    };
 
     let mut offset: usize = 0;
     if arguments.len() > 1 {
         let offset_value = arguments[1].coerce_to_int64(global_this)?;
         offset = offset_value.max(0) as usize;
     }
+
+    let Some(buffer) = arguments[0].as_array_buffer(global_this) else {
+        return Ok(JSValue::js_number_from_int32(-1));
+    };
 
     let bytes = buffer.byte_slice();
     let mut current_offset = offset;
@@ -1537,7 +1475,7 @@ pub(crate) fn index_of_line(
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn nanoseconds(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+fn nanoseconds(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let ns = global_this
         .bun_vm()
@@ -1549,9 +1487,8 @@ pub(crate) fn nanoseconds(global_this: &JSGlobalObject, _: &CallFrame) -> JsResu
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old::<2>();
-    let arguments = arguments.slice();
+fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let arguments = callframe.arguments();
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let vm = global_object.bun_vm().as_mut();
     let mut config: crate::server::ServerConfig = 'brk: {
@@ -1745,12 +1682,8 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn alloc_unsafe(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old::<1>();
-    let size = arguments.ptr[0];
+fn alloc_unsafe(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let [size] = callframe.arguments_as_array::<1>();
     if !size.is_uint32_as_any_int() {
         return Err(global_this.throw_invalid_arguments(format_args!("Expected a positive number")));
     }
@@ -1758,7 +1691,7 @@ pub(crate) fn alloc_unsafe(
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     #[cfg(windows)]
     {
         let _ = callframe;
@@ -1767,10 +1700,9 @@ pub(crate) fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
 
     #[cfg(not(windows))]
     {
-        let arguments_ = callframe.arguments_old::<2>();
         // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
         let vm = global_this.bun_vm();
-        let mut args = ArgumentsSlice::init(vm, arguments_.slice());
+        let mut args = ArgumentsSlice::init(vm, callframe.arguments());
 
         let mut buf = PathBuffer::uninit();
         let path = 'brk: {
@@ -1783,13 +1715,19 @@ pub(crate) fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
                         );
                     }
                     let paths = &[path_str.slice()];
-                    break 'brk bun_paths::resolve_path::join_abs_string_buf::<
+                    let buf_len = buf.len();
+                    let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
                         bun_paths::resolve_path::platform::Auto,
                     >(
                         bun_paths::fs::FileSystem::instance().top_level_dir(),
-                        &mut buf,
+                        &mut buf[..buf_len - 1],
                         paths,
-                    );
+                    ) else {
+                        return Err(
+                            global_this.throw_invalid_arguments(format_args!("Path too long"))
+                        );
+                    };
+                    break 'brk joined;
                 }
             }
             return Err(global_this.throw_invalid_arguments(format_args!("Expected a path")));
@@ -1891,55 +1829,55 @@ pub(crate) fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
     }
 }
 
-pub(crate) fn get_transpiler_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_transpiler_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     jsc::codegen::js::get_constructor::<crate::api::js_transpiler::JSTranspiler>(global_this)
 }
 
-pub(crate) fn get_file_system_router(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_file_system_router(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     jsc::codegen::js::get_constructor::<crate::api::filesystem_router::FileSystemRouter>(
         global_this,
     )
 }
 
-pub(crate) fn get_hash_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_hash_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     HashObject::create(global_this)
 }
 
-pub(crate) fn get_jsonc_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_jsonc_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     crate::api::jsonc_object::create(global_this)
 }
-pub(crate) fn get_markdown_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_markdown_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     crate::api::markdown_object::create(global_this)
 }
-pub(crate) fn get_toml_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_toml_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     TOMLObject::create(global_this)
 }
 
-pub(crate) fn get_json5_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_json5_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     JSON5Object::create(global_this)
 }
 
-pub(crate) fn get_yaml_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_yaml_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     YAMLObject::create(global_this)
 }
 
-pub(crate) fn get_archive_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_archive_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     jsc::codegen::js::get_constructor::<crate::api::archive::Archive>(global_this)
 }
 
-pub(crate) fn get_glob_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_glob_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     jsc::codegen::js::get_constructor::<crate::api::glob::Glob>(global_this)
 }
 
-pub(crate) fn get_image_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_image_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     jsc::codegen::js::get_constructor::<crate::image::Image>(global_this)
 }
 
-pub(crate) fn get_s3_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_s3_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     jsc::codegen::js::get_constructor::<crate::webcore::s3_client::S3Client>(global_this)
 }
 
-pub(crate) fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     // NOTE (layering): `RareData::s3_default_client` body lives in
     // `bun_jsc::rare_data::_accessor_body` and names `bun_runtime::s3` types.
     // That can't compile in `bun_jsc`, so port the body here where the S3
@@ -1992,7 +1930,7 @@ pub(crate) fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) 
     js_client
 }
 
-pub(crate) fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     use crate::valkey_jsc::JSValkeyClient;
 
     let valkey = match JSValkeyClient::create_no_js_no_pubsub(global_this, &[JSValue::UNDEFINED]) {
@@ -2024,19 +1962,19 @@ pub(crate) fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObje
     as_js
 }
 
-pub(crate) fn get_valkey_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_valkey_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     jsc::codegen::js::get_constructor::<crate::valkey_jsc::JSValkeyClient>(global_this)
 }
 
-pub(crate) fn get_terminal_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_terminal_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     crate::api::bun_terminal_body::js::get_constructor(global_this)
 }
 
-pub(crate) fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     JSValue::js_boolean(global_this.bun_vm().standalone_module_graph.is_some())
 }
 
-pub(crate) fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
+fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
     use crate::webcore::blob::{Blob, BlobExt as _};
     use bun_standalone_graph::{File as GraphFile, Graph as StandaloneModuleGraph};
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
@@ -2098,24 +2036,24 @@ pub(crate) fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> 
     Ok(array)
 }
 
-pub(crate) fn get_semver(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_semver(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     bun_semver_jsc::SemverObject::create(global_this)
 }
 
-pub(crate) fn get_unsafe(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_unsafe(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     UnsafeObject::create(global_this)
 }
 
 /// EnvironmentVariables is runtime defined.
 /// Also, you can't iterate over process.env normally since it only exists at build-time otherwise
-pub(crate) fn get_csrf_object(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_csrf_object(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
     CSRFObject::create(global_object)
 }
 
-pub(crate) struct CSRFObject;
+struct CSRFObject;
 
 impl CSRFObject {
-    pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
+    fn create(global_this: &JSGlobalObject) -> JSValue {
         let object = JSValue::create_empty_object(global_this, 2);
 
         // NOTE: `JSFunction::create` takes the raw JSC-ABI host fn pointer,
@@ -2170,11 +2108,11 @@ impl CSRFObject {
 }
 
 // This is aliased to Bun.env
-pub mod environment_variables {
+pub(crate) mod environment_variables {
     use super::*;
 
     #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Bun__getEnvCount(
+    extern "C" fn Bun__getEnvCount(
         global_object: &JSGlobalObject,
         ptr: &mut core::mem::MaybeUninit<*const Box<[u8]>>,
     ) -> usize {
@@ -2194,7 +2132,7 @@ pub mod environment_variables {
     /// less than the count it returned; the backing storage must not have been
     /// reallocated in between.
     #[unsafe(no_mangle)]
-    pub(crate) unsafe extern "C" fn Bun__getEnvKey(
+    unsafe extern "C" fn Bun__getEnvKey(
         ptr: *const Box<[u8]>,
         i: usize,
         data_ptr: &mut core::mem::MaybeUninit<*const u8>,
@@ -2206,7 +2144,7 @@ pub mod environment_variables {
     }
 
     #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Bun__getEnvValue(
+    extern "C" fn Bun__getEnvValue(
         global_object: &JSGlobalObject,
         name: &ZigString,
         value: &mut core::mem::MaybeUninit<ZigString>,
@@ -2222,7 +2160,7 @@ pub mod environment_variables {
     /// BunString variant of Bun__getEnvValue. The returned value borrows from
     /// the env map; caller must copy before the map can mutate.
     #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Bun__getEnvValueBunString(
+    extern "C" fn Bun__getEnvValueBunString(
         global_object: &JSGlobalObject,
         name: &BunString,
         value: &mut core::mem::MaybeUninit<BunString>,
@@ -2247,7 +2185,7 @@ pub mod environment_variables {
     /// writes to that var. Parent deref'ing on overwrite won't free the
     /// bytes while a worker still holds a ref.
     #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Bun__setEnvValue(
+    extern "C" fn Bun__setEnvValue(
         global_object: &JSGlobalObject,
         name: &BunString,
         value: &BunString,
@@ -2269,9 +2207,7 @@ pub mod environment_variables {
         // bytes stay alive; if not, they're freed now.
         *slot.ptr = None;
 
-        // NOTE: `Loader.map` is `&'a mut Map` (a mutable reference field);
-        // re-borrow as `&mut *` to avoid moving the reference out of the loader.
-        let env_map = &mut *vm.transpiler.env_mut().map;
+        let env_map = &mut vm.transpiler.env_mut().map;
 
         if value.is_empty() {
             // Store a static empty string rather than removing, so that
@@ -2292,10 +2228,7 @@ pub mod environment_variables {
         bun_core::handle_oom(env_map.put(slot.key, &stored.bytes));
     }
 
-    pub(crate) fn get_env_value(
-        global_object: &JSGlobalObject,
-        name: ZigString,
-    ) -> Option<ZigString> {
+    fn get_env_value(global_object: &JSGlobalObject, name: ZigString) -> Option<ZigString> {
         // SAFETY: bun_vm() returns the live thread-local VM.
         let vm = global_object.bun_vm();
         let sliced = name.to_slice();
@@ -2305,7 +2238,7 @@ pub mod environment_variables {
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: JSValue) {
+extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: JSValue) {
     // SAFETY: VirtualMachine::get() returns the thread-local VM raw pointer.
     let vm = jsc::virtual_machine::VirtualMachine::get().as_mut();
     let _ = vm.uncaught_exception(global_object, err, false);
@@ -2321,7 +2254,7 @@ pub(crate) extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: J
 /// the buffer — preserving error precedence and avoiding a protect leak on the
 /// early-throw path.
 #[inline]
-pub fn parse_compress_args(
+pub(crate) fn parse_compress_args(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<(JSValue, Option<JSValue>)> {
@@ -2347,7 +2280,7 @@ pub fn parse_compress_args(
 /// option properties (which can run arbitrary JS) must do so *before* calling
 /// this, so nothing runs between the coercion and the use of the slice.
 #[inline]
-pub fn coerce_compress_buffer(
+pub(crate) fn coerce_compress_buffer(
     global: &JSGlobalObject,
     buffer_value: JSValue,
 ) -> JsResult<node::StringOrBuffer> {
@@ -2360,7 +2293,7 @@ pub fn coerce_compress_buffer(
 /// [`parse_compress_args`] + [`coerce_compress_buffer`], for callers that read
 /// no further option properties.
 #[inline]
-pub fn parse_compress_buffer_and_options(
+pub(crate) fn parse_compress_buffer_and_options(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<(node::StringOrBuffer, Option<JSValue>)> {
@@ -2482,7 +2415,7 @@ pub mod JSZlib {
         gunzip_or_inflate_sync(global_this, buffer_value, options_val, true)
     }
 
-    pub(crate) fn gunzip_or_inflate_sync(
+    fn gunzip_or_inflate_sync(
         global_this: &JSGlobalObject,
         buffer_value: JSValue,
         options_val_: Option<JSValue>,
@@ -2545,7 +2478,7 @@ pub mod JSZlib {
                 //  +---+---+---+---+---+---+---+---+
                 //  |     CRC32     |     ISIZE     |
                 //  +---+---+---+---+---+---+---+---+
-                let estimated_size: u32 = u32::from_ne_bytes(
+                let estimated_size: u32 = u32::from_le_bytes(
                     compressed[compressed.len() - 4..][..4]
                         .try_into()
                         .expect("infallible: size matches"),
@@ -2653,7 +2586,7 @@ pub mod JSZlib {
         }
     }
 
-    pub(crate) fn gzip_or_deflate_sync(
+    fn gzip_or_deflate_sync(
         global_this: &JSGlobalObject,
         buffer_value: JSValue,
         options_val_: Option<JSValue>,

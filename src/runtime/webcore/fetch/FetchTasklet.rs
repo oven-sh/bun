@@ -917,6 +917,16 @@ impl FetchTasklet {
     pub(crate) fn on_progress_update(&mut self) -> JsTerminatedResult<()> {
         jsc::mark_binding!();
         bun_output::scoped_log!(FetchTasklet, "onProgressUpdate");
+        if bun_core::image::restored()
+            && bun_core::env_var::BUN_IMAGE_VERBOSE.get().unwrap_or(false)
+        {
+            let msg = format!(
+                "[image] fetch onProgressUpdate (js thread) task={:p} has_more={}\n",
+                self as *const Self, self.result.has_more
+            );
+            // SAFETY: fd write.
+            unsafe { libc::write(2, msg.as_ptr().cast(), msg.len()) };
+        }
         self.mutex.lock();
         self.has_schedule_callback.store(false, Ordering::Relaxed);
         let is_done = !self.result.has_more;
@@ -2416,6 +2426,19 @@ impl FetchTasklet {
         // at this point only this thread is accessing result to is no race condition
         let is_done = !result.has_more;
         let task_ref = Self::from_raw_mut(task);
+        if bun_core::image::restored()
+            && bun_core::env_var::BUN_IMAGE_VERBOSE.get().unwrap_or(false)
+        {
+            let msg = format!(
+                "[image] fetch cb (http thread) task={:p} done={} has_more={} fail={}\n",
+                task,
+                is_done,
+                result.has_more,
+                result.fail.is_some()
+            );
+            // SAFETY: fd write.
+            unsafe { libc::write(2, msg.as_ptr().cast(), msg.len()) };
+        }
 
         task_ref.mutex.lock();
         // we need to unlock before task.deref();

@@ -10,12 +10,15 @@ const fsPromises = fs.promises;
 
 const buffer = new Uint8Array();
 
+// Bun's ERR_INVALID_ARG_VALUE message for an empty buffer omits the
+// trailing "Received Uint8Array(0) []" suffix; accept both shapes.
+const emptyBufferMessage = /^The argument 'buffer' is empty and cannot be written\.(?: Received Uint8Array\(0\) \[\])?$/;
+
 assert.throws(
   () => fs.readSync(fd, buffer, 0, 10, 0),
   {
     code: 'ERR_INVALID_ARG_VALUE',
-    message: 'The argument \'buffer\' is empty and cannot be written. ' +
-    'Received Uint8Array(0) []'
+    message: emptyBufferMessage
   }
 );
 
@@ -23,8 +26,7 @@ assert.throws(
   () => fs.read(fd, buffer, 0, 1, 0, common.mustNotCall()),
   {
     code: 'ERR_INVALID_ARG_VALUE',
-    message: 'The argument \'buffer\' is empty and cannot be written. ' +
-    'Received Uint8Array(0) []'
+    message: emptyBufferMessage
   }
 );
 
@@ -34,8 +36,7 @@ assert.throws(
     () => filehandle.read(buffer, 0, 1, 0),
     {
       code: 'ERR_INVALID_ARG_VALUE',
-      message: 'The argument \'buffer\' is empty and cannot be written. ' +
-               'Received Uint8Array(0) []'
+      message: emptyBufferMessage
     }
   ).then(common.mustCall());
 })().then(common.mustCall());

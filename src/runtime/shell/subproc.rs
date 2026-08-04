@@ -726,6 +726,15 @@ impl ShellSubprocess {
                     let _ = spawn_stdout.map(bun_sys::Fd::close);
                     let _ = spawn_stderr.map(bun_sys::Fd::close);
                 }
+                let proc = spawn_result.to_process(event_loop);
+                // SAFETY: `to_process` returns a live heap-allocated `Process`
+                // with one intrusive ref; sole reference.
+                unsafe {
+                    let _ = (*proc).kill(SignalCode::SIGKILL as u8);
+                    (*proc).wait(true);
+                    (*proc).close();
+                    bun_ptr::ThreadSafeRefCount::<Process>::deref(proc);
+                }
                 return Err(ShellErr::Sys(e.to_shell_system_error()));
             }
         };
@@ -819,28 +828,26 @@ impl ShellSubprocess {
         // ReadableStream stdin: `assign_to_stream` tries `wire_native_sink`
         // (`SinkHandle::FileSink`) first, then falls back to the JS pump.
         if let Some(mut stream) = stdin_stream {
-            let assign_err: Option<Box<[u8]>> = 'assign: {
-                let Some(global) = cmd_parent.interp.get().global_this_ref() else {
-                    break 'assign None;
-                };
-                // SAFETY: borrow of the stdin slot scoped to this block; single-threaded.
-                let Writable::Pipe(pipe) = (unsafe { &mut (*subprocess).stdin }) else {
-                    break 'assign None;
-                };
-                match pipe.assign_to_stream(&mut stream, global).to_error() {
-                    None => None,
-                    Some(err) => {
-                        use std::io::Write;
-                        let mut msg = Vec::<u8>::new();
-                        let _ = write!(
-                            &mut msg,
-                            "Failed to pipe ReadableStream to stdin: {}",
-                            err.fmt_string(global)
-                        );
-                        Some(msg.into_boxed_slice())
-                    }
-                }
+            let global = cmd_parent
+                .interp
+                .get()
+                .global_this_ref()
+                .expect("ReadableStream redirect implies JS event loop");
+            // SAFETY: borrow of the stdin slot scoped to this block; single-threaded.
+            let Writable::Pipe(pipe) = (unsafe { &mut (*subprocess).stdin }) else {
+                unreachable!("Writable::init returns Pipe for Stdio::ReadableStream")
             };
+            let assign_err = pipe
+                .assign_to_stream(&mut stream, global)
+                .to_error()
+                .map(|err| {
+                    format!(
+                        "Failed to pipe ReadableStream to stdin: {}",
+                        err.fmt_string(global)
+                    )
+                    .into_bytes()
+                    .into_boxed_slice()
+                });
             if let Some(msg) = assign_err {
                 // SAFETY: scoped `&mut` for the kill; `abort_after_failed_start`
                 // then consumes the allocation.
@@ -1032,11 +1039,11 @@ impl Writable {
                             (*pipe_ptr).writer.with_mut(|w| w.start_with_current_pipe())
                         } {
                             bun_sys::Result::Ok(()) => {}
-                            bun_sys::Result::Err(_err) => {
+                            bun_sys::Result::Err(e) => {
                                 // SAFETY: pipe_ptr is live with refcount 1;
                                 // deref frees it.
                                 unsafe { FileSink::deref(pipe_ptr) };
-                                return Err(WritableInitError::UnexpectedCreatingStdin);
+                                return Err(WritableInitError::Sys(e));
                             }
                         }
 
@@ -1174,6 +1181,14 @@ impl Writable {
                             unsafe { FileSink::deref(pipe_ptr) };
                             return Err(WritableInitError::Sys(e));
                         }
+                    }
+                    // SAFETY: sole reference; `w.handle` is the `PosixStreamingWriter`'s PollOrFd.
+                    unsafe {
+                        (*pipe_ptr).writer.with_mut(|w| {
+                            if let Some(poll) = w.handle.get_poll() {
+                                poll.set_flag(bun_io::FilePollFlag::Socket);
+                            }
+                        });
                     }
                     // SAFETY: `create` returns non-null with one owned ref; `adopt` takes it over.
                     Ok(Writable::Pipe(unsafe { FileSinkPtr::adopt(pipe_ptr) }))

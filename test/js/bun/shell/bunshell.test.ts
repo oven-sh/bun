@@ -3091,8 +3091,8 @@ describe("redirect stdin from ReadableStream", () => {
   const childPump = `process.stdout.write(await Bun.stdin.text())`;
 
   test.concurrent("native source (subprocess stdout)", async () => {
-    // #18262 repro: a Bun.spawn stdout ReadableStream (backed by a native
-    // ByteStream) piped into a shell command's stdin via the SinkHandle path.
+    // #18262 repro: a Bun.spawn stdout ReadableStream piped into a shell
+    // command's stdin via the SinkHandle path.
     await using proc = Bun.spawn({
       cmd: [BUN, "-e", "process.stdout.write('hello from stream')"],
       env: bunEnv,
@@ -3123,6 +3123,29 @@ describe("redirect stdin from ReadableStream", () => {
     const out = await $`${BUN} -e ${childPump} < ${stream}`.env(bunEnv).nothrow().quiet();
     expect({ stdout: out.stdout.toString(), exitCode: out.exitCode }).toEqual({
       stdout: "file-content",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("native ByteStream source (fetch response.body)", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            async pull(c) {
+              c.enqueue(Buffer.from("http-"));
+              await Bun.sleep(0);
+              c.enqueue(Buffer.from("body"));
+              c.close();
+            },
+          }),
+        ),
+    });
+    const res = await fetch(server.url);
+    const out = await $`${BUN} -e ${childPump} < ${res.body}`.env(bunEnv).nothrow().quiet();
+    expect({ stdout: out.stdout.toString(), exitCode: out.exitCode }).toEqual({
+      stdout: "http-body",
       exitCode: 0,
     });
   });

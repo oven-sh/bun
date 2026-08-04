@@ -18,7 +18,7 @@ test.concurrent(
     expect(stdout).toStartWith("RSS delta");
     expect(exitCode).toBe(0);
   },
-  30_000,
+  60_000,
 );
 
 test("pathToFileURL escapes special characters", () => {

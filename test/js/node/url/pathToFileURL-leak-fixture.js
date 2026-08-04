@@ -1,20 +1,24 @@
 // Regression fixture for https://github.com/oven-sh/bun/pull/16784:
-// pathToFileURL leaked the native WTF::String for the resolved path on
-// every call (refcount was incremented but never released), which grew
-// RSS by ~3.4 KB per call.
+// pathToFileURL leaked one Latin1 WTF::StringImpl for the resolved path
+// per call, because the BunString returned from
+// ResolvePath__joinAbsStringBufCurrentPlatformBunString was converted via
+// toWTFString() instead of transferToWTFString() and never deref'd.
 //
 // Instead of running hundreds of thousands of iterations and checking an
 // absolute RSS ceiling (which has to be branched for debug vs ASAN and is
 // slow on ASAN lanes), run a short warmup to let allocator pools settle,
-// sample RSS, run a measurement batch with a GC after each round so
-// collectible URL wrappers don't accumulate, then assert the growth is
-// bounded. The parent test spawns this with ASAN's free-quarantine
-// disabled so freed native allocations are returned immediately; with that
-// the no-leak delta is ~0 MB on release and <2 MB under debug+ASAN, while
-// the original leak would add ~14 MB over the measurement batch.
+// sample RSS, run a measurement batch with a GC after each round so the
+// collectible DOMURL wrappers are reclaimed and only genuinely leaked
+// native allocations accumulate, then assert the growth is bounded. The
+// parent test spawns this with ASAN's free-quarantine disabled so freed
+// native allocations are returned immediately.
+//
+// With the leak reintroduced (PathInlines.h transferToWTFString ->
+// toWTFString) and the 4000-byte relative path below, the measured delta
+// over 4096 measurement calls is 18-19 MB; without the leak it is <2 MB.
 import { pathToFileURL } from "url";
 
-const longPath = Buffer.alloc(1021, "Z").toString();
+const longPath = Buffer.alloc(4000, "Z").toString();
 const rss =
   process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
     ? Bun.unsafe.memoryFootprint

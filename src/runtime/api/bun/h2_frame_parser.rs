@@ -1119,7 +1119,10 @@ thread_local! {
     // pool allocation itself.
     static POOL: RefCell<Option<Box<ManuallyDrop<H2FrameParserHiveAllocator>>>> =
         const { RefCell::new(None) };
-    static SHARED_REQUEST_BUFFER: RefCell<Box<[u8; 16384]>> = RefCell::new(Box::new([0u8; 16384]));
+    // Scratch for assembling one PADDED DATA payload. Moved out of the slot while in use
+    // (see `DirectWriterStruct::write_padded`): the write can flush the cork and re-enter
+    // JS, and a nested padded write must get its own buffer.
+    static PADDED_PAYLOAD_BUFFER: Cell<Option<Box<[u8]>>> = const { Cell::new(None) };
 }
 
 /// One wire-order piece of a multi-frame send_data batch (see BATCH_SEGMENTS).
@@ -1738,19 +1741,7 @@ impl Stream {
                     };
                     let _ = data_header.write(&mut writer);
                     if padding != 0 {
-                        break 'brk SHARED_REQUEST_BUFFER.with_borrow_mut(|buffer| {
-                            // SAFETY: src/dst may overlap — use ptr::copy (memmove)
-                            unsafe {
-                                core::ptr::copy(
-                                    able_to_send.as_ptr(),
-                                    buffer.as_mut_ptr().add(1),
-                                    able_to_send.len(),
-                                );
-                            }
-                            buffer[0] = padding;
-                            buffer[1 + able_to_send.len()..payload_size].fill(0);
-                            writer.write_all(&buffer[0..payload_size]).is_ok()
-                        });
+                        break 'brk writer.write_padded(&able_to_send, padding).is_ok();
                     } else {
                         break 'brk writer.write_all(&able_to_send).is_ok();
                     }
@@ -1802,19 +1793,7 @@ impl Stream {
                     };
                     let _ = data_header.write(&mut writer);
                     if padding != 0 {
-                        break 'brk SHARED_REQUEST_BUFFER.with_borrow_mut(|buffer| {
-                            // SAFETY: src/dst may overlap — ptr::copy is memmove; dst capacity covers payload_size
-                            unsafe {
-                                core::ptr::copy(
-                                    frame_slice.as_ptr(),
-                                    buffer.as_mut_ptr().add(1),
-                                    frame_slice.len(),
-                                );
-                            }
-                            buffer[0] = padding;
-                            buffer[1 + frame_slice.len()..payload_size].fill(0);
-                            writer.write_all(&buffer[0..payload_size]).is_ok()
-                        });
+                        break 'brk writer.write_padded(frame_slice, padding).is_ok();
                     } else {
                         break 'brk writer.write_all(frame_slice).is_ok();
                     }
@@ -6165,6 +6144,27 @@ impl bun_io::Write for DirectWriterStruct {
     }
 }
 
+impl DirectWriterStruct {
+    /// Writes the payload of a PADDED DATA frame: the pad length, `data`, then `padding`
+    /// zero bytes (RFC 9113 6.1). The caller has already written the frame header.
+    fn write_padded(&mut self, data: &[u8], padding: u8) -> bun_io::Result<()> {
+        let payload_size = 1 + data.len() + padding as usize;
+        // `write()` can flush the cork and, over a JS-backed transport, re-enter JS that
+        // reaches send_data()/flush_queue() again before this frame's bytes are all corked.
+        // Own the scratch for the duration so that nested padded write neither trips a held
+        // borrow nor overwrites bytes this write is still copying from.
+        let mut buffer = PADDED_PAYLOAD_BUFFER
+            .take()
+            .unwrap_or_else(|| vec![0u8; H2_CORK_BUFFER_SIZE].into_boxed_slice());
+        buffer[0] = padding;
+        buffer[1..=data.len()].copy_from_slice(data);
+        buffer[1 + data.len()..payload_size].fill(0);
+        let result = self.write_all(&buffer[..payload_size]);
+        PADDED_PAYLOAD_BUFFER.set(Some(buffer));
+        result
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // H2FrameParser impl — JS host fns (part 1)
 // ──────────────────────────────────────────────────────────────────────────
@@ -7294,19 +7294,7 @@ impl H2FrameParser {
                         let mut writer = self.to_writer();
                         let _ = data_header.write(&mut writer);
                         if padding != 0 {
-                            SHARED_REQUEST_BUFFER.with_borrow_mut(|buffer| {
-                                // SAFETY: src/dst may overlap — ptr::copy is memmove; dst capacity covers payload_size
-                                unsafe {
-                                    core::ptr::copy(
-                                        slice.as_ptr(),
-                                        buffer.as_mut_ptr().add(1),
-                                        slice.len(),
-                                    );
-                                }
-                                buffer[0] = padding;
-                                buffer[1 + slice.len()..payload_size].fill(0);
-                                let _ = writer.write_all(&buffer[0..payload_size]);
-                            });
+                            let _ = writer.write_padded(slice, padding);
                         } else {
                             let _ = writer.write_all(slice);
                         }

@@ -37,6 +37,8 @@
 #include <mutex>
 
 
+extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
+
 namespace uWS {
 
 namespace detail {
@@ -129,6 +131,13 @@ private:
     static unsigned char socketKind() { return SSL ? US_SOCKET_KIND_UWS_HTTP_TLS : US_SOCKET_KIND_UWS_HTTP; }
 
 public:
+    /* node:http flood prevention: re-feed parked request bytes through the same
+     * parse path fresh socket data takes. The caller guarantees the buffer has
+     * LIBUS_RECV_BUFFER_PADDING of writable slack past `length`. */
+    static us_socket_t *feedNodeHttpData(us_socket_t *s, char *data, int length) {
+        return onData<true>(s, data, length);
+    }
+
     us_socket_group_t *getSocketGroup() {
         return &group;
     }
@@ -342,7 +351,7 @@ private:
             nodeHttpRequestTrailers = &nodeHttpResponseData->nodeHttpRequestTrailers;
         }
 
-        auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.useInsecureHTTPParser, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+        auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.useInsecureHTTPParser, httpContextData->flags.useLenientTransferEncoding, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
 
 
             /* For every request we reset the timeout and hang until user makes action */
@@ -400,6 +409,9 @@ private:
                 httpResponseData->nodeHttpQueuedPipelinedCount++;
                 if (((AsyncSocket<SSL> *) s)->getBufferedAmount() > 0) {
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
+                    /* Also stop the request loop over the buffer being parsed
+                     * right now — pausing the socket alone cannot bound it. */
+                    httpResponseData->nodeHttpParkAtNextBoundary = true;
                     ((HttpResponse<SSL> *) s)->pause();
                 }
                 }
@@ -426,6 +438,15 @@ private:
                  * on this keep-alive connection (the flag itself was cleared above). */
                 if constexpr (IsNodeHttp) {
                     ((HttpResponseData<SSL, true> *) httpResponseData)->nodeHttpResponseTrailers.clear();
+
+                    /* Node's flood prevention: sync write()+end() handlers bypass the pipelined
+                     * branch yet still back up the socket. On outgoing backpressure, pause reads
+                     * and park already-received requests. No already-paused guard (replay clears the park flag only). */
+                    if (((AsyncSocket<SSL> *) s)->getBufferedAmount() > 0) {
+                        httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
+                        httpResponseData->nodeHttpParkAtNextBoundary = true;
+                        ((HttpResponse<SSL> *) s)->pause();
+                    }
                 }
             }
 
@@ -735,10 +756,11 @@ private:
          * backpressure when the queue drained; now that it has flushed, read
          * new requests again. */
         if constexpr (IsNodeHttp) {
-            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) && httpResponseData->nodeHttpQueuedPipelinedCount == 0
-                && asyncSocket->getBufferedAmount() == 0) {
-                httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
-                reinterpret_cast<HttpResponse<SSL> *>(s)->resume();
+            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
+                /* Parked pipelined requests must replay before fresh reads or the stream
+                 * reorders; the hook holds under backpressure and resumes raw reads only once
+                 * the queue and spill drain (JSNodeHTTPServerSocket.cpp). */
+                Bun__NodeHTTP__onReadsResumable(SSL, s);
             }
         }
 

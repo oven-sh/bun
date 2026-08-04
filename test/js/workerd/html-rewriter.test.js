@@ -1741,6 +1741,86 @@ const payloads = [
   },
 ];
 
+// TextEncoderStream → HTMLRewriter → CompressionStream: the rewriter's input is
+// driven by the native-sink bypass (encodeIntoSink), and its output ByteStream
+// is consumed by a JS reader (pipeThrough), so its `drain()` is what wakes the
+// rewriter once a batch of output bytes has been taken. With enough elements
+// that one input chunk's output exceeds the rewriter's output high-water mark,
+// the rewriter's `write` returns Backpressure; this must eventually resolve.
+describe("output consumed via pipeThrough after a native-sink input transform", () => {
+  // ~50 elements → ~800 bytes of rewriter output per input chunk, well above
+  // the default output high-water mark (256).
+  const unit = "<p>abc</p>";
+  const chunk = Buffer.alloc(50 * unit.length, unit).toString();
+  const expected = Buffer.alloc(50 * 16, '<p x="1">abc</p>').toString();
+
+  function makeRewritten() {
+    let i = 0;
+    const body = new ReadableStream({
+      async pull(c) {
+        await Bun.sleep(0);
+        if (i++ === 0) c.enqueue(chunk);
+        else c.close();
+      },
+    });
+    return new HTMLRewriter()
+      .on("p", { element: e => e.setAttribute("x", "1") })
+      .transform(new Response(body.pipeThrough(new TextEncoderStream())));
+  }
+
+  it("completes when read with arrayBuffer()", async () => {
+    const compressed = makeRewritten().body.pipeThrough(new CompressionStream("gzip"));
+    const buf = await new Response(compressed).arrayBuffer();
+    const text = await new Response(
+      new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip")),
+    ).text();
+    expect(text).toBe(expected);
+  });
+
+  it("completes when served over HTTP", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(makeRewritten().body.pipeThrough(new CompressionStream("gzip"))),
+    });
+    const buf = await (await fetch(server.url)).arrayBuffer();
+    const text = await new Response(
+      new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip")),
+    ).text();
+    expect(text).toBe(expected);
+  });
+
+  // CompressionStream is the only native-byte-transform that can sit downstream
+  // of the rewriter's ByteStream output; cover each format so a later per-codec
+  // regression shows up here.
+  it.each(["gzip", "deflate", "deflate-raw", "brotli", "zstd"])(
+    "completes for CompressionStream(%s)",
+    async format => {
+      const compressed = makeRewritten().body.pipeThrough(new CompressionStream(format));
+      const text = await new Response(compressed.pipeThrough(new DecompressionStream(format))).text();
+      expect(text).toBe(expected);
+    },
+  );
+
+  // Two input chunks → the second chunk is what the Backpressure wake must
+  // re-pull from upstream (the single-chunk case only owes the end() call).
+  it("completes across multiple input chunks", async () => {
+    let i = 0;
+    const body = new ReadableStream({
+      async pull(c) {
+        await Bun.sleep(0);
+        if (i++ < 2) c.enqueue(chunk);
+        else c.close();
+      },
+    });
+    const rewritten = new HTMLRewriter()
+      .on("p", { element: e => e.setAttribute("x", "1") })
+      .transform(new Response(body.pipeThrough(new TextEncoderStream())));
+    const compressed = rewritten.body.pipeThrough(new CompressionStream("gzip"));
+    const text = await new Response(compressed.pipeThrough(new DecompressionStream("gzip"))).text();
+    expect(text).toBe(expected + expected);
+  });
+});
+
 payloads.forEach(type => {
   type.test(`works with payload of type ${type.name}`, async () => {
     let calls = 0;

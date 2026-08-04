@@ -673,11 +673,15 @@ impl ByteStream {
     }
 
     pub(crate) fn drain(&self) -> Vec<u8> {
-        if !self.buffer.get().is_empty() {
-            self.signal_drained();
-            return Vec::<u8>::move_from_list(self.buffer.replace(Vec::new()));
+        if self.buffer.get().is_empty() {
+            return Vec::<u8>::default();
         }
-        Vec::<u8>::default()
+        // Empty the buffer BEFORE `signal_drained` (same order as `on_pull`): the
+        // producer's on_ready may inspect `self.buffer.len()` to decide whether
+        // output backpressure has cleared.
+        let drained = Vec::<u8>::move_from_list(self.buffer.replace(Vec::new()));
+        self.signal_drained();
+        drained
     }
 
     /// Take a pre-attach `StreamResult::Err` stashed by [`Self::append`].

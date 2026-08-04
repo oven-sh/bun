@@ -310,6 +310,10 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
     // SAFETY: `sink_ptr` is a live JSSink of type `sink_id` (the C++ caller
     // null-checks it before attaching); the sink copies what it needs.
     let handle = unsafe { sink_handle_from_id(sink_id, ptr) };
+    if handle.is_none() {
+        this.scratch.replace(buf);
+        return JSValue::UNDEFINED;
+    }
     let wrote = handle
         .write(&streams::Result::Temporary(RawSlice::new(&buf)))
         .to_js(global);
@@ -339,6 +343,9 @@ pub extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
     };
     // SAFETY: as in `__encodeIntoSink`.
     let handle = unsafe { sink_handle_from_id(sink_id, ptr) };
+    if handle.is_none() {
+        return JSValue::UNDEFINED;
+    }
     handle
         .write(&streams::Result::Temporary(RawSlice::new(&REPLACEMENT)))
         .to_js(global)

@@ -1454,11 +1454,10 @@ node_api_create_external_string_latin1(napi_env env,
 {
     // https://nodejs.org/api/n-api.html#node_api_create_external_string_latin1
     NAPI_PREAMBLE_NO_PENDING_CHECK(env);
-    NAPI_CHECK_ARG(env, str);
+    // Node's CHECK_NEW_STRING_ARGS: str may be null when length is 0.
+    NAPI_RETURN_EARLY_IF_FALSE(env, length == 0 || str != nullptr, napi_invalid_arg);
     NAPI_CHECK_ARG(env, result);
-    // Reject while a napi exception is pending before adopting str, so the caller
-    // cleanly retains ownership (matches napi_create_external_buffer/_arraybuffer).
-    NAPI_RETURN_EARLY_IF_FALSE(env, !env->hasPendingException(), napi_pending_exception);
+    NAPI_RETURN_EARLY_IF_FALSE(env, length == NAPI_AUTO_LENGTH || length <= INT_MAX, napi_invalid_arg);
 
     length = length == NAPI_AUTO_LENGTH ? strlen(str) : length;
     Zig::GlobalObject* globalObject = toJS(env);
@@ -1472,7 +1471,9 @@ node_api_create_external_string_latin1(napi_env env,
     if (length == 0) {
         *result = toNapi(JSC::jsEmptyString(JSC::getVM(globalObject)), globalObject);
         env->doFinalizer(finalize_callback, str, finalize_hint);
-        NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
+        // Ownership transferred; return ok even if doFinalizer promoted a
+        // pre-existing napi_throw to the VM, so the caller doesn't double-free.
+        return napi_set_last_error(env, napi_ok);
     }
 
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const Latin1Character*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {
@@ -1499,11 +1500,10 @@ node_api_create_external_string_utf16(napi_env env,
 {
     // https://nodejs.org/api/n-api.html#node_api_create_external_string_utf16
     NAPI_PREAMBLE_NO_PENDING_CHECK(env);
-    NAPI_CHECK_ARG(env, str);
+    // Node's CHECK_NEW_STRING_ARGS: str may be null when length is 0.
+    NAPI_RETURN_EARLY_IF_FALSE(env, length == 0 || str != nullptr, napi_invalid_arg);
     NAPI_CHECK_ARG(env, result);
-    // Reject while a napi exception is pending before adopting str, so the caller
-    // cleanly retains ownership (matches napi_create_external_buffer/_arraybuffer).
-    NAPI_RETURN_EARLY_IF_FALSE(env, !env->hasPendingException(), napi_pending_exception);
+    NAPI_RETURN_EARLY_IF_FALSE(env, length == NAPI_AUTO_LENGTH || length <= INT_MAX, napi_invalid_arg);
 
     length = length == NAPI_AUTO_LENGTH ? std::char_traits<char16_t>::length(str) : length;
     Zig::GlobalObject* globalObject = toJS(env);
@@ -1517,7 +1517,9 @@ node_api_create_external_string_utf16(napi_env env,
     if (length == 0) {
         *result = toNapi(JSC::jsEmptyString(JSC::getVM(globalObject)), globalObject);
         env->doFinalizer(finalize_callback, str, finalize_hint);
-        NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
+        // Ownership transferred; return ok even if doFinalizer promoted a
+        // pre-existing napi_throw to the VM, so the caller doesn't double-free.
+        return napi_set_last_error(env, napi_ok);
     }
 
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {

@@ -9,7 +9,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // Each test spawns `bun build` in its own tempDir with no shared state.
-// Run concurrently so 18 independent bun-build invocations don't serialise
+// Run concurrently so the independent bun-build invocations don't serialise
 // on CI wall-clock (matches sibling regression tests like 28914, 29225).
 test.concurrent("bun build --format=cjs drops an unreachable top-level await before reporting TLA", async () => {
   using dir = tempDir("issue-29243-dead-tla", {

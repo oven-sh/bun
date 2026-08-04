@@ -171,12 +171,9 @@ where
                     }));
                 }
 
-                // `--no-<x>` where `<x>` is a known option that carries a
-                // value cannot mean anything, and Node rejects it
-                // (src/node_options-inl.h). An *unknown* `--no-<x>` is left
-                // alone: Bun ignores unrecognized flags on purpose so the many
-                // Node options it does not implement (--no-global-search-paths,
-                // --no-extra-info-on-fatal-exception, …) stay harmless.
+                // Node rejects `--no-<x>` when `<x>` is a known value-taking option
+                // (src/node_options-inl.h); unknown `--no-<x>` stays ignored so Node
+                // options Bun does not implement remain harmless.
                 if self.reject_bad_negations {
                     if let Some(negated) = name.strip_prefix(b"no-") {
                         let negates_a_value = params.iter().any(|p| {
@@ -370,11 +367,9 @@ where
         let Some(mut full_arg) = self.iter.next() else {
             return Ok(None);
         };
-        // Only tokens reaching here are being read as flags: option values and
-        // `--` targets are pulled straight off `iter`, so they stay verbatim.
-        // Restrict rewrites to flag-shaped tokens so a mapping can never touch
-        // the `-`/`--` sentinels or a positional, per the contract on
-        // `ParseOptions::short_aliases`.
+        // Only flag-shaped tokens reach here (option values and `--` targets are pulled straight
+        // off `iter`); restrict rewrites so a mapping never touches `-`/`--` or a positional,
+        // per the contract on `ParseOptions::short_aliases`.
         if full_arg.starts_with(b"-") && full_arg != b"-" && full_arg != b"--" {
             for (from, to) in self.short_aliases {
                 if full_arg == *from {
@@ -408,24 +403,9 @@ where
         }))
     }
 
-    /// Bind the value of a param declared with Node's value semantics
-    /// ([`clap::Values::OneNoDashValue`] / [`clap::Values::OneOptionalNoDashValue`]).
-    ///
-    /// Mirrors nodejs/node v26.3.0 `src/node_options-inl.h`:
-    ///
-    /// * An `=`-attached value binds verbatim. For the required form an empty
-    ///   one is an error rather than an empty value (`node --eval=` exits 9);
-    ///   the optional form is a boolean upstream, so `--print=` is no value.
-    /// * A separate following argument that starts with '-' is never the
-    ///   value; it is a missing value instead (`node -e -p` exits 9). This is
-    ///   why an expression like `-42` must be passed as `--eval=-42`.
-    /// * A separate following argument may escape that rule with a leading
-    ///   backslash, which is then stripped: `node -p "\-42"` prints -42. The
-    ///   `=` form does not unescape, so `--eval=\-42` keeps the backslash.
-    /// * For the optional form (upstream's `--print <arg>` alias) an *empty*
-    ///   following argument is additionally not consumed. It stays a
-    ///   positional, which is why `node -p "" -e 42` prints `undefined`: the
-    ///   positional ends option parsing before `-e` is seen.
+    /// Bind the value of a [`clap::Values::OneNoDashValue`] / `OneOptionalNoDashValue`
+    /// param per Node's `src/node_options-inl.h`: `=` binds verbatim (empty is an error
+    /// for required); a separate leading-`-` arg is never the value; leading `\` escapes.
     fn node_style_value(
         &mut self,
         takes_value: clap::Values,

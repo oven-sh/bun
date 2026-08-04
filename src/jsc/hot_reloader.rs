@@ -301,12 +301,9 @@ impl HotReloaderEventLoop for EventLoop {
     }
 }
 
-/// `bun build --watch` instantiates `NewHotReloader<BundleV2, AnyEventLoop, true>`.
-/// With `RELOAD_IMMEDIATELY = true`, `Task::enqueue` either diverges via
-/// `bun_core::reload_process()` or takes the kill-signal branch — but the
-/// latter requires `watch_kill_signal_has_listeners()`, which is never true
-/// for the `BundleV2`/`AnyEventLoop` instantiations, so this is never
-/// reached.
+/// `bun build --watch` instantiates `NewHotReloader<BundleV2, AnyEventLoop, true>`. With
+/// `RELOAD_IMMEDIATELY = true`, `Task::enqueue` either diverges or takes the kill-signal branch —
+/// the latter needs `watch_kill_signal_has_listeners()`, never true here, so this is never reached.
 impl HotReloaderEventLoop for bun_event_loop::AnyEventLoop {
     fn enqueue_task_concurrent(_this: &Self, _task: core::ptr::NonNull<ConcurrentTask>) {
         unreachable!()
@@ -678,15 +675,9 @@ where
                 task: JscTask::new(tag, that.cast::<()>()),
                 ..Default::default()
             });
-            // `&that.concurrent_task` is an interior pointer into a
-            // Box-allocated Task; the event loop must not outlive `that`.
-            //
-            // Inlines `NewHotReloader::enqueue_task_concurrent` to avoid forming
-            // a whole-struct `&NewHotReloader` (see `Self::pending_count` doc).
-            // `RELOAD_IMMEDIATELY` either diverged above or took the
-            // kill-signal branch; for the BundleV2/AnyEventLoop instantiations
-            // `watch_kill_signal_has_listeners()` is never true, so this path
-            // only runs with `RELOAD_IMMEDIATELY = false`.
+            // `&that.concurrent_task` is interior to a Box-allocated Task; the loop must not
+            // outlive `that`. Inlines `enqueue_task_concurrent` to avoid forming a whole-struct
+            // `&NewHotReloader`. BundleV2/AnyEventLoop reach here only with RELOAD_IMMEDIATELY=false.
             let ctx = self.ctx_ptr();
             // SAFETY: ctx outlives reloader (BACKREF); `event_loop()` returns
             // the live event-loop pointer owned by `Ctx`.
@@ -698,13 +689,9 @@ where
         }
         self.count = 0;
 
-        // The JS thread will emit the kill-signal listeners then execve. If it's
-        // stuck in synchronous code it never drains the posted task, so saving
-        // the file would stop restarting the process. Arm a one-shot detached
-        // timer that forces the reload after a bounded window (node's watcher
-        // SIGKILLs an unresponsive child after its kill-signal grace period).
-        // The watcher thread itself returns to its normal blocking read, so the
-        // responsive-JS path behaves exactly as it did without this fallback.
+        // The JS thread emits kill-signal listeners then execve; if it's stuck in sync code it
+        // never drains the posted task. Arm a one-shot timer that forces the reload after a
+        // bounded window (node's watcher SIGKILLs an unresponsive child after its grace period).
         if RELOAD_IMMEDIATELY {
             arm_watch_reload_grace_timer();
         }

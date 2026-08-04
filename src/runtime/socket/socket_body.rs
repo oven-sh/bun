@@ -1573,8 +1573,15 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(handlers) = self.handlers.get() {
             Self::handlers_set_cached(value, global, handlers.cell());
         }
-        // Hold strong until the socket is closed / marked inactive.
-        self.this_value.with_mut(|r| r.set_strong(value, global));
+        if self.socket.get().is_detached() {
+            // Detached (node:net pre-connect) has no native events and never
+            // hits mark_inactive(), so a Strong would leak. Hold weak; connect
+            // paths upgrade via connect_finish / mark_active.
+            self.this_value.with_mut(|r| r.set_weak(value));
+        } else {
+            // Hold strong until the socket is closed / marked inactive.
+            self.this_value.with_mut(|r| r.set_strong(value, global));
+        }
         value
     }
 
@@ -2073,6 +2080,16 @@ impl<const SSL: bool> NewSocket<SSL> {
                 &sys::Error::from_code_int(err, sys::Tag::read),
                 &global,
             );
+        } else if SSL && reason.is_some_and(|r| !r.is_null()) {
+            // openssl.c's fatal-close hands the OpenSSL error string (per-loop
+            // scratch, valid only for this sync dispatch); net.ts adds ERR_SSL_*.
+            // SAFETY: NUL-terminated C string from ssl_on_data's fatal branch.
+            let msg = unsafe { core::ffi::CStr::from_ptr(reason.unwrap().cast()) };
+            if !msg.is_empty() {
+                use bun_jsc::StringJsc as _;
+                js_error = bun_core::String::borrow_utf8(msg.to_bytes())
+                    .to_error_instance(&global);
+            }
         }
 
         if let Err(e) = callback.call(&global, this_value, &[this_value, js_error]) {

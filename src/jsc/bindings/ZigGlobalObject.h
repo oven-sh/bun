@@ -180,6 +180,9 @@ public:
     WebCore::ScriptExecutionContext* scriptExecutionContext() const;
 
     void queueTask(WebCore::EventLoopTask* task);
+    // Runs the task on the next event-loop iteration, after I/O and due
+    // timers, instead of the current tick's drain-until-empty task loop.
+    void queueTaskNextLoopIteration(WebCore::EventLoopTask* task);
     void queueTaskConcurrently(WebCore::EventLoopTask* task);
 
     JSDOMStructureMap& structures() WTF_REQUIRES_LOCK(m_gcLock) { return m_structures; }

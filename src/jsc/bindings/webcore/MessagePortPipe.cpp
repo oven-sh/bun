@@ -179,8 +179,14 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         }
     }
 
-    if (rescheduleCtx)
-        scheduleDrain(side, rescheduleCtx);
+    if (rescheduleCtx) {
+        // Resume on the NEXT loop iteration so a ping-pong pair can't starve
+        // timers — node does the same via TriggerAsync in MessagePort::OnMessage
+        // (https://github.com/nodejs/node/blob/main/src/node_messaging.cc).
+        context->postTaskNextLoopIteration([pipe = Ref { *this }, side, ctxId = rescheduleCtx](ScriptExecutionContext&) {
+            pipe->drainAndDispatch(side, ctxId);
+        });
+    }
 }
 
 std::optional<MessageWithMessagePorts> MessagePortPipe::takeOne(uint8_t side)

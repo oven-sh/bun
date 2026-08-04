@@ -342,7 +342,9 @@ void Worker::drainToWorker(ScriptExecutionContext& context)
         globalObject->globalEventScope->dispatchEvent(event);
     });
     if (reschedule) {
-        ScriptExecutionContext::postTaskTo(m_clientIdentifier, [protectedThis = Ref { *this }](ScriptExecutionContext& ctx) {
+        // Resume next iteration so a sustained sender can't starve the
+        // worker's timers — see MessagePortPipe::drainAndDispatch.
+        context.postTaskNextLoopIteration([protectedThis = Ref { *this }](ScriptExecutionContext& ctx) {
             protectedThis->drainToWorker(ctx);
         });
     }
@@ -360,7 +362,9 @@ void Worker::drainToParent(ScriptExecutionContext& context)
         dispatchEvent(event);
     });
     if (reschedule) {
-        postTaskToParent([protectedThis = Ref { *this }](ScriptExecutionContext& c) {
+        // Same yield as drainToWorker: this runs on the parent thread, so
+        // `context` is the parent context this task was dispatched on.
+        context.postTaskNextLoopIteration([protectedThis = Ref { *this }](ScriptExecutionContext& c) {
             protectedThis->drainToParent(c);
         });
     }

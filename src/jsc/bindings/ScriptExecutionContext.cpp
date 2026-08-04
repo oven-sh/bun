@@ -283,6 +283,12 @@ void ScriptExecutionContext::postTask(Function<void(ScriptExecutionContext&)>&& 
     auto* task = new EventLoopTask(WTF::move(lambda));
     static_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
 }
+
+void ScriptExecutionContext::postTaskNextLoopIteration(Function<void(ScriptExecutionContext&)>&& lambda)
+{
+    auto* task = new EventLoopTask(WTF::move(lambda));
+    static_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskNextLoopIteration(task);
+}
 // Executes the task on context's thread asynchronously.
 void ScriptExecutionContext::postTask(EventLoopTask* task)
 {

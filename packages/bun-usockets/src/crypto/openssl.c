@@ -1639,15 +1639,13 @@ struct us_bun_verify_error_t us_internal_ssl_verify_error(struct us_socket_t *s)
 
 /* ── Handshake state machine ─────────────────────────────────────────────── */
 
-/* Park the fatal OpenSSL reason behind a failed SSL_* call where the
- * handshake-failure dispatch can find it, then drain the queue and mark the
- * socket fatal. Only parks while the handshake is unfinished: that dispatch is
- * the sole consumer, so a later reason would linger and be misreported as some
- * other socket's handshake failure. */
+/* Park the fatal OpenSSL reason, drain the queue, mark the socket fatal.
+ * Consumed by ssl_dispatch_parked_reason (pre-handshake) or ssl_on_data's
+ * fatal close (post-handshake); both clear the scratch after use. */
 static void ssl_park_fatal_reason(struct us_socket_t *s) {
   struct loop_ssl_data *loop_ssl_data =
       (struct loop_ssl_data *) s->group->loop->data.ssl_data;
-  if (loop_ssl_data && s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
+  if (loop_ssl_data) {
     /* The OLDEST queued entry is the root cause and is what node reports
      * (https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L860);
      * later entries wrap it or belong to another socket on this thread. */
@@ -2253,8 +2251,20 @@ restart:
         if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
           ssl_park_fatal_reason(s);
         }
-        ssl_close(s, 0, NULL);
+        void *close_reason = NULL;
+        if (s->ssl_handshake_state == HANDSHAKE_COMPLETED &&
+            loop_ssl_data->ssl_last_fatal_error[0] &&
+            loop_ssl_data->ssl_last_fatal_error_owner == (void *)s) {
+          /* Post-handshake fatal: hand the OpenSSL reason to on_close for
+           * node:net's ERR_SSL_<REASON>. on_close copies it synchronously, so
+           * passing the per-loop scratch is safe. */
+          close_reason = loop_ssl_data->ssl_last_fatal_error;
+        }
+        /* RESET, not code 0: a fatal record is dead TLS — the graceful path
+         * would defer the fd close awaiting close_notify and drop reason. */
+        ssl_close(s, close_reason ? LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET : 0, close_reason);
         loop_ssl_data->ssl_last_fatal_error[0] = 0;
+        loop_ssl_data->ssl_last_fatal_error_owner = NULL;
         return NULL;
       } else {
         if (err == SSL_ERROR_WANT_WRITE) s->ssl_read_wants_write = 1;

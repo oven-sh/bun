@@ -2002,13 +2002,18 @@ it("http2 padded DATA write survives a re-entrant stream write from a JS Duplex 
     const EXPECTED_WIRE = 9 + 13256 + 9 + 12256 + 9 + 3256;
     let side, armed = false, reentered = false, total = 0, onComplete;
     const counts = { 0x41: 0, 0x42: 0, 0x43: 0 };
+    const fail = what => err => {
+      console.error(what, err);
+      process.exit(1);
+    };
     const duplex = new Duplex({
       read() {},
       write(chunk, enc, cb) {
         if (armed) {
           for (const b of chunk) if (b in counts) counts[b]++;
           total += chunk.length;
-          if (!reentered) {
+          // The first chunk carrying outer's payload is the mid-frame cork flush.
+          if (!reentered && chunk.includes(0x41)) {
             reentered = true;
             side.write(Buffer.alloc(3000, 0x42));
           }
@@ -2021,7 +2026,7 @@ it("http2 padded DATA write survives a re-entrant stream write from a JS Duplex 
       createConnection: () => duplex,
       paddingStrategy: http2.constants.PADDING_STRATEGY_MAX,
     });
-    session.on("error", () => {});
+    session.on("error", fail("session error"));
     await new Promise(r => session.once("connect", r));
     const frame = (type, flags) => Buffer.from([0, 0, 0, type, flags, 0, 0, 0, 0]);
     // server preface by hand: empty SETTINGS, then the ACK for the client's SETTINGS
@@ -2030,8 +2035,10 @@ it("http2 padded DATA write survives a re-entrant stream write from a JS Duplex 
     side = session.request({ ":method": "POST", ":path": "/side" }, { endStream: false });
     const outer = session.request({ ":method": "POST", ":path": "/outer" }, { endStream: false });
     const fill = session.request({ ":method": "POST", ":path": "/fill" }, { endStream: false });
-    for (const s of [side, outer, fill]) s.on("error", () => {});
-    await new Promise(r => setImmediate(r)); // HEADERS leave the cork at the end of the tick
+    for (const s of [side, outer, fill]) s.on("error", fail("stream error"));
+    // The three HEADERS frames leave the cork in this tick's deferred auto-flush, which runs
+    // before the loop reaches the next immediate.
+    await new Promise(r => setImmediate(r));
     const complete = new Promise(r => (onComplete = r));
     fill.write(Buffer.alloc(13000, 0x43));
     armed = true;

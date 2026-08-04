@@ -1119,10 +1119,6 @@ thread_local! {
     // pool allocation itself.
     static POOL: RefCell<Option<Box<ManuallyDrop<H2FrameParserHiveAllocator>>>> =
         const { RefCell::new(None) };
-    // Scratch for assembling one PADDED DATA payload. Moved out of the slot while in use
-    // (see `DirectWriterStruct::write_padded`): the write can flush the cork and re-enter
-    // JS, and a nested padded write must get its own buffer.
-    static PADDED_PAYLOAD_BUFFER: Cell<Option<Box<[u8]>>> = const { Cell::new(None) };
 }
 
 /// One wire-order piece of a multi-frame send_data batch (see BATCH_SEGMENTS).
@@ -6148,20 +6144,14 @@ impl DirectWriterStruct {
     /// Writes the payload of a PADDED DATA frame: the pad length, `data`, then `padding`
     /// zero bytes (RFC 9113 6.1). The caller has already written the frame header.
     fn write_padded(&mut self, data: &[u8], padding: u8) -> bun_io::Result<()> {
-        let payload_size = 1 + data.len() + padding as usize;
-        // `write()` can flush the cork and, over a JS-backed transport, re-enter JS that
-        // reaches send_data()/flush_queue() again before this frame's bytes are all corked.
-        // Own the scratch for the duration so that nested padded write neither trips a held
-        // borrow nor overwrites bytes this write is still copying from.
-        let mut buffer = PADDED_PAYLOAD_BUFFER
-            .take()
-            .unwrap_or_else(|| vec![0u8; H2_CORK_BUFFER_SIZE].into_boxed_slice());
-        buffer[0] = padding;
-        buffer[1..=data.len()].copy_from_slice(data);
-        buffer[1 + data.len()..payload_size].fill(0);
-        let result = self.write_all(&buffer[..payload_size]);
-        PADDED_PAYLOAD_BUFFER.set(Some(buffer));
-        result
+        // Assembled in a buffer this call owns: `write()` can flush the cork and, over a
+        // JS-backed transport, re-enter JS that reaches send_data()/flush_queue() again
+        // before this frame is fully corked, so no shared scratch may be live across it.
+        let mut payload = Vec::with_capacity(1 + data.len() + padding as usize);
+        payload.push(padding);
+        payload.extend_from_slice(data);
+        payload.resize(payload.len() + padding as usize, 0);
+        self.write_all(&payload)
     }
 }
 

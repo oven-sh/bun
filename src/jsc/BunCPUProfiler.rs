@@ -177,10 +177,7 @@ fn build_output_path(
         generate_default_filename(&mut filename_buf, is_md_format)?
     };
 
-    // `dir` and `name` are user-controlled CLI bytes, and AutoAbsPath is
-    // CheckLength::ASSUME (over-long input panics in PooledBuf slice indexing
-    // rather than returning Err), so bound the combined length before touching
-    // the buffer. One byte is reserved for `slice_z`'s NUL.
+    // dir/name are unbounded CLI input; AutoAbsPath (CheckLength::ASSUME) panics on overflow.
     let sep_for_dir = usize::from(!config.dir.is_empty());
     let upper_bound = path
         .len()

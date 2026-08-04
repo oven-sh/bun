@@ -74,7 +74,7 @@ describe("scripts/update-parallel-allowlist.mjs", () => {
 
   test("stress-named and docker-prefixed files never qualify", () => {
     const files = ["c/ok.test.ts", "c/ok2.test.ts", "c/foo-stress.test.ts", "js/sql/sql.test.ts"];
-    const { excludeFiles } = computeAllowlist({
+    const { dirs, excludeFiles } = computeAllowlist({
       ...base,
       files,
       flaky: new Map(),
@@ -83,6 +83,7 @@ describe("scripts/update-parallel-allowlist.mjs", () => {
     });
     expect(excludeFiles).toContain("c/foo-stress.test.ts");
     expect(excludeFiles).not.toContain("c/ok.test.ts");
+    expect(dirs).not.toContain("js/sql");
   });
 
   test("importing the script does not run its CLI (no token check, no network)", () => {

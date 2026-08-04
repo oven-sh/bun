@@ -164,8 +164,15 @@ if (process.argv[1] === __filename) {
 
   let previousExcludes = new Set();
   try {
-    previousExcludes = new Set(JSON.parse(readFileSync(outputPath, "utf8")).excludeFiles || []);
-  } catch {}
+    const prev = JSON.parse(readFileSync(outputPath, "utf8")).excludeFiles;
+    if (!Array.isArray(prev)) throw new Error("excludeFiles is not an array");
+    previousExcludes = new Set(prev);
+  } catch (e) {
+    if (e?.code !== "ENOENT") {
+      console.error(`could not read previous ${outputPath}: ${e?.message || e}`);
+      process.exit(1);
+    }
+  }
 
   console.error(`finding ${WANT_BUILDS} recent finished PR builds...`);
   const builds = await findBuilds(WANT_BUILDS);

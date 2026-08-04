@@ -3260,6 +3260,55 @@ describe.concurrent(
       expect(result).toEqual({ fired: true, foreign: 0 });
     });
 
+    // Same handover, but B is a native TCP connection to a local h2c server: B's own writes
+    // never run JS, so the only JS that can touch B's payload mid-send is A's Duplex being
+    // flushed when B takes the cork slot. Oracle: the request body the server receives.
+    it.each(["transfer", "resize0"])(
+      "another session's transport JS running on cork handover, native writer (%s)",
+      async mode => {
+        const result = await run(/* js */ `
+      const server = http2.createServer();
+      server.on("error", die("server error"));
+      const streamOpened = Promise.withResolvers();
+      const body = new Promise(resolve => {
+        server.on("stream", stream => {
+          streamOpened.resolve();
+          const chunks = [];
+          stream.on("data", c => chunks.push(c));
+          stream.on("end", () => {
+            stream.respond({ ":status": 200 });
+            stream.end();
+            resolve(Buffer.concat(chunks));
+          });
+        });
+      });
+      await new Promise(r => server.listen(0, "127.0.0.1", r));
+      const holder = { src: payload(8000, ${mode === "resize0"}) };
+      const snap = Buffer.from(holder.src);
+      let armed = false, fired = 0;
+      const duplexA = wireDuplex(() => { if (armed && !fired++) yank(holder, ${JSON.stringify(mode)}); });
+      const sessionA = await connect(duplexA);
+      const sessionB = http2.connect("http://127.0.0.1:" + server.address().port);
+      sessionB.on("error", die("session B error"));
+      const reqB = sessionB.request({ ":method": "POST", ":path": "/" }, { endStream: false });
+      reqB.on("error", die("stream B error"));
+      reqB.on("response", () => {});
+      await streamOpened.promise;
+      // Same tick: A corks its HEADERS, then B writes.
+      const reqA = sessionA.request({ ":method": "POST", ":path": "/" }, { endStream: false });
+      reqA.on("error", die("stream A error"));
+      armed = true;
+      reqB.write(holder.src);
+      const firedDuringWrite = fired > 0;
+      reqB.end();
+      const got = await body;
+      console.log(JSON.stringify({ native: !!sessionB.socket._handle, firedDuringWrite, foreign: foreign(got, snap) }));
+      process.exit(0);
+    `);
+        expect(result).toEqual({ native: true, firedDuringWrite: true, foreign: 0 });
+      },
+    );
+
     // The session's socket is a native TLSSocket, but one upgraded from a JS Duplex
     // (tls.connect({ socket })), so every TLS record is written through that Duplex's JS.
     // Oracle: the request body a real secure server receives.

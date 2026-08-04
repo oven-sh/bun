@@ -351,6 +351,9 @@ export default {
   PerformanceNodeEntry,
 
   kHandle: Symbol("kHandle"),
+  // node:net and internal/cluster/child must agree on this symbol so the
+  // cluster disconnect protocol can find the net.Server owning a faux handle.
+  owner_symbol: Symbol("owner_symbol"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),
   kWeakHandler: Symbol("kWeak"),
   kGetNativeReadableProto: Symbol("kGetNativeReadableProto"),

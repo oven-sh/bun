@@ -1189,11 +1189,12 @@ describe.concurrent(() => {
 
   const spawnAbort = async (src, extraFlags = [], exe = bunExe()) => {
     // The abort is intentional: disable core dumps like the upstream node
-    // abort tests do, so CI lanes that collect core files at teardown don't
-    // flag this child's core as a crash.
+    // abort tests do, and clear BUN_CRASH_REPORT_URL so the SIGABRT isn't
+    // uploaded to CI's remap server and pinned on the next failing test as
+    // "crash reported" (which blocks its retry).
     const cmd = [exe, "--abort-on-uncaught-exception", ...extraFlags, "-e", src];
     const proc = Bun.spawn(isWindows ? cmd : ["sh", "-c", 'ulimit -c 0 && exec "$@"', "sh", ...cmd], {
-      env: bunEnv,
+      env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
       stdout: "pipe",
       stderr: "pipe",
     });

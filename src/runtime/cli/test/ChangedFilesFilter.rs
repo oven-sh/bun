@@ -128,10 +128,14 @@ pub(crate) fn filter<'a>(
 
     let changed_count = changed_files.count();
     let total = test_files.len();
-    let Some((affected, graph_files)) =
-        scan_affected(ctx, vm, test_files, &changed_files, "--changed")
-    else {
-        // Module-graph scan failed; fall back to running every test.
+    let Some((affected, graph_files)) = scan_affected(
+        ctx,
+        vm,
+        test_files,
+        &changed_files,
+        "--changed",
+        "running all tests",
+    ) else {
         return Ok(Result {
             test_files,
             changed_count,
@@ -190,9 +194,14 @@ pub(crate) fn detect_affected(
         });
     }
 
-    let Some((affected, _)) = scan_affected(ctx, vm, test_files, &changed_files, "--changed-first")
-    else {
-        // Module-graph scan failed; fall back to prioritizing nothing.
+    let Some((affected, _)) = scan_affected(
+        ctx,
+        vm,
+        test_files,
+        &changed_files,
+        "--changed-first",
+        "running tests in the usual order",
+    ) else {
         return Ok(AffectedSet {
             paths: StringSet::new(),
             changed_count,
@@ -221,6 +230,7 @@ fn scan_affected(
     test_files: &[Interned],
     changed_files: &StringSet,
     flag: &str,
+    on_scan_fail: &str,
 ) -> Option<(Vec<bool>, Vec<Box<[u8]>>)> {
     // Convert the interned-path list to []const []const u8 for the bundler.
     let entry_points: Vec<&[u8]> = test_files.iter().map(|p| p.as_bytes()).collect();
@@ -278,7 +288,12 @@ fn scan_affected(
     ) {
         Ok(b) => b,
         Err(err) => {
-            bun_core::warn!("{}: failed to build module graph ({})", flag, err.name());
+            bun_core::warn!(
+                "{}: failed to build module graph ({}); {}",
+                flag,
+                err.name(),
+                on_scan_fail
+            );
             Output::flush();
             return None;
         }

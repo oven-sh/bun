@@ -1814,6 +1814,63 @@ describe("output consumed via pipeThrough after a native-sink input transform", 
   });
 });
 
+// The same output-backpressure state, consumed by a native sink instead of a
+// JS reader: the sink is installed on the output ByteStream while it still
+// holds more than the rewriter's high-water mark in buffered bytes, and the
+// rewriter's input is already fully consumed (input_ended). flush_to_sink()
+// must write the buffered bytes to the sink before waking the rewriter (which
+// then runs end_rewrite() synchronously).
+describe("output consumed by a native sink after output backpressure", () => {
+  const prefix = "<p>" + Buffer.alloc(100, "A").toString() + "</p>";
+  const suffix = "<q>" + Buffer.alloc(30_000, "B").toString() + "</q>";
+  const html = prefix + "<x></x>" + suffix;
+
+  // Produce a rewriter output ByteStream in the "input_ended + buffer > hwm"
+  // state: .body materialises the ByteStream; resolving the handler gate lets
+  // resume_rewrite() push the 30 KB suffix into that buffer; drain_pending_input
+  // then returns early on output_backpressured(), leaving end_rewrite() owed.
+  async function makeParked() {
+    const gate = Promise.withResolvers();
+    const out = new HTMLRewriter()
+      .on("x", { element: () => gate.promise })
+      .transform(new Response(html));
+    const body = out.body;
+    gate.resolve();
+    await 0;
+    return { out, body };
+  }
+
+  it("chained HTMLRewriter receives the full output in order", async () => {
+    const { body } = await makeParked();
+    const chained = new HTMLRewriter().transform(new Response(body));
+    expect(await chained.text()).toBe(html);
+  });
+
+  it("Bun.serve returning the rewriter Response sends the full output", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      async fetch() {
+        return (await makeParked()).out;
+      },
+    });
+    expect(await (await fetch(server.url)).text()).toBe(html);
+  });
+
+  it("fetch request body wired to the output ByteStream uploads the full output", async () => {
+    const received = Promise.withResolvers();
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        received.resolve(await req.text());
+        return new Response("ok");
+      },
+    });
+    const { body } = await makeParked();
+    await fetch(server.url, { method: "POST", body });
+    expect(await received.promise).toBe(html);
+  });
+});
+
 payloads.forEach(type => {
   type.test(`works with payload of type ${type.name}`, async () => {
     let calls = 0;

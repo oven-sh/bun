@@ -3279,17 +3279,16 @@ where
                                 .set(readable_stream::Strong::init(stream, global_this));
 
                             this.byte_stream.set(Some(byte_stream_nn));
-                            let mut response_buf = byte_stream.drain();
-                            let buffer = response_buf.move_to_list();
-                            let has_body_bytes = !buffer.is_empty();
-                            this.response_buf_owned.set(buffer);
 
                             // we don't set size here because even if we have a hint
                             // uWebSockets won't let us partially write streaming content
                             this.blob.with_mut(|b| b.detach());
 
                             // if we've received metadata and part of the body, send everything we can and drain
-                            if has_body_bytes {
+                            if !byte_stream.buffer.get().is_empty() {
+                                let mut buf = byte_stream.buffer.replace(Vec::new());
+                                byte_stream.offset.set(0);
+                                this.response_buf_owned.set(buf.move_to_list());
                                 resp.run_corked_with_type(
                                     Self::drain_response_buffer_and_metadata_corked,
                                     this.as_ctx_ptr(),
@@ -3308,6 +3307,10 @@ where
                                     this.as_ctx_ptr(),
                                 );
                             }
+                            // Wake the producer now that the buffered bytes are
+                            // written; any output it emits synchronously reaches
+                            // `write_chunk` after them.
+                            byte_stream.flush_to_sink();
                             return;
                         }
                     }

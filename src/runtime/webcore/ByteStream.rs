@@ -167,7 +167,17 @@ impl ByteStream {
             return;
         }
         self.sink_paused.set(false);
+        self.flush_to_sink();
+    }
 
+    /// Write any buffered bytes to `self.sink`, then [`signal_drained`]. The
+    /// native-sink wiring paths call this (instead of [`drain`] + a manual
+    /// `sink.write`) so the buffered bytes reach the sink before the producer
+    /// is woken; a producer whose `on_ready` feeds synchronously (RewriterPipe)
+    /// would otherwise emit newer bytes to the already-installed sink ahead of
+    /// the ones the caller is still holding. Clears `self.sink` when the write
+    /// or the last-chunk flag ends the stream.
+    pub(crate) fn flush_to_sink(&self) {
         let sink = *self.sink.get();
         if sink.is_none() {
             return;
@@ -672,13 +682,15 @@ impl ByteStream {
         // deallocate the storage backing `&mut self` (dangling UAF).
     }
 
+    /// JS-reader drain (native-source adapter's `handle.drain()` and the
+    /// `has_received_last_chunk` blob hand-off). Callers that have already
+    /// installed `self.sink` must use [`flush_to_sink`] instead so the bytes
+    /// are written before the producer is woken.
     pub(crate) fn drain(&self) -> Vec<u8> {
+        debug_assert!(self.sink.get().is_none());
         if self.buffer.get().is_empty() {
             return Vec::<u8>::default();
         }
-        // Empty the buffer BEFORE `signal_drained` (same order as `on_pull`): the
-        // producer's on_ready may inspect `self.buffer.len()` to decide whether
-        // output backpressure has cleared.
         let drained = Vec::<u8>::move_from_list(self.buffer.replace(Vec::new()));
         self.signal_drained();
         drained

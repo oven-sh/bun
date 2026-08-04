@@ -2,6 +2,12 @@
 
 const assert = require('assert');
 
+// JSC's InjectedScript callFrame builder (scopeChain) has an unchecked throw
+// scope in the prebuilt WebKit; don't propagate the ASAN validator to the
+// spawned `bun inspect --probe` target or every pause aborts it.
+delete process.env.BUN_JSC_validateExceptionChecks;
+delete process.env.BUN_JSC_dumpSimulatedThrows;
+
 // Work around a pre-existing inspector issue: if the debuggee exits too quickly
 // the inspector can segfault while tearing down. For now normalize the segfault
 // back to the expected terminal event (e.g. "completed" or "miss")

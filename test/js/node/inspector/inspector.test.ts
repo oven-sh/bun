@@ -1042,7 +1042,9 @@ export { after };
 
   awaiting = "Debugger.paused";
   await paused.promise;
-  expect(pausedReason).toBe("other");
+  // The CDP adapter relabels the first pause after releasing a
+  // wait-for-debugger target as "Break on start" (see cdp.ts).
+  expect(pausedReason).toBe("Break on start");
   // Do not wait for the resume reply: the inspected thread may reach
   // process.exit(0) before the debugger thread has relayed it, which closes
   // the socket first. The JSON on stdout is the real proof the resume landed.

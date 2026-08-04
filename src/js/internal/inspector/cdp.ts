@@ -725,10 +725,11 @@ class InspectorCDPAdapter {
     // An error VALUE with a preview: JSC caps preview properties at five, and
     // an error's five JSC location properties crowd `stack` out entirely, so
     // recover it from the object itself (V8 lists it first).
-    if (remote?.subtype === "error" && remote.preview && remote.objectId) {
+    const previewObjectId = remote?.objectId;
+    if (remote?.subtype === "error" && remote.preview && previewObjectId) {
       this.#sendToBackend(
         "Runtime.getProperties",
-        { objectId: remote.objectId, ownProperties: true },
+        { objectId: previewObjectId, ownProperties: true },
         null,
         method,
         (props, error) => {
@@ -1075,7 +1076,7 @@ class InspectorCDPAdapter {
       const pending = this.#pending.$get(id);
       if (!pending) return;
       this.#pending.$delete(id);
-      const { clientId, onResult } = pending;
+      const { clientId, onResult, method: pendingMethod } = pending;
       if (onResult) {
         onResult(parsed.result || {}, error);
         return;
@@ -1085,11 +1086,11 @@ class InspectorCDPAdapter {
         this.#replyErrorToClient(clientId, error.code ?? -32000, toCdpErrorMessage(error.message));
         return;
       }
-      if (EVALUATE_LIKE_METHODS.$has(pending.method)) {
-        this.#replyEvaluateLike(clientId, pending.method, parsed.result || {});
+      if (EVALUATE_LIKE_METHODS.$has(pendingMethod)) {
+        this.#replyEvaluateLike(clientId, pendingMethod, parsed.result || {});
         return;
       }
-      this.#replyToClient(clientId, this.#translateResult(pending.method, parsed.result || {}));
+      this.#replyToClient(clientId, this.#translateResult(pendingMethod, parsed.result || {}));
       return;
     }
     if (typeof method === "string") {
@@ -1629,15 +1630,6 @@ class InspectorCDPAdapter {
 
       case "Debugger.getPossibleBreakpoints":
         return { locations: this.#toOriginalLocations(result.locations) };
-
-      case "Debugger.setBreakpointByUrl":
-        return { breakpointId: result.breakpointId, locations: this.#toOriginalLocations(result.locations) };
-
-      case "Debugger.setBreakpoint":
-        return {
-          breakpointId: result.breakpointId,
-          actualLocation: this.#toOriginalLocation(result.actualLocation ?? result.location),
-        };
 
       default:
         return result;

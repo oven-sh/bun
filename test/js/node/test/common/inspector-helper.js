@@ -12,6 +12,12 @@ const _MAINSCRIPT = fixtures.path('loop.js');
 const DEBUG = false;
 const TIMEOUT = common.platformTimeout(15 * 1000);
 
+// JSC's InjectedScript callFrame builder (scopeChain / evaluateWithScopeExtension)
+// has unchecked throw scopes in the prebuilt WebKit; don't propagate the ASAN
+// validator to the spawned inspect target or every pause aborts it.
+delete process.env.BUN_JSC_validateExceptionChecks;
+delete process.env.BUN_JSC_dumpSimulatedThrows;
+
 function spawnChildProcess(inspectorFlags, scriptContents, scriptFile) {
   const args = [].concat(inspectorFlags);
   if (scriptContents) {

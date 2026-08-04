@@ -18,10 +18,11 @@ function isAbsoluteURLPath(path: unknown) {
 }
 
 function getRequestURL(request: any, host: string) {
-  if (isAbsoluteURLPath(request.path)) {
-    return request.path;
+  const { path } = request;
+  if (isAbsoluteURLPath(path)) {
+    return path;
   }
-  return `${request.protocol}//${host}${request.path}`;
+  return `${request.protocol}//${host}${path}`;
 }
 
 // Convert a Headers object (Map<string, number | string | string[]>) to a

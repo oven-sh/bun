@@ -765,9 +765,7 @@ impl ResolveMessage {
             // https://github.com/nodejs/node/blob/main/lib/internal/modules/esm/formats.js
             // (mimeToFormat): only JS/JSON/Wasm MIME types have a format. Comma-less
             // data: URLs fall through to the resolver's invalid-data-URL error.
-            let Some(comma) = strings::index_of_char(rest, b',') else {
-                return None;
-            };
+            let comma = strings::index_of_char(rest, b',')?;
             let mut mime = &rest[..comma as usize];
             if let Some(stripped) = mime.strip_suffix(b";base64".as_slice()) {
                 mime = stripped;
@@ -809,7 +807,7 @@ impl ResolveMessage {
                 // Bun's blob:, bun:, node:, and macro: namespaces.
                 const SUPPORTED: [&[u8]; 6] =
                     [b"file", b"data", b"node", b"bun", b"blob", b"macro"];
-                if !SUPPORTED.iter().any(|s| *s == scheme) {
+                if !SUPPORTED.contains(&scheme) {
                     // Node's network-import check lists "file and data" for
                     // http(s); the general check lists "file, data, and node".
                     let listed: &str = if scheme == b"http" || scheme == b"https" {

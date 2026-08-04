@@ -1137,7 +1137,7 @@ impl<'a> Visitor<'a> {
                         prev.key_range,
                     );
                 return Entry {
-                    data: EntryData::Invalid(Box::<[u8]>::from(&NODE_MIXED_KEYS_MESSAGE[..])),
+                    data: EntryData::Invalid(Box::<[u8]>::from(NODE_MIXED_KEYS_MESSAGE)),
                 };
             }
 

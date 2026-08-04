@@ -2590,6 +2590,49 @@ impl TestCommand {
         } else {
             &mut all_test_files[..]
         };
+
+        // --changed-first: compute the affected set now (on the full
+        // discovered list) so it can be applied after --shard/--randomize
+        // have reordered or sliced it.
+        let changed_first_affected: Option<ChangedFilesFilter::AffectedSet> =
+            match &ctx.test_options.changed_first {
+                Some(since) if !test_files.is_empty() => {
+                    let result =
+                        match ChangedFilesFilter::detect_affected(&ctx, vm, test_files, since) {
+                            Ok(r) => r,
+                            Err(err) => {
+                                Output::err(
+                                    err,
+                                    "--changed-first: unable to determine affected tests",
+                                    (),
+                                );
+                                Global::exit(1);
+                            }
+                        };
+                    if result.changed_count == 0 {
+                        pretty_error!("<r><d>--changed-first:<r> no changed files\n");
+                    } else if result.paths.count() == 0 {
+                        pretty_error!(
+                            "<r><d>--changed-first:<r> {} changed file{}, no test files affected\n",
+                            result.changed_count,
+                            if result.changed_count == 1 { "" } else { "s" }
+                        );
+                    } else {
+                        pretty_error!(
+                            "<r><d>--changed-first:<r> {} changed file{}, {}/{} test file{} affected\n",
+                            result.changed_count,
+                            if result.changed_count == 1 { "" } else { "s" },
+                            result.paths.count(),
+                            test_files.len(),
+                            if test_files.len() == 1 { "" } else { "s" }
+                        );
+                    }
+                    Output::flush();
+                    Some(result)
+                }
+                _ => None,
+            };
+
         // --shard=M/N: sort the test files for determinism, then keep only
         // every Nth file starting at M-1. This round-robin distribution
         // keeps shards roughly balanced regardless of how many files there
@@ -2701,11 +2744,44 @@ impl TestCommand {
                 }
             }
 
+            // --changed-first: move affected files to the front, preserving
+            // relative order within each half so the unaffected tail keeps the
+            // order it would otherwise have (discovery, shard-selected, or
+            // shuffled). Applied after --shard so shard membership is
+            // unchanged, and after --randomize so the shuffle still covers the
+            // whole list.
+            let mut priority_count: u32 = 0;
+            if let Some(affected) = &changed_first_affected
+                && affected.paths.count() > 0
+            {
+                let mut front: Vec<Interned> = Vec::with_capacity(test_files.len());
+                let mut back: Vec<Interned> = Vec::with_capacity(test_files.len());
+                for &f in test_files.iter() {
+                    if affected.paths.contains(f.as_bytes()) {
+                        front.push(f);
+                    } else {
+                        back.push(f);
+                    }
+                }
+                if !ctx.test_options.randomize {
+                    if let Some(t) = reporter.timings.as_ref().filter(|t| !t.is_empty()) {
+                        t.sort_slowest_first(&mut front);
+                    } else {
+                        front.sort_by(|a, b| strings::order(a.as_bytes(), b.as_bytes()));
+                    }
+                }
+                priority_count = u32::try_from(front.len()).unwrap();
+                for (i, f) in front.into_iter().chain(back).enumerate() {
+                    test_files[i] = f;
+                }
+            }
+
             if ctx.test_options.parallel > 0 {
                 ran_parallel = ParallelRunner::run_as_coordinator(
                     &mut reporter,
                     vm,
                     test_files,
+                    priority_count,
                     &mut *ctx,
                     &mut coverage_options,
                 )?;

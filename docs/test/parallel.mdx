@@ -159,6 +159,17 @@ The file is plain JSON, slowest first, so it doubles as a "what's slow" report:
 
 `--timings` can be passed more than once; the files are read as one table (paths that don't exist yet are skipped), and `--update-timings` writes to the **first** path. Under `--shard` that output contains just the files the shard ran, so the shards' outputs are disjoint and, read together on the next run, add up to the whole suite — no merge step. [Large codebases](/test/index#large-codebases) on the main page has the full CI workflow.
 
+## Running affected files first with `--changed-first`
+
+```sh terminal icon="terminal"
+bun test --changed-first          # uncommitted + untracked vs HEAD
+bun test --changed-first=main     # vs a branch or commit
+```
+
+`--changed-first` uses the same git + module-graph detection as `--changed` to find which test files are affected by your edits, but instead of skipping the rest it moves the affected files to the front of the run. On a PR CI job that still wants full coverage, this surfaces failures in what you touched before the slow tail of the suite starts, and combined with `--bail` the run stops there.
+
+Affected files are ordered slowest-first when `--timings` is available, otherwise by path; the remaining files keep the order they would otherwise have. Under `--parallel` every worker drains the affected set before starting on its own chunk. Under `--shard` each file stays in the shard it would normally belong to and is simply run first within that shard. `--changed` and `--changed-first` cannot be passed together.
+
 ## How it compares
 
 2 000 TypeScript test files × 8 small tests each, all importing a small app built on `zod`, `date-fns` and `lodash`, with a shared setup file (custom matcher + `beforeEach`/`afterEach`) loaded via each runner's preload mechanism — the shape of a large application's unit-test suite ([`bench/test/app`](https://github.com/oven-sh/bun/tree/main/bench/test/app), `bun app/setup.ts 2000 20`). 16-core Apple M4 Max:

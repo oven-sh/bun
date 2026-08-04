@@ -28,11 +28,11 @@ pub struct struct_gz_header_s {
     pub hcrc: c_int,
     pub done: c_int,
 }
-pub type gz_header = struct_gz_header_s;
-pub type gz_headerp = *mut gz_header;
+pub(crate) type gz_header = struct_gz_header_s;
+pub(crate) type gz_headerp = *mut gz_header;
 
-pub type in_func = Option<unsafe extern "C" fn(*mut c_void, *mut *mut u8) -> c_uint>;
-pub type out_func = Option<unsafe extern "C" fn(*mut c_void, *mut u8, c_uint) -> ReturnCode>;
+pub(crate) type in_func = Option<unsafe extern "C" fn(*mut c_void, *mut *mut u8) -> c_uint>;
+pub(crate) type out_func = Option<unsafe extern "C" fn(*mut c_void, *mut u8, c_uint) -> ReturnCode>;
 
 unsafe extern "C" {
     pub safe fn zlibVersion() -> *const c_char;

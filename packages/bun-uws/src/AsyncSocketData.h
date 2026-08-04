@@ -151,6 +151,8 @@ struct AsyncSocketData {
     AsyncSocketData() = default;
     bool isIdle = false;
     bool isAuthorized = false; // per-socket TLS authorization status
+    bool peerCertVerified = false;
+    const char *peerCertVerifyErrorCode = nullptr;
 };
 
 }

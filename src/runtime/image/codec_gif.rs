@@ -124,7 +124,7 @@ impl Dict {
     }
 }
 
-pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
+pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
     // ── header + LSD ───────────────────────────────────────────────────────
     if bytes.len() < 13 || !(&bytes[0..6] == b"GIF89a" || &bytes[0..6] == b"GIF87a") {
         return Err(codecs::Error::DecodeFailed);

@@ -36,7 +36,7 @@ impl RequestedExports {
     /// `get_or_put`-shaped entry on the dense `Vec<Option<Self>>` storage.
     /// Returns `(found_existing, &mut value)`; inserts `Default` when absent.
     #[inline]
-    pub(crate) fn entry(map: &mut Vec<Option<Self>>, idx: u32) -> (bool, &mut Self) {
+    fn entry(map: &mut Vec<Option<Self>>, idx: u32) -> (bool, &mut Self) {
         let i = idx as usize;
         if i >= map.len() {
             map.resize_with(i + 1, || None);
@@ -47,7 +47,7 @@ impl RequestedExports {
     }
 
     #[inline]
-    pub(crate) fn lookup(map: &[Option<Self>], idx: u32) -> Option<&Self> {
+    fn lookup(map: &[Option<Self>], idx: u32) -> Option<&Self> {
         map.get(idx as usize).and_then(Option::as_ref)
     }
 }

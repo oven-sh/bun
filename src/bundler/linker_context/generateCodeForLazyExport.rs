@@ -18,7 +18,7 @@ use bun_collections::DynamicBitSetUnmanaged as BitSet;
 
 type SymbolList<'a> = bun_ast::symbol::List<'a>;
 
-pub fn generate_code_for_lazy_export(
+pub(crate) fn generate_code_for_lazy_export(
     this: &mut LinkerContext,
     source_index: IndexInt,
 ) -> Result<(), AllocError> {

@@ -102,9 +102,6 @@ template<> struct JSDOMWrapperConverterTraits<CryptoKey> {
 String convertEnumerationToString(CryptoKey::Type);
 template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, CryptoKey::Type);
 
-template<> std::optional<CryptoKey::Type> parseEnumeration<CryptoKey::Type>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> ASCIILiteral expectedEnumerationValues<CryptoKey::Type>();
-
 } // namespace WebCore
 
 #endif // ENABLE(WEB_CRYPTO)

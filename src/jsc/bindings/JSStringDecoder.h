@@ -110,8 +110,6 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
-    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSStringDecoderPrototype* prototype);
-
     // Must be defined for each specialization class.
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
     DECLARE_EXPORT_INFO;

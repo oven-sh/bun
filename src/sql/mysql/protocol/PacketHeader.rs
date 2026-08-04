@@ -10,7 +10,7 @@ impl PacketHeader {
     /// The header's length field is 24 bits. A single packet's payload must be
     /// strictly smaller than this; a length of exactly 0xFFFFFF signals a
     /// multi-packet continuation.
-    pub const MAX_PAYLOAD_LENGTH: usize = 0xFF_FF_FF;
+    pub(crate) const MAX_PAYLOAD_LENGTH: usize = 0xFF_FF_FF;
 
     pub fn decode(bytes: &[u8]) -> Option<PacketHeader> {
         if bytes.len() < 4 {
@@ -23,7 +23,7 @@ impl PacketHeader {
         })
     }
 
-    pub fn encode(self) -> [u8; 4] {
+    pub(crate) fn encode(self) -> [u8; 4] {
         [
             u8::try_from(self.length & 0xff).expect("int cast"),
             u8::try_from((self.length >> 8) & 0xff).expect("int cast"),

@@ -60,12 +60,12 @@ function internalBinding(name: string) {
       // The real thing: os/fs/crypto/zlib/trace sections, same object node's
       // internalBinding("constants") exposes (ProcessBindingConstants.cpp).
       return $processBindingConstants;
+    case "quic":
+      return require("internal/quic/binding");
     case "uv": {
-      // process.binding("uv") carries libuv's own codes on every platform
-      // (including Windows' synthetic ones), same as node's uv binding —
-      // but not getErrorMessage, which node's binding also exposes. Derive
-      // it from the same native uv_e table (util.getSystemErrorMap) so the
-      // messages can never diverge. Cached: node returns a stable object.
+      // Add getErrorMessage (which node's uv binding exposes) derived from the same native uv_e
+      // table so messages can never diverge. Cached: node returns a stable object.
+      // https://github.com/nodejs/node/blob/main/src/uv.cc
       if (cachedUvBinding === undefined) {
         const errmap: Map<number, [string, string]> = require("node:util").getSystemErrorMap();
         cachedUvBinding = {
@@ -92,6 +92,10 @@ function internalBinding(name: string) {
       return { TCP: TestTCPWrap, constants: { SOCKET: 0, SERVER: 1 } };
     case "util":
       return { isInsideNodeModules };
+    case "cares_wrap":
+      // Only the pure IP-normalizer the vendored tls/dns tests reach for; the
+      // resolver surface lives in node:dns.
+      return { canonicalizeIP: require("bun:internal-for-testing").canonicalizeIP };
     // The icu-era binding node exposed until nodejs/node#55156; vendored
     // tests like test-icu-punycode still consume it.
     case "icu": {

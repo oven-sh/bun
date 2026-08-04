@@ -79,7 +79,6 @@ using namespace JSC;
     macro(disturbed) \
     macro(domain) \
     macro(drain) \
-    macro(encode) \
     macro(encoding) \
     macro(end) \
     macro(errno) \

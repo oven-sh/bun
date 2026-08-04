@@ -1032,3 +1032,44 @@ test("--parallel: SIGTERM on coordinator kills workers and their grandchildren",
     } catch {}
   expect(outstanding).toEqual([]);
 }, 15000);
+
+test("--parallel --no-isolate: a worker keeps one global and module registry across its files", async () => {
+  const files: Record<string, string> = {
+    "shared.ts": `export let count = 0; export const bump = () => ++count;`,
+  };
+  for (const f of ["a", "b", "c"]) {
+    files[`${f}.test.ts`] =
+      `import {test,expect} from "bun:test"; import {bump} from "./shared"; test("${f}", () => { console.log("COUNT " + bump() + " G " + ((globalThis as any).__g ??= "${f}")); });`;
+  }
+  using dir = tempDir("parallel-no-isolate", files);
+  const run = async (...extra: string[]) => {
+    await using proc = Bun.spawn({
+      // Huge scale-up delay: one worker runs all three files, so sharing (or not) is observable.
+      cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=1000000", ...extra],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const m = [...(stdout + stderr).matchAll(/COUNT (\d+) G (\w)/g)];
+    return { counts: m.map(x => x[1]), globals: new Set(m.map(x => x[2])).size, stdout, stderr, exitCode };
+  };
+
+  // Dispatch order across chunks isn't the point here; module state and globalThis are.
+  const isolated = await run();
+  expect(isolated.stdout).toContain("PARALLEL");
+  expect(isolated.counts).toEqual(["1", "1", "1"]);
+  expect(isolated.globals).toBe(3);
+  expect(isolated.stderr).toContain("3 pass");
+  expect(isolated.stderr).not.toContain("error:");
+  expect(isolated.exitCode).toBe(0);
+
+  const shared = await run("--no-isolate");
+  expect(shared.stdout).toContain("PARALLEL");
+  expect(shared.counts).toEqual(["1", "2", "3"]);
+  expect(shared.globals).toBe(1);
+  expect(shared.stderr).toContain("3 pass");
+  expect(shared.stderr).not.toContain("error:");
+  expect(shared.exitCode).toBe(0);
+});

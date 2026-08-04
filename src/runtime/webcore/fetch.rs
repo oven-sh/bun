@@ -36,7 +36,7 @@ pub mod fetch_tasklet;
 
 #[path = "fetch/FetchRequestBodySink.rs"]
 pub mod fetch_request_body_sink;
-pub use self::fetch_request_body_sink::{FetchRequestBodySink, FetchRequestBodySinkJSSink};
+pub use self::fetch_request_body_sink::FetchRequestBodySink;
 
 #[path = "fetch/compress_body.rs"]
 pub mod compress_body;

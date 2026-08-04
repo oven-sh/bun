@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include <JavaScriptCore/VM.h>
+#include <wtf/text/AtomStringTable.h>
 #include <JavaScriptCore/VMInlines.h>
 #include <JavaScriptCore/StackAlignment.h>
 #include <JavaScriptCore/Heap.h>
@@ -988,7 +989,9 @@ static void imageRestoreAndRun(const char* path)
         s_snapFd = fd; // keep the image open so dirtymap/celldiff can diff against it
         mi_free_set_filter(frozenFreeFilter);
         if (hdr.reserved[0]) mi_theap_freeze((mi_theap_t*)hdr.reserved[0]);
-        mi_theap_set_default(mi_heap_theap(mi_heap_new()));
+        mi_arena_id_t freshArena = 0; mi_heap_t* fresh = nullptr;
+        if (!getenv("BUN_IMAGE_NOFRESHARENA") && mi_reserve_os_memory_ex(1ull << 30, false, false, true, &freshArena) == 0) fresh = mi_heap_new_in_arena(freshArena); // post-restore memory never interleaves with (or dirties the bitmaps of) image arenas
+        mi_theap_set_default(mi_heap_theap(fresh ? fresh : mi_heap_new()));
     }
     if (getenv("BUN_IMAGE_TRAP")) imageTrapArm();
     // pthread TLS keys created by the build process (WTF::ThreadSpecific etc.) must exist here too, or setspecific silently fails; burn keys up to the image's high-water mark.
@@ -1002,11 +1005,16 @@ static void imageRestoreAndRun(const char* path)
     JSC::JSGlobalObject* globalObject = (JSC::JSGlobalObject*)hdr.globalObject;
     us_loop_reinit_for_image(uws_get_loop());
     Bun__imageAdoptMainThreadVM();
+    if (!getenv("BUN_IMAGE_NOEVACUATE")) {
+        // Tables that take inserts on every run get fresh storage now, so the inserts don't COW image pages one by one.
+        JSC::JSLockHolder lock(*vm);
+        { auto& t = vm->atomStringTable()->table(); auto copy = t; t.swap(copy); }
+    }
     if (!getenv("BUN_IMAGE_EVAL")) {
         {
             JSC::JSLockHolder lock(*vm);
             NakedPtr<JSC::Exception> exception;
-            JSC::evaluate(globalObject, JSC::makeSource("globalThis.__bunImageRestored = true; if (typeof __onImageRestored === 'function') __onImageRestored();"_s, JSC::SourceOrigin {}, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue(), exception);
+            JSC::evaluate(globalObject, JSC::makeSource("globalThis.__bunImageRestored = true; if (process.env.BUN_IMAGE_TRACE_EXIT) { const oe = process.exit; process.exit = function(c) { require('fs').writeSync(2, '[image] process.exit(' + c + ') from:\\n' + new Error().stack + '\\n'); return oe.call(this, c); }; process.on('exit', c => require('fs').writeSync(2, '[image] exit event ' + c + '\\n')); } if (typeof __onImageRestored === 'function') __onImageRestored();"_s, JSC::SourceOrigin {}, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue(), exception);
             if (exception) fprintf(stderr, "[image] __onImageRestored threw: %s\n", exception->value().toWTFString(globalObject).utf8().data());
         }
         Bun__imageContinueEventLoop(); // never returns

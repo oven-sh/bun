@@ -368,6 +368,7 @@ size_t AbortSignal::memoryCost() const
 template<typename Visitor>
 void AbortSignal::visitAbortAlgorithms(Visitor& visitor)
 {
+    if ([&]() WTF_IGNORES_THREAD_SAFETY_ANALYSIS { return m_abortAlgorithms.isEmpty(); }()) return; // racy-but-benign; avoids dirtying the lock word of an idle signal on every GC
     Locker locker { m_abortAlgorithmsLock };
     for (auto& pair : m_abortAlgorithms)
         pair.second->visitJSFunction(visitor);

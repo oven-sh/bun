@@ -946,6 +946,9 @@ extern "C" fn close_and_wait_on_exit() {
 }
 
 fn close_and_wait() {
+    if bun_core::Global::IMAGE_RESTORED.load(Ordering::Relaxed) {
+        return;
+    } // the CF thread belongs to the build process
     #[cfg(target_os = "macos")]
     if let Some(&loop_) = FSEVENTS_DEFAULT_LOOP.get() {
         let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock_guard();

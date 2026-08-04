@@ -1,21 +1,39 @@
-var longPath = Buffer.alloc(1021, "Z").toString();
-const isDebugBuildOfBun = globalThis?.Bun?.revision?.includes("debug");
-// ASAN's quarantine retains freed allocations (default 256 MB) and shadow
-// memory raises the absolute RSS floor; widen the cap to avoid false positives.
-const isASAN = process.execPath.includes("bun-asan");
+// Regression fixture for https://github.com/oven-sh/bun/pull/16784:
+// pathToFileURL leaked the native WTF::String for the resolved path on
+// every call (refcount was incremented but never released), which grew
+// RSS by ~3.4 KB per call.
+//
+// Instead of running hundreds of thousands of iterations and checking an
+// absolute RSS ceiling (which has to be branched for debug vs ASAN and is
+// slow on ASAN lanes), run a short warmup to let allocator pools settle,
+// sample RSS, run a measurement batch with a GC after each round so
+// collectible URL wrappers don't accumulate, then assert the growth is
+// bounded. The parent test spawns this with ASAN's free-quarantine
+// disabled so freed native allocations are returned immediately; with that
+// the no-leak delta is ~0 MB on release and <2 MB under debug+ASAN, while
+// the original leak would add ~14 MB over the measurement batch.
+import { pathToFileURL } from "url";
+
+const longPath = Buffer.alloc(1021, "Z").toString();
 const rss =
   process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
     ? Bun.unsafe.memoryFootprint
     : process.memoryUsage.rss;
-import { pathToFileURL } from "url";
-for (let i = 0; i < 1024 * (isDebugBuildOfBun ? 32 : 256); i++) {
-  pathToFileURL(longPath);
+
+function batch(n) {
+  for (let i = 0; i < n; i++) pathToFileURL(longPath);
+  Bun.gc(true);
 }
-Bun.gc(true);
-const limitMB = isASAN ? 700 : 250;
-const rssMB = (rss() / 1024 / 1024) | 0;
-console.log("RSS", rssMB, "MB");
-if (rssMB > limitMB) {
-  // On macOS, this was 860 MB.
-  throw new Error("RSS is too high. Must be less than " + limitMB + "MB");
+
+for (let i = 0; i < 4; i++) batch(512);
+const baseline = rss();
+
+for (let i = 0; i < 8; i++) batch(512);
+const after = rss();
+
+const deltaMB = (after - baseline) / 1024 / 1024;
+console.log("RSS delta", deltaMB.toFixed(1), "MB (baseline", (baseline / 1024 / 1024) | 0, "MB)");
+
+if (deltaMB > 8) {
+  throw new Error("pathToFileURL leaked " + deltaMB.toFixed(1) + " MB over 4096 calls");
 }

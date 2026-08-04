@@ -113,7 +113,7 @@ import { readableStreamFromArray } from "harness";
     ]) {
       const s = new TextDecoderStream("utf-16le");
       expect(s.encoding).toBe("utf-16le");
-      await terminate(s).catch(() => {});
+      await terminate(s);
       expect(s.encoding).toBe("utf-16le");
       expect(s.fatal).toBe(false);
     }

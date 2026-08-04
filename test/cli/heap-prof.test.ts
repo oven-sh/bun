@@ -235,7 +235,7 @@ test.skipIf(isWindows).each([
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("done");
-  expect(stderr).toContain("ENAMETOOLONG");
+  expect(stderr).toContain("MaxPathExceeded");
   expect(stderr).toContain("Failed to write heap profile");
   expect(exitCode).toBe(0);
   expect(proc.signalCode).toBeNull();

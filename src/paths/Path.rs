@@ -80,6 +80,7 @@ pub mod options {
     }
     impl CheckLength {
         pub(crate) const ASSUME: u8 = 0;
+        pub(crate) const CHECK: u8 = 1;
         #[inline(always)]
         pub(crate) const fn from_u8(v: u8) -> Self {
             if v == 0 {
@@ -581,6 +582,13 @@ pub type AbsPath<
 /// Absolute path with auto separator.
 pub type AutoAbsPath = Path<u8, { Kind::ABS }, { PathSeparators::AUTO }>;
 
+/// Absolute path with auto separator and `CheckLength::CheckForGreaterThanMaxPath`.
+/// `from`/`append`/`append_fmt`/`join` return `Err(MaxPathExceeded)` on overflow
+/// instead of panicking in `PooledBuf` slice indexing. Use for unbounded user
+/// input (CLI args, JS strings).
+pub type AutoAbsPathChecked =
+    Path<u8, { Kind::ABS }, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
+
 /// `RelPath(opts)` — forces `kind = .rel`.
 pub type RelPath<
     U = u8,
@@ -1072,9 +1080,21 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             // `unsafe`) — the u8 impl is `fn(s) { s }`, the u16 default is
             // `unreachable!()` and is const-folded out in this monomorphisation.
             let parts_u8: &[&[u8]] = U::id_u8_slices(parts);
-            let joined = sep_dispatch!(join_abs_string_buf(cloned_slice, pooled, parts_u8));
+            let joined = if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
+                match sep_dispatch!(join_abs_string_buf_checked(cloned_slice, pooled, parts_u8)) {
+                    Some(j) => j,
+                    None => return Err(PathError::MaxPathExceeded),
+                }
+            } else {
+                sep_dispatch!(join_abs_string_buf(cloned_slice, pooled, parts_u8))
+            };
 
             let trimmed = trim_input(TrimInputKind::Abs, joined);
+            if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath
+                && trimmed.len() >= U::MAX_PATH
+            {
+                return Err(PathError::MaxPathExceeded);
+            }
             self._buf.len = trimmed.len();
         }
         Ok(())

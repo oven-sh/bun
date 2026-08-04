@@ -5,7 +5,7 @@ use crate::VM;
 use bun_core::{OwnedString, String as BunString};
 #[cfg(windows)]
 use bun_paths::OSPathBuffer;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer};
+use bun_paths::{AutoAbsPathChecked, PathBuffer};
 use bun_sys::{self, Errno, Fd, FdDirExt as _};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -102,8 +102,8 @@ fn write_profile_to_file(
     let profile_slice = profile_string.to_utf8();
     // (defer profile_slice.deinit() — handled by Drop on Utf8Slice)
 
-    // Determine the output path using AutoAbsPath
-    let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
+    // dir/name are unbounded CLI input, so use the length-checked variant.
+    let mut path_buf = AutoAbsPathChecked::init_top_level_dir();
     // (defer path_buf.deinit() — handled by Drop)
 
     build_output_path(&mut path_buf, config, is_md_format)?;
@@ -147,7 +147,7 @@ fn write_profile_to_file(
 }
 
 fn build_output_path(
-    path: &mut bun_paths::AutoAbsPath,
+    path: &mut AutoAbsPathChecked,
     config: &CPUProfilerConfig,
     is_md_format: bool,
 ) -> Result<(), ProfilerError> {
@@ -177,25 +177,12 @@ fn build_output_path(
         generate_default_filename(&mut filename_buf, is_md_format)?
     };
 
-    // dir/name are unbounded CLI input; AutoAbsPath (CheckLength::ASSUME) panics on overflow.
-    let sep_for_dir = usize::from(!config.dir.is_empty());
-    let upper_bound = path
-        .len()
-        .saturating_add(sep_for_dir)
-        .saturating_add(config.dir.len())
-        .saturating_add(1)
-        .saturating_add(filename.len());
-    if upper_bound >= MAX_PATH_BYTES {
-        return Err(ProfilerError::FilenameTooLong);
-    }
-
-    // Append directory if specified
     if !config.dir.is_empty() {
-        path.join(&[config.dir]).expect("bounded above");
+        path.join(&[config.dir])
+            .map_err(|_| ProfilerError::FilenameTooLong)?;
     }
-
-    // Append filename
-    path.append(filename).expect("bounded above");
+    path.append(filename)
+        .map_err(|_| ProfilerError::FilenameTooLong)?;
 
     Ok(())
 }

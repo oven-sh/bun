@@ -1,7 +1,7 @@
 use crate::CrateError as Error;
 use bun_core::{Output, Timespec, TimespecMockMode};
 use bun_core::{OwnedString, String as BunString};
-use bun_paths::{AutoAbsPath, MAX_PATH_BYTES, PathBuffer, resolve_path};
+use bun_paths::{AutoAbsPathChecked, PathBuffer, resolve_path};
 use bun_sys::{self as sys, E, Fd, FdDirExt};
 
 use crate::VM;
@@ -42,8 +42,8 @@ pub(crate) fn generate_and_write_profile(
     // Freed by Drop on ZigStringSlice.
     let profile_slice = profile_string.to_utf8();
 
-    // Determine the output path using AutoAbsPath
-    let mut path_buf = AutoAbsPath::init_top_level_dir();
+    // dir/name are unbounded CLI input, so use the length-checked variant.
+    let mut path_buf = AutoAbsPathChecked::init_top_level_dir();
     // `defer path_buf.deinit()` — handled by Drop.
 
     build_output_path(&mut path_buf, config)?;
@@ -99,7 +99,10 @@ pub(crate) fn generate_and_write_profile(
     Ok(())
 }
 
-fn build_output_path(path: &mut AutoAbsPath, config: &HeapProfilerConfig) -> Result<(), Error> {
+fn build_output_path(
+    path: &mut AutoAbsPathChecked,
+    config: &HeapProfilerConfig,
+) -> Result<(), Error> {
     // Generate filename
     let mut filename_buf = PathBuffer::uninit();
     let filename: &[u8] = if !config.name.is_empty() {
@@ -108,24 +111,9 @@ fn build_output_path(path: &mut AutoAbsPath, config: &HeapProfilerConfig) -> Res
         generate_default_filename(&mut filename_buf, config.text_format)?
     };
 
-    // dir/name are unbounded CLI input; AutoAbsPath (CheckLength::ASSUME) panics on overflow.
-    let sep_for_dir = usize::from(!config.dir.is_empty());
-    let upper_bound = path
-        .len()
-        .saturating_add(sep_for_dir)
-        .saturating_add(config.dir.len())
-        .saturating_add(1)
-        .saturating_add(filename.len());
-    if upper_bound >= MAX_PATH_BYTES {
-        return Err(Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-    }
-
-    // Append directory if specified
     if !config.dir.is_empty() {
         path.append(config.dir)?;
     }
-
-    // Append filename
     path.append(filename)?;
     Ok(())
 }

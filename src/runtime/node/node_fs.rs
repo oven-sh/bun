@@ -3664,7 +3664,9 @@ pub mod args {
             if let Some(val) = arguments.next() {
                 arguments.eat();
                 if val.is_object() {
-                    if let Some(b) = val.get_boolean_strict(ctx, "recursive")? {
+                    if let Some(b) =
+                        val.get_boolean_strict_named(ctx, "recursive", "options.recursive")?
+                    {
                         recursive = b;
                     }
                     if let Some(mode_) = val.get(ctx, "mode")? {

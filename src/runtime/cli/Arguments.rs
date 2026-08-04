@@ -1324,6 +1324,18 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 net,
                 addon,
             });
+        } else {
+            // Same constraint (and message substring) as Node's
+            // ERR_MISSING_OPTION: "--permission is required".
+            for allow_flag in [&b"--allow-fs-read"[..], b"--allow-fs-write"] {
+                if !args.options(allow_flag).is_empty() {
+                    Output::err_generic(
+                        "--permission is required to use {}",
+                        format_args!("{}", BStr::new(allow_flag)),
+                    );
+                    Global::exit(1);
+                }
+            }
         }
 
         if let Some(unhandled_rejections) = args.option(b"--unhandled-rejections") {
@@ -1521,28 +1533,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         {
             Output::err_generic("--cron-title and --cron-period must not be empty", ());
             Global::exit(1);
-        }
-
-        // Node.js permission-model flags. The model itself is not implemented;
-        // reject these loudly instead of silently running without the
-        // requested sandbox.
-        if args.flag(b"--permission") {
-            Output::err_generic(
-                "--permission is not supported by Bun (the Node.js permission model is not implemented)",
-                (),
-            );
-            Global::exit(1);
-        }
-        for allow_flag in [&b"--allow-fs-read"[..], b"--allow-fs-write"] {
-            if !args.options(allow_flag).is_empty() {
-                // Same constraint (and message substring) as Node's
-                // ERR_MISSING_OPTION: "--permission is required".
-                Output::err_generic(
-                    "--permission is required to use {}",
-                    format_args!("{}", BStr::new(allow_flag)),
-                );
-                Global::exit(1);
-            }
         }
 
         // `--inspect-port` / `--debug-port` set the default debugger target for --inspect*

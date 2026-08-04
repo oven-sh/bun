@@ -338,7 +338,7 @@ crypto_exports.getHashes = getHashes;
 // Node's MakeCallback runs async crypto callbacks inside the active domain; bridge
 // the trailing callback through the domain-aware guard when one is active.
 function wrapDomainCallbackLast(fn, name) {
-  function wrapper(a, b, c, d) {
+  function wrapper() {
     if (process.domain != null) {
       const n = arguments.length;
       if (n > 0 && typeof arguments[n - 1] === "function") {

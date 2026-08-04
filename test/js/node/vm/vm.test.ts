@@ -1018,10 +1018,20 @@ describe("context options with throwing getters", () => {
   test.concurrent("the getter's exception propagates to the caller", async () => {
     // Each entry point tests the context-option keys it actually reads
     // (the Script path takes contextCodeGeneration, not codeGeneration).
+    // A dotted key puts the throwing getter on the nested object.
+    const contextKeys = (codeGenerationKey: string) => [
+      "name",
+      "origin",
+      codeGenerationKey,
+      `${codeGenerationKey}.strings`,
+      `${codeGenerationKey}.wasm`,
+      "importModuleDynamically",
+      "microtaskMode",
+    ];
     const matrix = {
-      createContext: ["name", "origin", "codeGeneration", "importModuleDynamically"],
-      runInNewContext: ["name", "origin", "codeGeneration", "importModuleDynamically"],
-      scriptRunInNewContext: ["name", "origin", "contextCodeGeneration", "importModuleDynamically"],
+      createContext: contextKeys("codeGeneration"),
+      runInNewContext: contextKeys("codeGeneration"),
+      scriptRunInNewContext: contextKeys("contextCodeGeneration"),
     };
     const code = `
       const vm = require("node:vm");
@@ -1034,7 +1044,10 @@ describe("context options with throwing getters", () => {
       for (const [entry, keys] of Object.entries(matrix)) {
         for (const key of keys) {
           const opts = {};
-          Object.defineProperty(opts, key, {
+          const path = key.split(".");
+          let target = opts;
+          for (const part of path.slice(0, -1)) target = target[part] = {};
+          Object.defineProperty(target, path.at(-1), {
             get() { throw new Error("getter:" + key); },
             enumerable: true,
           });
@@ -1058,6 +1071,7 @@ describe("context options with throwing getters", () => {
       Object.entries(matrix)
         .flatMap(([entry, keys]) => keys.map(key => `${entry} ${key} getter:${key}`))
         .join("\n") + "\nsurvived\n";
+    expect(stderr).toBe("");
     expect(stdout).toBe(expected);
     expect(exitCode).toBe(0);
   });

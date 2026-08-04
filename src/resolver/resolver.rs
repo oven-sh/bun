@@ -4461,15 +4461,19 @@ impl<'a> Resolver<'a> {
                 open_dir_count.set(open_dir_count.get() + 1);
             }
             // When `open_dir` is not stored as `DirEntry.fd` (entry already
-            // fresh, or an existing handle carried over), it is released at
-            // the end of this iteration; the `store_fd` guard does not.
+            // fresh, or an existing handle carried over), release it at the
+            // end of this iteration. When it IS stored, remove it from
+            // `open_dirs` so the `close_dirs` defer above cannot close what
+            // `DirEntry.fd` now owns (its `need_to_close_files()` arm would).
             let open_dir_adopted = core::cell::Cell::new(false);
             let _close_unadopted = scopeguard::guard((), |()| {
-                if open_dir_freshly_opened && !open_dir_adopted.get() {
+                if open_dir_freshly_opened {
                     let n = open_dir_count.get();
                     debug_assert!(n > 0 && bufs!(open_dirs)[n - 1] == open_dir);
                     open_dir_count.set(n - 1);
-                    let _ = ::bun_sys::close(open_dir);
+                    if !open_dir_adopted.get() {
+                        let _ = ::bun_sys::close(open_dir);
+                    }
                 }
             });
 

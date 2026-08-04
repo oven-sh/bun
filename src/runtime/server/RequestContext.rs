@@ -3298,13 +3298,9 @@ where
                                 byte_stream.parent_const().producer.get(),
                                 WebCore::streams::SourceHandle::HTMLRewriter(_)
                             ) {
-                                // An HTMLRewriter producer can fail before its
-                                // first byte (an async handler rejecting);
-                                // defer status/headers to the first chunk/end
-                                // so that failure can still reach `error()`.
-                                // Headers never preceded the first byte on
-                                // this path before either: the old
-                                // implementation buffered the whole rewrite.
+                                // Defer status/headers to the first chunk/end
+                                // so a pre-first-byte handler failure can
+                                // still reach `error()`.
                             } else {
                                 // if we only have metadata to send, send it now
                                 resp.run_corked_with_type(

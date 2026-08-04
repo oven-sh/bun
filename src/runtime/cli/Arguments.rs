@@ -284,8 +284,8 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\""
     ),
     // Node's permission model. Hidden from `--help` until the fs scope covers
-    // every filesystem path (module loader, `Bun.file`, compile cache still
-    // bypass it); only `node:fs` and `net` are enforced today.
+    // every filesystem path (`Bun.file`, compile cache still bypass it); only
+    // `node:fs`, the module loader, and `net` are enforced today.
     parse_param!("--permission"),
     parse_param!("--allow-fs-read <STR>..."),
     parse_param!("--allow-fs-write <STR>..."),

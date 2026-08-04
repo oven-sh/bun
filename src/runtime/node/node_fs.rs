@@ -1339,6 +1339,7 @@ mod _async_tasks {
         args::Rm        => Write, |s| (Some(&s.0.path), None);
         args::Unlink    => Write, |s| (Some(&s.path), None);
         args::WriteFile => Write, |s| (s.file.permission_path(), None);
+        args::AppendFile => Write, |s| (s.0.file.permission_path(), None);
         args::Truncate  => Write, |s| (s.path.permission_path(), None);
 
         // ── read(src) then write(dest) ────────────────────────────────────

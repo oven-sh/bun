@@ -1892,6 +1892,7 @@ impl<'a> Resolver<'a> {
 
             if self.opts.external.abs_paths.count() > 0
                 && self.opts.external.abs_paths.contains(import_path)
+                && !self.matches_excluded_external(import_path)
             {
                 // If the string literal in the source text is an absolute path and has
                 // been marked as an external module, mark it as *not* an absolute path.
@@ -2135,6 +2136,7 @@ impl<'a> Resolver<'a> {
 
         if self.opts.external.abs_paths.count() > 0
             && self.opts.external.abs_paths.contains(abs_path)
+            && !self.matches_excluded_external(abs_path)
         {
             // If the string literal in the source text is an absolute path and has
             // been marked as an external module, mark it as *not* an absolute path.

@@ -940,6 +940,27 @@ impl<'a> Parser<'a> {
                         );
                     }
                 }
+
+                if let Some(expr) = _bun.get(b"internal") {
+                    match &expr.data {
+                        ExprData::EString(s) => {
+                            self.ctx.args.internal = vec![estring_to_owned(s, self.bump)];
+                        }
+                        ExprData::EArray(array) => {
+                            let items = array.items.slice();
+                            let mut internals: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
+                            for item in items {
+                                self.expect_string(item)?;
+                                let ExprData::EString(s) = &item.data else {
+                                    unreachable!("expect_string returned Ok for non-EString")
+                                };
+                                internals.push(estring_to_owned(s, self.bump));
+                            }
+                            self.ctx.args.internal = internals;
+                        }
+                        _ => self.add_error(expr.loc, b"Expected string or array")?,
+                    }
+                }
             }
         }
 
@@ -1046,27 +1067,6 @@ impl<'a> Parser<'a> {
                         externals.push(estring_to_owned(s, self.bump));
                     }
                     self.ctx.args.external = externals;
-                }
-                _ => self.add_error(expr.loc, b"Expected string or array")?,
-            }
-        }
-
-        if let Some(expr) = json.get(b"internal") {
-            match &expr.data {
-                ExprData::EString(s) => {
-                    self.ctx.args.internal = vec![estring_to_owned(s, self.bump)];
-                }
-                ExprData::EArray(array) => {
-                    let items = array.items.slice();
-                    let mut internals: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
-                    for item in items {
-                        self.expect_string(item)?;
-                        let ExprData::EString(s) = &item.data else {
-                            unreachable!("expect_string returned Ok for non-EString")
-                        };
-                        internals.push(estring_to_owned(s, self.bump));
-                    }
-                    self.ctx.args.internal = internals;
                 }
                 _ => self.add_error(expr.loc, b"Expected string or array")?,
             }

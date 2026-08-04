@@ -114,6 +114,124 @@ describe("bundler", () => {
     },
   });
 
+  // Absolute filesystem specifiers: `internal` wins over a positive
+  // `external` entry for the same absolute path (normalized against cwd,
+  // like the positive `--external` path is).
+  itBundled("internal/AbsolutePathOverridesExternal", {
+    backend: "cli",
+    entryPoints: ["/entry.js"],
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "{{root}}/foo.js";
+        console.log(a);
+      `,
+      "/foo.js": /* js */ `
+        export const a = "Hello Absolute";
+      `,
+    },
+    external: ["{{root}}/foo.js"],
+    internal: ["{{root}}/foo.js"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("Hello Absolute");
+    },
+  });
+
+  // Relative filesystem specifiers: `internal` wins over a positive
+  // `external` entry for the same relative path (both are normalized against
+  // cwd before comparison, so the exclusion matches the resolved abs path).
+  itBundled("internal/RelativePathOverridesExternal", {
+    backend: "cli",
+    entryPoints: ["/entry.js"],
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./foo.js";
+        console.log(a);
+      `,
+      "/foo.js": /* js */ `
+        export const a = "Hello Relative";
+      `,
+    },
+    external: ["./foo.js"],
+    internal: ["./foo.js"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("Hello Relative");
+    },
+  });
+
+  // Sanity control: without `internal`, a positive `external` entry for the
+  // same absolute path leaves the import as-is.
+  itBundled("internal/AbsolutePathControlExternal", {
+    backend: "cli",
+    entryPoints: ["/entry.js"],
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "{{root}}/foo.js";
+        console.log(a);
+      `,
+      "/foo.js": /* js */ `
+        export const a = "Hello Absolute";
+      `,
+    },
+    external: ["{{root}}/foo.js"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("Hello Absolute");
+    },
+  });
+
+  // Sanity control: without `internal`, a positive `external` entry for the
+  // same relative path leaves the import as-is.
+  itBundled("internal/RelativePathControlExternal", {
+    backend: "cli",
+    entryPoints: ["/entry.js"],
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./foo.js";
+        console.log(a);
+      `,
+      "/foo.js": /* js */ `
+        export const a = "Hello Relative";
+      `,
+    },
+    external: ["./foo.js"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("Hello Relative");
+    },
+  });
+
+  // `internal` is read from the `[bundle]` table in bunfig.toml (CLI
+  // regression: it must NOT be read from the config root).
+  itBundled("internal/BunfigBundleTable", {
+    backend: "cli",
+    entryPoints: ["/entry.js"],
+    files: {
+      "/bunfig.toml": /* toml */ `
+        [bundle]
+        internal = ["foo"]
+      `,
+      "/entry.js": /* js */ `
+        import { a } from "foo";
+        console.log(a);
+      `,
+      "/node_modules/foo/index.js": /* js */ `
+        export const a = "Hello World";
+      `,
+      "/node_modules/foo/package.json": /* json */ `
+        {
+          "name": "foo",
+          "version": "1.0.0",
+          "main": "index.js"
+        }
+      `,
+    },
+    packages: "external",
+    onAfterBundle(api) {
+      // "foo" is bundled — its code must appear in the output instead of a
+      // runtime `import ... from "foo"`.
+      api.expectFile("/out.js").toContain("Hello World");
+      api.expectFile("/out.js").not.toContain(`from "foo"`);
+    },
+  });
+
   // Sanity control: without `internal`, `packages: "external"` leaves the
   // import as-is — proving the tests above exercise the new behavior.
   itBundled("internal/ControlExternal", {

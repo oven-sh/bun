@@ -163,8 +163,8 @@ pub(crate) fn init_external_modules(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
-                            "External path \"{}\" cannot have more than one \"*\" wildcard",
-                            bstr::BStr::new(external)
+                            "Internal path \"{}\" must use at most one \"*\" wildcard",
+                            bstr::BStr::new(rest)
                         ),
                     );
                     return result;
@@ -179,12 +179,18 @@ pub(crate) fn init_external_modules(
                     .insert(rest)
                     .expect("unreachable");
             } else {
-                // Absolute paths and other exact specifiers: match by prefix
-                // (covers the path itself and anything beneath it).
-                result.excludes.push(WildcardPattern {
-                    prefix: Box::from(rest),
-                    suffix: Box::default(),
-                });
+                // Filesystem specifiers (absolute or relative): normalize
+                // against cwd exactly like positive `--external` paths, so the
+                // stored prefix matches the normalized `abs_path` the resolver
+                // compares against. Prefix match covers the path itself and
+                // anything beneath it.
+                let normalized = validate_path(log, fs, cwd, rest, b"internal path");
+                if !normalized.is_empty() {
+                    result.excludes.push(WildcardPattern {
+                        prefix: normalized,
+                        suffix: Box::default(),
+                    });
+                }
             }
             continue;
         }

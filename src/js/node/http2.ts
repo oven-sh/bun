@@ -27,13 +27,7 @@
  * Modifications were made to the original code.
  */
 const { isTypedArray } = require("node:util/types");
-const {
-  hideFromStack,
-  throwNotImplemented,
-  hasObserver,
-  enqueueNodeEntry,
-  PerformanceNodeEntry,
-} = require("internal/shared");
+const { hideFromStack, hasObserver, enqueueNodeEntry, PerformanceNodeEntry } = require("internal/shared");
 const { STATUS_CODES } = require("internal/http");
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const tls = require("node:tls");
@@ -41,7 +35,6 @@ const net = require("node:net");
 const fs = require("node:fs");
 const { $data } = require("node:fs/promises");
 const FileHandle = $data.FileHandle;
-const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const kInfoHeaders = Symbol("sent-info-headers");
 const kStrictSingleValueFields = Symbol("strictSingleValueFields");

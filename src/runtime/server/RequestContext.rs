@@ -3279,7 +3279,7 @@ where
                                 .set(readable_stream::Strong::init(stream, global_this));
 
                             this.byte_stream.set(Some(byte_stream_nn));
-                            let mut response_buf = byte_stream.drain();
+                            let mut response_buf = byte_stream.take_buffer();
                             let buffer = response_buf.move_to_list();
                             let has_body_bytes = !buffer.is_empty();
                             this.response_buf_owned.set(buffer);
@@ -3308,6 +3308,8 @@ where
                                     this.as_ctx_ptr(),
                                 );
                             }
+                            // Wake the producer after the older bytes are queued.
+                            byte_stream.signal_drained();
                             return;
                         }
                     }

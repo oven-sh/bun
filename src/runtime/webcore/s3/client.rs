@@ -1037,10 +1037,10 @@ pub(crate) fn upload_stream(
                 return Ok(end_promise_value);
             }
 
-            let buffered = byte_stream.drain();
-            let has_last = byte_stream.has_received_last_chunk.get();
+            let buffered = byte_stream.take_buffer();
+            let had_last = byte_stream.has_received_last_chunk.get();
             if !buffered.is_empty() {
-                let chunk = if has_last {
+                let chunk = if had_last {
                     crate::webcore::streams::StreamResult::OwnedAndDone(buffered)
                 } else {
                     crate::webcore::streams::StreamResult::Owned(buffered)
@@ -1062,15 +1062,18 @@ pub(crate) fn upload_stream(
                     _ => {}
                 }
             }
-            if has_last {
+            if had_last {
                 byte_stream.sink.set(crate::webcore::SinkHandle::None);
                 sink.source.clear();
                 if !sink.ended {
                     let _ = sink.end(None);
                 }
                 ctx.handle_resolve_stream();
+            } else if !byte_stream.sink_paused.get() {
+                // Wake the producer after the older bytes are in the sink.
+                byte_stream.signal_drained();
             }
-            // `!has_last`: the stream-pump +1 (rc=2) is released by
+            // `!had_last`: the stream-pump +1 (rc=2) is released by
             // `NetworkSink::end_from_stream` after the terminal write/fail so the
             // sink outlives the synchronous `resolve()` re-entry.
             return Ok(end_promise_value);

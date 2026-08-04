@@ -343,13 +343,29 @@ describe("node-style CLI argument errors", () => {
 
   test("--allow-fs-read with --permission does not error at argument parsing", () => {
     // The permission model itself is not implemented; --permission is accepted
-    // and ignored (same as before these flags were recognized), so existing
-    // scripts that pass it keep running.
-    const { stdout, exitCode } = Bun.spawnSync({
+    // and warned about (so a caller expecting Node's sandbox is not silently
+    // unsandboxed) but the script still runs.
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
       cmd: [bunExe(), "--permission", "--allow-fs-read=*", "-e", "console.log('ran')"],
       env: bunEnv,
     });
     expect(stdout.toString("utf8")).toBe("ran\n");
+    expect(stderr.toString("utf8")).toContain("--permission is not yet implemented");
+    expect(exitCode).toBe(0);
+  });
+
+  test("--permission alone emits a SecurityWarning and still runs the script", () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--permission", "-e", "console.log(require('fs').existsSync(process.execPath))"],
+      env: bunEnv,
+    });
+    // Goes through process.emitWarning, so stderr has the standard
+    // "<name>: <message>" shape.
+    expect(stderr.toString("utf8")).toContain(
+      "SecurityWarning: --permission is not yet implemented in Bun. The permission model is not enforced.",
+    );
+    // Script ran unsandboxed — fs read succeeded.
+    expect(stdout.toString("utf8")).toBe("true\n");
     expect(exitCode).toBe(0);
   });
 });

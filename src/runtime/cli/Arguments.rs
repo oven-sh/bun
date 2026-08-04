@@ -1353,7 +1353,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
         // Node permission-model flags: the model is not implemented, but
         // --allow-fs-* without --permission is rejected like Node (ERR_MISSING_OPTION).
-        if !args.flag(b"--permission") {
+        ctx.runtime_options.permission_flag = args.flag(b"--permission");
+        if !ctx.runtime_options.permission_flag {
             for allow_flag in [&b"--allow-fs-read"[..], b"--allow-fs-write"] {
                 if !args.options(allow_flag).is_empty() {
                     // Same constraint (and message substring) as Node's

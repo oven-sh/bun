@@ -553,6 +553,10 @@ pub struct RuntimeOptions {
     /// `--check` / `-c`: parse the entry point (or stdin) without executing it,
     /// like Node.js.
     pub check_syntax: bool,
+    /// `--permission` was passed. The permission model itself is not yet
+    /// implemented on this branch; recorded so startup can emit a
+    /// `process.emitWarning` instead of silently running unsandboxed.
+    pub permission_flag: bool,
 }
 
 #[derive(Default)]
@@ -637,6 +641,7 @@ impl Default for RuntimeOptions {
             cpu_prof: CpuProf::default(),
             heap_prof: HeapProf::default(),
             check_syntax: false,
+            permission_flag: false,
         }
     }
 }

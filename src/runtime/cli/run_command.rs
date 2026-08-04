@@ -1387,6 +1387,22 @@ impl Run {
 
         self.add_conditional_globals();
 
+        // `--permission` is accepted but the model is not yet implemented here;
+        // warn so a caller expecting Node's sandbox is not silently unsandboxed.
+        if ctx.runtime_options.permission_flag {
+            let global = vm.global();
+            let mut msg = bun_core::String::static_(
+                b"--permission is not yet implemented in Bun. The permission model is not enforced.",
+            );
+            let mut kind = bun_core::String::static_(b"SecurityWarning");
+            if let Ok(msg_js) = bun_jsc::bun_string_jsc::transfer_to_js(&mut msg, global)
+                && let Ok(kind_js) = bun_jsc::bun_string_jsc::transfer_to_js(&mut kind, global)
+            {
+                let _ =
+                    global.emit_warning(msg_js, kind_js, JSValue::UNDEFINED, JSValue::UNDEFINED);
+            }
+        }
+
         // ── redis preconnect (must run under the API lock) ─────────────────
         'do_redis_preconnect: {
             if !ctx.runtime_options.redis_preconnect {

@@ -987,6 +987,7 @@ static void imageRestoreAndRun(const char* path)
         std::sort(s_runs.begin(), s_runs.end(), [](const FrozenRun& x, const FrozenRun& y) { return x.start < y.start; });
         s_snapFd = fd; // keep the image open so dirtymap/celldiff can diff against it
         mi_free_set_filter(frozenFreeFilter);
+        if (hdr.reserved[0]) mi_theap_freeze((mi_theap_t*)hdr.reserved[0]);
         mi_theap_set_default(mi_heap_theap(mi_heap_new()));
     }
     if (getenv("BUN_IMAGE_TRAP")) imageTrapArm();

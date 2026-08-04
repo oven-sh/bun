@@ -440,6 +440,7 @@ mi_decl_export bool mi_subproc_visit_heaps(mi_subproc_id_t subproc, mi_heap_visi
 
 struct mi_theap_s;
 typedef struct mi_theap_s mi_theap_t;
+mi_decl_export void mi_theap_freeze(mi_theap_t* theap) mi_attr_noexcept;  // image restore: never collect/purge/idle-sweep this theap again
 
 mi_decl_export mi_theap_t* mi_heap_theap(mi_heap_t* heap);
 mi_decl_export mi_theap_t* mi_theap_set_default(mi_theap_t* theap);

@@ -3294,9 +3294,24 @@ where
                                     Self::drain_response_buffer_and_metadata_corked,
                                     this.as_ctx_ptr(),
                                 );
+                            } else if matches!(
+                                byte_stream.parent_const().producer.get(),
+                                WebCore::streams::SourceHandle::HTMLRewriter(_)
+                            ) {
+                                // An HTMLRewriter producer can fail before its
+                                // first byte (an async handler rejecting);
+                                // defer status/headers to the first chunk/end
+                                // so that failure can still reach `error()`.
+                                // Headers never preceded the first byte on
+                                // this path before either: the old
+                                // implementation buffered the whole rewrite.
+                            } else {
+                                // if we only have metadata to send, send it now
+                                resp.run_corked_with_type(
+                                    Self::render_metadata_corked,
+                                    this.as_ctx_ptr(),
+                                );
                             }
-                            // Otherwise defer metadata to the first chunk/end so
-                            // a pre-first-byte failure can still reach `error()`.
                             return;
                         }
                     }
@@ -3341,9 +3356,9 @@ where
         }
         let resp = this.resp.get().expect("infallible: resp bound");
 
-        // The `Source::Bytes` path defers metadata until the first body
-        // chunk so an upstream failure that arrives before any bytes can
-        // still reach the server's `error()` hook. Flush it now, corked.
+        // A rewriter-produced `Source::Bytes` body defers metadata until the
+        // first chunk so a pre-first-byte failure can still reach the
+        // server's `error()` hook. Flush it now, corked.
         if !this.flags.has_written_status() {
             resp.run_corked_with_type(Self::render_metadata_corked, this.as_ctx_ptr());
         }

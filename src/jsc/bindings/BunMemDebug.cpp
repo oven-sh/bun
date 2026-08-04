@@ -790,6 +790,7 @@ struct us_loop_t;
 extern "C" void us_loop_reinit_for_image(struct us_loop_t*);
 extern "C" struct us_loop_t* uws_get_loop();
 extern "C" void Bun__imageContinueEventLoop();
+extern "C" void uws_adopt_loop_for_current_thread(struct us_loop_t*);
 void _mi_scavenger_forked_child(void); // C++-mangled (mimalloc is built as C++ here)
 extern "C" void Bun__imageAdoptMainThreadVM();
 // ===== v0 heap image experiment (macOS, no-ASLR, JIT off): dump all mimalloc/JSC memory + __DATA at idle; a fresh process maps it back and runs JS on the image VM.
@@ -841,12 +842,15 @@ static void imageTrapReport()
 }
 
 static struct termios s_imageTermios; static int s_imageTermiosFd = -1; // lives in __DATA, so it travels inside the image
+static uint64_t s_imageOpenFds[16]; // fds 0..1023 open in the build process: the restored process parks /dev/null on them so stale closes are harmless and new fds never alias them
 static void imageDump(JSC::VM& vm, const char* path)
 {
 #if OS(DARWIN)
     JSC::JSLockHolder lock(vm);
     s_imageTermiosFd = -1;
     for (int fd = 0; fd < 3; fd++) if (isatty(fd) && !tcgetattr(fd, &s_imageTermios)) { s_imageTermiosFd = fd; break; }
+    memset(s_imageOpenFds, 0, sizeof s_imageOpenFds);
+    for (int fd = 3; fd < 1024; fd++) if (fcntl(fd, F_GETFD) != -1) s_imageOpenFds[fd / 64] |= 1ull << (fd % 64);
     { // Error objects keep raw StackFrames (CodeBlock pointers) until .stack is first read; resolve them now so nothing in the image points at code we drop or re-link
         JSC::HeapIterationScope scope(vm.heap);
         vm.heap.objectSpace().forEachLiveCell(scope, [&](JSC::HeapCell* heapCell, JSC::HeapCell::Kind kind) {
@@ -938,11 +942,12 @@ static void imageDump(JSC::VM& vm, const char* path)
     hdr.globalObject = (uint64_t)defaultGlobalObject();
     hdr.mainThread = (uint64_t)&WTF::Thread::currentSingleton();
     hdr.reserved[0] = (uint64_t)mi_theap_get_default(); // main thread's mimalloc theap (TLS-referenced, lives in the heap)
+    hdr.reserved[7] = (uint64_t)uws_get_loop(); // main thread's uWS loop (TLS-referenced)
     { pthread_key_t k = 0; if (!pthread_key_create(&k, nullptr)) { hdr.reserved[1] = (uint64_t)k; pthread_key_delete(k); } } // high-water mark of pthread TLS keys
     { // fds that are the controlling TTY (dup'd stdin/stdout readers): the restoring process recreates them from its own 0/1/2
         struct stat st[3]; bool have[3]; for (int i = 0; i < 3; i++) have[i] = !fstat(i, &st[i]) && S_ISCHR(st[i].st_mode);
         int n = 0;
-        for (int fd = 3; fd < 256 && n < 6; fd++) {
+        for (int fd = 3; fd < 256 && n < 5; fd++) {
             struct stat fs; if (fstat(fd, &fs) || !S_ISCHR(fs.st_mode)) continue;
             int fl = fcntl(fd, F_GETFL); int src = -1;
             for (int i = 0; i < 3; i++) if (have[i] && fs.st_rdev == st[i].st_rdev) { src = ((fl & O_ACCMODE) == O_RDONLY) ? 0 : (i == 0 ? 1 : i); break; }
@@ -1026,8 +1031,16 @@ static void imageRestoreAndRun(const char* path)
     // Re-seat allocator TLS: this thread's default theap must be the image's main theap, not whatever this process created before the overlay.
     if (hdr.reserved[0]) mi_theap_set_default((mi_theap_t*)hdr.reserved[0]);
     _mi_scavenger_forked_child(); // same situation as a fork child: the image says a scavenger runs, but no such thread exists here
+    { // park /dev/null on every fd number the image thinks it owns (the image file fd itself gets moved out of the way first)
+        int hi = 1023; while (hi > 2 && !(s_imageOpenFds[hi / 64] & (1ull << (hi % 64)))) hi--;
+        if (fd <= hi) { int moved = fcntl(fd, F_DUPFD_CLOEXEC, hi + 1); if (moved >= 0) { close(fd); fd = moved; } }
+        int devnull = open("/dev/null", O_RDWR | O_CLOEXEC); int parked = 0;
+        for (int k = 3; k <= hi; k++) if ((s_imageOpenFds[k / 64] & (1ull << (k % 64))) && fcntl(k, F_GETFD) == -1 && dup2(devnull, k) == k) parked++;
+        if (devnull > hi) close(devnull);
+        if (verbose) fprintf(stderr, "[image] parked /dev/null on %d stale fd numbers (max %d)\n", parked, hi);
+    }
     if (s_imageTermiosFd >= 0 && isatty(s_imageTermiosFd)) tcsetattr(s_imageTermiosFd, TCSANOW, &s_imageTermios); // raw mode etc. as the build process left it
-    for (int i = 2; i < 8 && hdr.reserved[i]; i++) { // recreate TTY fds at their old numbers from our own stdio
+    for (int i = 2; i < 7 && hdr.reserved[i]; i++) { // recreate TTY fds at their old numbers from our own stdio
         int fd = (int)(hdr.reserved[i] >> 16), fl = (int)((hdr.reserved[i] >> 4) & 0xfff), src = (int)(hdr.reserved[i] & 0xf) - 1;
         if (isatty(src) && dup2(src, fd) == fd) { if (fl & O_NONBLOCK) fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK); if (verbose) fprintf(stderr, "[image] dup2(%d, %d)\n", src, fd); }
     }
@@ -1056,6 +1069,7 @@ static void imageRestoreAndRun(const char* path)
     JSC::VM* vm = (JSC::VM*)hdr.vm;
     fprintf(stderr, "[image] thread: image main=%p currentSingleton=%p currentMayBeNull=%p apiLock owner=%p held=%d\n", mainThread, &WTF::Thread::currentSingleton(), WTF::Thread::currentMayBeNull(), vm->apiLock().ownerThread() ? vm->apiLock().ownerThread()->get() : nullptr, (int)vm->apiLock().currentThreadIsHoldingLock());
     JSC::JSGlobalObject* globalObject = (JSC::JSGlobalObject*)hdr.globalObject;
+    uws_adopt_loop_for_current_thread((struct us_loop_t*)hdr.reserved[8 - 1]); // main thread's uWS::Loop TLS -> the image's loop object (else uws_get_loop() would make a second loop)
     us_loop_reinit_for_image(uws_get_loop());
     Bun__imageAdoptMainThreadVM();
     { JSC::JSLockHolder lock(*vm); vm->didRestoreFromImage();

@@ -1782,6 +1782,10 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
   {
     return (struct us_loop_t *)uWS::Loop::get();
   }
+  void uws_adopt_loop_for_current_thread(struct us_loop_t *loop)
+  {
+    uWS::Loop::adoptForCurrentThread((uWS::Loop *)loop);
+  }
   struct us_loop_t *uws_get_loop_with_native(void *existing_native_loop)
   {
       return (struct us_loop_t *)uWS::Loop::get(existing_native_loop);

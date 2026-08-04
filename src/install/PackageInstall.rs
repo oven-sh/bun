@@ -1631,43 +1631,37 @@ impl<'a> PackageInstall<'a> {
                             );
                         }
                         EntryKind::File => {
+                            // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
+                            fn map_linkat_err(err: sys::Error) -> crate::Error {
+                                match err.get_errno() {
+                                    sys::E::EXDEV | sys::E::EACCES | sys::E::EPERM => {
+                                        crate::Error::NotSameFileSystem
+                                    }
+                                    sys::E::ENXIO => {
+                                        crate::Error::Sys(bun_errno::SystemErrno::ENXIO)
+                                    }
+                                    _ => err.into(),
+                                }
+                            }
+
                             if let Err(err) = sys::linkat(
                                 entry.dir,
                                 entry.basename,
                                 destination_dir.fd(),
                                 entry.path,
                             ) {
-                                // Map raw errno to the error names the caller's
-                                // `NotSameFileSystem` / `ENXIO` checks (and the
-                                // copyfile fallback in `install()`) expect.
-                                match err.get_errno() {
-                                    sys::E::EEXIST => {
-                                        let _ = sys::unlinkat(destination_dir, entry.path);
-                                        sys::linkat(
-                                            entry.dir,
-                                            entry.basename,
-                                            destination_dir.fd(),
-                                            entry.path,
-                                        )?;
-                                    }
-                                    sys::E::EXDEV => {
-                                        return Err(crate::Error::NotSameFileSystem);
-                                    }
-                                    sys::E::EPERM | sys::E::EACCES if cfg!(target_env = "ohos") => {
-                                        // OHOS SELinux blocks hard links; fall back to copy
-                                        crate::copy_file_fallback(
-                                            entry.dir,
-                                            entry.basename,
-                                            destination_dir.fd(),
-                                            entry.path,
-                                        )?;
-                                    }
-                                    sys::E::ENXIO => {
-                                        return Err(crate::Error::Sys(
-                                            bun_errno::SystemErrno::ENXIO,
-                                        ));
-                                    }
-                                    _ => return Err(err.into()),
+
+                                if err.get_errno() == sys::E::EEXIST {
+                                    let _ = sys::unlinkat(destination_dir, entry.path);
+                                    sys::linkat(
+                                        entry.dir,
+                                        entry.basename,
+                                        destination_dir.fd(),
+                                        entry.path,
+                                    )
+                                    .map_err(map_linkat_err)?;
+                                } else {
+                                    return Err(map_linkat_err(err));
                                 }
                             }
 

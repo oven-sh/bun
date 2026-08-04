@@ -1106,6 +1106,12 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             }
         }
 
+        if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath
+            && self.len() + 1 + part.len() >= U::MAX_PATH
+        {
+            return Err(PathError::MaxPathExceeded);
+        }
+
         // The four (C, U) arms are dispatched below via TypeId checks, which
         // const-fold to a single arm per monomorphization.
         use core::any::TypeId;

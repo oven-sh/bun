@@ -471,16 +471,20 @@ Server.prototype.unref = function () {
   return this;
 };
 
+// Node.js's ConnectionsList is parser-keyed: freeParser() drops the entry on
+// 'upgrade'/'connect' handoff (releaseServerParserShim nulls socket.parser on
+// that same handoff), so upgraded sockets are outside both drain methods.
 Server.prototype.closeAllConnections = function () {
-  const server = this[serverSymbol];
-  if (!server) {
+  const connections = this[kTrackedConnections];
+  if (!connections) {
     return;
   }
-  this[serverSymbol] = undefined;
-  clearInterval(this[kConnectionsCheckingInterval]);
-  this.listening = false;
-
-  server.stop(true);
+  for (const socket of connections) {
+    if (socket.parser == null) {
+      continue;
+    }
+    socket.destroy();
+  }
 };
 
 Server.prototype.getConnections = function (callback) {
@@ -494,8 +498,23 @@ Server.prototype.getConnections = function (callback) {
 };
 
 Server.prototype.closeIdleConnections = function () {
-  const server = this[serverSymbol];
-  server?.closeIdleConnections();
+  const connections = this[kTrackedConnections];
+  if (!connections) {
+    return;
+  }
+  for (const socket of connections) {
+    const message = socket._httpMessage;
+    if (socket.parser == null || (message && !message.finished) || socket[kPipelinedResponses]?.length) {
+      continue;
+    }
+    // Node.js's ConnectionsList.idle() additionally skips parsers whose
+    // last_message_start_ is non-zero (set on accept and on each message
+    // begin); the native handle exposes the same lastMessageStartMs.
+    if (socket[kHandle]?.hasIncompleteRequest) {
+      continue;
+    }
+    socket.destroy();
+  }
 };
 
 Server.prototype.close = function (optionalCallback?) {

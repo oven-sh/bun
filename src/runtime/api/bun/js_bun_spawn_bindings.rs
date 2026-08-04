@@ -1335,8 +1335,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool, const BUFFERED_ASYNC: bool>(
         stdin: JsCell::new(Writable::Ignore),
         stdout: JsCell::new(Readable::Ignore),
         stderr: JsCell::new(Readable::Ignore),
-        // 1=JS wrapper / spawnSync owner / spawnAndWait promise,
-        // 2=Process exit handler. Last one out runs Subprocess::deinit.
+        // 1=JS wrapper / spawnSync owner / spawnAndWait promise; 2=exit handler.
         ref_count: bun_ptr::RefCount::init_exact_refs(2),
         stdio_pipes: JsCell::new(core::mem::take(&mut spawned_extra_pipes)),
         ipc_data: Cell::new(None),
@@ -1414,9 +1413,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool, const BUFFERED_ASYNC: bool>(
     ) {
         Ok(v) => subprocess.stdin.set(v),
         Err(err) => {
-            // Neither owner is wired up yet: release both refs below (the
-            // second runs `deinit`). stdout/stderr are still `.ignore`, so
-            // close the raw spawned handles here.
+            // Neither owner is wired up yet; stdout/stderr are still `.ignore`.
             #[cfg(unix)]
             {
                 if let Some(fd) = spawned_stdout {

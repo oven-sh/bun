@@ -1409,8 +1409,7 @@ impl Subprocess<'_> {
         }
     }
 
-    /// JS wrapper finalizer (and spawnSync's explicit release): drops that
-    /// owner's +1. Resource teardown is in [`Subprocess::deinit`].
+    /// JS wrapper finalizer / spawnSync release; teardown is in [`Subprocess::deinit`].
     pub fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(Subprocess, "finalize");
         // Refcounted: the trailing `this.deref()` releases the JS wrapper's +1;
@@ -1452,8 +1451,7 @@ impl Subprocess<'_> {
             this.deref();
         }
 
-        // Swept at VM teardown with the child still running: the exit handler
-        // can no longer fire, so release its ref here.
+        // Swept at VM teardown with the child still running.
         let exit_handler_pending = this.process().exit_handler.is_some();
         this.process_mut().detach();
         if exit_handler_pending {
@@ -1464,8 +1462,7 @@ impl Subprocess<'_> {
         this.deref();
     }
 
-    /// `RefCount` destructor (last deref, whoever held it). Each step is
-    /// idempotent with the eager calls in `finalize` / `on_process_exit`.
+    /// `RefCount` destructor; idempotent with `finalize` / `on_process_exit`.
     fn deinit(this: *mut Self) {
         bun_output::scoped_log!(Subprocess, "deinit");
         // SAFETY: refcount == 0 ⇒ `this` is the unique owner of a live Box.

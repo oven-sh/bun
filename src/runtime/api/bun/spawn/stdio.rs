@@ -409,8 +409,7 @@ impl Stdio {
         Ok(())
     }
 
-    /// `is_sync`: buffered-result caller (spawnSync / spawnAndWait); rejects
-    /// options that need a live Subprocess handle.
+    /// `is_sync`: spawnSync / spawnAndWait (no live Subprocess handle).
     pub(crate) fn extract(
         out_stdio: &mut Stdio,
         global: &JSGlobalObject,

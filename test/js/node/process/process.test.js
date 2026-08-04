@@ -2103,6 +2103,26 @@ it("--disable-warning suppresses print but not user 'warning' listeners", async 
   expect(exitCode).toBe(0);
 });
 
+// Bun analog of the upstream test-process-warnings.mjs NODE_OPTIONS case, which
+// is skipped via process.config.variables.node_without_node_options because Bun
+// reads BUN_OPTIONS instead of NODE_OPTIONS.
+it.each(["main thread", "worker"])("--disable-warning is honored via BUN_OPTIONS (%s)", async where => {
+  const body = `process.emitWarning("one", { type: "DeprecationWarning", code: "DEP1" });
+     process.emitWarning("two", { type: "DeprecationWarning", code: "DEP2" });`;
+  const src =
+    where === "worker" ? `new (require("node:worker_threads").Worker)(${JSON.stringify(body)}, { eval: true });` : body;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: { ...bunEnv, BUN_OPTIONS: "--disable-warning=DEP2" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toMatch(/\[DEP1\] DeprecationWarning: one/);
+  expect(stderr).not.toMatch(/DEP2/);
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+});
+
 it("_rawDebug never throws when fd 2 is closed", async () => {
   await using proc = Bun.spawn({
     cmd: [

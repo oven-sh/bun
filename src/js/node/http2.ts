@@ -4999,8 +4999,22 @@ class ClientHttp2Session extends Http2Session {
     streamError: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) => {
       if (!self || typeof stream !== "object") return;
 
+      // A stream whose own reset was dispatched before any session teardown (e.g. the native
+      // header-encode failure path, which tears the session down on the next dispatch because
+      // the HPACK encoder is desynced) must keep its own code: surface it instead of the
+      // generic ERR_HTTP2_STREAM_CANCEL that destroy() installs for still-open streams.
+      const ownError =
+        typeof error === "number" && error !== 0 && !stream.rstCode && self[kSessionDestroyError] == null;
+      if (ownError) stream.rstCode = error;
       self.#connections--;
-      process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
+      process.nextTick(
+        emitStreamErrorNT,
+        self,
+        stream,
+        ownError ? streamErrorFromCode(error) : error,
+        true,
+        self.#connections === 0 && self.#closed,
+      );
     }),
     streamEnd: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) => {
       if (!self || typeof stream !== "object") return;

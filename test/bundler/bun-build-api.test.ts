@@ -514,10 +514,19 @@ describe("Bun.build", () => {
           if (!first.success) throw new AggregateError(first.logs, "first build failed");
           rmSync(sub, { recursive: true, force: true });
           writeFileSync(sub, "");
-          const second = await Bun.build({ entrypoints: [entry], throw: false });
-          if (second.success) throw new Error("second build should have failed to resolve ./sub/mod.js");
-          if (!second.logs.some(l => String(l.message ?? l).includes("./sub/mod.js")))
-            throw new AggregateError(second.logs, "second build failed for an unrelated reason");
+          // BundleThread bumps the generation after its queue drains, which may
+          // be after the first build's promise has already resolved. Until it
+          // does, a build reuses the stale listing and fails reading the file
+          // (ENOTDIR) instead of resolving; re-build until the resolver itself
+          // reports the failure.
+          let second;
+          for (let i = 0; ; i++) {
+            second = await Bun.build({ entrypoints: [entry], throw: false });
+            if (second.success) throw new Error("second build should have failed to resolve ./sub/mod.js");
+            if (second.logs.some(l => String(l.message ?? l).includes("Could not resolve"))) break;
+            if (i === 100) throw new AggregateError(second.logs, "second build never reported a resolve error");
+            await Bun.sleep(5);
+          }
           rmSync(sub, { force: true });
           mkdirSync(sub);
           writeFileSync(join(sub, "mod.js"), "export const value = 2;\\n");

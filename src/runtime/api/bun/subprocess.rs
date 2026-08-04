@@ -113,14 +113,16 @@ pub use bun_spawn::process::StdioKind;
 // codegen shim hands to whichever method JS calls next. `UnsafeCell`-backed
 // fields suppress `noalias` on the outer `&Subprocess`, making the miscompile
 // structurally impossible.
-// Intrusive ref-count: `RefPtr<Subprocess>` provides ref/deref and frees the
-// Box when ref_count → 0; `deinit` runs when the last ref drops.
+// Intrusive ref-count: owned-resource teardown lives in [`Subprocess::deinit`],
+// which runs when the last ref drops (JS finalizer, process-exit handler,
+// stdin sink, or a pending `spawnAndWait` promise), not in the GC finalizer.
 #[derive(bun_ptr::RefCounted)]
+#[ref_count(destroy = Subprocess::deinit)]
 pub struct Subprocess<'a> {
     pub(crate) ref_count: RefCount<Subprocess<'a>>,
     /// Intrusively-refcounted `Process`. Allocated via
     /// `heap::alloc` in `Process::init_posix`/`init_windows`; the +1 ref
-    /// from construction is released in [`Subprocess::finalize`] via
+    /// from construction is released in [`Subprocess::deinit`] via
     /// `Process::deref()`. Not `Arc` — `Process` carries its own
     /// `ThreadSafeRefCount` and crosses the `ProcessAutoKiller`/waiter-thread
     /// boundary by raw identity, so wrapping in `Arc` would double-count and
@@ -422,10 +424,6 @@ impl Subprocess<'_> {
     }
 
     pub(crate) fn compute_has_pending_activity(&self) -> bool {
-        if self.spawn_and_wait_promise.get().has() {
-            return true;
-        }
-
         // `ipc_data` is never set back to `None` after init, so checking only
         // for `is_some()` would keep the JSSubprocess strongly referenced for the
         // lifetime of the VM. The IPC side contributes pending activity until
@@ -452,6 +450,10 @@ impl Subprocess<'_> {
 
     pub(crate) fn update_has_pending_activity(&self) {
         if self.flags.get().contains(Flags::IS_SYNC) {
+            return;
+        }
+        // No JS wrapper (spawnAndWait) or already finalized.
+        if self.this_value.get().is_empty() {
             return;
         }
 
@@ -563,7 +565,6 @@ impl Subprocess<'_> {
             return;
         };
         let Some(promise) = promise_js.as_any_promise() else {
-            self.update_has_pending_activity();
             self.deref();
             return;
         };
@@ -591,7 +592,7 @@ impl Subprocess<'_> {
             }
         }
 
-        self.update_has_pending_activity();
+        // Releases the pending-promise ref; may run `deinit` and free `self`.
         self.deref();
     }
 
@@ -1410,6 +1411,10 @@ impl Subprocess<'_> {
         }
     }
 
+    /// GC finalizer for the `JSSubprocess` wrapper (also used by `spawnSync`
+    /// as its explicit owner release). Drops the wrapper's +1 and force-releases
+    /// refs whose callbacks can no longer fire once the wrapper is gone; the
+    /// owned-resource teardown itself lives in [`Subprocess::deinit`].
     pub fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(Subprocess, "finalize");
         // Refcounted: the trailing `this.deref()` releases the JS wrapper's +1;
@@ -1420,11 +1425,8 @@ impl Subprocess<'_> {
         // access it after it's been freed We cannot call any methods which
         // access GC'd values during the finalizer
         this.this_value.with_mut(|v| v.finalize());
-        let spawn_and_wait_pending = this.spawn_and_wait_promise.get().has();
-        this.spawn_and_wait_promise.with_mut(|p| p.deinit());
-        if spawn_and_wait_pending {
-            this.deref();
-        }
+        this.update_flags(|f| f.insert(Flags::FINALIZED));
+        debug_assert!(!this.spawn_and_wait_promise.get().has());
 
         this.clear_abort_signal();
 
@@ -1432,6 +1434,8 @@ impl Subprocess<'_> {
             !this.compute_has_pending_activity()
                 || VirtualMachine::VirtualMachine::get().is_shutting_down()
         );
+        // Nobody can observe the streams anymore; stop readers now rather than
+        // waiting for the last ref.
         this.finalize_streams();
 
         // `Writable::init()` took a +1 (`subprocess.ref_()`, guarded by
@@ -1454,31 +1458,51 @@ impl Subprocess<'_> {
             this.deref();
         }
 
+        // At VM teardown the wrapper can be swept while the child is still
+        // running; the exit handler would then fire into a dead VM, so detach
+        // it and release the ref it would have released.
         let exit_handler_pending = this.process().exit_handler.is_some();
         this.process_mut().detach();
         if exit_handler_pending {
             this.deref();
         }
-        // Release the intrusive ref now,
-        // not when `ref_count` → 0. The raw `*mut Process` is left dangling but
-        // no code path reads `this.process` after this (finalize runs once).
-        // SAFETY: `process` is the live Box-backed Process; deref() frees it
-        // when its own ThreadSafeRefCount reaches zero.
-        unsafe { Process::deref(this.process.as_ptr()) };
 
-        if this.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            Self::timer_all().remove(this.event_loop_timer.as_ptr());
+        // The wrapper's own +1; may run `deinit`.
+        this.deref();
+    }
+
+    /// `RefCount` destructor: runs when the last ref drops, from whichever
+    /// owner that was (GC finalizer, `on_process_exit`, `on_stdin_destroyed`,
+    /// or `maybe_resolve_spawn_and_wait`). Every step is idempotent with the
+    /// eager calls in [`finalize`](Self::finalize) / `on_process_exit`.
+    ///
+    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
+    /// whose generated trait `destructor` upholds the sole-owner contract.
+    fn deinit(this: *mut Self) {
+        bun_output::scoped_log!(Subprocess, "deinit");
+        // SAFETY: refcount == 0 ⇒ `this` is the unique owner of a live Box.
+        let this_ref: &Self = unsafe { &*this };
+
+        this_ref.clear_abort_signal();
+        this_ref.finalize_streams();
+        this_ref.process_mut().detach();
+        // SAFETY: `process` is the live Box-backed Process holding the +1 from
+        // `to_process`; nothing reads `this.process` after this.
+        unsafe { Process::deref(this_ref.process.as_ptr()) };
+
+        if this_ref.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
+            Self::timer_all().remove(this_ref.event_loop_timer.as_ptr());
         }
-        this.set_event_loop_timer_refd(false);
+        this_ref.set_event_loop_timer_refd(false);
 
-        let mut mb = this.stdout_maxbuf.get();
+        let mut mb = this_ref.stdout_maxbuf.get();
         MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
-        this.stdout_maxbuf.set(mb);
-        let mut mb = this.stderr_maxbuf.get();
+        this_ref.stdout_maxbuf.set(mb);
+        let mut mb = this_ref.stderr_maxbuf.get();
         MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
-        this.stderr_maxbuf.set(mb);
+        this_ref.stderr_maxbuf.set(mb);
 
-        if let Some(ipc_data) = this.ipc_data.take() {
+        if let Some(ipc_data) = this_ref.ipc_data.take() {
             // In normal operation the socket is already `.closed` by the time we
             // get here (that is what allowed `computeHasPendingActivity` to drop
             // to false and let GC collect us). Detach and release our ref; any
@@ -1491,8 +1515,8 @@ impl Subprocess<'_> {
             }
         }
 
-        this.update_flags(|f| f.insert(Flags::FINALIZED));
-        this.deref();
+        // SAFETY: allocated via `heap::into_raw(Box::new(..))` in `spawn_maybe_sync`.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     pub(crate) fn get_exited(&self, this_value: JSValue, global_this: &JSGlobalObject) -> JSValue {

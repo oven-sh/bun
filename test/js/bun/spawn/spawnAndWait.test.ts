@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { readdirSync } from "node:fs";
 
 describe.concurrent("Bun.spawnAndWait basics", () => {
   test("basic stdout", async () => {
@@ -190,20 +191,50 @@ test("ENOENT throws synchronously", () => {
   ).toThrow(expect.objectContaining({ code: "ENOENT" }));
 });
 
-test("onExit is ignored and does not leak the internal Subprocess", async () => {
+test("onExit is ignored at runtime", async () => {
   let called = false;
   const result = await Bun.spawnAndWait({
     cmd: [bunExe(), "-e", "console.log('hi')"],
     env: bunEnv,
     // @ts-expect-error - onExit is not in SpawnSyncOptions; must be a silent no-op at runtime
-    onExit(proc: any) {
+    onExit() {
       called = true;
-      proc.stdout;
     },
   });
   expect(called).toBe(false);
   expect(result.stdout.toString()).toBe("hi\n");
   expect(result.exitCode).toBe(0);
+});
+
+test("stdin ReadableStream is rejected (matches spawnSync)", () => {
+  expect(() =>
+    Bun.spawnAndWait({
+      cmd: [bunExe(), "-e", ""],
+      env: bunEnv,
+      stdin: new ReadableStream({ start(c) { c.close(); } }),
+    }),
+  ).toThrow("'stdin' ReadableStream is only supported with Bun.spawn");
+});
+
+// Teardown is refcount-driven: pipes, pidfd, and extra stdio fds are released
+// when the promise settles, without waiting for GC to finalize a wrapper.
+test.skipIf(!isLinux)("releases fds when the promise settles, without GC", async () => {
+  const countFds = () => readdirSync("/proc/self/fd").length;
+  const once = async () => {
+    const result = await Bun.spawnAndWait({
+      cmd: [bunExe(), "-e", "console.log('x')"],
+      env: bunEnv,
+      stdio: [Buffer.from("in"), "pipe", "pipe", "pipe"],
+    });
+    expect(result.exitCode).toBe(0);
+  };
+  // Warm up any lazily-opened runtime fds.
+  await once();
+  const before = countFds();
+  for (let i = 0; i < 10; i++) {
+    await once();
+  }
+  expect(countFds()).toBe(before);
 });
 
 test("stdio: 'socket-fd' is rejected", () => {

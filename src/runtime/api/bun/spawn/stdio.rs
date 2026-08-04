@@ -363,7 +363,7 @@ impl Stdio {
             webcore::body::Value::Locked(_) => {
                 if is_sync {
                     return Err(global.throw_invalid_arguments(format_args!(
-                        "ReadableStream cannot be used in sync mode"
+                        "ReadableStream body as stdio is only supported with Bun.spawn"
                     )));
                 }
 
@@ -409,6 +409,9 @@ impl Stdio {
         Ok(())
     }
 
+    /// `is_sync`: the caller only returns a buffered result object (spawnSync /
+    /// spawnAndWait), so options that need a live `Subprocess` handle
+    /// (ReadableStream stdin, 'socket-fd') are rejected.
     pub(crate) fn extract(
         out_stdio: &mut Stdio,
         global: &JSGlobalObject,
@@ -535,7 +538,7 @@ impl Stdio {
 
             if is_sync {
                 return Err(global.throw_invalid_arguments(format_args!(
-                    "'{}' ReadableStream cannot be used in sync mode",
+                    "'{}' ReadableStream is only supported with Bun.spawn",
                     bstr::BStr::new(name),
                 )));
             }

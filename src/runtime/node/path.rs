@@ -2981,7 +2981,7 @@ fn relative(
 
 /// Based on Node v21.6.1 path.posix.resolve:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1095
-fn resolve_posix_t<'a, T: PathCharCwd>(
+pub(crate) fn resolve_posix_t<'a, T: PathCharCwd>(
     paths: &[&[T]],
     buf: &'a mut [T],
     buf2: &mut [T],

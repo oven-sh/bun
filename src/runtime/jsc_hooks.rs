@@ -3764,11 +3764,9 @@ unsafe fn fetch_builtin_module(
         // `module.registerHooks()` load hooks observe builtins (node:-URL, null source);
         // Node ignores hook source/format overrides for the `builtin` format.
         // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-        if unsafe { &*jsc_vm }.module_hooks_load_count > 0
-            && !unsafe { &*jsc_vm }.module_hooks_skip
-            && !_global.is_null()
-            && spec.starts_with(b"node:")
-        {
+        let hooks_active =
+            unsafe { (*jsc_vm).module_hooks_load_count > 0 && !(*jsc_vm).module_hooks_skip };
+        if hooks_active && !_global.is_null() && spec.starts_with(b"node:") {
             // SAFETY: `_global` is non-null (checked above) and live.
             let global_ref = unsafe { &*_global };
             // SAFETY: `specifier` is live for the call.
@@ -4438,10 +4436,10 @@ unsafe fn transpile_file(
     // ── `module.registerHooks()` load hooks ─────────────────────────────────
     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
     let module_hooks_active = unsafe {
-        (*jsc_vm).module_hooks_resolve_count > 0 || (*jsc_vm).module_hooks_load_count > 0
+        ((*jsc_vm).module_hooks_resolve_count > 0 || (*jsc_vm).module_hooks_load_count > 0)
+            && !(*jsc_vm).module_hooks_skip
     };
     if module_hooks_active
-        && !unsafe { &*jsc_vm }.module_hooks_skip
         && lr.virtual_source.is_none()
         && !had_blob
         && force_loader_type.is_none()
@@ -4458,11 +4456,11 @@ unsafe fn transpile_file(
             ModuleType::Esm => 2,
             _ => 0,
         };
-        // SAFETY: `&path_str` is live for the call.
+        // SAFETY: `path_str` is live for the call.
         match unsafe {
             bun_jsc::cpp::Bun__runModuleLoadHooks(
                 global_ref,
-                &path_str,
+                &raw const path_str,
                 loader_hint,
                 module_type_hint,
                 is_commonjs_require,
@@ -4479,6 +4477,7 @@ unsafe fn transpile_file(
                         // virtual source in `get_loader_and_virtual_source`).
                         let contents: &'static [u8] =
                             unsafe { bun_ptr::detach_lifetime(hook_source_utf8.slice()) };
+                        // SAFETY: see above.
                         let path_text: &'static [u8] =
                             unsafe { bun_ptr::detach_lifetime(lr.path.text) };
                         hook_virtual_source = bun_ast::Source {
@@ -5380,8 +5379,9 @@ unsafe fn resolve_hook(
     // `module.registerHooks()` resolve hooks — before builtin alias so hooks observe
     // builtins. Mirrors `VirtualMachine::resolve_maybe_needs_trailing_slash`.
     // SAFETY: `vm` is the live per-thread VM.
-    if unsafe { &*vm }.module_hooks_resolve_count > 0
-        && !unsafe { &*vm }.module_hooks_skip
+    let resolve_hooks_active =
+        unsafe { (*vm).module_hooks_resolve_count > 0 && !(*vm).module_hooks_skip };
+    if resolve_hooks_active
         && bun_jsc::node_module_module::module_hooks_should_intercept(specifier_utf8.slice())
     {
         // SAFETY: `vm` is the live per-thread VM.
@@ -5395,14 +5395,14 @@ unsafe fn resolve_hook(
                 return true;
             }
         } else {
-            // SAFETY: `&specifier` / `&source` are live for the call.
+            // SAFETY: `specifier` / `source` are live for the call.
             match unsafe {
                 bun_jsc::cpp::Bun__runModuleResolveHooks(
                     global_ref,
-                    &specifier,
-                    &source,
-                    is_esm,
-                    is_user_require_resolve,
+                    &raw const specifier,
+                    &raw const source,
+                    mode.is_esm(),
+                    matches!(mode, ResolveMode::RequireResolve),
                 )
             } {
                 Ok(v) if v.is_undefined_or_null() => {}

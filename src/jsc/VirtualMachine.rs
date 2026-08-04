@@ -4412,14 +4412,14 @@ impl VirtualMachine {
                     return Ok(());
                 }
             } else {
-                // SAFETY: `&specifier` / `&source` are live for the call.
+                // SAFETY: `specifier` / `source` are live for the call.
                 match unsafe {
                     crate::cpp::Bun__runModuleResolveHooks(
                         global,
-                        &specifier,
-                        &source,
-                        is_esm,
-                        is_user_require_resolve,
+                        &raw const specifier,
+                        &raw const source,
+                        mode.is_esm(),
+                        matches!(mode, ResolveMode::RequireResolve),
                     )
                 } {
                     Ok(v) if v.is_undefined_or_null() => {}

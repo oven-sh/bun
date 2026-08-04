@@ -81,10 +81,9 @@ pub(crate) extern "C" fn Bun__Node__getRedirectWarnings(out: *mut bun_core::Stri
     true
 }
 
-/// `--disable-warning` entries as `[ptr, len]` pairs into caller-provided
-/// buffers. Returns the number of entries. `bufs`/`lens` may be null when
-/// `cap == 0` to query the count. Entries borrow the CLI-owned Vec (never
-/// mutated after argument parsing).
+/// `--disable-warning` entries as `[ptr, len]` pairs into caller-provided buffers; returns
+/// the count. `bufs`/`lens` may be null when `cap == 0` to query the count. Entries
+/// borrow the CLI-owned Vec (never mutated after argument parsing).
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__Node__getDisabledWarnings(
     bufs: *mut *const u8,

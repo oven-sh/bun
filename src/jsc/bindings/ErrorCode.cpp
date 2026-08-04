@@ -264,10 +264,8 @@ JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JS
 // on one line ("Received { abc: 123 }") the way Node does.
 extern "C" BunString Bun__inspect_singleline(JSC::JSGlobalObject* globalObject, JSValue value);
 
-// Mirrors the escaping util.inspect applies inside quoted strings: named
-// escapes for common control characters, \xNN for the rest, and the active
-// quote character. Bun.inspect can't be used here: it double-quotes strings
-// while Node's messages use util.inspect's single-quote preference.
+// util.inspect's quoted-string escaping (https://github.com/nodejs/node/blob/main/lib/internal/util/inspect.js
+// strEscape). Bun.inspect double-quotes; Node's messages use single quotes.
 template<typename CharType>
 static void appendEscapedQuotedChar(WTF::StringBuilder& builder, CharType c, char quote)
 {

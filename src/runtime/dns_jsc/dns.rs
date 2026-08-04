@@ -177,21 +177,20 @@ mod lib_c {
 
 /// The windows implementation borrows the struct used for libc getaddrinfo
 #[cfg(windows)]
-mod lib_uv_backend {
+pub(crate) mod lib_uv_backend {
     use super::*;
 
-    struct Holder {
+    pub(crate) struct LibuvCompleteHolder {
         uv_info: *mut libuv::uv_getaddrinfo_t,
-        task: jsc::AnyTask::AnyTask,
     }
 
-    impl Holder {
-        fn run(held: *mut c_void) -> jsc::AnyTask::JsResult<()> {
-            // SAFETY: held was heap-allocated in on_raw_libuv_complete
-            let held = unsafe { bun_core::heap::take(held.cast::<Self>()) };
-            GetAddrInfoRequest::on_libuv_complete(held.uv_info);
-            Ok(())
+    impl LibuvCompleteHolder {
+        pub(crate) fn run(self: Box<Self>) {
+            GetAddrInfoRequest::on_libuv_complete(self.uv_info);
         }
+    }
+    impl bun_event_loop::Taskable for LibuvCompleteHolder {
+        const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::GetAddrInfoLibuvComplete;
     }
 
     extern "C" fn on_raw_libuv_complete(
@@ -203,26 +202,15 @@ mod lib_uv_backend {
         // SAFETY: data was set to the GetAddrInfoRequest pointer before uv_getaddrinfo
         let this: *mut GetAddrInfoRequest = unsafe { (*uv_info).data.cast() };
 
-        let holder = bun_core::heap::into_raw(Box::new(Holder {
-            uv_info,
-            // `AnyTask.callback` is a non-nullable
-            // `fn` pointer, so `MaybeUninit::zeroed().assume_init()` would be
-            // instant UB regardless of the overwrite below; use the trapping
-            // Default and overwrite in place.
-            task: jsc::AnyTask::AnyTask::default(),
-        }));
-        // SAFETY: holder is a valid heap allocation
+        let task = jsc::Task::from_boxed(Box::new(LibuvCompleteHolder { uv_info }));
+        // SAFETY: `this` is the live GetAddrInfoRequest set as uv data.
         unsafe {
-            (*holder).task = jsc::AnyTask::AnyTask {
-                ctx: NonNull::new(holder.cast()),
-                callback: Holder::run,
-            };
             (*this)
                 .head
                 .global_this()
                 .bun_vm()
                 .as_mut()
-                .enqueue_task(jsc::Task::init(&mut (*holder).task));
+                .enqueue_task(task);
         }
     }
 
@@ -4014,9 +4002,12 @@ impl Resolver {
         // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
         unsafe {
             (*state).timer.increment_timer_ref(1, uws_loop);
-            // `JsCell` is `#[repr(transparent)]`, so `as_ptr()` yields the same
-            // address `dispatch.rs::owner!` recovers via `from_field_ptr!`.
-            (*state).timer.insert(self.event_loop_timer.as_ptr());
+            // whole-struct provenance: `from_field_ptr!` recovers the container on fire
+            (*state).timer.insert(
+                core::ptr::addr_of!(self.event_loop_timer)
+                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                    .cast_mut(),
+            );
         }
         true
     }

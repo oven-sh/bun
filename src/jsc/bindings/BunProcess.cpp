@@ -1224,14 +1224,9 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return true;
 
-    // node parity (exitWithUndefinedFatalException): the internal fatal-exception
-    // handler is monkey-patchable as process._fatalException. If user code
-    // replaces it with a non-callable value, node cannot dispatch and exits with
-    // code 6 (InvalidFatalExceptionMonkeyPatching).
-    //
-    // This is an extern "C" entry point called from Rust, so use a top exception
-    // scope: a ThrowScope would simulate a re-throw on destruction that no caller
-    // on this path ever checks.
+    // Node exits with code 6 (InvalidFatalExceptionMonkeyPatching) when process._fatalException
+    // is replaced with a non-callable. Top exception scope: this extern "C" entry is called
+    // from Rust and no caller checks for a simulated re-throw from a ThrowScope.
     {
         auto fatalScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         JSValue fatalException = process->get(globalObject, Identifier::fromString(vm, "_fatalException"_s));
@@ -1241,10 +1236,8 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
                 return true;
         } else if (!fatalException.isCallable()) {
             Bun__Process__exit(globalObject, 6);
-            // Bun__Process__exit is noreturn on the main thread but DOES return
-            // in a worker (it only requests termination); don't fall through into
-            // the uncaughtException emit logic, and report the exception as
-            // handled so the caller doesn't override the exit code.
+            // Bun__Process__exit returns in a worker (only requests termination); don't
+            // fall through to the emit logic and report handled so exit code is preserved.
             return true;
         }
     }
@@ -1706,10 +1699,8 @@ static void ensureOnWarningInstalled(Zig::GlobalObject* globalObject, Process* p
     RELEASE_AND_RETURN(scope, void(JSC::profiledCall(globalObject, ProfilingReason::API, installer, JSC::getCallData(installer), globalObject->globalThis(), args)));
 }
 
-// Node's doEmitWarning: process.emit('warning', warning). The default print
-// is a real 'warning' listener (onWarning), so --disable-warning filtering,
-// trace flags, and property reads all live in JS where getter exceptions
-// propagate to uncaughtException like Node.
+// Node's doEmitWarning: process.emit('warning', warning). The default print is a real
+// 'warning' listener (onWarning), so filtering/trace/property reads live in JS like Node.
 JSC_DEFINE_HOST_FUNCTION(jsFunction_emitWarning, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -1738,13 +1729,9 @@ static JSValue constructLoadEnvFile(VM& vm, JSObject* processObject)
     return JSC::JSFunction::create(vm, globalObject, processObjectInternalsLoadEnvFileCodeGenerator(vm), globalObject);
 }
 
-// Shared helper for lazy PropertyCallback builders that enter JS.
-// setUpStaticFunctionSlot / reifyAllStaticProperties wrap the callback in
-// DeferTerminationForAWhile, so a worker terminate() mid-build does not leave a
-// TerminationException pending here. A non-termination throw from the builtin is
-// cleared and reported so the worker's reifyAllStaticProperties (triggered by
-// node:worker_threads preload deleting main-only process.* entries) does not
-// surface a half-reified process with a pending exception.
+// Lazy PropertyCallback builders that enter JS. reifyAllStaticProperties wraps these in
+// DeferTerminationForAWhile; a non-termination throw is cleared+reported so the worker's
+// reifyAllStaticProperties (node:worker_threads preload) doesn't leave a pending exception.
 static JSValue callLazyProcessBuilder(VM& vm, JSC::JSGlobalObject* globalObject, JSC::FunctionExecutable* (*generator)(VM&), const JSC::ArgList& args)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);

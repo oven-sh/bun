@@ -1733,13 +1733,14 @@ impl BaseScope {
         self.has_callback = has_callback;
         if let Some(parent) = self.parent {
             // SAFETY: parent backref valid; tree is single-threaded and parent
-            // outlives child.
-            let parent = unsafe { &mut *parent };
-            if self.only != Only::No {
-                parent.mark_contains_only();
-            }
-            if self.has_callback {
-                parent.mark_has_callback();
+            // outlives child. Borrows are scoped to each call.
+            unsafe {
+                if self.only != Only::No {
+                    (*parent).mark_contains_only();
+                }
+                if self.has_callback {
+                    (*parent).mark_has_callback();
+                }
             }
         }
     }

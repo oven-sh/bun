@@ -473,10 +473,8 @@ export function windowsEnv(
   // assignment (never Object.defineProperty on the target) keeps the
   // proxy CustomAccessors on `internalEnv` and their side effects intact.
   function writeEnvVar(p: string, k: string, value: unknown) {
-    // coerceForWrite runs Node's EnvSetter semantics (DEP0104 for
-    // non-string values under --pending-deprecation, then ToString) and
-    // fires the TZ timezone side effect on every write, so it survives a
-    // prior `delete process.env.TZ` dropping the CustomAccessor.
+    // Node's EnvSetter semantics (DEP0104 + ToString) and the TZ side effect;
+    // name-matching TZ here survives a prior `delete process.env.TZ`.
     const coerced = coerceForWrite(k, value);
     // Track the key for enumeration if it isn't already there. Don't gate on
     // `k in internalEnv`: the proxy accessors (HTTP_PROXY, ...) always exist
@@ -635,20 +633,12 @@ export function rawDebug() {
 }
 
 export function installOnWarningListener(process, redirectPath, disabledArr) {
-  // Port of Node's lib/internal/process/warning.js onWarning, registered as a
-  // real 'warning' listener so removeAllListeners('warning') silences it and
-  // a throwing user listener does not skip the print.
-  //
-  // node:fs is only loaded when --redirect-warnings/NODE_REDIRECT_WARNINGS is
-  // set; the common case (no redirect) never needs it.
+  // Port of https://github.com/nodejs/node/blob/main/lib/internal/process/warning.js onWarning,
+  // registered as a real 'warning' listener so removeAllListeners('warning') silences it.
   const appendFileSync = redirectPath ? require("node:fs").appendFileSync : undefined;
-  // process.stderr.write instead of console.error: with an inspector Session
-  // that has Runtime enabled, console.* is wrapped to emit
-  // Runtime.consoleAPICalled (inspector.ts). A throwing consoleAPICalled
-  // listener is surfaced via process.emitWarning, so writing through
-  // console.error here would re-enter the listener on the next tick and loop.
-  // process.stderr.write keeps hijackStderr observability and Windows console
-  // handling without touching the console hook.
+  // process.stderr.write, not console.error: under an inspector Session console.* emits
+  // Runtime.consoleAPICalled, and a throwing listener there is surfaced via emitWarning —
+  // console.error would re-enter and loop. stderr.write keeps hijackStderr observable.
   const stderr = process.stderr;
   // --disable-warning names/codes as a Set: matches Node's SafeSet lookup
   // and avoids an FFI + utf8() encode per emit.
@@ -661,10 +651,8 @@ export function installOnWarningListener(process, redirectPath, disabledArr) {
         appendFileSync(redirectPath, message + "\n");
         return;
       } catch {
-        // Intentional simplification: appendFileSync opens per-write and
-        // falls back to stderr per-warning on failure, whereas Node holds a
-        // single fd and writes async. Open failures retry on the next
-        // warning like Node's writeToFile.
+        // Simplification vs Node's writeToFile (single fd, async): open per-write and
+        // fall back to stderr per-warning; open failures retry on the next warning.
       }
     }
     stderr.write(message + "\n");
@@ -682,9 +670,8 @@ export function installOnWarningListener(process, redirectPath, disabledArr) {
     const trace = process.traceProcessWarnings || (isDeprecation && process.traceDeprecation);
     let msg = `(node:${process.pid}) `;
     if (code) msg += `[${code}] `;
-    // Only touch `.stack` when tracing: reading it materializes the lazy
-    // stack trace and can run a user Error.prepareStackTrace, like Node's
-    // `if (trace && warning.stack)` short-circuit.
+    // Only touch `.stack` when tracing: it materializes the lazy trace and may run
+    // a user Error.prepareStackTrace (Node short-circuits `trace && warning.stack`).
     // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
     if (trace && warning.stack) {
       msg += warning.stack;
@@ -799,10 +786,8 @@ export function createProcessFinalization(process) {
 }
 
 export function buildAllowedNodeEnvironmentFlags() {
-  // Node's process.allowedNodeEnvironmentFlags: a frozen Set whose has()
-  // normalizes underscores to dashes, tolerates missing leading dashes, and
-  // strips "=value" suffixes. The canonical entries are kept in a closure so
-  // Set.prototype.add.call(...) cannot make new entries observable.
+  // https://github.com/nodejs/node/blob/main/lib/internal/process/per_thread.js buildAllowedFlags:
+  // a frozen Set whose has() normalizes _→-, missing dashes, and =value suffixes.
   const canonical = [
     "--conditions",
     "--diagnostic-dir",

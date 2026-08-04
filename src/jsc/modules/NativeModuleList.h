@@ -27,10 +27,8 @@
     BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro)
 
 namespace Zig {
-// Fixed slot index for each native module's cached default-export object
-// on GlobalObject::m_nativeModuleDefaults. The generator runs once per
-// registry (ESM vs CJS) but both registries must observe the same default
-// object, so INIT_NATIVE_MODULE reads and writes this slot.
+// Slot index into GlobalObject::m_nativeModuleDefaults. The generator runs once per
+// registry (ESM vs CJS); INIT_NATIVE_MODULE reads/writes this slot so both see one object.
 enum class NativeModuleDefaultSlot : unsigned char {
 #define NATIVE_MODULE_SLOT(id, enumName) enumName,
 BUN_FOREACH_ESM_NATIVE_MODULE(NATIVE_MODULE_SLOT)

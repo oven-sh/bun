@@ -146,13 +146,8 @@ pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSVal
     false
 }
 
-/// Called by the CJS evaluator (JSCommonJSModule.cpp) at most once, for the
-/// root CommonJS module (`m_id == "."`). Records on the VM when that module is
-/// the entry point, so the run command can report a top-level throw with
-/// origin `uncaughtException` (Node's CJS-runner semantics) instead of
-/// `unhandledRejection`. The `main()` comparison stays because an ESM entry
-/// that `import`s a CJS file also gets `m_id == "."` (requireMap was still
-/// empty), and that must not set `evaluated_as_cjs`.
+/// Called once by JSCommonJSModule.cpp for the root CJS module so the run command reports
+/// origin `uncaughtException`. `main()` compare filters out an ESM entry that `import`s CJS.
 // HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
 pub fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
     if this.entry_point_result.evaluated_as_cjs || this.main().is_empty() {
@@ -175,9 +170,9 @@ pub fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
 // HOST_EXPORT(Bun__closeChildIPC, c)
 pub fn close_child_ipc(global: &JSGlobalObject) {
     let vm = global.bun_vm().as_mut();
-    if let Some(current_ipc) = vm.get_ipc_instance() {
+    if let Some(current_ipc) = crate::ipc_host::get_ipc_instance(vm) {
         // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance`.
-        unsafe { (*current_ipc).data.close_socket_next_tick(true) };
+        unsafe { (*current_ipc).data().close_socket_next_tick(true) };
     }
 }
 

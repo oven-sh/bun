@@ -13,11 +13,8 @@ class JSValue;
 
 namespace Bun {
 
-// Node.js treats process.env as an exotic object: every assigned value is
-// coerced to a string (process.env.x = 42 stores "42", = undefined stores
-// "undefined"), writes keyed by a symbol throw a TypeError, and
-// Object.defineProperty only accepts a data descriptor that is explicitly
-// configurable, writable, and enumerable.
+// Node's process.env exotic object (https://github.com/nodejs/node/blob/main/src/node_env_var.cc):
+// values ToString'd, symbol keys throw, defineProperty requires a full writable data descriptor.
 class JSEnvironmentVariableMap final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -58,12 +55,9 @@ private:
 
 JSC::JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
 
-// Setting the TZ environment variable must make *existing* Date instances
-// recompute their local time. JSC's DateCache::resetIfNecessarySlow() only
-// clears the shared DateInstanceCache slots; live DateInstance objects keep a
-// Ref to their DateInstanceData whose cached gregorian breakdown still
-// matches the instance's ms value, so toString() keeps returning the old
-// offset. Walk the heap and invalidate those per-instance caches.
+// Setting TZ must make *existing* Date instances recompute local time. JSC's DateCache
+// reset only clears shared slots; live DateInstances keep a Ref to DateInstanceData
+// whose gregorian cache still matches, so walk the heap and invalidate those.
 void invalidateLiveDateInstanceCaches(JSC::VM&);
 
 // resetIfNecessarySlow() + invalidateLiveDateInstanceCaches(): every caller
@@ -79,9 +73,8 @@ JSC::JSValue createSharedEnvironmentVariablesMap(Zig::GlobalObject* globalObject
 // clone can allowlist them without exposing the latter's declaration.
 bool isProcessEnvClassInfo(const JSC::ClassInfo*);
 
-// Resolve the SHARE_ENV store for a worker spawned from `globalObject`: the
-// spawning thread's existing store if it has one, otherwise a fresh store seeded
-// from its `process.env` (which is then swapped to a write-through view).
+// SHARE_ENV store for a worker spawned from `globalObject`: the spawner's existing store,
+// else a fresh one seeded from its `process.env` (then swapped to a write-through view).
 // Returns null if seeding threw.
 RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalObject);
 

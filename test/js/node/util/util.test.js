@@ -176,9 +176,10 @@ describe("util", () => {
         cmd: [bunExe(), "-e", fixture],
         env: bunEnv,
         stdout: "pipe",
-        stderr: "inherit",
+        stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
       expect(stdout).toBe(
         [
           "revoked: threw TypeError: Proxy has already been revoked. No more operations are allowed to be performed on it",

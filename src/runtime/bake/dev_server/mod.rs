@@ -343,7 +343,7 @@ impl ResponseLike for bun_uws::AnyResponse {
 pub struct HmrSocket {
     /// BACKREF: owned by `dev.active_websocket_connections`; destroyed via
     /// `remove` + `heap::take` in `on_close`.
-    pub(crate) dev: bun_ptr::BackRef<DevServer>,
+    pub(crate) dev: bun_ptr::BackRef<DevServer, bun_ptr::Mut>,
     pub(crate) underlying: Option<bun_uws::AnyWebSocket>,
     pub(crate) subscriptions: super::dev_server_body::HmrTopicBits,
     /// By telling DevServer the active route, this enables receiving detailed

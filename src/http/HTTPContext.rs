@@ -669,8 +669,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
             // without a second decrement. Route through the centralised
             // `raw_as_mut` accessor — `raw` is a live intrusive-refcounted
             // ProxyTunnel; we hold the strong ref `detach_and_deref` releases.
-            let t = crate::proxy_tunnel::raw_as_mut(t.leak());
-            t.shutdown();
+            let t_ptr = t.leak();
+            crate::proxy_tunnel::ProxyTunnel::shutdown(
+                core::ptr::NonNull::new(t_ptr).expect("leaked strong ref is non-null"),
+            );
+            let t = crate::proxy_tunnel::raw_as_mut(t_ptr);
             t.detach_and_deref();
         }
         if let Some(s) = h2_session {

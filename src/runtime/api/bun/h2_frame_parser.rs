@@ -1138,6 +1138,59 @@ impl Drop for DispatchGuard<'_> {
     }
 }
 
+/// Follows the byte stream `write()` emits over a JS-backed transport and reports when it
+/// sits at a point where another frame may legally begin: between frames, and not inside a
+/// header block (HEADERS / PUSH_PROMISE without END_HEADERS up to the CONTINUATION that carries
+/// it, RFC 9113 §4.3). See `write_to_js_transport`.
+#[derive(Clone, Copy, Default)]
+struct TxFrameTracker {
+    /// Payload bytes still owed on the current frame.
+    remaining: u32,
+    /// A frame header split across chunks is collected here until all 9 bytes are known.
+    header: [u8; FrameHeader::BYTE_SIZE],
+    header_len: u8,
+    /// A HEADERS/PUSH_PROMISE/CONTINUATION without END_HEADERS went out; the block is open.
+    header_block_open: bool,
+}
+
+impl TxFrameTracker {
+    fn at_boundary(&self) -> bool {
+        self.remaining == 0 && self.header_len == 0 && !self.header_block_open
+    }
+
+    fn advance(&mut self, mut chunk: &[u8]) {
+        const CONNECTION_PREFACE: &[u8] = crate::api::h2::wire::CONNECTION_PREFACE;
+        while !chunk.is_empty() {
+            if self.remaining > 0 {
+                let take = (self.remaining as usize).min(chunk.len());
+                self.remaining -= take as u32;
+                chunk = &chunk[take..];
+                continue;
+            }
+            if self.header_len == 0 && chunk.starts_with(CONNECTION_PREFACE) {
+                // The client magic precedes the first SETTINGS frame; it is not a frame.
+                chunk = &chunk[CONNECTION_PREFACE.len()..];
+                continue;
+            }
+            let have = self.header_len as usize;
+            let take = (FrameHeader::BYTE_SIZE - have).min(chunk.len());
+            self.header[have..have + take].copy_from_slice(&chunk[..take]);
+            self.header_len += take as u8;
+            chunk = &chunk[take..];
+            if self.header_len as usize == FrameHeader::BYTE_SIZE {
+                let header = FrameHeader::decode(&self.header);
+                self.header_len = 0;
+                self.remaining = header.length;
+                if matches!(header.type_, 0x01 | 0x05 | 0x09) {
+                    // HEADERS, PUSH_PROMISE, CONTINUATION
+                    self.header_block_open =
+                        header.flags & HeadersFrameFlags::END_HEADERS as u8 == 0;
+                }
+            }
+        }
+    }
+}
+
 /// The `+1` a native frame holds on the parser while it runs code that can free it (an inbound
 /// dispatch, a write that re-enters JS). Live guards are counted in
 /// `H2FrameParser::native_keepalives` so `finalize` can release the ones whose frame will never
@@ -1308,6 +1361,13 @@ pub struct H2FrameParser {
     /// never contends with the engine borrow.
     engine_frames_received: Cell<u64>,
     engine_frames_sent: Cell<u64>,
+    /// Where the bytes emitted through `write()` over a JS-backed transport stand relative to
+    /// frame and header-block boundaries.
+    tx_tracker: Cell<TxFrameTracker>,
+    /// JS-backed transport only: a frame (or header block) that overflowed the cork part-way
+    /// through its serialization is assembled here (corked prefix + its chunks) and handed to
+    /// the transport whole once its last byte arrives. Empty between frames.
+    tx_spill: JsCell<Vec<u8>>,
     ref_count: bun_ptr::RefCount<Self>, // intrusive — bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
     /// Number of live `Keepalive` guards: the `+1`s held by native frames currently on the stack.
     /// Read only by `release_refs_stranded_by_exit()`.
@@ -2997,6 +3057,12 @@ impl H2FrameParser {
         if self.js_socket_flushing.get() {
             return 0;
         }
+        if !self.tx_tracker.get().at_boundary() {
+            // Mid-frame or mid-header-block (see write_to_js_transport): flushing now would
+            // put the cork or write_buffer inside that unit. It completes synchronously and
+            // the cork's auto-flush is already registered.
+            return 0;
+        }
         // Keep `self` alive across the re-entrant JS calls below.
         let _keepalive = self.keepalive();
 
@@ -3489,6 +3555,9 @@ impl H2FrameParser {
             return self._write(bytes);
         }
         self.cork();
+        if matches!(self.native_socket.get(), BunSocket::None) {
+            return self.write_to_js_transport(bytes);
+        }
         let mut ok = true;
         loop {
             let off = CORK_OFFSET.with(|c| c.get()) as usize;
@@ -3520,6 +3589,58 @@ impl H2FrameParser {
             self.cork();
             bytes = &bytes[avail..];
         }
+    }
+
+    /// `write()` for a session with no native socket, whose bytes reach the wire through the
+    /// `onWrite` handler (`socket.write()` on a JS stream). That call runs the transport's
+    /// `_write` synchronously, and user code there can serialize another frame (ping(),
+    /// settings(), goaway(), request()) or flush before it returns. Bytes are therefore only
+    /// handed over where another frame may legally follow: at a frame boundary outside a header
+    /// block. A frame or HEADERS..CONTINUATION run that does not fit in the cork is assembled in
+    /// `tx_spill` and written whole once its last chunk arrives (always synchronously, the
+    /// producers emit those chunks back to back), so a frame serialized re-entrantly corks up
+    /// behind it instead of landing inside it.
+    fn write_to_js_transport(&self, bytes: &[u8]) -> bool {
+        let mut tracker = self.tx_tracker.get();
+        tracker.advance(bytes);
+        self.tx_tracker.set(tracker);
+        let at_boundary = tracker.at_boundary();
+        if self.tx_spill.get().is_empty() {
+            let off = CORK_OFFSET.with(|c| c.get()) as usize;
+            if bytes.len() <= H2_CORK_BUFFER_SIZE - off {
+                CORK_OFFSET.with(|c| c.set((off + bytes.len()) as u16));
+                CORK_BUFFER.with_borrow_mut(|buf| {
+                    buf[off..off + bytes.len()].copy_from_slice(bytes);
+                });
+                return true;
+            }
+            if off == 0 && at_boundary {
+                // Nothing corked and the chunk is whole frames: send it directly.
+                return self._write(bytes);
+            }
+        }
+        self.tx_spill.with_mut(|spill| {
+            if spill.is_empty() {
+                spill.reserve(H2_CORK_BUFFER_SIZE + bytes.len());
+                self.drain_cork_into(spill);
+            }
+            spill.extend_from_slice(bytes);
+        });
+        if !at_boundary {
+            return true;
+        }
+        let mut data = self.tx_spill.with_mut(core::mem::take);
+        let ok = self._write(&data);
+        data.clear();
+        if data.capacity() > MAX_BUFFER_SIZE as usize {
+            data.shrink_to(MAX_BUFFER_SIZE as usize);
+        }
+        self.tx_spill.with_mut(|spill| {
+            if spill.is_empty() {
+                *spill = data;
+            }
+        });
+        ok
     }
 }
 
@@ -9621,6 +9742,8 @@ impl H2FrameParser {
             frames_sent_legacy: Cell::new(0),
             engine_frames_received: Cell::new(0),
             engine_frames_sent: Cell::new(0),
+            tx_tracker: Cell::new(TxFrameTracker::default()),
+            tx_spill: JsCell::new(Vec::new()),
             auto_flusher: JsCell::new(AutoFlusher::default()),
             padding_strategy: Cell::new(PaddingStrategy::None),
             engine: core::cell::RefCell::new(None),
@@ -9842,6 +9965,8 @@ impl H2FrameParser {
         // capacity must be released here. Drop-and-replace = free.
         self.read_buffer.set(MutableString::default());
         self.write_buffer.with_mut(|wb| wb.clear_and_free());
+        self.tx_spill.with_mut(|s| s.clear_and_free());
+        self.tx_tracker.set(TxFrameTracker::default());
         // Drop every per-stream JS context root; the parser is detaching.
         self.sctx.with_mut(|m| m.clear());
         self.write_buffer_offset.set(0);

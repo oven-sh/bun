@@ -4098,3 +4098,171 @@ it("remoteSettings/localSettings are never null before the peer's SETTINGS arriv
     server.close();
   }
 });
+
+describe("frames issued from inside a user-supplied Duplex transport's _write", () => {
+  // A transport wrapper that sends a frame of its own from its _write (a keepalive ping, a
+  // settings update, a goaway, another request) must see that frame sequenced AFTER the unit
+  // whose bytes it is currently being handed: never spliced between a frame's header and payload,
+  // never between a HEADERS frame and its CONTINUATIONs, and no byte may be handed to it twice.
+  // The session used to flush its 16 KiB cork mid-frame (re-entering _write) and cork the frame's
+  // remainder behind whatever the nested call serialized, so the nested frame landed inside the
+  // DATA payload and the body's tail spilled past the declared length (peer framing desync).
+  const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+  const FRAME = { DATA: 0, HEADERS: 1, SETTINGS: 4, PUSH_PROMISE: 5, PING: 6, GOAWAY: 7, CONTINUATION: 9 };
+  const END_HEADERS = 0x4;
+  function parseFrames(buf) {
+    let i = buf.subarray(0, PREFACE.length).equals(PREFACE) ? PREFACE.length : 0;
+    const frames = [];
+    while (i + 9 <= buf.length) {
+      const len = buf.readUIntBE(i, 3);
+      const end = i + 9 + len;
+      if (end > buf.length) break;
+      frames.push({
+        type: buf[i + 3],
+        flags: buf[i + 4],
+        len,
+        streamId: buf.readUInt32BE(i + 5) & 0x7fffffff,
+        payload: buf.subarray(i + 9, end),
+      });
+      i = end;
+    }
+    // RFC 9113 4.3: from a HEADERS/PUSH_PROMISE without END_HEADERS to the CONTINUATION that
+    // carries it, no other frame may appear on the connection.
+    let headerBlocksContiguous = true;
+    for (let k = 0; k < frames.length; k++) {
+      const f = frames[k];
+      if ([FRAME.HEADERS, FRAME.PUSH_PROMISE, FRAME.CONTINUATION].includes(f.type) && !(f.flags & END_HEADERS)) {
+        const next = frames[k + 1];
+        if (next && !(next.type === FRAME.CONTINUATION && next.streamId === f.streamId)) headerBlocksContiguous = false;
+      }
+    }
+    return { frames, complete: i === buf.length, headerBlocksContiguous };
+  }
+  const nestedBody = Buffer.alloc(40000, 0x42);
+  const nested = {
+    ping: { type: FRAME.PING, issue: sess => sess.ping(Buffer.from("NESTPING"), () => {}) },
+    settings: { type: FRAME.SETTINGS, issue: sess => sess.settings({ enablePush: false }) },
+    goaway: { type: FRAME.GOAWAY, issue: sess => sess.goaway(0, 0, Buffer.from("NESTGOAWAY")) },
+    request: {
+      type: FRAME.HEADERS,
+      issue: sess => sess.request({ ":method": "GET", ":path": "/nested" }, { endStream: true }).on("error", () => {}),
+    },
+    // A request whose body spans several DATA frames (the batched multi-frame send path).
+    data: {
+      type: FRAME.HEADERS,
+      issue: sess => {
+        const r = sess.request({ ":method": "POST", ":path": "/nested" }, { endStream: false });
+        r.on("error", () => {});
+        r.end(nestedBody);
+      },
+    },
+  };
+  // outer "data": the nested call fires while the 16374-byte body's DATA frame overflows the cork
+  // behind the corked ~11 KiB HEADERS. outer "continuation": it fires while a header block larger
+  // than one frame (HEADERS + CONTINUATION) is being handed to the transport.
+  const cases = [];
+  for (const kind of Object.keys(nested)) {
+    cases.push([kind, "data", false], [kind, "data", true], [kind, "continuation", false]);
+  }
+
+  it.each(cases)(
+    "nested %s() issued during the outer %s write (transport backpressured: %p)",
+    async (kind, outer, backpressured) => {
+      const chunks = [];
+      let armed = false;
+      let issued = false;
+      let sess;
+      const transport = new Duplex({
+        // A 1-byte highWaterMark makes every socket.write() report backpressure, which routes the
+        // session's follow-up bytes through its native pending buffer instead of straight to JS.
+        writableHighWaterMark: backpressured ? 1 : undefined,
+        read() {},
+        write(chunk, enc, cb) {
+          chunks.push(Buffer.from(chunk));
+          if (armed && !issued) {
+            issued = true;
+            nested[kind].issue(sess);
+          }
+          cb();
+        },
+      });
+
+      sess = http2.connect("http://localhost:1", { createConnection: () => transport });
+      sess.on("error", () => {});
+      try {
+        await new Promise(resolve => sess.once("connect", resolve));
+
+        const body = Buffer.alloc(16374, 0x41);
+        // 15000 'p's HPACK-encode to ~11 KiB (one HEADERS frame); 30000 to ~22 KiB, which needs a
+        // CONTINUATION frame after a full 16384-byte HEADERS frame.
+        const pad = Buffer.alloc(outer === "continuation" ? 30000 : 15000, 0x70).toString();
+        if (outer === "continuation") armed = true;
+        const req = sess.request({ ":method": "POST", ":path": "/", "x-pad": pad }, { endStream: false });
+        req.on("error", () => {});
+        armed = true;
+        req.write(body);
+
+        // Wait (by condition, not time) until the outer frames and the nested frames are all out.
+        const done = parsed => {
+          if (!parsed.complete) return false;
+          const di = parsed.frames.findIndex(f => f.type === FRAME.DATA && f.streamId === 1);
+          if (di === -1) return false;
+          if (!parsed.frames.some(f => f.type === nested[kind].type && (f.type !== FRAME.HEADERS || f.streamId === 3)))
+            return false;
+          if (kind === "data") {
+            const got = parsed.frames
+              .filter(f => f.type === FRAME.DATA && f.streamId === 3)
+              .reduce((n, f) => n + f.len, 0);
+            if (got < nestedBody.length) return false;
+          }
+          return true;
+        };
+        let parsed;
+        for (let tick = 0; tick < 400; tick++) {
+          await new Promise(resolve => setImmediate(resolve));
+          parsed = parseFrames(Buffer.concat(chunks));
+          if (done(parsed)) break;
+        }
+
+        expect(issued).toBe(true);
+        // Every byte the transport received belongs to exactly one complete frame, and header
+        // blocks are never interleaved with other frames.
+        expect(parsed.complete).toBe(true);
+        expect(parsed.headerBlocksContiguous).toBe(true);
+        // One connection preface + SETTINGS (a second one mid-stream would not even parse), one
+        // request header block on stream 1, one DATA frame carrying exactly the body.
+        expect(parsed.frames.filter(f => f.type === FRAME.SETTINGS).length).toBe(kind === "settings" ? 2 : 1);
+        expect(parsed.frames.filter(f => f.type === FRAME.HEADERS && f.streamId === 1).length).toBe(1);
+        expect(parsed.frames.some(f => f.type === FRAME.CONTINUATION && f.streamId === 1)).toBe(
+          outer === "continuation",
+        );
+        const dataFrames = parsed.frames.filter(f => f.type === FRAME.DATA && f.streamId === 1);
+        expect(dataFrames.length).toBe(1);
+        expect(dataFrames[0].payload.equals(body)).toBe(true);
+        // The nested frames are well-formed frames of their own, after the unit they were issued
+        // from: the stream-1 header block, and (when issued during the body write) its DATA frame.
+        const blockEnd = parsed.frames.findIndex(
+          f => [FRAME.HEADERS, FRAME.CONTINUATION].includes(f.type) && f.streamId === 1 && f.flags & END_HEADERS,
+        );
+        const issuedAfter = outer === "continuation" ? blockEnd : parsed.frames.indexOf(dataFrames[0]);
+        const after = parsed.frames.slice(issuedAfter + 1);
+        const before = parsed.frames.slice(0, issuedAfter + 1);
+        expect(before.filter(f => f.streamId === 3).length).toBe(0);
+        if (kind === "request" || kind === "data") {
+          expect(after.filter(f => f.type === FRAME.HEADERS && f.streamId === 3).length).toBe(1);
+        } else {
+          expect(before.slice(1).filter(f => f.type === nested[kind].type).length).toBe(0);
+          expect(after.filter(f => f.type === nested[kind].type).length).toBe(1);
+        }
+        if (kind === "data") {
+          const nestedData = Buffer.concat(
+            after.filter(f => f.type === FRAME.DATA && f.streamId === 3).map(f => f.payload),
+          );
+          expect(nestedData.equals(nestedBody)).toBe(true);
+        }
+      } finally {
+        sess.destroy();
+      }
+    },
+  );
+});

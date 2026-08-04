@@ -6131,6 +6131,15 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 JSValue::UNDEFINED,
                 JSValue::js_number(old_state as f64),
             );
+        } else if code == crate::api::h2::wire::ErrorCode::NoError.as_u32() {
+            // Peer RST_STREAM(NO_ERROR) is a clean close (node/nghttp2 deliver rstCode 0, 'end'
+            // before 'close', no 'error'): dispatch the same full close as END_STREAM. The
+            // legacy parser's handle_rst_stream_frame makes the same distinction.
+            self.dispatch_with_extra(
+                JSH2FrameParser::Gc::onStreamEnd,
+                stream_ctx,
+                JSValue::js_number(StreamState::CLOSED as u8 as f64),
+            );
         } else {
             self.dispatch_with_extra(
                 JSH2FrameParser::Gc::onStreamError,
@@ -8160,7 +8169,6 @@ impl H2FrameParser {
                 if js_value.is_empty_or_undefined_or_null() {
                     continue;
                 }
-                let value_str = js_value.to_js_string(global_object)?;
                 // All-digit names can't be passed to get_truthy (integer-index-like names trip
                 // a debug assert in getIfPropertyExistsImpl) and can never be sensitive.
                 let never_index = if Self::is_index_like_name(validated_name) {
@@ -8171,6 +8179,41 @@ impl H2FrameParser {
                         None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
                     }
                 };
+                if js_value.js_type().is_array() {
+                    // Array values are one header per element on the wire, like the
+                    // request()/respond() encoders; ToString would comma-join them
+                    // into a single field.
+                    let mut value_iter = js_value.array_iterator(global_object)?;
+                    while let Some(item) = value_iter.next()? {
+                        if item.is_empty_or_undefined_or_null() {
+                            let exception = global_object.to_type_error(
+                                bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                                format_args!(
+                                    "Invalid value for header \"{}\"",
+                                    BStr::new(validated_name)
+                                ),
+                            );
+                            return Err(global_object.throw_value(exception));
+                        }
+                        let value_str = item.to_js_string(global_object)?;
+                        let value_slice = value_str.to_slice(global_object);
+                        let value = value_slice.slice();
+                        if this
+                            .encode_header_into_list(
+                                &mut encoded_headers,
+                                validated_name,
+                                value,
+                                never_index,
+                            )
+                            .is_err()
+                        {
+                            return Err(global_object
+                                .throw(format_args!("Failed to encode push promise headers")));
+                        }
+                    }
+                    continue;
+                }
+                let value_str = js_value.to_js_string(global_object)?;
                 let value_slice = value_str.to_slice(global_object);
                 let value = value_slice.slice();
                 if this

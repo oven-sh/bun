@@ -9,6 +9,8 @@
 #include <JavaScriptCore/ScriptExecutable.h>
 #include <JavaScriptCore/FunctionExecutable.h>
 #include <JavaScriptCore/SourceProvider.h>
+#include <JavaScriptCore/StackVisitor.h>
+#include <JavaScriptCore/CodeBlock.h>
 #include <wtf/Stopwatch.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/JSONValues.h>
@@ -315,6 +317,28 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
     // releaseStackTraces() calls processUnverifiedStackTraces() internally
     auto stackTraces = profiler->releaseStackTraces();
     profiler->clearData();
+
+    // One final synthetic sample of the current JS stack: the sampling thread only wakes once
+    // per interval, so a profile stopped right after starting can be empty. V8 records the stop
+    // call site and Node's tests rely on the stopping script appearing in the profile.
+    if (vm.topCallFrame) {
+        WTF::Vector<JSC::SamplingProfiler::StackFrame> frames;
+        JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+            JSC::CodeBlock* codeBlock = visitor->codeBlock();
+            if (!codeBlock)
+                return WTF::IterationStatus::Continue;
+            JSC::SamplingProfiler::StackFrame frame(codeBlock->ownerExecutable());
+            frame.semanticLocation.lineColumn = visitor->computeLineAndColumn();
+            frames.append(WTF::move(frame));
+            return WTF::IterationStatus::Continue;
+        });
+        if (!frames.isEmpty()) {
+            JSC::SamplingProfiler::StackTrace trace;
+            trace.timestamp = MonotonicTime::now();
+            trace.frames = WTF::move(frames);
+            stackTraces.append(WTF::move(trace));
+        }
+    }
 
     // If neither output is requested, we're done
     if (!outJSON && !outText)

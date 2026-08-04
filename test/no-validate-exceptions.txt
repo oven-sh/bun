@@ -111,3 +111,12 @@ test/bundler/native-plugin.test.ts
 # `bun run build` in the react templates loads bun-plugin-tailwind's napi
 # addon, same Init() pattern.
 test/cli/init/init.test.ts
+
+# JSC's in-process InjectedScript host (evaluateWithScopeExtension, scopeChain,
+# getOwnNonIndexPropertyNames -> get) has unchecked throw scopes in the prebuilt
+# WebKit. These tests drive an inspector.Session in-process, so the validator
+# cannot be dropped from a spawned child's env like common/debugger.js does.
+test/js/node/test/parallel/test-inspector-promises.js
+test/js/node/test/parallel/test-inspector-module.js
+test/js/node/test/parallel/test-inspector-vm-global-accessors-getter-sideeffect.js
+test/js/node/test/parallel/test-inspector-vm-global-accessors-sideeffects.js

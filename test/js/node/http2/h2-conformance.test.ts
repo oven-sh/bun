@@ -1157,7 +1157,6 @@ describe("inbound stream lifecycle", () => {
       toString:start
       toString:end
       sendTrailers:returned
-      req error ERR_HTTP2_STREAM_CANCEL
       req close"
     `);
     expect(proc.signalCode).toBeNull();

@@ -2232,6 +2232,8 @@ enum StreamState {
   // The native side fully closed and freed the stream (state 7 delivered): there is
   // nothing left to send on the wire for it.
   NativeClosed = 1 << 6, // 1000000 = 64
+  // close(code) already scheduled the RST_STREAM; _destroy must not send a second one.
+  RstScheduled = 1 << 7, // 10000000 = 128
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2283,7 +2285,14 @@ function markStreamClosed(stream: Http2Stream) {
 }
 function rstNextTick(id: number, rstCode: number) {
   const session = this as Http2Session;
-  session[bunHTTP2Native]?.rstStream(id, rstCode);
+  const native = session[bunHTTP2Native];
+  if (native) {
+    native.rstStream(id, rstCode);
+    // This can run on the program's last live turn (close() defers it via
+    // setImmediate / 'finish'); a RST_STREAM left in the cork for the
+    // auto-flusher would strand the peer waiting for the stream to settle.
+    native.flush();
+  }
 }
 // node streamOnPause/streamOnResume (lib/internal/http2/core.js): the readable's flow state
 // drives the native receive window. While paused, the stream's window is not replenished; on
@@ -2608,6 +2617,11 @@ class Http2Stream extends Duplex {
         validateFunction(callback, "callback");
         this.once("close", callback);
       }
+      // Set before end(): end() can run _final synchronously, and _final must
+      // already see that this stream closes via RST_STREAM (node's closeStream
+      // also records the code before ending the writable side).
+      this.rstCode = code;
+      this[bunHTTP2StreamStatus] |= StreamState.RstScheduled;
       this.push(null);
       const { ending } = this._writableState;
       if (!ending) {
@@ -2619,7 +2633,6 @@ class Http2Stream extends Duplex {
         }
         this.end();
       }
-      this.rstCode = code;
       markStreamClosed(this);
       if (this.pending) {
         // No id yet (the HEADERS frame is still queued behind connect/concurrency limits): the
@@ -2706,7 +2719,9 @@ class Http2Stream extends Duplex {
       !this[kNeverAnnounced] &&
       // A cleanly closed stream the native side already freed has nothing to send:
       // the deferred rstStream would be a guaranteed no-op host call per request.
-      (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
+      (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0) &&
+      // close(code) already scheduled this stream's RST_STREAM.
+      (this[bunHTTP2StreamStatus] & StreamState.RstScheduled) === 0
     ) {
       setImmediate(rstNextTick.bind(session, this.#id, rstCode));
     }
@@ -2747,6 +2762,13 @@ class Http2Stream extends Duplex {
           return;
         }
         this[bunHTTP2StreamStatus] |= StreamState.FinalCalled;
+        if ((status & (StreamState.Closed | StreamState.RstScheduled)) !== 0) {
+          // close(code) is tearing this stream down with RST_STREAM; an empty END_STREAM DATA
+          // here is a protocol error on a server stream that never sent response HEADERS
+          // (nghttp2 peers fail the session). Node's closeStream writes only the RST_STREAM.
+          callback();
+          return;
+        }
         // When waitForTrailers is active, writing an empty DATA frame with
         // close=true emits a bare empty DATA frame (flags=0) to the wire
         // before the trailer/noTrailers path runs, which then emits ANOTHER
@@ -4078,10 +4100,10 @@ class ServerHttp2Session extends Http2Session {
         markStreamClosed(stream);
         self.#connections--;
         if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
-        if (stream.readable && !stream.rstCode) {
-          // Clean close while data is still buffered on the readable side (e.g. the response
-          // ended before the request body was consumed): node defers the destroy until the
-          // consumer drains it ('end'), so the buffered request body is not lost.
+        if (!stream.rstCode && !stream.destroyed && stream.errored == null && !stream.readableEnded) {
+          // Clean close before the readable has delivered EOF: node defers destroy until 'end'
+          // (forced by push(null)/resume() above) so buffered request body isn't lost and
+          // 'end' precedes 'close'.
           stream.once("end", destroySelfOnEnd);
         } else if (stream.writableEnded && !stream.writableFinished && !stream.destroyed) {
           // The writable side is mid-finish (an in-flight _final settled the native stream
@@ -5012,10 +5034,10 @@ class ClientHttp2Session extends Http2Session {
         stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
         markStreamClosed(stream);
         self.#connections--;
-        if (stream.readable && !stream.rstCode) {
-          // Clean close while data is still buffered on the readable side: node defers the
-          // destroy until the consumer drains it ('end'), so a late-attaching reader does not
-          // lose data.
+        if (!stream.rstCode && !stream.destroyed && stream.errored == null && !stream.readableEnded) {
+          // Clean close before the readable has delivered EOF: node defers destroy until 'end'
+          // so a late reader doesn't lose data and 'end' precedes 'close'. Also covers a peer
+          // RST_STREAM(NO_ERROR), whose only frame is the reset itself.
           stream.once("end", destroySelfOnEnd);
         } else if (stream.writableEnded && !stream.writableFinished && !stream.destroyed) {
           // The writable side is mid-finish (an in-flight _final settled the native stream
@@ -6081,9 +6103,6 @@ class ClientHttp2Session extends Http2Session {
         const req = new ClientHttp2Stream(undefined, this, headers);
         req.authority = authority;
         req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
-        if (onClientStreamCreatedChannel.hasSubscribers) {
-          onClientStreamCreatedChannel.publish({ stream: req, headers });
-        }
         if (this.#pendingRequests === null) {
           this.#pendingRequests = [];
         }
@@ -6101,6 +6120,11 @@ class ClientHttp2Session extends Http2Session {
         req.cork();
         process.nextTick(uncorkNT, req);
         setupRequestEndAndSignal(req, options, signal);
+        // node publishes 'created' last, after endStream has closed the
+        // writable side, so subscribers observe the final writableEnded.
+        if (onClientStreamCreatedChannel.hasSubscribers) {
+          onClientStreamCreatedChannel.publish({ stream: req, headers });
+        }
         return req;
       }
 
@@ -6114,9 +6138,6 @@ class ClientHttp2Session extends Http2Session {
       const req = new ClientHttp2Stream(stream_id, this, headers);
       req.authority = authority;
       req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
-      if (onClientStreamCreatedChannel.hasSubscribers) {
-        onClientStreamCreatedChannel.publish({ stream: req, headers });
-      }
       const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
       if (typeof options === "undefined") {
         this.#parser.request(stream_id, req, wireHeaders, sensitiveNames);
@@ -6133,6 +6154,11 @@ class ClientHttp2Session extends Http2Session {
       req.cork();
       process.nextTick(uncorkNT, req);
       setupRequestEndAndSignal(req, options, signal);
+      // node publishes 'created' last, after endStream has closed the
+      // writable side, so subscribers observe the final writableEnded.
+      if (onClientStreamCreatedChannel.hasSubscribers) {
+        onClientStreamCreatedChannel.publish({ stream: req, headers });
+      }
       process.nextTick(emitEventNT, req, "ready");
       return req;
     } catch (e: any) {

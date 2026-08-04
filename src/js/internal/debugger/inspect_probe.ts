@@ -958,8 +958,14 @@ class ProbeInspectorSession {
           ? SideEffectFreeRegExpPrototypeSymbolReplace(/\\/g, target.suffix, "/")
           : target.suffix;
       const escapedPath = SideEffectFreeRegExpPrototypeSymbolReplace(/([/\\.?*()^${}|[\]])/g, normalizedFile, "\\$1");
+      // Separators *inside* a multi-segment suffix were pinned to "/", so "dir/file.js" never
+      // matched a Windows script URL spelled "...\dir\file.js". POSIX keeps "\" literal.
+      const pathPattern =
+        process.platform === "win32"
+          ? SideEffectFreeRegExpPrototypeSymbolReplace(/\\\//g, escapedPath, "[\\/\\\\]")
+          : escapedPath;
       const params = {
-        urlRegex: `^(.*[\\/\\\\])?${escapedPath}$`,
+        urlRegex: `^(.*[\\/\\\\])?${pathPattern}$`,
         // CDP locations are 0-based, the probe target from CLI is 1-based.
         lineNumber: target.line - 1,
       };

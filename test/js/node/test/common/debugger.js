@@ -2,6 +2,12 @@
 const common = require('../common');
 const spawn = require('child_process').spawn;
 
+// JSC's InjectedScript callFrame builder (scopeChain / evaluateWithScopeExtension)
+// has unchecked throw scopes in the prebuilt WebKit; don't propagate the ASAN
+// validator to the spawned `bun inspect` target or every pause aborts it.
+delete process.env.BUN_JSC_validateExceptionChecks;
+delete process.env.BUN_JSC_dumpSimulatedThrows;
+
 const BREAK_MESSAGE = new RegExp('(?:' + [
   'assert', 'break', 'break on start', 'debugCommand',
   'exception', 'other', 'promiseRejection', 'step',

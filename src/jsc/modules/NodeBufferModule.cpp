@@ -121,10 +121,8 @@ static void transcodeEncodeNarrow(const WTF::Vector<char16_t>& units, char16_t m
 
 BUN_DECLARE_HOST_FUNCTION(jsBufferTranscode);
 
-// Port of Node's buffer.transcode — the lib/buffer.js wrapper plus the icu
-// binding (https://github.com/nodejs/node/blob/v25.2.1/src/node_i18n.cc#L187);
-// ICU-converter paths implemented over simdutf (macOS system ICU hides the
-// ucnv API).
+// Port of Node's buffer.transcode; ICU-converter paths implemented over simdutf (macOS system
+// ICU hides the ucnv API). https://github.com/nodejs/node/blob/main/src/node_i18n.cc
 BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
     (JSGlobalObject * globalObject,
         CallFrame* callFrame))

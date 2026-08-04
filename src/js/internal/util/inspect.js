@@ -745,6 +745,9 @@ ObjectDefineProperty(inspect, "replDefaults", {
     validateObject(options, "options");
     return ObjectAssign(inspectReplDefaults, options);
   },
+  // node:repl re-defines this property with its own writer-backed accessor
+  // (see REPLServer constructor); keep it configurable so that works.
+  configurable: true,
 });
 
 // Set Graphics Rendition https://en.wikipedia.org/wiki/ANSI_escape_code#graphics
@@ -1581,7 +1584,7 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       if (keys.length === 0 && protoProps === undefined) {
         return ctx.stylize(base, "date");
       }
-    } else if (value instanceof Error) {
+    } else if (isNativeError(value) || value instanceof Error) {
       base = formatError(value, constructor, tag, ctx, keys);
       if (keys.length === 0 && protoProps === undefined) return base;
     } else if (isAnyArrayBuffer(value)) {
@@ -1881,7 +1884,7 @@ function getStackFrames(ctx, err, stack) {
   }
 
   // Remove stack frames identical to frames in cause.
-  if (cause != null && cause instanceof Error) {
+  if (cause != null && (isNativeError(cause) || cause instanceof Error)) {
     const causeStack = getStackString(cause);
     const causeStackStart = StringPrototypeIndexOf(causeStack, "\n    at");
     if (causeStackStart !== -1) {
@@ -2902,17 +2905,14 @@ const kPerCodePointWidthOptions = { __proto__: null, perCodePoint: true, countAn
 function getStringWidth(str, removeControlChars = true) {
   if (removeControlChars) str = stripVTControlCharacters(str);
   str = StringPrototypeNormalize(str, "NFC");
-  // node measures every code point individually (icu.getStringWidth with
-  // expandEmojiSequence defaulting on), not grapheme clusters. ANSI was
-  // already stripped above; node's binding has no ANSI awareness, so any
-  // residual escape bytes count as their own code points (Cc = 0).
+  // node measures per code point, not grapheme clusters; ANSI was already stripped above.
+  // https://github.com/nodejs/node/blob/main/src/node_i18n.cc (GetColumnWidth)
   return internalGetStringWidth(str, kPerCodePointWidthOptions);
 }
 
-// node's ansi matcher (lib/internal/util/inspect.js, from chalk/ansi-regex):
-// only complete, validly-terminated sequences are stripped — Bun.stripANSI
-// also eats bare/invalid ESC/CSI prefixes, which node keeps.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/inspect.js
+// node's ansi matcher (from chalk/ansi-regex): only complete sequences are stripped —
+// Bun.stripANSI also eats bare/invalid ESC/CSI prefixes, which node keeps.
+// https://github.com/nodejs/node/blob/main/lib/internal/util/inspect.js
 const ansi = new RegExp(
   "[\\u001B\\u009B][[\\]()#;?]*" +
     "(?:(?:(?:(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]+)*" +
@@ -3006,33 +3006,7 @@ export default {
   inspect,
   format,
   formatWithOptions,
-  stripVTControlCharacters,
   getStringWidth,
   previewEntries,
-  //! non-standard properties, should these be kept? (not currently exposed)
-  //stylizeWithColor,
-  //stylizeWithHTML(str, styleType) {
-  //  const style = inspect.styles[styleType];
-  //  if (style !== undefined) {
-  //    return `<span style="color:${style};">${escapeHTML(str)}</span>`;
-  //  }
-  //  return escapeHTML(str);
-  //},
+  stripVTControlCharacters,
 };
-
-// unused without `stylizeWithHTML`
-/*const entities = {
-  34: "&quot;",
-  38: "&amp;",
-  39: "&apos;",
-  60: "&lt;",
-  62: "&gt;",
-  160: "&nbsp;",
-};
-function escapeHTML(str) {
-  return str.replace(/[\u0000-\u002F\u003A-\u0040\u005B-\u0060\u007B-\u00FF]/g, c => {
-    const code = String(c.charCodeAt(0));
-    const ent = entities[code];
-    return ent || "&#" + code + ";";
-  });
-}*/

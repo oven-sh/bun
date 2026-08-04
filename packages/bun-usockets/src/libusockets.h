@@ -422,6 +422,12 @@ void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
  * after the socket closed (no-op). */
 void us_socket_sni_resolve(us_socket_r s, struct ssl_ctx_st *ctx, int error);
 void *us_socket_server_name_userdata(us_socket_r s);
+/* Socket-level SNI resolver, for a server-side socket adopted into TLS with no
+ * listen socket behind it. Same contract as the listener resolver: an owned
+ * SSL_CTX ref or NULL; *abort_handshake 1 = drop silently, 2 = suspend. */
+typedef struct ssl_ctx_st *(*us_socket_server_name_cb)(struct us_socket_t *socket,
+    const char *hostname, int *abort_handshake);
+void us_socket_on_server_name(us_socket_r s, us_socket_server_name_cb cb);
 
 /* ── Connect ──────────────────────────────────────────────────────────────
  * Returns either us_socket_t* (fast path, *is_connecting=1) or
@@ -500,6 +506,8 @@ struct us_bun_socket_context_options_t {
     /* Colon-separated signature algorithm list applied via
      * SSL_CTX_set1_sigalgs_list. */
     const char *sigalgs;
+    /* Colon-separated named-group list applied via SSL_CTX_set1_groups_list. */
+    const char *ecdh_curve;
 };
 
 enum create_bun_socket_error_t {
@@ -509,6 +517,7 @@ enum create_bun_socket_error_t {
     CREATE_BUN_SOCKET_ERROR_INVALID_CA,
     CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS,
     CREATE_BUN_SOCKET_ERROR_INVALID_CRL,
+    CREATE_BUN_SOCKET_ERROR_INVALID_ECDH_CURVE,
 };
 
 /* Build an SSL_CTX from options. Returns the BoringSSL SSL_CTX*; caller owns
@@ -542,6 +551,9 @@ int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
 void us_ssl_enable_pending_events(struct ssl_st *ssl);
 int us_ssl_pop_pending_session(struct ssl_st *ssl, unsigned char *out, int out_cap);
 int us_ssl_pop_pending_keylog(struct ssl_st *ssl, unsigned char *out, int out_cap);
+/* The resumable session most recently delivered via the new-session callback,
+ * or NULL if none. Borrowed; valid until the next NewSessionTicket or SSL_free. */
+struct ssl_session_st *us_ssl_get_new_session(struct ssl_st *ssl);
 
 /* Public interfaces for loops */
 

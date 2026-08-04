@@ -1298,6 +1298,73 @@ describe("bundler", () => {
     },
   });
 
+  // https://github.com/oven-sh/bun/issues/14586
+  // Enough top-level bindings to exhaust every single-char name. With `$`
+  // unreferenced it sorts last in the head alphabet, so it is the 54th name
+  // the minifier would otherwise hand out.
+  const manyDecls = Array.from({ length: 60 }, (_, i) => `class C${i} { m${i}() {} }`).join("\n");
+  const manyRefs = Array.from({ length: 60 }, (_, i) => `C${i}`).join(",");
+  itBundled("minify/IdentifiersNeverBareDollar", {
+    files: {
+      "/entry.js": /* js */ `
+        ${manyDecls}
+        console.log(${manyRefs});
+      `,
+    },
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    target: "browser",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // No bare `$` identifier (allow `$` inside longer names like `a$`/`$a`).
+      const bareDollar = /(?<![A-Za-z0-9_$])\$(?![A-Za-z0-9_$])/;
+      expect(bareDollar.test(code)).toBe(false);
+    },
+  });
+  itBundled("minify/IdentifiersDollarStillUsableWhenReferenced", {
+    files: {
+      "/entry.js": /* js */ `
+        $(document).ready(() => {});
+        ${manyDecls}
+        console.log(${manyRefs});
+      `,
+    },
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    target: "browser",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // The unbound reference to `$` must be preserved verbatim; reserving
+      // the name must not break referencing an existing global `$`.
+      expect(code).toContain("$(document)");
+      // Count bare `$` occurrences: exactly the one reference above.
+      const bareDollar = /(?<![A-Za-z0-9_$])\$(?![A-Za-z0-9_$])/g;
+      expect([...code.matchAll(bareDollar)].length).toBe(1);
+    },
+  });
+  // The reservation is scoped to the minify renamer; the non-minifying
+  // `NumberRenamer` must keep user-written `$` bindings verbatim (React
+  // Compiler emits `let $ = _c(n)` inside every optimized component).
+  itBundled("minify/IdentifiersDollarPreservedWithoutMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        function Component() {
+          let $ = _c(3);
+          return $[0];
+        }
+        console.log(Component);
+      `,
+    },
+    minifyIdentifiers: false,
+    target: "browser",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("let $ = _c(3)");
+      expect(code).toContain("return $[0]");
+      expect(code).not.toContain("$2");
+    },
+  });
+
   // Without minifySyntax the block body must be preserved verbatim.
   itBundled("minify/ArrowReturnNotCollapsedWithoutMinifySyntax", {
     files: {

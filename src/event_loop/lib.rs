@@ -1,6 +1,5 @@
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
-pub mod AnyTask;
 pub mod AnyTaskWithExtraContext;
 pub mod ConcurrentTask;
 pub mod DeferredTaskQueue;
@@ -29,7 +28,7 @@ pub mod any_event_loop;
 
 // ─── public surface ─────────────────────────────────────────────────────────
 
-pub use AnyTask::{ErasedJsError, JsResult};
+pub type JsResult<T> = core::result::Result<T, bun_core::JsError>;
 pub use ConcurrentTask::{Task, TaskTag, Taskable, task_tag};
 
 // snake_case alias for the file-level-struct module so higher tiers avoid
@@ -71,7 +70,7 @@ bun_dispatch::link_interface! {
 impl JsEventLoop {
     /// `jsc::VirtualMachine::get().event_loop()` for the current thread.
     #[inline]
-    pub fn current() -> Self {
+    pub(crate) fn current() -> Self {
         // SAFETY: `__bun_js_event_loop_current` returns the live per-thread
         // `jsc::EventLoop` (panics if none), so the `link_interface!` owner
         // invariant for `Self::new` is upheld for every dispatch on this handle.

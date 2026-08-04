@@ -155,24 +155,17 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
 
 const kEmptyObject = ObjectFreeze(Object.create(null));
 
-// Node invokes fs/dns callbacks off the libuv completion via InternalMakeCallback:
-// a throw leaves callback->Call() empty, failing the InternalCallbackScope, and
-// the pending exception surfaces through TriggerUncaughtException instead of a
-// promise rejection. Bun runs these callbacks from a promise reaction, where an
-// unguarded throw would only reject that promise (an unhandledRejection).
-// https://github.com/nodejs/node/blob/v26.3.0/src/api/callback.cc#L255-L268
-// fs dispatch: https://github.com/nodejs/node/blob/v26.3.0/src/node_file.cc#L724-L741
-// dns dispatch: https://github.com/nodejs/node/blob/v26.3.0/src/cares_wrap.cc#L1881
+// Node invokes fs/dns callbacks via InternalMakeCallback, so a throw becomes uncaughtException
+// (not unhandledRejection); Bun runs them from a promise reaction so we reroute the throw.
+// https://github.com/nodejs/node/blob/main/src/api/callback.cc
 const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
 
 // Wrap a node-style callback so a throw inside it takes the uncaught path. The
 // callback keeps its place in the event loop; only the throw is rerouted. The
 // arity switch avoids materializing `arguments` for the shapes fs and dns use.
 function guardCallback(callback) {
-  // Node's MakeCallback runs async callbacks inside the domain that was
-  // active when the operation started and routes throws to that domain's
-  // error handler; capture it here (creation time == dispatch time for the
-  // node-style APIs using this guard).
+  // Node's MakeCallback runs async callbacks inside the domain active at dispatch
+  // and routes throws to its error handler; capture it at creation (== dispatch here).
   const domain = (process as any).domain;
   if (domain != null && typeof domain._errorHandler === "function") {
     return function guardedInDomain(a, b, c) {
@@ -220,36 +213,42 @@ function guardCallback(callback) {
 }
 
 const nodeModulesRE = /[\\/]node_modules[\\/]/;
+const ErrorCaptureStackTrace = Error.captureStackTrace;
 function returnStackFrames(_err: unknown, frames: unknown[]) {
   return frames;
 }
 
-// Port of node's IsInsideNodeModules (src/node_util.cc): test whether the
-// first real user frame (skipping node:/internal/native frames) lives inside
-// a node_modules directory. Uses prepareStackTrace CallSites so no stack
-// string is materialized; globals restored in finally.
+// Port of node's IsInsideNodeModules: first real user frame inside node_modules?
+// Guarded so a tampered Error.* never escapes to callers like url.parse.
+// https://github.com/nodejs/node/blob/main/src/node_util.cc
 function isInsideNodeModules(frameLimit: number): boolean {
-  const prevLimit = Error.stackTraceLimit;
-  const prevPrepare = Error.prepareStackTrace;
-  let frames: { getFileName(): string | null }[];
+  let prevLimit: unknown, prevPrepare: unknown;
+  let frames: { getFileName(): string | null }[] | undefined;
   try {
+    prevLimit = Error.stackTraceLimit;
+    prevPrepare = Error.prepareStackTrace;
     Error.stackTraceLimit = frameLimit;
     Error.prepareStackTrace = returnStackFrames;
     const target: { stack?: unknown } = {};
-    Error.captureStackTrace(target, isInsideNodeModules);
+    ErrorCaptureStackTrace(target, isInsideNodeModules);
     frames = target.stack as typeof frames;
+  } catch {
   } finally {
-    Error.stackTraceLimit = prevLimit;
-    Error.prepareStackTrace = prevPrepare;
+    try {
+      Error.stackTraceLimit = prevLimit;
+      Error.prepareStackTrace = prevPrepare;
+    } catch {}
   }
   if (!$isJSArray(frames)) return false;
-  for (const frame of frames) {
-    const filename = frame.getFileName();
-    if (!filename || filename.startsWith("node:") || filename.startsWith("internal:") || filename === "native") {
-      continue;
+  try {
+    for (const frame of frames) {
+      const filename = frame.getFileName();
+      if (!filename || filename.startsWith("node:") || filename.startsWith("internal:") || filename === "native") {
+        continue;
+      }
+      return nodeModulesRE.test(filename);
     }
-    return nodeModulesRE.test(filename);
-  }
+  } catch {}
   return false;
 }
 
@@ -285,7 +284,7 @@ const observerCounts = new Map();
 const kObservers = new Set();
 
 /** Entry types routed through this JS-side registry instead of the native observer. */
-const kNodeEntryTypes = new Set(["net", "dns", "http", "function"]);
+const kNodeEntryTypes = new Set(["net", "dns", "http", "function", "quic"]);
 
 function hasObserver(type) {
   return (observerCounts.get(type) ?? 0) > 0;
@@ -432,11 +431,8 @@ const kInternalAssertionSuffix =
   "\nThis is caused by either a bug in Node.js or incorrect usage of Node.js internals.\n" +
   "Please open an issue with this stack trace at https://github.com/nodejs/node/issues\n";
 
-//
-
-// State behind `node:module`'s getSourceMapsSupport()/setSourceMapsSupport().
-// Bun resolves source maps for stack traces without an opt-in flag, so the
-// initial state reports enabled.
+// State behind `node:module`'s get/setSourceMapsSupport(); Bun always resolves source
+// maps for stack traces, so the initial state reports enabled.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L59
 var sourceMapsSupport = ObjectFreeze({
   __proto__: null,

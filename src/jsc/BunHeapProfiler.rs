@@ -16,12 +16,8 @@ pub struct HeapProfilerConfig {
     pub text_format: bool,
 }
 
-/// Scan a Worker's `execArgv` for the `--heap-prof` flag family. Returns a
-/// config only when `--heap-prof` itself is present; `--heap-prof-interval`
-/// is accepted-and-ignored like the CLI (see Arguments.rs).
-///
-/// # Safety
-/// Each `WTFStringImpl` in `exec_argv` must be a live WTF string.
+/// Scan a Worker's `execArgv` for `--heap-prof`; returns a config only when the flag
+/// itself is present. SAFETY: each `WTFStringImpl` in `exec_argv` must be live.
 pub unsafe fn parse_worker_exec_argv(
     exec_argv: &[bun_core::WTFStringImpl],
 ) -> Option<HeapProfilerConfig> {
@@ -98,7 +94,10 @@ pub fn start_heap_profiler(vm: &mut VM) {
     Bun__startHeapProfiler(vm);
 }
 
-pub fn generate_and_write_profile(vm: &mut VM, config: &HeapProfilerConfig) -> Result<(), Error> {
+pub(crate) fn generate_and_write_profile(
+    vm: &mut VM,
+    config: &HeapProfilerConfig,
+) -> Result<(), Error> {
     // `defer profile_string.deref()` — `bun_core::String` is `Copy` (no Drop);
     // wrap the +1 ref from C++ in `OwnedString` so it's released on every exit path.
     let profile_string = OwnedString::new(if config.text_format {

@@ -18,12 +18,9 @@
 #pragma push_macro("assert")
 #undef assert
 
-// For `-e`/`-p` scripts, node exposes every require()-able builtin as a lazy,
-// re-assignable global (addBuiltinLibsToObject in lib/internal/modules/helpers.js).
-// `crypto` is included: node's eval_string.js special-cases code mentioning
-// crypto so the identifier resolves to node:crypto rather than WebCrypto; the
-// CustomValue accessor below has the same effect (and plain assignment
-// replaces it, like node's setReal).
+// For `-e`/`-p`, node exposes every require()-able builtin as a lazy re-assignable
+// global (addBuiltinLibsToObject in lib/internal/modules/helpers.js); `crypto` included
+// so the identifier resolves to node:crypto (like node's eval_string.js special-case).
 #define FOREACH_EXPOSED_BUILTIN_IMR(v)     \
     v(ffi,                    Bun::InternalModuleRegistry::BunFFI) \
     v(assert,                 Bun::InternalModuleRegistry::NodeAssert) \
@@ -100,13 +97,9 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::Global
 #undef PUT_CUSTOM_GETTER_SETTER
 }
 
-// `--print` output: node logs the completion value through console.log, whose
-// rendering is util.inspect with default options. Bun's native console
-// formatter deliberately differs from node's, so `-p` routes its final value
-// through the node util.inspect port for byte-level output parity.
-// Returns the inspected string, or empty (after clearing the exception, like
-// Bun__preExecutionBootstrap above) so the Rust caller can fall back to the
-// native console formatter.
+// `--print` output: node logs via console.log (util.inspect); Bun's native console
+// differs, so route through the node util.inspect port. Returns the inspected string,
+// or empty (exception cleared) so the Rust caller falls back to the native formatter.
 extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__inspectEvalResultForPrint(
     Zig::GlobalObject* globalObject, JSC::EncodedJSValue encodedValue, bool colors)
 {

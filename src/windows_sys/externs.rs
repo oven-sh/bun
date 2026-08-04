@@ -229,7 +229,7 @@ pub struct WIN32_FILE_ATTRIBUTE_DATA {
 }
 
 /// `GET_FILEEX_INFO_LEVELS` — enum(u32) selecting `GetFileAttributesExW` payload.
-pub type GET_FILEEX_INFO_LEVELS = u32;
+pub(crate) type GET_FILEEX_INFO_LEVELS = u32;
 
 /// `FILE_INFO_BY_HANDLE_CLASS` (`winbase.h`), as a bare `u32`.
 pub type FILE_INFO_BY_HANDLE_CLASS = u32;
@@ -1042,7 +1042,7 @@ impl NTSTATUS {
     /// `STATUS_FILE_DELETED` — an I/O request other than close was performed on
     /// a file after it was deleted (typically `NtCreateFile` against a name
     /// that has already been POSIX-delete-pended).
-    pub const FILE_DELETED: NTSTATUS = NTSTATUS(0xC000_0123);
+    pub(crate) const FILE_DELETED: NTSTATUS = NTSTATUS(0xC000_0123);
     pub const SHARING_VIOLATION: NTSTATUS = NTSTATUS(0xC000_0043);
     /// `STATUS_CANNOT_DELETE` — the file has `FILE_ATTRIBUTE_READONLY` (and the
     /// filesystem rejected `FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE`), or a
@@ -1200,7 +1200,7 @@ pub mod ws2_32 {
     /// associated consts. Values from `winsock2.h`.
     #[repr(transparent)]
     #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-    pub struct WinsockError(pub u16);
+    pub struct WinsockError(pub(crate) u16);
     impl WinsockError {
         #[inline]
         pub const fn raw(self) -> u16 {
@@ -1706,10 +1706,10 @@ pub struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
 pub struct IO_COUNTERS {
     pub ReadOperationCount: u64,
     pub WriteOperationCount: u64,
-    pub OtherOperationCount: u64,
-    pub ReadTransferCount: u64,
-    pub WriteTransferCount: u64,
-    pub OtherTransferCount: u64,
+    pub(crate) OtherOperationCount: u64,
+    pub(crate) ReadTransferCount: u64,
+    pub(crate) WriteTransferCount: u64,
+    pub(crate) OtherTransferCount: u64,
 }
 
 #[repr(C)]

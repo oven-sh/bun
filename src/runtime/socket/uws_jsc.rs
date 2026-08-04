@@ -37,7 +37,7 @@ impl StreamBufferExt for bun_uws_sys::us_socket::StreamBuffer {
 }
 
 // ── create_bun_socket_error_t.toJS / us_bun_verify_error_t.toJS ────────────
-pub fn create_bun_socket_error_to_js(
+pub(crate) fn create_bun_socket_error_to_js(
     this: create_bun_socket_error_t,
     global_object: &JSGlobalObject,
 ) -> JSValue {
@@ -75,6 +75,12 @@ pub fn create_bun_socket_error_to_js(
             .err(
                 bun_jsc::ErrorCode::ERR_CRYPTO_OPERATION_FAILED,
                 format_args!("Failed to parse CRL"),
+            )
+            .to_js(),
+        create_bun_socket_error_t::invalid_ecdh_curve => global_object
+            .err(
+                bun_jsc::ErrorCode::ERR_CRYPTO_OPERATION_FAILED,
+                format_args!("Failed to set ECDH curve"),
             )
             .to_js(),
     }
@@ -118,7 +124,7 @@ pub(crate) fn any_web_socket_get_topics_as_js_array(
 /// `socket` and `buffer` must be valid, non-null pointers for the duration of the call
 /// (guaranteed by the C++ caller `JSNodeHTTPServerSocket.cpp`).
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
+unsafe extern "C" fn us_socket_buffered_js_write(
     socket: *mut us_socket_t,
     // kept for ABI parity with the C++ caller; TLS is now per-socket
     _ssl: bool,

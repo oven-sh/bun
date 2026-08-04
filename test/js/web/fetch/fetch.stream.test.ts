@@ -1263,17 +1263,14 @@ describe.concurrent("fetch() with streaming", () => {
             gcTick(false);
             expect(buffer.toString("utf8")).toBe("unreachable");
           } catch (err) {
+            expect(err).toBeInstanceOf(TypeError);
             if (compression === "br") {
-              expect((err as Error).name).toBe("Error");
               expect((err as Error).code).toBe("BrotliDecompressionError");
             } else if (compression === "deflate-libdeflate") {
-              expect((err as Error).name).toBe("Error");
               expect((err as Error).code).toBe("ZlibError");
             } else if (compression === "zstd") {
-              expect((err as Error).name).toBe("Error");
               expect((err as Error).code).toBe("ZstdDecompressionError");
             } else {
-              expect((err as Error).name).toBe("Error");
               expect((err as Error).code).toBe("ZlibError");
             }
           }
@@ -1365,7 +1362,7 @@ describe.concurrent("fetch() with streaming", () => {
         gcTick(false);
         expect(buffer.toString("utf8")).toBe("unreachable");
       } catch (err) {
-        expect((err as Error).name).toBe("Error");
+        expect(err).toBeInstanceOf(TypeError);
         expect((err as Error).code).toBe("ECONNRESET");
       }
     });

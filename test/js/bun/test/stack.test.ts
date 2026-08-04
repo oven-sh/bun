@@ -1,7 +1,6 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
-import "harness";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, bunRun, normalizeBunSnapshot } from "harness";
 import { join } from "node:path";
 
 test("name property is used for function calls in Error.stack", () => {
@@ -71,8 +70,8 @@ test.todo("name property is used for function calls in Bun.inspect with bound ob
   expect(WRONG()).toContain("at RIGHT");
 });
 
-test("err.line and err.column are set", () => {
-  expect([join(import.meta.dir, "err-stack-fixture.js")]).toRun(
+test("err.line and err.column are set", async () => {
+  expect(await bunRun(join(import.meta.dir, "err-stack-fixture.js"))).toSpawn(
     JSON.stringify(
       {
         line: 3,
@@ -82,7 +81,7 @@ test("err.line and err.column are set", () => {
       },
       null,
       2,
-    ) + "\n",
+    ),
   );
 });
 

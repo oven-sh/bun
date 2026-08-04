@@ -170,9 +170,9 @@ pub fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
 // HOST_EXPORT(Bun__closeChildIPC, c)
 pub fn close_child_ipc(global: &JSGlobalObject) {
     let vm = global.bun_vm().as_mut();
-    if let Some(current_ipc) = vm.get_ipc_instance() {
+    if let Some(current_ipc) = crate::ipc_host::get_ipc_instance(vm) {
         // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance`.
-        unsafe { (*current_ipc).data.close_socket_next_tick(true) };
+        unsafe { (*current_ipc).data().close_socket_next_tick(true) };
     }
 }
 

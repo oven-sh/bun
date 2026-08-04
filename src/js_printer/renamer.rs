@@ -642,9 +642,14 @@ impl NumberRenamer {
                         // `s` is non-null (either `initial_scope` or a fresh
                         // pool slot from a prior iteration); the new child
                         // outlives this `ParentRef` only until `put()` below.
-                        parent: Some(bun_ptr::ParentRef::from(
-                            core::ptr::NonNull::new(s).expect("number_scope non-null"),
-                        )),
+                        // SAFETY: `s` is the live pool slot / initial scope (write provenance).
+                        parent: Some(unsafe {
+                            bun_ptr::ParentRef::from_raw_mut(
+                                core::ptr::NonNull::new(s)
+                                    .expect("number_scope non-null")
+                                    .as_ptr(),
+                            )
+                        }),
                         // Pre-size to the AST scope's symbol count so the
                         // per-name insert path doesn't realloc the table
                         // 0→4→8→… as names are assigned. Most scopes assign
@@ -752,7 +757,7 @@ pub struct NumberScope {
     /// `assign_names_recursive_with_number_scope` call, both of which strictly
     /// outlive this child (children are `put()` back before their parent), so
     /// `ParentRef::get()` is sound without per-site `unsafe`.
-    pub(crate) parent: Option<bun_ptr::ParentRef<NumberScope>>,
+    pub(crate) parent: Option<bun_ptr::ParentRef<NumberScope, bun_ptr::Mut>>,
     pub(crate) name_counts: NameCountMap,
 }
 
@@ -784,7 +789,7 @@ impl NameUse {
             return NameUse::SameScope(count);
         }
 
-        let mut s: Option<bun_ptr::ParentRef<NumberScope>> = this.parent;
+        let mut s: Option<bun_ptr::ParentRef<NumberScope, bun_ptr::Mut>> = this.parent;
 
         while let Some(scope) = s {
             // `ParentRef<NumberScope>: Deref` — safe backref deref under the

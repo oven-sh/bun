@@ -106,7 +106,8 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         result: StdioResult,
         source: Source,
     ) -> IntrusiveRc<Self> {
-        let this = bun_core::heap::into_raw(Box::new(Self {
+        #[allow(unused_mut)]
+        let mut boxed = Box::new(Self {
             ref_count: RefCount::init(),
             writer: IOWriter::<P>::default(),
             stdio_result: result,
@@ -115,9 +116,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             event_loop,
             started: false,
             buffer: RawSlice::EMPTY,
-        }));
-        // SAFETY: `this` was just allocated above and is non-null.
-        let this_ref = unsafe { &mut *this };
+        });
         #[cfg(windows)]
         {
             // On Windows `StdioResult` is the `WindowsStdioResult` union and
@@ -127,18 +126,21 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             // `Source::Pipe`, so we move it out (replacing with `Unavailable`)
             // and `heap::alloc` it (set_pipe re-wraps via `heap::take`).
             use crate::process::WindowsStdioResult;
-            match core::mem::replace(&mut this_ref.stdio_result, WindowsStdioResult::Unavailable) {
+            match core::mem::replace(&mut boxed.stdio_result, WindowsStdioResult::Unavailable) {
                 WindowsStdioResult::Buffer(pipe) => {
                     // SAFETY: `pipe` is a Box-allocated `uv::Pipe`; `set_pipe`
                     // takes ownership via `heap::take`.
-                    unsafe { this_ref.writer.set_pipe(bun_core::heap::into_raw(pipe)) };
+                    unsafe { boxed.writer.set_pipe(bun_core::heap::into_raw(pipe)) };
                 }
                 WindowsStdioResult::BufferFd(_) | WindowsStdioResult::Unavailable => {
                     unreachable!("StaticPipeWriter stdin requires WindowsStdioResult::Buffer");
                 }
             }
         }
-        this_ref.writer.set_parent(this);
+        let this = bun_core::heap::into_raw(boxed);
+        // SAFETY: `this` was just leaked above; borrow scoped to registering
+        // the parent backref.
+        unsafe { (*this).writer.set_parent(this) };
         // SAFETY: ownership of the initial ref is transferred to the returned IntrusiveRc.
         unsafe { IntrusiveRc::from_raw(this) }
     }

@@ -280,11 +280,11 @@ fn apply_barrel_optimization_impl(
 }
 
 /// Clear is_unused on a deferred barrel record. Returns true if the record was un-deferred.
-fn un_defer_record(import_records: &mut import_record::List, record_idx: u32) -> bool {
-    if record_idx as usize >= import_records.len() {
+fn un_defer_record(import_records: &mut import_record::List, record_idx: usize) -> bool {
+    if record_idx >= import_records.len() {
         return false;
     }
-    let rec = &mut import_records.as_mut_slice()[record_idx as usize];
+    let rec = &mut import_records.as_mut_slice()[record_idx];
     if rec.flags.contains(import_record::Flags::IS_INTERNAL)
         || !rec.flags.contains(import_record::Flags::IS_UNUSED)
     {
@@ -292,6 +292,19 @@ fn un_defer_record(import_records: &mut import_record::List, record_idx: u32) ->
     }
     rec.flags.remove(import_record::Flags::IS_UNUSED);
     true
+}
+
+/// The record's patched source_index, or (dev server, where indices are left
+/// unset on import records) a path-map lookup.
+#[inline]
+fn record_target(
+    rec: &bun_ast::ImportRecord,
+    map: Option<bun_ptr::BackRef<crate::PathToSourceIndexMap::PathToSourceIndexMap>>,
+) -> Option<u32> {
+    if rec.source_index.is_valid() {
+        return Some(rec.source_index.get());
+    }
+    map?.get_path(&rec.path)
 }
 
 /// BFS work queue item: un-defer an export from a barrel.
@@ -396,8 +409,10 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // Borrowck: `path_to_source_index_map` borrows
     // `&mut this.graph`; wrap in `BackRef` so the long-lived read borrow
     // doesn't conflict with `&mut this.requested_exports` /
-    // `&mut this.graph.ast` below. The map is not mutated for the duration of
-    // this fn.
+    // `&mut this.graph.ast` below. The map struct sits at a stable address in
+    // `graph.build_graphs[target]`; `resolve_barrel_records` may grow it
+    // through its own `&mut` reborrow, but no `&mut` is live when this
+    // `BackRef` is dereferenced (`record_target` re-derefs fresh each call).
     let path_to_source_index_map: Option<
         bun_ptr::BackRef<crate::PathToSourceIndexMap::PathToSourceIndexMap>,
     > = if dev_handle.is_some() {
@@ -501,14 +516,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
     //   can destructure or access any export. Must mark as .all. We cannot
     //   safely assume which exports will be used.
     for (idx, ir) in file_import_records.as_slice().iter().enumerate() {
-        let target = if ir.source_index.is_valid() {
-            ir.source_index.get()
-        } else if let Some(map) = path_to_source_index_map {
-            match map.get_path(&ir.path) {
-                Some(t) => t,
-                None => continue,
-            }
-        } else {
+        let Some(target) = record_target(ir, path_to_source_index_map) else {
             continue;
         };
         if ir.flags.contains(import_record::Flags::IS_INTERNAL) {
@@ -580,14 +588,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // Add bare require/dynamic-import targets to BFS as star imports — both
     // always need the full namespace.
     for (idx, ir) in file_import_records.as_slice().iter().enumerate() {
-        let target = if ir.source_index.is_valid() {
-            ir.source_index.get()
-        } else if let Some(map) = path_to_source_index_map {
-            match map.get_path(&ir.path) {
-                Some(t) => t,
-                None => continue,
-            }
-        } else {
+        let Some(target) = record_target(ir, path_to_source_index_map) else {
             continue;
         };
         if ir.flags.contains(import_record::Flags::IS_INTERNAL) {
@@ -610,6 +611,33 @@ pub(crate) fn schedule_barrel_deferred_imports(
                 is_star: true,
             });
         }
+    }
+
+    // `export * from` re-exports every name of the target: request it in full.
+    // (IS_EXPORT_STAR_TARGET only covers the exporter-parses-first order.)
+    let star_record_indices: Vec<u32> =
+        this.graph.ast.items_export_star_import_records()[result_source_index as usize].to_vec();
+    for star_idx in star_record_indices {
+        if star_idx as usize >= file_import_records.len() {
+            continue;
+        }
+        let ir = &file_import_records.as_slice()[star_idx as usize];
+        if ir.flags.contains(import_record::Flags::IS_INTERNAL) {
+            continue;
+        }
+        let Some(target) = record_target(ir, path_to_source_index_map) else {
+            continue;
+        };
+        let (found, value) = RequestedExports::entry(&mut this.requested_exports, target);
+        if found && matches!(value, RequestedExports::All) {
+            continue;
+        }
+        *value = RequestedExports::All;
+        queue.push(BarrelWorkItem {
+            barrel_source_index: target,
+            alias: b"",
+            is_star: true,
+        });
     }
 
     // Also seed the BFS with exports previously requested from THIS file
@@ -667,6 +695,12 @@ pub(crate) fn schedule_barrel_deferred_imports(
         if qi >= initial_queue_len {
             let (found, value) = RequestedExports::entry(&mut this.requested_exports, barrel_idx);
             if item_is_star {
+                // Already-All barrels were propagated once; skipping here
+                // terminates `export *` cycles.
+                if found && matches!(value, RequestedExports::All) {
+                    qi += 1;
+                    continue;
+                }
                 *value = RequestedExports::All;
             } else {
                 match value {
@@ -700,15 +734,95 @@ pub(crate) fn schedule_barrel_deferred_imports(
         if item_is_star {
             // Read flags by index, then mutate (borrowck).
             let len = barrel_ir.len();
+            let mut un_deferred_any = false;
             for idx in 0..len {
                 let flags = barrel_ir.as_slice()[idx].flags;
                 if flags.contains(import_record::Flags::IS_UNUSED)
                     && !flags.contains(import_record::Flags::IS_INTERNAL)
                 {
-                    if un_defer_record(barrel_ir, u32::try_from(idx).unwrap()) {
+                    if un_defer_record(barrel_ir, idx) {
                         barrels_to_resolve.put(barrel_idx, ())?;
+                        un_deferred_any = true;
                     }
                 }
+            }
+            // Resolve now: propagation below needs source indices.
+            if un_deferred_any {
+                newly_scheduled +=
+                    resolve_barrel_records(this, barrel_idx, &mut barrels_to_resolve);
+            }
+
+            // A namespace request covers every export: request each
+            // re-exported name from its source module and `export *` targets
+            // in full, so already-parsed inner barrels un-defer too.
+            struct StarPush {
+                target: u32,
+                alias: Option<bun_ast::StoreStr>,
+                is_star: bool,
+            }
+            let mut pushes: Vec<StarPush> = Vec::new();
+            {
+                let irs = &this.graph.ast.items_import_records()[barrel_idx as usize];
+                let named_exports = &this.graph.ast.items_named_exports()[barrel_idx as usize];
+                let named_imports = &this.graph.ast.items_named_imports()[barrel_idx as usize];
+                for entry in named_exports.values() {
+                    let Some(imp) = named_imports.get(&entry.ref_) else {
+                        continue;
+                    };
+                    if imp.import_record_index as usize >= irs.len() {
+                        continue;
+                    }
+                    let rec = &irs.as_slice()[imp.import_record_index as usize];
+                    if rec.flags.contains(import_record::Flags::IS_INTERNAL) {
+                        continue;
+                    }
+                    let Some(target) = record_target(rec, path_to_source_index_map) else {
+                        continue;
+                    };
+                    if imp.alias_is_star {
+                        pushes.push(StarPush {
+                            target,
+                            alias: None,
+                            is_star: true,
+                        });
+                    } else if imp.alias.is_some() {
+                        pushes.push(StarPush {
+                            target,
+                            alias: imp.alias,
+                            is_star: false,
+                        });
+                    }
+                }
+                for &star_idx in
+                    this.graph.ast.items_export_star_import_records()[barrel_idx as usize].iter()
+                {
+                    if (star_idx as usize) >= irs.len() {
+                        continue;
+                    }
+                    let rec = &irs.as_slice()[star_idx as usize];
+                    if rec.flags.contains(import_record::Flags::IS_INTERNAL) {
+                        continue;
+                    }
+                    let Some(target) = record_target(rec, path_to_source_index_map) else {
+                        continue;
+                    };
+                    pushes.push(StarPush {
+                        target,
+                        alias: None,
+                        is_star: true,
+                    });
+                }
+            }
+            for p in pushes {
+                queue.push(BarrelWorkItem {
+                    barrel_source_index: p.target,
+                    // Arena-backed `StoreStr`, valid for the bundler-arena lifetime.
+                    alias: match p.alias {
+                        Some(a) => a.slice(),
+                        None => b"",
+                    },
+                    is_star: p.is_star,
+                });
             }
             qi += 1;
             continue;
@@ -731,7 +845,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
                 if star_idx as usize >= barrel_ir.len() {
                     continue;
                 }
-                if un_defer_record(barrel_ir, star_idx) {
+                if un_defer_record(barrel_ir, star_idx as usize) {
                     barrels_to_resolve.put(barrel_idx, ())?;
                 }
                 let mut star_rec_si = barrel_ir.as_slice()[star_idx as usize].source_index;
@@ -757,7 +871,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
         };
 
         let barrel_ir = &mut this.graph.ast.items_import_records_mut()[barrel_idx as usize];
-        if un_defer_record(barrel_ir, resolution.import_record_index) {
+        if un_defer_record(barrel_ir, resolution.import_record_index as usize) {
             barrels_to_resolve.put(barrel_idx, ())?;
         }
 

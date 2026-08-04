@@ -17,7 +17,7 @@ async function compile(dir: string, extraArgs: string[] = []) {
     stderr: "pipe",
   });
   const [stdout, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  if (code !== 0) throw new Error(`compile failed\n${stdout}\n${stderr}`);
+  if (code !== 0) throw new Error(`compile failed (exit ${code})\n${stdout}\n${stderr}`);
 }
 
 async function run(dir: string) {
@@ -34,76 +34,47 @@ async function run(dir: string) {
 }
 
 describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
+  // One compiled binary exercises every CLI-side /$bunfs/ path we care about:
+  // a file-loader asset's parent directory, an --asset directory tree, an
+  // --asset single file, and the ENOENT/ENOTDIR/EISDIR/EACCES error paths.
+  // These used to be four separate `bun build --compile` invocations.
   test(
-    "existsSync/statSync/readdirSync on embedded-file parent directories",
+    "CLI: file-loader asset, --asset dir + file, and /$bunfs/ fs semantics",
     async () => {
-      using dir = tempDir("bunfs-dirsem", {
+      using dir = tempDir("bunfs-cli", {
         "index.ts": /* ts */ `
         import asset from "./data.txt" with { type: "file" };
         import fs from "node:fs";
         import path from "node:path";
 
-        const dir = path.dirname(asset);
-        const results = {
-          assetExists: fs.existsSync(asset),
-          dirExists: fs.existsSync(dir),
-          dirExistsTrailingSlash: fs.existsSync(dir + "/"),
-          dirStatIsDir: fs.statSync(dir).isDirectory(),
-          dirLstatIsDir: fs.lstatSync(dir).isDirectory(),
-          accessOk: (() => { try { fs.accessSync(dir); return true; } catch { return false; } })(),
-          accessWriteErr: (() => { try { fs.accessSync(asset, fs.constants.W_OK); return ""; } catch (e: any) { return e.code; } })(),
-          readdir: fs.readdirSync(dir).sort(),
-          readdirHasAsset: fs.readdirSync(dir).includes(path.basename(asset)),
-        };
-        console.log(JSON.stringify(results));
-      `,
-        "data.txt": "hello",
-      });
-
-      await compile(String(dir));
-      const { stdout, stderr, code } = await run(String(dir));
-      expect(stderr.trim()).toBe("");
-      const r = JSON.parse(stdout.trim());
-      expect(r.assetExists).toBe(true);
-      expect(r.dirExists).toBe(true);
-      expect(r.dirExistsTrailingSlash).toBe(true);
-      expect(r.dirStatIsDir).toBe(true);
-      expect(r.dirLstatIsDir).toBe(true);
-      expect(r.accessOk).toBe(true);
-      expect(r.accessWriteErr).toBe("EACCES");
-      expect(r.readdirHasAsset).toBe(true);
-      expect(r.readdir.length).toBeGreaterThan(0);
-      expect(code).toBe(0);
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "--asset embeds a directory tree with original paths, enumerable via fs and readable via Bun.file",
-    async () => {
-      using dir = tempDir("bunfs-asset-flag", {
-        "index.ts": /* ts */ `
-        import fs from "node:fs";
-        import path from "node:path";
-
-        // This mirrors what svelte-adapter-bun does: walk a directory relative
-        // to the bundled entry, stat each entry, serve via Bun.file().
-        const root = path.join(import.meta.dir, "client");
-        if (!fs.existsSync(root)) throw new Error("client dir missing: " + root);
-
-        const entries = fs.readdirSync(root, { withFileTypes: true });
-        const byName: Record<string, { isDir: boolean; isFile: boolean }> = {};
-        for (const e of entries) {
-          byName[e.name] = { isDir: e.isDirectory(), isFile: e.isFile() };
+        function errcode(fn: () => unknown): string {
+          try { fn(); return ""; } catch (e: any) { return e.code; }
         }
 
+        // file-loader asset: parent-directory semantics
+        const assetDir = path.dirname(asset);
+        const fileLoader = {
+          assetExists: fs.existsSync(asset),
+          dirExists: fs.existsSync(assetDir),
+          dirExistsTrailingSlash: fs.existsSync(assetDir + "/"),
+          dirStatIsDir: fs.statSync(assetDir).isDirectory(),
+          dirLstatIsDir: fs.lstatSync(assetDir).isDirectory(),
+          accessOk: errcode(() => fs.accessSync(assetDir)) === "",
+          accessWriteErr: errcode(() => fs.accessSync(asset, fs.constants.W_OK)),
+          readdir: fs.readdirSync(assetDir).sort(),
+          readdirHasAsset: fs.readdirSync(assetDir).includes(path.basename(asset)),
+        };
+
+        // --asset directory tree (mirrors svelte-adapter-bun: walk a directory
+        // relative to the bundled entry, stat each entry, serve via Bun.file())
+        const root = path.join(import.meta.dir, "client");
+        if (!fs.existsSync(root)) throw new Error("client dir missing: " + root);
+        const entries = fs.readdirSync(root, { withFileTypes: true });
+        const byName: Record<string, { isDir: boolean; isFile: boolean }> = {};
+        for (const e of entries) byName[e.name] = { isDir: e.isDirectory(), isFile: e.isFile() };
         const indexHtml = path.join(root, "index.html");
         const nestedCss = path.join(root, "_app", "immutable", "app.css");
-
-        const recursive = fs.readdirSync(root, { recursive: true }).map(String).sort();
-        const recursiveAsync = (await fs.promises.readdir(root, { recursive: true })).map(String).sort();
-
-        const out = {
+        const client = {
           root,
           entries: Object.keys(byName).sort(),
           byName,
@@ -114,121 +85,104 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           nestedCssContent: await Bun.file(nestedCss).text(),
           nestedCssViaReadFile: fs.readFileSync(nestedCss, "utf8"),
           nestedDirIsDir: fs.statSync(path.join(root, "_app", "immutable")).isDirectory(),
-          readFileDirErr: (() => { try { fs.readFileSync(root); return ""; } catch (e: any) { return e.code; } })(),
-          recursive,
-          recursiveAsync,
+          readFileDirErr: errcode(() => fs.readFileSync(root)),
+          recursive: fs.readdirSync(root, { recursive: true }).map(String).sort(),
+          recursiveAsync: (await fs.promises.readdir(root, { recursive: true })).map(String).sort(),
           embeddedFileCount: Bun.embeddedFiles.length,
         };
-        console.log(JSON.stringify(out));
+
+        // readdir on a non-existent /$bunfs/ path
+        const missing = path.join(import.meta.dir, "does-not-exist");
+        const enoent = {
+          code: errcode(() => fs.readdirSync(missing)),
+          exists: fs.existsSync(missing),
+        };
+
+        // --asset single file
+        const cfg = path.join(import.meta.dir, "config.json");
+        const singleFile = {
+          exists: fs.existsSync(cfg),
+          content: fs.readFileSync(cfg, "utf8"),
+          readdirCode: errcode(() => fs.readdirSync(cfg)),
+        };
+
+        console.log(JSON.stringify({ fileLoader, client, enoent, singleFile }));
       `,
+        "data.txt": "hello",
         "client/index.html": "<!doctype html><h1>hi</h1>",
         "client/favicon.svg": "<svg/>",
         "client/_app/immutable/app.css": "body{margin:0}",
         "client/_app/immutable/chunks/entry.js": "export default 1;",
-      });
-
-      await compile(String(dir), ["--asset", "./client"]);
-      const { stdout, stderr, code } = await run(String(dir));
-      expect(stderr.trim()).toBe("");
-      const r = JSON.parse(stdout.trim());
-
-      // import.meta.dir is /$bunfs/root (or B:/~BUN/root on Windows); client lives directly under it.
-      expect(r.root.replace(/\\/g, "/")).toMatch(/\/root\/client$/);
-
-      expect(r.entries).toEqual(["_app", "favicon.svg", "index.html"]);
-      expect(r.byName["index.html"]).toEqual({ isDir: false, isFile: true });
-      expect(r.byName["favicon.svg"]).toEqual({ isDir: false, isFile: true });
-      expect(r.byName["_app"]).toEqual({ isDir: true, isFile: false });
-
-      expect(r.indexHtmlExists).toBe(true);
-      expect(r.indexHtmlSize).toBe("<!doctype html><h1>hi</h1>".length);
-      expect(r.indexHtmlContent).toBe("<!doctype html><h1>hi</h1>");
-      expect(r.nestedCssExists).toBe(true);
-      expect(r.nestedCssContent).toBe("body{margin:0}");
-      expect(r.nestedCssViaReadFile).toBe("body{margin:0}");
-      expect(r.nestedDirIsDir).toBe(true);
-      expect(r.readFileDirErr).toBe("EISDIR");
-
-      // recursive must include both files and intermediate directories, with
-      // the platform path separator (same as Node's real-fs recursive readdir).
-      const rec: string[] = r.recursive;
-      expect(rec).toContain("_app");
-      expect(rec).toContain(join("_app", "immutable"));
-      expect(rec).toContain(join("_app", "immutable", "app.css"));
-      expect(rec).toContain(join("_app", "immutable", "chunks"));
-      expect(rec).toContain(join("_app", "immutable", "chunks", "entry.js"));
-      expect(rec).toContain("favicon.svg");
-      expect(rec).toContain("index.html");
-      expect(r.recursive.join("\n")).not.toContain(sep === "/" ? "\\" : "/");
-      expect(r.recursiveAsync).toEqual(r.recursive);
-
-      expect(r.embeddedFileCount).toBeGreaterThanOrEqual(4);
-      expect(code).toBe(0);
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "readdirSync on a non-existent /$bunfs/ path throws ENOENT",
-    async () => {
-      using dir = tempDir("bunfs-enoent", {
-        "index.ts": /* ts */ `
-        import fs from "node:fs";
-        import path from "node:path";
-        const p = path.join(import.meta.dir, "does-not-exist");
-        try {
-          fs.readdirSync(p);
-          console.log("FAIL: no throw");
-        } catch (e: any) {
-          console.log(JSON.stringify({ code: e.code, exists: fs.existsSync(p) }));
-        }
-      `,
-      });
-      await compile(String(dir));
-      const { stdout, stderr, code } = await run(String(dir));
-      expect(stderr.trim()).toBe("");
-      const r = JSON.parse(stdout.trim());
-      expect(r.code).toBe("ENOENT");
-      expect(r.exists).toBe(false);
-      expect(code).toBe(0);
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "--asset on a single file",
-    async () => {
-      using dir = tempDir("bunfs-asset-file", {
-        "index.ts": /* ts */ `
-        import fs from "node:fs";
-        import path from "node:path";
-        const p = path.join(import.meta.dir, "config.json");
-        let readdirCode = "";
-        try { fs.readdirSync(p); } catch (e: any) { readdirCode = e.code; }
-        console.log(JSON.stringify({
-          exists: fs.existsSync(p),
-          content: fs.readFileSync(p, "utf8"),
-          readdirCode,
-        }));
-      `,
         "config.json": `{"ok":true}`,
       });
-      await compile(String(dir), ["--asset", "./config.json"]);
+
+      await compile(String(dir), ["--asset", "./client", "--asset", "./config.json"]);
       const { stdout, stderr, code } = await run(String(dir));
       expect(stderr.trim()).toBe("");
       const r = JSON.parse(stdout.trim());
-      expect(r.exists).toBe(true);
-      expect(r.content).toBe(`{"ok":true}`);
-      expect(r.readdirCode).toBe("ENOTDIR");
+
+      const expectedRecursive = [
+        "_app",
+        join("_app", "immutable"),
+        join("_app", "immutable", "app.css"),
+        join("_app", "immutable", "chunks"),
+        join("_app", "immutable", "chunks", "entry.js"),
+        "favicon.svg",
+        "index.html",
+      ].sort();
+
+      expect(r).toEqual({
+        fileLoader: {
+          assetExists: true,
+          dirExists: true,
+          dirExistsTrailingSlash: true,
+          dirStatIsDir: true,
+          dirLstatIsDir: true,
+          accessOk: true,
+          accessWriteErr: "EACCES",
+          // the hashed file-loader name is covered by readdirHasAsset
+          readdir: expect.arrayContaining(["client", "config.json"]),
+          readdirHasAsset: true,
+        },
+        client: {
+          root: expect.stringMatching(/[/\\]root[/\\]client$/),
+          entries: ["_app", "favicon.svg", "index.html"],
+          byName: {
+            _app: { isDir: true, isFile: false },
+            "favicon.svg": { isDir: false, isFile: true },
+            "index.html": { isDir: false, isFile: true },
+          },
+          indexHtmlExists: true,
+          indexHtmlSize: "<!doctype html><h1>hi</h1>".length,
+          indexHtmlContent: "<!doctype html><h1>hi</h1>",
+          nestedCssExists: true,
+          nestedCssContent: "body{margin:0}",
+          nestedCssViaReadFile: "body{margin:0}",
+          nestedDirIsDir: true,
+          readFileDirErr: "EISDIR",
+          recursive: expectedRecursive,
+          recursiveAsync: expectedRecursive,
+          embeddedFileCount: expect.any(Number),
+        },
+        enoent: { code: "ENOENT", exists: false },
+        singleFile: { exists: true, content: `{"ok":true}`, readdirCode: "ENOTDIR" },
+      });
+      // recursive uses the platform path separator (same as Node's real-fs recursive readdir)
+      expect(r.client.recursive.join("\n")).not.toContain(sep === "/" ? "\\" : "/");
+      // data.txt + config.json + 4 under client/
+      expect(r.client.embeddedFileCount).toBeGreaterThanOrEqual(6);
       expect(code).toBe(0);
     },
     TIMEOUT,
   );
 
+  // One Bun.build() covers both the directory-asset and the single-file-asset
+  // JS-API paths, including the index.js-does-not-collide-with-entry case.
+  // These used to be two separate Bun.build() calls (each writes a ~1GB binary).
   test(
-    "Bun.build({compile: {assets}}) embeds a directory tree",
+    "Bun.build({compile: {assets}}): directory + file assets, entry keyed at basename(outfile)",
     async () => {
-      using dir = tempDir("bunfs-asset-jsapi", {
+      using dir = tempDir("bunfs-jsapi", {
         "index.ts": /* ts */ `
           import fs from "node:fs";
           import path from "node:path";
@@ -236,53 +190,33 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           console.log(JSON.stringify({
             entries: fs.readdirSync(root).sort(),
             content: fs.readFileSync(path.join(root, "index.html"), "utf8"),
+            subCss: fs.readFileSync(path.join(root, "sub", "a.css"), "utf8"),
+            // entry is keyed at basename(outfile), so an index.js asset is readable as itself
+            indexJs: fs.readFileSync(path.join(import.meta.dir, "index.js"), "utf8"),
           }));
         `,
         "public/index.html": "<h1>js-api</h1>",
         "public/sub/a.css": "body{}",
-      });
-
-      const result = await Bun.build({
-        entrypoints: [join(String(dir), "index.ts")],
-        compile: {
-          outfile: join(String(dir), "app"),
-          assets: [join(String(dir), "public")],
-        },
-      });
-      expect(result.success).toBe(true);
-
-      const { stdout, stderr, code } = await run(String(dir));
-      expect(stderr.trim()).toBe("");
-      const r = JSON.parse(stdout.trim());
-      expect(r.entries).toEqual(["index.html", "sub"]);
-      expect(r.content).toBe("<h1>js-api</h1>");
-      expect(code).toBe(0);
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "Bun.build({compile: {assets}}) keys the entry point at basename(outfile) so an index.js asset does not collide",
-    async () => {
-      using dir = tempDir("bunfs-asset-jsapi-entry", {
-        "index.ts": /* ts */ `
-          import fs from "node:fs";
-          import path from "node:path";
-          console.log(fs.readFileSync(path.join(import.meta.dir, "index.js"), "utf8"));
-        `,
         "cfg/index.js": `ASSET_CONTENT`,
       });
+
       const result = await Bun.build({
         entrypoints: [join(String(dir), "index.ts")],
         compile: {
           outfile: join(String(dir), "app"),
-          assets: [join(String(dir), "cfg", "index.js")],
+          assets: [join(String(dir), "public"), join(String(dir), "cfg", "index.js")],
         },
       });
       expect(result.success).toBe(true);
+
       const { stdout, stderr, code } = await run(String(dir));
       expect(stderr.trim()).toBe("");
-      expect(stdout.trim()).toBe("ASSET_CONTENT");
+      expect(JSON.parse(stdout.trim())).toEqual({
+        entries: ["index.html", "sub"],
+        content: "<h1>js-api</h1>",
+        subCss: "body{}",
+        indexJs: "ASSET_CONTENT",
+      });
       expect(code).toBe(0);
     },
     TIMEOUT,

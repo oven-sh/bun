@@ -1605,7 +1605,7 @@ impl BlobExt for Blob {
             global_this,
             readable_stream.value,
             // SAFETY: file_sink is a live +1 *mut FileSink.
-            unsafe { &mut *file_sink },
+            unsafe { NonNull::new_unchecked(file_sink) },
         );
 
         assignment_result.ensure_still_alive();
@@ -5257,7 +5257,7 @@ pub(crate) fn write_file_internal(
                         {
                             on_start_buffering(orig_task);
                         }
-                        locked.task = Some(task.cast::<c_void>());
+                        locked.task = Some(NonNull::new(task).unwrap().cast::<c_void>());
                         locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
                         // SAFETY: `task` was just heap-allocated; consumed in `then_wrap`.
                         Ok(ControlFlow::Break(unsafe { (*task).promise.value() }))

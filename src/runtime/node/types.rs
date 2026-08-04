@@ -248,8 +248,7 @@ impl Default for StringOrBuffer {
     }
 }
 
-/// Type-tag classification (no user JS) for deferred decoding via
-/// [`StringOrBuffer::from_js_with_kind`].
+/// Type-tag classification (no user JS); decode later via `from_js_with_kind`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StringOrBufferKind {
     String,

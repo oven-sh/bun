@@ -211,7 +211,11 @@ test("stdin ReadableStream is rejected (matches spawnSync)", () => {
     Bun.spawnAndWait({
       cmd: [bunExe(), "-e", ""],
       env: bunEnv,
-      stdin: new ReadableStream({ start(c) { c.close(); } }),
+      stdin: new ReadableStream({
+        start(c) {
+          c.close();
+        },
+      }),
     }),
   ).toThrow("'stdin' ReadableStream is only supported with Bun.spawn");
 });

@@ -610,7 +610,13 @@ fn spawn_maybe_sync<const IS_SYNC: bool, const BUFFERED_ASYNC: bool>(
                         let mut stdio_iter = stdio_val.array_iterator(global_this)?;
                         let mut i: i32 = 0;
                         while let Some(value) = stdio_iter.next()? {
-                            Stdio::extract(&mut stdio[i as usize], global_this, i, value, IS_SYNC || BUFFERED_ASYNC)?;
+                            Stdio::extract(
+                                &mut stdio[i as usize],
+                                global_this,
+                                i,
+                                value,
+                                IS_SYNC || BUFFERED_ASYNC,
+                            )?;
                             if i == 2 {
                                 break;
                             }
@@ -653,15 +659,33 @@ fn spawn_maybe_sync<const IS_SYNC: bool, const BUFFERED_ASYNC: bool>(
                 }
             } else {
                 if let Some(value) = args.get(global_this, "stdin")? {
-                    Stdio::extract(&mut stdio[0], global_this, 0, value, IS_SYNC || BUFFERED_ASYNC)?;
+                    Stdio::extract(
+                        &mut stdio[0],
+                        global_this,
+                        0,
+                        value,
+                        IS_SYNC || BUFFERED_ASYNC,
+                    )?;
                 }
 
                 if let Some(value) = args.get(global_this, "stderr")? {
-                    Stdio::extract(&mut stdio[2], global_this, 2, value, IS_SYNC || BUFFERED_ASYNC)?;
+                    Stdio::extract(
+                        &mut stdio[2],
+                        global_this,
+                        2,
+                        value,
+                        IS_SYNC || BUFFERED_ASYNC,
+                    )?;
                 }
 
                 if let Some(value) = args.get(global_this, "stdout")? {
-                    Stdio::extract(&mut stdio[1], global_this, 1, value, IS_SYNC || BUFFERED_ASYNC)?;
+                    Stdio::extract(
+                        &mut stdio[1],
+                        global_this,
+                        1,
+                        value,
+                        IS_SYNC || BUFFERED_ASYNC,
+                    )?;
                 }
             }
 

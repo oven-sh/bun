@@ -1381,10 +1381,13 @@ class InspectorCDPAdapter {
 
       case "ScriptProfiler.trackingComplete": {
         const clientId = this.#profilerStopClientIds.shift();
-        // Broadcast to every session sharing this backend: all of them learn
-        // tracking ended; only the one whose Profiler.stop is waiting replies.
-        this.#profilerTracking = false;
-        if (clientId === undefined) return;
+        if (clientId === undefined) {
+          // Broadcast: a session that did not issue the stop learns tracking
+          // ended. The issuing session already cleared #profilerTracking at
+          // Profiler.stop and may have re-armed it with a pipelined start.
+          this.#profilerTracking = false;
+          return;
+        }
         this.#replyToClient(clientId, { profile: this.#translateSamplingProfile(params) });
         this.#profilerStartTime = 0;
         return;

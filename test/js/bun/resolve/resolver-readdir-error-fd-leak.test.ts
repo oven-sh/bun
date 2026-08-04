@@ -58,10 +58,13 @@ long syscall(long number, ...) {
 const INNER = /* ts */ `
 import { readdirSync, readlinkSync } from "node:fs";
 const N = ${DIR_COUNT};
+let failed = 0;
 for (let i = 0; i < N; i++) {
   try {
     require.resolve("./d" + i + "${MARKER}/m.ts");
-  } catch {}
+  } catch {
+    failed++;
+  }
 }
 let leaked = 0;
 for (const name of readdirSync("/proc/self/fd")) {
@@ -70,7 +73,7 @@ for (const name of readdirSync("/proc/self/fd")) {
     if (target.includes("${MARKER}")) leaked++;
   } catch {}
 }
-console.log("LEAKED=" + leaked);
+console.log("FAILED=" + failed + " LEAKED=" + leaked);
 process.exit(0);
 `;
 
@@ -115,7 +118,12 @@ test.skipIf(!isLinux || isMusl || !cc)(
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const m = stdout.match(/LEAKED=(\d+)/);
-    expect({ stdout: m?.[0], stderr, exitCode }).toEqual({ stdout: "LEAKED=0", stderr: "", exitCode: 0 });
+    // FAILED=DIR_COUNT proves the shim actually fired; if bun stops routing
+    // getdents64 through libc's syscall() the resolves succeed and this trips.
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: `FAILED=${DIR_COUNT} LEAKED=0`,
+      stderr: "",
+      exitCode: 0,
+    });
   },
 );

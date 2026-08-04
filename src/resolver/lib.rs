@@ -1231,10 +1231,10 @@ pub mod fs {
             // is published into the returned DirEntry; `handle_published` flips
             // once that happens so the `store_fd` success path keeps the fd while
             // the `?`/error returns below still close it.
-            let should_close_handle = !had_handle && (!store_fd || self.need_to_close_files());
+            let close_even_if_published = !store_fd || self.need_to_close_files();
             let handle_published = core::cell::Cell::new(false);
             let _close_guard = scopeguard::guard((), |()| {
-                if !had_handle && (should_close_handle || !handle_published.get()) {
+                if !had_handle && (close_even_if_published || !handle_published.get()) {
                     let _ = bun_sys::close(handle);
                 }
             });

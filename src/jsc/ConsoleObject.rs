@@ -532,6 +532,15 @@ fn message_with_type_and_level_(
         }
     }
 
+    if message_type == MessageType::Assert && print_length > 0 {
+        let text: &str = if enable_colors {
+            pfmt!("<r><red>Assertion failed<r><d>: <r>", true)
+        } else {
+            "Assertion failed: "
+        };
+        let _ = writer.write_all(text.as_bytes());
+    }
+
     if print_length > 0 {
         format2(
             level,

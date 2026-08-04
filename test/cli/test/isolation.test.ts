@@ -413,6 +413,125 @@ describe.concurrent("bun test --isolate", () => {
   });
 });
 
+// When a file leaves globalThis in its post-preload shape, --isolate reuses the
+// global (scrubbing leaked own properties and dropping only project-path module
+// records) instead of allocating a fresh one. A file that overwrites a built-in
+// global forces a full swap.
+describe.concurrent("--isolate global reuse", () => {
+  // Fixture shared by the reuse/swap/disable tests: the last file reports
+  // {reuse, swap} so the child assertion is in one place and can't drift.
+  const reuseFixtures = (dirtyA: string, assertB: string) => ({
+    "node_modules/pkg/index.js": `module.exports = { tag: "pkg", slot: null };`,
+    "node_modules/pkg/package.json": `{"name":"pkg","main":"index.js"}`,
+    "state.ts": `export const counter = { n: 0 };`,
+    "a.test.ts": `
+      import { test, expect } from "bun:test";
+      import { counter } from "./state";
+      import pkg from "pkg";
+      test("a", () => {
+        counter.n++;
+        (globalThis as any).__leakedFromA = counter;
+        pkg.slot = "set-by-a";
+        ${dirtyA}
+        expect(counter.n).toBe(1);
+      });
+    `,
+    "b.test.ts": `
+      import { test, expect } from "bun:test";
+      import { counter } from "./state";
+      import pkg from "pkg";
+      test("b", () => {
+        expect(counter.n).toBe(0);
+        expect((globalThis as any).__leakedFromA).toBeUndefined();
+        ${assertB}
+      });
+    `,
+    "c.test.ts": `
+      import { test, expect } from "bun:test";
+      import { testIsolationResetStats } from "bun:internal-for-testing";
+      test("c", () => {
+        console.log("RESET_STATS=" + JSON.stringify(testIsolationResetStats()));
+        expect(true).toBe(true);
+      });
+    `,
+  });
+
+  async function runIsolate(dir: string, env: Record<string, string> = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts", "./c.test.ts"],
+      env: { ...bunEnv, ...env },
+      cwd: dir,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const m = stdout.match(/RESET_STATS=(\{.*?\})/);
+    const stats = m ? (JSON.parse(m[1]) as { reuse: number; swap: number }) : null;
+    return { stdout, stderr, exitCode, stats };
+  }
+
+  test("reuses the global and keeps node_modules records when nothing on globalThis was overwritten", async () => {
+    using dir = tempDir(
+      "isolate-reuse-clean",
+      // b observes the node_modules record survived (pkg.slot still "set-by-a")
+      // while the project-path ./state module was dropped (counter.n is 0) and
+      // the leaked own property was scrubbed.
+      reuseFixtures("", `expect(pkg.slot).toBe("set-by-a");`),
+    );
+    const { stderr, stats, exitCode } = await runIsolate(String(dir));
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+    expect(stats).toEqual({ reuse: 2, swap: 0 });
+    expect(exitCode).toBe(0);
+  });
+
+  test("falls back to a full swap when a built-in global is overwritten", async () => {
+    using dir = tempDir(
+      "isolate-reuse-dirty",
+      // a replaces globalThis.fetch; b must see the built-in restored and the
+      // node_modules record dropped (pkg.slot back to null) by the full swap.
+      reuseFixtures(
+        `globalThis.fetch = (() => 42) as any;`,
+        `expect(typeof fetch).toBe("function");
+         expect(String(fetch)).toContain("native code");
+         expect(pkg.slot).toBe(null);`,
+      ),
+    );
+    const { stderr, stats, exitCode } = await runIsolate(String(dir));
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+    // a→b is the swap; b→c is clean again.
+    expect(stats).toEqual({ reuse: 1, swap: 1 });
+    expect(exitCode).toBe(0);
+  });
+
+  test("falls back to a full swap when an Array.prototype watchpoint is fired", async () => {
+    using dir = tempDir(
+      "isolate-reuse-proto",
+      reuseFixtures(
+        `(Array.prototype as any)[0] = "poison";`,
+        `expect(([] as any)[0]).toBeUndefined();
+         expect(pkg.slot).toBe(null);`,
+      ),
+    );
+    const { stderr, stats, exitCode } = await runIsolate(String(dir));
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+    expect(stats?.swap).toBeGreaterThanOrEqual(1);
+    expect(exitCode).toBe(0);
+  });
+
+  test("BUN_FEATURE_FLAG_DISABLE_ISOLATION_GLOBAL_REUSE=1 forces a full swap every file", async () => {
+    using dir = tempDir(
+      "isolate-reuse-disabled",
+      reuseFixtures("", `expect(pkg.slot).toBe(null);`),
+    );
+    const { stderr, stats, exitCode } = await runIsolate(String(dir), {
+      BUN_FEATURE_FLAG_DISABLE_ISOLATION_GLOBAL_REUSE: "1",
+    });
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+    expect(stats).toEqual({ reuse: 0, swap: 0 });
+    expect(exitCode).toBe(0);
+  });
+});
+
 // The eviction test below proves the SourceProvider cache is active (control:
 // b sees stale v1 → cache hit) and that delete require.cache evicts it
 // (treatment: b sees fresh v2). A/B timing was removed as flaky; this is the

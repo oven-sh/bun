@@ -692,6 +692,202 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     return globalObject;
 }
 
+namespace Bun {
+
+// Snapshot of a freshly-created global (after --preload) used by
+// Zig__GlobalObject__tryResetForTestIsolation to decide whether a file left
+// the global clean enough to reuse (preserving JIT'd code and linked
+// CodeBlocks) instead of paying for a full swap.
+struct TestIsolationBaseline {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(TestIsolationBaseline);
+
+public:
+    struct Entry {
+        JSC::EncodedJSValue value;
+        uint8_t attributes;
+    };
+    // globalThis own properties at capture time. Keys are UniquedStringImpl*
+    // (the global is a dictionary; its PropertyTable keys are already uniqued
+    // and live as long as the global).
+    WTF::UncheckedKeyHashMap<WTF::RefPtr<WTF::UniquedStringImpl>, Entry> ownProperties;
+    unsigned lexicalSymbolTableSize { 0 };
+    unsigned varSymbolTableSize { 0 };
+    // The global this baseline was captured against; a baseline survives until
+    // the next full swap, at which point it's re-captured on the new global.
+    Zig::GlobalObject* capturedGlobal { nullptr };
+    unsigned reuseCount { 0 };
+    unsigned swapCount { 0 };
+};
+
+} // namespace Bun
+
+// Records the post-preload own-property set of `globalObject` so the next
+// file's swap can compare against it. Called from Rust between preload and the
+// file's own module load, and only on the first file after a fresh global.
+extern "C" void Zig__GlobalObject__captureTestIsolationBaseline(Zig::GlobalObject* globalObject)
+{
+    JSC::VM& vm = globalObject->vm();
+    JSC::JSLockHolder locker(vm);
+    auto* clientData = WebCore::clientData(vm);
+    if (!clientData->testIsolationBaseline)
+        clientData->testIsolationBaseline.reset(new Bun::TestIsolationBaseline);
+    auto& baseline = *clientData->testIsolationBaseline;
+    baseline.ownProperties.clear();
+    baseline.capturedGlobal = globalObject;
+    baseline.lexicalSymbolTableSize = globalObject->globalLexicalEnvironment()->symbolTable()->size();
+
+    // Static hash-table entries (setTimeout, fetch, Reflect, process, …) reify
+    // into own-property storage on first access. Reify them all now so the
+    // baseline records their canonical values; a test that later overwrites one
+    // is then caught by the value compare, and the scrub never mistakes a lazy
+    // reification for a user leak.
+    if (!globalObject->staticPropertiesReified())
+        globalObject->reifyAllStaticProperties(globalObject);
+
+    baseline.varSymbolTableSize = globalObject->symbolTable()->size();
+
+    globalObject->structure()->forEachProperty(vm, [&](const auto& entry) -> bool {
+        baseline.ownProperties.add(entry.key(),
+            Bun::TestIsolationBaseline::Entry {
+                JSC::JSValue::encode(globalObject->getDirect(entry.offset())),
+                entry.attributes() });
+        return true;
+    });
+}
+
+// Returns true if `globalObject` was scrubbed in place and can be reused for
+// the next file; false if a full swap (createForTestIsolation) is required.
+// Callers have already run the runtime-side cleanup (sockets, timers, handles).
+extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* globalObject)
+{
+    JSC::VM& vm = globalObject->vm();
+    JSC::JSLockHolder locker(vm);
+    auto* clientData = WebCore::clientData(vm);
+    auto* baseline = clientData->testIsolationBaseline.get();
+    if (!baseline || baseline->capturedGlobal != globalObject)
+        return false;
+
+    auto swap = [&] { baseline->swapCount++; return false; };
+
+    // Prototype-chain watchpoints are one-shot: once fired they cannot be
+    // re-armed, so a file that invalidates one forces a full swap for the
+    // remainder of the run (the fresh global's watchpoints start valid again).
+    if (globalObject->isHavingABadTime()
+        || !globalObject->objectPrototypeChainIsSane()
+        || !globalObject->arrayPrototypeChainIsSane()
+        || !globalObject->stringPrototypeChainIsSane()
+        || !globalObject->arrayIteratorProtocolWatchpointSet().isStillValid()
+        || !globalObject->mapIteratorProtocolWatchpointSet().isStillValid()
+        || !globalObject->setIteratorProtocolWatchpointSet().isStillValid())
+        return swap();
+
+    // Top-level `let`/`const`/`class` in a sloppy-mode script land here and
+    // can't be deleted.
+    if (globalObject->globalLexicalEnvironment()->symbolTable()->size() != baseline->lexicalSymbolTableSize)
+        return swap();
+    if (globalObject->symbolTable()->size() != baseline->varSymbolTableSize)
+        return swap();
+
+    if (globalObject->hasOverriddenModuleWrapper
+        || globalObject->hasOverriddenModuleResolveFilenameFunction
+        || globalObject->hasOverriddenModuleRunMain
+        || globalObject->m_errorConstructorPrepareStackTraceValue.get())
+        return swap();
+
+    // Compare own properties. Anything in the baseline whose value or
+    // attributes changed means user code overwrote a built-in (e.g.
+    // `globalThis.fetch = mock`); anything extra is a leak to scrub.
+    WTF::Vector<JSC::Identifier, 16> toDelete;
+    unsigned seen = 0;
+    bool dirty = false;
+    globalObject->structure()->forEachProperty(vm, [&](const auto& entry) -> bool {
+        auto it = baseline->ownProperties.find(entry.key());
+        if (it == baseline->ownProperties.end()) {
+            toDelete.append(JSC::Identifier::fromUid(vm, entry.key()));
+            return true;
+        }
+        seen++;
+        if (entry.attributes() != it->value.attributes
+            || JSC::JSValue::encode(globalObject->getDirect(entry.offset())) != it->value.value) {
+            dirty = true;
+            return false;
+        }
+        return true;
+    });
+    if (dirty || seen != baseline->ownProperties.size())
+        return swap();
+
+    for (auto& id : toDelete) {
+        JSC::DeletePropertySlot slot;
+        JSC::JSCell::deleteProperty(globalObject, globalObject, id, slot);
+    }
+
+    // Drop project/test modules so "module state is not shared between files"
+    // holds; keep node_modules and builtin records so their linked CodeBlocks
+    // (and JIT'd code) survive, which is where the per-file cost under
+    // --isolate actually goes. Project code is an absolute path outside
+    // node_modules; bun's loader keys builtins by specifier ("node:fs",
+    // "bun:test"), which this leaves alone.
+    auto isProjectPath = [](WTF::StringView key) {
+        if (key.isEmpty())
+            return false;
+#if OS(WINDOWS)
+        if (key.contains("\\node_modules\\"_s) || key.contains("/node_modules/"_s))
+            return false;
+        return key.length() >= 2 && (key[1] == ':' || (key[0] == '\\' && key[1] == '\\'));
+#else
+        return key[0] == '/' && !key.contains("/node_modules/"_s);
+#endif
+    };
+    {
+        auto* moduleLoader = globalObject->moduleLoader();
+        WTF::Vector<JSC::Identifier, 32> evict;
+        for (auto& [key, entry] : moduleLoader->moduleMap()) {
+            UNUSED_VARIABLE(entry);
+            if (isProjectPath(WTF::StringView(key.first)))
+                evict.append(JSC::Identifier::fromUid(vm, key.first));
+        }
+        WTF::Locker locker { moduleLoader->cellLock() };
+        for (auto& id : evict)
+            moduleLoader->removeEntry(id);
+    }
+    {
+        auto* requireMap = globalObject->requireMap();
+        WTF::Vector<JSC::JSValue, 32> evict;
+        auto* iter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), requireMap, JSC::IterationKind::Keys);
+        JSC::JSValue value;
+        while (iter->next(globalObject, value)) {
+            if (auto* str = value.toStringOrNull(globalObject); str && isProjectPath(str->view(globalObject)))
+                evict.append(value);
+        }
+        for (auto& key : evict)
+            requireMap->remove(globalObject, key);
+    }
+
+    globalObject->m_nextTickQueue.clear();
+    globalObject->mockModule = {};
+    globalObject->globalEventScope->removeAllEventListeners();
+    // The Rust side already restored the OS cwd; drop the JS-side cache so the
+    // next `process.cwd()` re-reads it.
+    if (globalObject->hasProcessObject())
+        globalObject->processObject()->clearCachedCwd();
+
+    baseline->reuseCount++;
+    return true;
+}
+
+extern "C" void Zig__GlobalObject__testIsolationResetStats(Zig::GlobalObject* globalObject, uint32_t* reuse, uint32_t* swap)
+{
+    auto* baseline = WebCore::clientData(globalObject->vm())->testIsolationBaseline.get();
+    *reuse = baseline ? baseline->reuseCount : 0;
+    *swap = baseline ? baseline->swapCount : 0;
+}
+
+void WebCore::JSVMClientData::TestIsolationBaselineDeleter::operator()(Bun::TestIsolationBaseline* p) const
+{
+    delete p;
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {

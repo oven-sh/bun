@@ -1099,6 +1099,15 @@ impl<'a> Parser<'a> {
         // https://github.com/lodash/lodash/issues/5660
         let mut force_esm = false;
 
+        // data: URL modules are always ESM in node; CJS feature usage must not
+        // downgrade them (jsc_hooks.rs sets module_type=Esm for data: URLs).
+        // https://github.com/nodejs/node/blob/main/lib/internal/modules/esm/load.js
+        if p.options.module_type == options::ModuleType::Esm
+            && p.source.path.text.starts_with(b"data:")
+        {
+            force_esm = true;
+        }
+
         if p.should_unwrap_commonjs_to_esm() {
             if !p.imports_to_convert_from_require.as_slice().is_empty() {
                 let all_stmts = p.arena.alloc_slice_fill_with::<Stmt, _>(
@@ -1455,7 +1464,11 @@ impl<'a> Parser<'a> {
             exports_kind = js_ast::ExportsKind::Cjs;
         } else if p.esm_export_keyword.len > 0 || p.top_level_await_keyword.len > 0 {
             exports_kind = js_ast::ExportsKind::Esm;
-        } else if uses_exports_ref || uses_module_ref || p.has_top_level_return || p.has_with_scope
+        } else if (uses_exports_ref
+            || uses_module_ref
+            || p.has_top_level_return
+            || p.has_with_scope)
+            && !force_esm
         {
             exports_kind = js_ast::ExportsKind::Cjs;
             if p.options.features.commonjs_at_runtime {

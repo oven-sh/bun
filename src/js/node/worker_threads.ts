@@ -327,6 +327,40 @@ let resourceLimits = {};
 
 const BUN_WORKER_STDIO_KEY = "@@bunWorkerThreadsStdio";
 const BUN_WORKER_MESSAGING_KEY = "@@bunWorkerThreadsMessaging";
+const BUN_WORKER_CWD_COUNTER_KEY = "@@bunWorkerThreadsCwdCounter";
+
+// Shared cwd-invalidation counter: main thread bumps it on chdir(), workers
+// re-read the real cwd when it changes (AtomicsLoad is source-observable).
+// https://github.com/nodejs/node/blob/main/lib/internal/worker.js
+// The SharedArrayBuffer is allocated lazily on the first `new Worker()` so that
+// merely `require('worker_threads')` leaves process.memoryUsage().arrayBuffers
+// at 0 (test-memory-usage.js gates its strict-delta assertion on that).
+const AtomicsAdd = Atomics.add;
+const AtomicsLoad = Atomics.load;
+let cwdCounter: Uint32Array | undefined;
+if (isMainThread) {
+  const originalChdir = process.chdir;
+  process.chdir = function (path: string) {
+    originalChdir(path);
+    const counter = cwdCounter;
+    if (counter) AtomicsAdd(counter, 0, 1);
+  };
+}
+function installWorkerCwd(counter: Uint32Array) {
+  // Keep the counter for workers spawned by this worker (node's
+  // workerIo.sharedCwdCounter pass-along).
+  cwdCounter = counter;
+  let cachedCwd = "";
+  let lastCounter = -1;
+  const originalCwd = process.cwd;
+  process.cwd = function () {
+    const currentCounter = AtomicsLoad(counter, 0);
+    if (currentCounter === lastCounter) return cachedCwd;
+    lastCounter = currentCounter;
+    cachedCwd = originalCwd.$call(process);
+    return cachedCwd;
+  };
+}
 
 // Captured stdio rides a dedicated MessageChannel per stream with node's flow
 // control (lib/internal/worker/io.js): the writer posts an array of chunks
@@ -746,9 +780,11 @@ if (
 ) {
   const stdioPorts = workerData[BUN_WORKER_STDIO_KEY];
   const controlPort = workerData[BUN_WORKER_MESSAGING_KEY];
+  const sharedCwdCounter = workerData[BUN_WORKER_CWD_COUNTER_KEY];
   workerData = workerData.data;
   if (stdioPorts) setupWorkerStdio(stdioPorts);
   if (controlPort) messaging.setupMainThreadPort(controlPort, _setEntryEvaluatedHook);
+  if (sharedCwdCounter) installWorkerCwd(sharedCwdCounter);
 }
 function receiveMessageOnPort(port: MessagePort) {
   let res = _receiveMessageOnPort(port);
@@ -944,6 +980,10 @@ class Worker extends EventEmitter {
   // Mirrors ref()/unref() for the async_hooks WORKER resource's hasRef();
   // undefined once the thread has exited, as node's handle reads back.
   #hasRef: boolean | undefined = true;
+  // node's worker has a public MessagePort whose AsyncWrap starts unref'd and
+  // follows worker.ref()/unref(); Bun's equivalent lives inside the native
+  // WebWorker, so its async_hooks MESSAGEPORT resource mirrors it here.
+  #publicPortHasRef = false;
 
   // this is used by terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
@@ -1027,6 +1067,8 @@ class Worker extends EventEmitter {
       portToMain = channel.portToMain;
       const portToWorker = channel.portToWorker;
       const workerDataWrapper: any = { [BUN_WORKER_MESSAGING_KEY]: portToWorker, data: options.workerData };
+      if (isMainThread) cwdCounter ??= new Uint32Array(new SharedArrayBuffer(4));
+      if (cwdCounter) workerDataWrapper[BUN_WORKER_CWD_COUNTER_KEY] = cwdCounter;
       // stdout/stderr always create channels (stdin only when requested), so the
       // worker always receives a stdio control object.
       workerDataWrapper[BUN_WORKER_STDIO_KEY] = stdioForWorker;
@@ -1118,29 +1160,38 @@ class Worker extends EventEmitter {
     const count = tickInitHooks.length;
     if (count === 0) return;
     const worker = this;
-    const resource = {
-      hasRef() {
-        return worker.#hasRef;
-      },
-    };
-    const asyncId = newAsyncId();
     // Snapshot: enable()/disable() from inside a hook must not affect the
     // in-flight dispatch (node stages such mutations in tmp_array).
     const snapshot = $newArrayWithSize<Function>(count);
     for (let i = 0; i < count; i++) snapshot[i] = tickInitHooks[i];
-    for (let i = 0; i < count; i++) {
-      try {
-        snapshot[i](asyncId, "WORKER", 0, resource);
-      } catch (err) {
-        // node: a throwing init hook is fatal (fatalError: print + exit 1),
-        // never surfaced to the `new Worker` caller — which here has already
-        // spawned the thread. console is user-mutable, so shield the print.
+    function emitOne(type: string, resource: object) {
+      const asyncId = newAsyncId();
+      for (let i = 0; i < count; i++) {
         try {
-          console.error(typeof err?.stack === "string" ? err.stack : err);
-        } catch {}
-        process.exit(1);
+          snapshot[i](asyncId, type, 0, resource);
+        } catch (err) {
+          // node: a throwing init hook is fatal (fatalError: print + exit 1),
+          // never surfaced to the `new Worker` caller — which here has already
+          // spawned the thread. console is user-mutable, so shield the print.
+          try {
+            console.error(typeof err?.stack === "string" ? err.stack : err);
+          } catch {}
+          process.exit(1);
+        }
       }
     }
+    emitOne("WORKER", {
+      hasRef() {
+        return worker.#hasRef;
+      },
+    });
+    // node also emits a MESSAGEPORT init for the worker's public port here
+    // (its AsyncWrap is constructed with the worker).
+    emitOne("MESSAGEPORT", {
+      hasRef() {
+        return worker.#publicPortHasRef;
+      },
+    });
   }
 
   get threadId() {
@@ -1157,12 +1208,18 @@ class Worker extends EventEmitter {
     this.#worker.ref();
     // node's ref()/unref() no-op once the handle is gone, leaving hasRef()
     // undefined rather than resurrecting it.
-    if (!this.#exited) this.#hasRef = true;
+    if (!this.#exited) {
+      this.#hasRef = true;
+      this.#publicPortHasRef = true;
+    }
   }
 
   unref() {
     this.#worker.unref();
-    if (!this.#exited) this.#hasRef = false;
+    if (!this.#exited) {
+      this.#hasRef = false;
+      this.#publicPortHasRef = false;
+    }
   }
 
   get stdin() {
@@ -1342,6 +1399,9 @@ class Worker extends EventEmitter {
     }
     this.#stdinPort?.close();
     this.#onExitPromise = e.code;
+    // node closes the public port before 'exit' fires, so its MESSAGEPORT
+    // resource reads unref'd from inside 'exit' listeners.
+    this.#publicPortHasRef = false;
     this.emit("exit", e.code);
     // node's WORKER handle is gone once the thread has exited, so its
     // hasRef() reads back undefined. 'exit' listeners ran synchronously above

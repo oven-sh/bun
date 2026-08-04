@@ -5923,11 +5923,19 @@ impl<'a> Resolver<'a> {
             ));
         }
 
+        // `watcher.watch` -> `add_directory` takes `Watcher.mutex`; the watcher
+        // thread's `dispatch_file_updates` holds that and then takes
+        // `entries_mutex` (via `bust_entries_cache`), so release ours first to
+        // avoid AB-BA. `.dir` is DirnameStore-interned, `.fd` is `Copy`.
+        let watch_dir = entries!().dir;
+        let watch_fd = entries!().fd;
+        drop(_entries_unlock);
+
         if FeatureFlags::WATCH_DIRECTORIES {
             // For existent directories which don't find a match
             // Start watching it automatically,
             if let Some(watcher) = self.watcher.as_ref() {
-                watcher.watch(entries!().dir, entries!().fd);
+                watcher.watch(watch_dir, watch_fd);
             }
         }
         dec_ret!(None);

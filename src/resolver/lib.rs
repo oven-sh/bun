@@ -1168,9 +1168,7 @@ pub mod fs {
         // https://twitter.com/jarredsumner/status/1655464485245845506
         /// Caller borrows the returned `EntriesOption`. When `FeatureFlags::ENABLE_ENTRY_CACHE`
         /// is `false`, it is not safe to store this pointer past the current function call.
-        ///
-        /// `maybe_handle` is owned: on success it is published into the cached
-        /// `DirEntry.fd` when `store_fd`; on any error before that it is closed.
+        /// `maybe_handle` is owned: published into `DirEntry.fd` on success when `store_fd`, closed otherwise.
         pub fn read_directory_with_iterator<I: DirEntryIterator>(
             &mut self,
             dir_maybe_trail_slash: &[u8],

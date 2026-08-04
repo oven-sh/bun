@@ -1301,11 +1301,7 @@ impl<'a> Linker<'a> {
                     Self::chmod_on_ok(self.err, abs_target);
                     return;
                 }
-                // Something already occupies the destination, or the tree is
-                // read-only (docker `:ro`, a protected CI cache). If a link is
-                // already there with the right target the install is a no-op
-                // here; falling through to delete+recreate would surface the
-                // original error even though nothing needs to change.
+                // Destination occupied or read-only: done if the right link is already there.
                 sys::Errno::EEXIST | sys::Errno::EPERM | sys::Errno::EACCES => {
                     let mut existing = path::path_buffer_pool::get();
                     if let Ok(n) = sys::readlink(abs_dest, &mut existing) {

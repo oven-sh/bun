@@ -33,6 +33,7 @@
 #include <string_view>
 #include <span>
 #include <map>
+#include <wtf/Vector.h>
 #include "MoveOnlyFunction.h"
 #include "ChunkedEncoding.h"
 
@@ -610,7 +611,7 @@ struct HttpResponseData;
          * at the next request boundary and park the rest", cleared for replay so it can make progress. */
         bool nodeHttpParkAtNextBoundary = false;
         bool nodeHttpSpillReplayScheduled = false;
-        std::string nodeHttpPausedSpill;
+        WTF::Vector<char> nodeHttpPausedSpill;
     private:
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
         uint64_t remainingStreamingBytes = 0;
@@ -1164,7 +1165,7 @@ struct HttpResponseData;
              * caller does not spill it into the size-capped header fallback buffer. */
             if constexpr (IsNodeHttp) {
                 if (nodeHttpParkAtNextBoundary) [[unlikely]] {
-                    nodeHttpPausedSpill.append(data, length);
+                    nodeHttpPausedSpill.append(std::span<const char>(data, length));
                     consumedTotal += length;
                     return HttpParserResult::success(consumedTotal, user);
                 }

@@ -411,12 +411,12 @@ static void replayNodeHttpPausedSpill(us_socket_t* socket)
     /* Let the replay's own parse loop run; HTTP_NODE_READS_PAUSED stays set so
      * fresh socket bytes cannot race ahead of the spill. */
     httpResponseData->nodeHttpParkAtNextBoundary = false;
-    std::string spill = std::move(httpResponseData->nodeHttpPausedSpill);
-    httpResponseData->nodeHttpPausedSpill.clear();
-    if (!spill.empty()) {
-        /* The parser's post-padded fence writes two bytes past the end. */
-        spill.reserve(spill.size() + LIBUS_RECV_BUFFER_PADDING);
-        us_socket_t* returned = uWS::HttpContext<SSL>::feedNodeHttpData(socket, spill.data(), (int)spill.size());
+    WTF::Vector<char> spill = std::exchange(httpResponseData->nodeHttpPausedSpill, {});
+    if (!spill.isEmpty()) {
+        /* The parser's post-padded fence writes two bytes past the logical end. */
+        size_t spillLength = spill.size();
+        spill.grow(spillLength + LIBUS_RECV_BUFFER_PADDING);
+        us_socket_t* returned = uWS::HttpContext<SSL>::feedNodeHttpData(socket, spill.mutableSpan().data(), (int)spillLength);
         if (!returned || us_socket_is_closed(returned)) {
             return;
         }
@@ -449,12 +449,12 @@ static void onNodeHttpReadsResumable(us_socket_t* socket)
         if (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() > 0) {
             return;
         }
-        if (httpResponseData->nodeHttpPausedSpill.empty()
+        if (httpResponseData->nodeHttpPausedSpill.isEmpty()
             && httpResponseData->nodeHttpQueuedPipelinedCount > 0) {
             return;
         }
     }
-    if (httpResponseData->nodeHttpPausedSpill.empty()) {
+    if (httpResponseData->nodeHttpPausedSpill.isEmpty()) {
         httpResponseData->nodeHttpParkAtNextBoundary = false;
         httpResponseData->state &= ~uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
         reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->resume();

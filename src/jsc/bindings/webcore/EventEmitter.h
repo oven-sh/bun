@@ -44,7 +44,6 @@ public:
 
     ScriptExecutionContext* scriptExecutionContext() const { return ContextDestructionObserver::scriptExecutionContext(); };
 
-    WEBCORE_EXPORT bool isNode() const { return false; };
     bool removeAllListeners();
     WEBCORE_EXPORT void addListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&, bool, bool);
     WEBCORE_EXPORT void removeListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&);
@@ -56,7 +55,6 @@ public:
     WEBCORE_EXPORT bool removeAllListeners(const Identifier& eventType);
 
     WEBCORE_EXPORT bool emit(const Identifier&, const MarkedArgumentBuffer&);
-    WEBCORE_EXPORT void uncaughtExceptionInEventHandler();
 
     WEBCORE_EXPORT Vector<Identifier> getEventNames();
     WEBCORE_EXPORT Vector<JSObject*> getListeners(const Identifier& eventType);
@@ -78,8 +76,6 @@ public:
 
     bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments);
     bool isFiringEventListeners() const;
-
-    void invalidateJSEventListeners(JSC::JSObject*);
 
     const EventEmitterData* eventTargetData() const;
 
@@ -108,7 +104,6 @@ private:
     }
 
     bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
-    void invalidateEventListenerRegions();
 
     EventEmitterData m_eventTargetData;
     unsigned m_maxListeners { 10 };

@@ -75,7 +75,6 @@ private:
 private:
     std::unique_ptr<ExtendedDOMIsoSubspaces> m_subspaces;
     JSC::IsoSubspace m_domConstructorSpace;
-    JSC::IsoSubspace m_domBuiltinConstructorSpace;
     JSC::IsoSubspace m_domNamespaceObjectSpace;
 
     Vector<JSC::IsoSubspace*> m_outputConstraintSpaces;
@@ -108,8 +107,6 @@ public:
     JSC::GCClient::IsoSubspace& domConstructorSpace() { return m_domConstructorSpace; }
 
     ExtendedDOMClientIsoSubspaces& clientSubspaces() { return *m_clientSubspaces.get(); }
-
-    JSC::GCClient::IsoSubspace& domBuiltinConstructorSpace() { return m_domBuiltinConstructorSpace; }
 
     // Constructed eagerly so the concurrent GC marker
     // (Zig::GlobalObject::visitChildrenImpl) never races the mutator on a
@@ -166,7 +163,6 @@ private:
 
     RefPtr<WebCore::DOMWrapperWorld> m_normalWorld;
     JSC::GCClient::IsoSubspace m_domConstructorSpace;
-    JSC::GCClient::IsoSubspace m_domBuiltinConstructorSpace;
     JSC::GCClient::IsoSubspace m_domNamespaceObjectSpace;
 
     std::unique_ptr<ExtendedDOMClientIsoSubspaces> m_clientSubspaces;

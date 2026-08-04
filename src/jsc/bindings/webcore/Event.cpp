@@ -32,10 +32,7 @@
 // #include "Performance.h"
 // #include "UserGestureIndicator.h"
 // #include "WorkerGlobalScope.h"
-#include <wtf/HexNumber.h>
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/text/StringBuilder.h>
-#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 
@@ -94,11 +91,6 @@ Ref<Event> Event::create(const AtomString& type, CanBubble canBubble, IsCancelab
     return adoptRef(*new Event(EventInterfaceType, type, canBubble, isCancelable, isComposed));
 }
 
-Ref<Event> Event::createForBindings()
-{
-    return adoptRef(*new Event(EventInterfaceType));
-}
-
 Ref<Event> Event::create(const AtomString& type, const EventInit& initializer, IsTrusted isTrusted)
 {
     return adoptRef(*new Event(EventInterfaceType, type, initializer, isTrusted));
@@ -118,8 +110,6 @@ void Event::initEvent(const AtomString& eventTypeArg, bool canBubbleArg, bool ca
     m_type = eventTypeArg;
     m_canBubble = canBubbleArg;
     m_cancelable = cancelableArg;
-
-    m_underlyingEvent = nullptr;
 }
 
 void Event::setTarget(RefPtr<EventTarget>&& target)
@@ -148,16 +138,6 @@ Vector<Ref<EventTarget>> Event::composedPath() const
     if (!m_eventPath)
         return Vector<Ref<EventTarget>>();
     return m_eventPath->computePathUnclosedToTarget(*m_currentTarget);
-}
-
-void Event::setUnderlyingEvent(Event* underlyingEvent)
-{
-    // Prohibit creation of a cycle by doing nothing if a cycle would be created.
-    for (Event* event = underlyingEvent; event; event = event->underlyingEvent()) {
-        if (event == this)
-            return;
-    }
-    m_underlyingEvent = underlyingEvent;
 }
 
 DOMHighResTimeStamp Event::timeStampForBindings(ScriptExecutionContext& context) const
@@ -190,17 +170,6 @@ void Event::resetAfterDispatch()
     m_immediatePropagationStopped = false;
 
     // InspectorInstrumentation::eventDidResetAfterDispatch(*this);
-}
-
-String Event::debugDescription() const
-{
-    return makeString(type(), " phase "_s, eventPhase(), bubbles() ? " bubbles "_s : " "_s, cancelable() ? "cancelable "_s : " "_s, "0x"_s, hex(reinterpret_cast<uintptr_t>(this), Lowercase));
-}
-
-TextStream& operator<<(TextStream& ts, const Event& event)
-{
-    ts << event.debugDescription();
-    return ts;
 }
 
 } // namespace WebCore

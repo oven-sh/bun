@@ -607,8 +607,6 @@ impl<'a> ThreadlocalAsyncHTTP<'a> {
 
 /// `socket: anytype` in `set_timeout` — minimal trait for what the body calls.
 pub trait SocketTimeout {
-    fn timeout(&self, seconds: core::ffi::c_uint);
-    fn set_timeout_minutes(&self, minutes: core::ffi::c_uint);
     /// Seconds-granularity idle timer. Values >240s are routed onto uSockets'
     /// minute-granularity long-timeout wheel; ≤240s use the short-tick timer.
     fn set_timeout(&self, seconds: core::ffi::c_uint);
@@ -1172,12 +1170,6 @@ pub fn configure_http_client_with_alpn(
 use bun_http_types::ETag::HeaderEntryColumns;
 
 impl<const SSL: bool> SocketTimeout for HttpSocket<SSL> {
-    fn timeout(&self, seconds: c_uint) {
-        uws::NewSocketHandler::<SSL>::timeout(self, seconds)
-    }
-    fn set_timeout_minutes(&self, minutes: c_uint) {
-        uws::NewSocketHandler::<SSL>::set_timeout_minutes(self, minutes)
-    }
     fn set_timeout(&self, seconds: c_uint) {
         uws::NewSocketHandler::<SSL>::set_timeout(self, seconds)
     }

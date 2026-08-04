@@ -363,8 +363,6 @@ public:
 
     bool useBigInts() const { return m_useBigInts; }
     bool returnArrays() const { return m_returnArrays; }
-    bool allowBareNamedParams() const { return m_allowBareNamedParams; }
-    bool allowUnknownNamedParams() const { return m_allowUnknownNamedParams; }
     void setUseBigInts(bool v) { m_useBigInts = v; }
     void setReturnArrays(bool v) { m_returnArrays = v; }
     void setAllowBareNamedParams(bool v) { m_allowBareNamedParams = v; }
@@ -417,7 +415,6 @@ public:
     // invalidated when the statement is reset with a different shape.
     JSC::Structure* ensureRowStructure(JSC::JSGlobalObject*);
     void invalidateRowStructure();
-    JSC::Structure* rowStructure() const { return m_rowStructure.get(); }
     // Per-result-column index into the structure's inline slots.
     // Duplicate column names share the first occurrence's slot so the
     // later column overwrites it — last-wins, matching Node's V8

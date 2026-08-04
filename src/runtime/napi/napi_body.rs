@@ -2410,16 +2410,13 @@ pub(crate) struct ThreadSafeFunction {
 
     pub callback: TsfnCallback,
     pub(crate) dispatch_state: AtomicU8, // DispatchState
-    /// JS-thread only: depth of live `on_dispatch` frames. Nested dispatches
-    /// happen when a callback (or a microtask it drains) re-enters the event
-    /// loop, e.g. bun:test's expect(promise).rejects waiting synchronously.
+    /// JS-thread only: depth of live (possibly nested) `on_dispatch` frames.
     pub(crate) dispatch_depth: u32,
-    /// JS-thread only: an `on_dispatch` observed `Closed` while an outer frame
-    /// still borrows this object or another task was still queued; whoever is
-    /// last out frees it.
+    /// JS-thread only: `Closed` was observed while frames or tasks still
+    /// reference this object; whoever is last out frees it.
     pub(crate) pending_destroy: bool,
-    /// Event-loop tasks currently queued that target `on_dispatch`. Written by
-    /// addon threads (via `schedule_dispatch`), hence atomic.
+    /// Queued event-loop tasks targeting `on_dispatch`; atomic because addon
+    /// threads schedule them.
     pub(crate) inflight_dispatch_tasks: AtomicU32,
     pub(crate) blocking_condvar: Condvar,
     pub(crate) closing: AtomicU8, // ClosingState
@@ -2516,21 +2513,16 @@ impl ThreadSafeFunction {
     // a `*mut ThreadSafeFunction`; the signature is fixed by that registry.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn on_dispatch(this: *mut ThreadSafeFunction) {
-        // No `&mut *this` is held across the body: `dispatch_one` runs user
-        // JS, which can re-enter `on_dispatch` for this same function through
-        // a nested event loop (§Forbidden aliased-&mut). Every access below is
-        // a short-lived reborrow on the single JS thread. More than one task
-        // can be in flight (see `schedule_dispatch` and `dispatch_one`'s
-        // backup dispatch), so only the last one out may free `*this`.
-        //
-        // SAFETY for the per-field derefs below: `this` is a live heap
-        // allocation owned by the event loop dispatch, and destroy is
-        // deferred while `dispatch_depth > 0` or tasks remain in flight.
+        // SAFETY: `this` is a live heap allocation owned by the event loop
+        // dispatch; destroy is deferred while `dispatch_depth > 0` or tasks
+        // remain in flight. No `&mut *this` is held across `dispatch_one`,
+        // which runs user JS that can re-enter this dispatch.
         let inflight = unsafe {
             (*this)
                 .inflight_dispatch_tasks
                 .fetch_sub(1, Ordering::SeqCst)
         } - 1;
+        // SAFETY: as above.
         if unsafe { (*this).env_dead.load(Ordering::SeqCst) } {
             // `env_teardown` already released everything and owns the free
             // decision. The loop this task came from is being destroyed.
@@ -2538,10 +2530,11 @@ impl ThreadSafeFunction {
         }
         // SAFETY: as above.
         if unsafe { (*this).closing.load(Ordering::SeqCst) } == ClosingState::Closed as u8 {
+            // SAFETY: as above.
             if unsafe { (*this).dispatch_depth } > 0 || inflight > 0 {
-                // An outer `on_dispatch` frame is still running, or another
-                // task for `*this` is still queued; whoever is last out frees
-                // it.
+                // An outer frame or queued task still references `*this`;
+                // whoever is last out frees it.
+                // SAFETY: as above.
                 unsafe { (*this).pending_destroy = true };
                 return;
             }
@@ -2552,6 +2545,7 @@ impl ThreadSafeFunction {
         }
 
         let mut is_first = true;
+        // SAFETY: as above.
         unsafe { (*this).dispatch_depth += 1 };
 
         // Run the tasks.
@@ -2562,8 +2556,7 @@ impl ThreadSafeFunction {
                     .dispatch_state
                     .store(DispatchState::Running as u8, Ordering::SeqCst)
             };
-            // SAFETY: as above. `dispatch_one` runs JS that can re-enter this
-            // function's dispatch, so it takes the raw pointer.
+            // SAFETY: as above.
             if unsafe { Self::dispatch_one(this, is_first) } {
                 is_first = false;
                 // SAFETY: as above.
@@ -2573,14 +2566,8 @@ impl ThreadSafeFunction {
                         .store(DispatchState::Pending as u8, Ordering::SeqCst)
                 };
             } else {
-                // We're done running tasks, for now. Transition Running → Idle
-                // via CAS instead of an unconditional store: between
-                // dispatch_one() observing an empty queue (and dropping the
-                // lock) and this point, another thread may have enqueued an
-                // item and called schedule_dispatch(). If we blindly stored
-                // Idle we'd overwrite that Pending and the callback would be
-                // dropped (flaky lost-wakeup under load). On CAS failure, loop
-                // and re-drain.
+                // CAS, not a store: a concurrent schedule_dispatch() may have
+                // set Pending, and storing Idle over it would drop a wakeup.
                 // SAFETY: as above.
                 if unsafe {
                     (*this).dispatch_state.compare_exchange(
@@ -2598,14 +2585,15 @@ impl ThreadSafeFunction {
             }
         }
 
-        unsafe { (*this).dispatch_depth -= 1 };
-        if unsafe { (*this).dispatch_depth } == 0
-            && unsafe { (*this).pending_destroy }
-            && unsafe { (*this).inflight_dispatch_tasks.load(Ordering::SeqCst) } == 0
-        {
-            // SAFETY: we are the outermost dispatch frame and no other task
-            // references this function; the nested frame that observed Closed
-            // returned without touching `*this` further.
+        // SAFETY: as above.
+        let destroy_now = unsafe {
+            (*this).dispatch_depth -= 1;
+            (*this).dispatch_depth == 0
+                && (*this).pending_destroy
+                && (*this).inflight_dispatch_tasks.load(Ordering::SeqCst) == 0
+        };
+        if destroy_now {
+            // SAFETY: outermost frame, no other task references `*this`.
             unsafe { ThreadSafeFunction::destroy(this) };
             return;
         }
@@ -2645,8 +2633,7 @@ impl ThreadSafeFunction {
                     self.callback = TsfnCallback::Js(StrongOptional::empty());
                     self.poll_ref.disable();
                     let self_ptr: *mut Self = self;
-                    // The finalize task targets `on_dispatch` too, so count it
-                    // before publishing it.
+                    // The finalize task targets `on_dispatch` too.
                     let _ = self.inflight_dispatch_tasks.fetch_add(1, Ordering::SeqCst);
                     let Some(loop_) = self.loop_mut() else {
                         // env torn down: `env_teardown` owns the finalize + free.
@@ -2663,14 +2650,11 @@ impl ThreadSafeFunction {
         }
     }
 
-    /// Runs one queued call. Takes `this` raw because `call` enters user JS,
-    /// which can re-enter this function's dispatch through a nested event
-    /// loop; the `&mut` reborrows here are scoped to the lock block and never
-    /// live across a JS entry.
+    /// Runs one queued call. `this` stays raw: `call` enters user JS, which
+    /// can re-enter this function's dispatch through a nested event loop.
     ///
     /// # Safety
-    /// `this` is a live threadsafe function on the JS thread; destroy is
-    /// deferred while `dispatch_depth > 0`.
+    /// `this` is a live threadsafe function on the JS thread.
     unsafe fn dispatch_one(this: *mut Self, is_first: bool) -> bool {
         let mut queue_finalizer_after_call = false;
         let task = 'brk: {
@@ -2707,12 +2691,8 @@ impl ThreadSafeFunction {
             }
 
             if prev_count > 1 && self_.inflight_dispatch_tasks.load(Ordering::SeqCst) == 0 {
-                // `call` below can block in a nested event loop (bun:test's
-                // expect(promise).rejects), stranding the items still queued
-                // behind this one. With no dispatch task in flight, schedule
-                // one backup so a nested loop can keep draining; if nothing
-                // blocks, it is a no-op. The read is stable here: increments
-                // happen under `lock`, and the decrement runs on this thread.
+                // `call` below can block in a nested event loop (#36828);
+                // one backup dispatch keeps the queued-behind items reachable.
                 self_.schedule_dispatch();
             }
 
@@ -2726,8 +2706,7 @@ impl ThreadSafeFunction {
         }
 
         if queue_finalizer_after_call {
-            // SAFETY: `this` is still live (destroy deferred, see fn
-            // contract); scoped reborrow after the JS entry returned.
+            // SAFETY: scoped reborrow; `this` is still live (destroy deferred).
             unsafe { &mut *this }.maybe_queue_finalizer();
         }
 
@@ -2740,13 +2719,11 @@ impl ThreadSafeFunction {
     /// See: https://github.com/nodejs/node/pull/38506
     /// In that case, we need to drain microtasks.
     ///
-    /// Takes `this` raw: the microtask drain and the callback run user JS,
-    /// which can re-enter this function's dispatch through a nested event
-    /// loop, so no borrow of `*this` may live across them.
+    /// `this` stays raw: the microtask drain and the callback run user JS,
+    /// which can re-enter this function's dispatch through a nested event loop.
     ///
     /// # Safety
-    /// `this` is a live threadsafe function on the JS thread; destroy is
-    /// deferred while `dispatch_depth > 0`.
+    /// `this` is a live threadsafe function on the JS thread.
     unsafe fn call(
         this: *mut Self,
         task: *mut c_void,
@@ -2758,10 +2735,9 @@ impl ThreadSafeFunction {
             return Ok(());
         };
 
-        // Copy the callback target out (all `Copy` values) BEFORE the
-        // microtask drain below: a nested dispatch inside it can finalize and
-        // clear `callback`, and the item we already dequeued must still be
-        // delivered. The `JSValue` copy on the stack stays rooted.
+        // Read the callback before the microtask drain: a nested dispatch in
+        // the drain can finalize and clear it, and the dequeued item must
+        // still be delivered.
         enum Target {
             Js(JSValue),
             C(
@@ -2785,8 +2761,6 @@ impl ThreadSafeFunction {
         };
 
         if !is_first {
-            // Take the loop as a raw pointer so no borrow of `*this` lives
-            // across the microtask drain.
             let loop_: *mut EventLoop = {
                 // SAFETY: scoped reborrow.
                 match unsafe { (*this).event_loop.as_mut() } {
@@ -2802,7 +2776,8 @@ impl ThreadSafeFunction {
         // SAFETY: env is valid while the TSF is live.
         let global_object = unsafe { &*env }.to_js();
 
-        // `tracker` is `Copy`; the guard borrows only `global_object`.
+        // SAFETY: scoped reborrow; `tracker` is `Copy`, the guard borrows only
+        // `global_object`.
         let _dispatch = unsafe { (*this).tracker }.dispatch(global_object);
 
         match target {
@@ -2903,15 +2878,10 @@ impl ThreadSafeFunction {
         if prev == DispatchState::Running as u8
             && self.inflight_dispatch_tasks.load(Ordering::SeqCst) > 0
         {
-            // The active dispatch loop usually picks the item up itself, but
-            // it can be blocked in a nested event loop waiting on a promise
-            // only this function can settle (#36828); the already-queued task
-            // covers that case, so don't add another.
+            // the running loop, or the already-queued task if it blocks in a
+            // nested event loop (#36828), picks the item up
             return;
         }
-        // Idle, or Running with no task queued to rescue a blocked loop:
-        // enqueue one. A redundant dispatch finds an empty queue and is a
-        // cheap no-op.
         let self_ptr: *mut Self = self;
         let Some(event_loop) = self.event_loop.as_ref() else {
             // env torn down: the loop is gone, nothing to schedule onto.

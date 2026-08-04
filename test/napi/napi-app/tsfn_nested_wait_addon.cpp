@@ -1,10 +1,6 @@
-// Regression test for oven-sh/bun#36828: bun:test's expect(promise).resolves /
-// .rejects waits for the promise by running a nested event loop. When that
-// wait happens inside a threadsafe function dispatch (directly in the JS
-// callback, or in a microtask drained between two batched callbacks), the
-// promise may only be able to settle through further threadsafe function
-// calls. Those calls used to be coalesced into the already-running dispatch
-// loop, which was blocked underneath the nested wait, deadlocking the process.
+// Regression test for oven-sh/bun#36828: threadsafe function calls must keep
+// dispatching while a callback blocks in a nested event loop
+// (expect(promise).resolves under bun:test).
 
 #include <js_native_api.h>
 #include <node_api.h>

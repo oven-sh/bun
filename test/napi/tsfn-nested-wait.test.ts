@@ -1,9 +1,6 @@
-// Regression test for oven-sh/bun#36828: under `bun test`, a promise that
-// could only settle through napi threadsafe function calls never settled when
-// the JS thread was blocked in a nested event loop inside a threadsafe
-// function dispatch (expect(promise).resolves / .rejects waits that way).
-// Calls pushed while the dispatch loop was "running" were coalesced into it
-// and never dispatched, deadlocking until the test timed out.
+// Regression test for oven-sh/bun#36828: threadsafe function calls deadlocked
+// under `bun test` when a callback blocked in a nested event loop
+// (expect(promise).resolves / .rejects waits that way).
 import { spawn, spawnSync } from "bun";
 import { beforeAll, expect, it } from "bun:test";
 import { existsSync } from "fs";

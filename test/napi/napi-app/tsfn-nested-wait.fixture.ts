@@ -1,7 +1,5 @@
-// Fixture for test/napi/tsfn-nested-wait.test.ts (oven-sh/bun#36828). Run
-// under `bun test`: expect(promise).resolves waits for the promise by running
-// a nested event loop, which is the ingredient that used to deadlock
-// threadsafe function dispatch.
+// Fixture for test/napi/tsfn-nested-wait.test.ts (oven-sh/bun#36828); must run
+// under `bun test` so expect(promise).resolves blocks in a nested event loop.
 import { expect, test } from "bun:test";
 import { join } from "path";
 
@@ -15,9 +13,7 @@ test("calls pushed while a callback blocks in a nested wait are dispatched", asy
     order.push(tag);
     if (tag === 1) {
       addon.signalBlocked();
-      // Blocks the event loop inside this threadsafe function dispatch until
-      // `blocker` settles; it only settles when call 2, pushed by the addon
-      // thread while we are blocked here, gets dispatched.
+      // blocks inside this dispatch until call 2 is dispatched
       expect(blocker.promise).resolves.toBe(2);
       order.push(3);
       done.resolve();

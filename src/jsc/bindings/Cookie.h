@@ -113,7 +113,6 @@ public:
     size_t memoryCost() const;
 
     static bool isValidCookieName(const String& name);
-    static bool isValidCookieValue(const String& value); // values are uri component encoded, so this isn't needed
     static bool isValidCookiePath(const String& path);
     static bool isValidCookieDomain(const String& domain);
 

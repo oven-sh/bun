@@ -88,16 +88,16 @@ pub type uv_file = c_int;
 pub type uv_os_sock_t = SOCKET;
 pub type uv_os_fd_t = HANDLE;
 pub type uv_pid_t = c_int;
-pub type uv_thread_t = HANDLE;
+pub(crate) type uv_thread_t = HANDLE;
 pub type uv_sem_t = HANDLE;
 pub type uv_uid_t = u8;
 pub type uv_gid_t = u8;
 pub type uv_req_type = c_uint;
 pub type uv_fs_type = c_int;
 pub type uv_errno_t = c_int;
-pub type uv_loop_option = c_uint;
-pub type uv_membership = c_uint;
-pub type uv_tty_mode_t = c_uint;
+pub(crate) type uv_loop_option = c_uint;
+pub(crate) type uv_membership = c_uint;
+pub(crate) type uv_tty_mode_t = c_uint;
 /// `uv_tty_mode_t` (uv.h) — typed wrapper for `uv_tty_set_mode` callers.
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -109,9 +109,9 @@ pub enum TtyMode {
     /// terminal (Windows ENABLE_VIRTUAL_TERMINAL_INPUT). Aligns with POSIX raw.
     Vt = 3,
 }
-pub type uv_tty_vtermstate_t = c_uint;
+pub(crate) type uv_tty_vtermstate_t = c_uint;
 pub type uv_stdio_flags = c_uint;
-pub type uv_clock_id = c_uint;
+pub(crate) type uv_clock_id = c_uint;
 pub type uv_dirent_type_t = c_uint;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -241,7 +241,7 @@ pub struct Handle {
     pub handle_queue: uv__queue,
     pub u: handle_u,
     pub endgame_next: *mut Handle,
-    pub flags: c_uint,
+    pub(crate) flags: c_uint,
 }
 pub type uv_handle_t = Handle;
 pub type uv_handle_s = Handle;
@@ -319,11 +319,11 @@ pub type uv_idle_cb = Option<unsafe extern "C" fn(*mut uv_idle_t)>;
 pub type uv_poll_cb = Option<unsafe extern "C" fn(*mut uv_poll_t, c_int, c_int)>;
 pub type uv_signal_cb = Option<unsafe extern "C" fn(*mut uv_signal_t, c_int)>;
 pub type uv_exit_cb = Option<unsafe extern "C" fn(*mut Process, i64, c_int)>;
-pub type uv_walk_cb = Option<unsafe extern "C" fn(*mut uv_handle_t, *mut c_void)>;
+pub(crate) type uv_walk_cb = Option<unsafe extern "C" fn(*mut uv_handle_t, *mut c_void)>;
 pub type uv_fs_cb = Option<unsafe extern "C" fn(*mut fs_t)>;
 pub type uv_fs_event_cb =
     Option<unsafe extern "C" fn(*mut uv_fs_event_t, *const c_char, c_int, ReturnCode)>;
-pub type uv_fs_poll_cb =
+pub(crate) type uv_fs_poll_cb =
     Option<unsafe extern "C" fn(*mut uv_fs_poll_t, c_int, *const uv_stat_t, *const uv_stat_t)>;
 pub type uv_udp_send_cb = Option<unsafe extern "C" fn(*mut uv_udp_send_t, c_int)>;
 pub type uv_udp_recv_cb =
@@ -335,7 +335,7 @@ pub type uv_getnameinfo_cb =
 pub type uv_work_cb = Option<unsafe extern "C" fn(*mut uv_work_t)>;
 pub type uv_after_work_cb = Option<unsafe extern "C" fn(*mut uv_work_t, c_int)>;
 pub type uv_random_cb = Option<unsafe extern "C" fn(*mut uv_random_t, c_int, *mut c_void, usize)>;
-pub type uv_thread_cb = Option<unsafe extern "C" fn(*mut c_void)>;
+pub(crate) type uv_thread_cb = Option<unsafe extern "C" fn(*mut c_void)>;
 pub type uv_malloc_func = Option<unsafe extern "C" fn(usize) -> *mut c_void>;
 pub type uv_realloc_func = Option<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void>;
 pub type uv_calloc_func = Option<unsafe extern "C" fn(usize, usize) -> *mut c_void>;
@@ -516,8 +516,11 @@ impl Loop {
         // SAFETY: self is a live loop.
         let _ = unsafe { uv_run(self, RunMode::Default) };
     }
+    /// Signature matches the uSockets loop's so callers need no `cfg`. Both args are ignored:
+    /// libuv derives its own deadline, and the Windows park hook is driven from `us_loop_run`
+    /// (libuv.c), which reuses libuv's already-refreshed clock via `uv_now`.
     #[inline]
-    pub fn tick_with_timeout(&mut self, _: i64) {
+    pub fn tick_with_timeout(&mut self, _: i64, _now_ns: u64) {
         // SAFETY: self is a live loop.
         let _ = unsafe { uv_run(self, RunMode::NoWait) };
     }
@@ -913,9 +916,9 @@ pub type struct_uv_stream_s = uv_stream_t;
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct uv_write_t {
-    pub data: *mut c_void,
+    pub(crate) data: *mut c_void,
     pub type_: uv_req_type,
-    pub reserved: [*mut c_void; 6],
+    pub(crate) reserved: [*mut c_void; 6],
     pub u: req_u,
     pub next_req: *mut uv_req_t,
     pub cb: uv_write_cb,
@@ -1146,7 +1149,7 @@ union pipe_u {
 #[repr(C)]
 pub struct Pipe {
     pub data: *mut c_void,
-    pub loop_: *mut Loop,
+    pub(crate) loop_: *mut Loop,
     pub type_: HandleType,
     pub close_cb: uv_close_cb,
     pub handle_queue: uv__queue,
@@ -1182,14 +1185,14 @@ impl Pipe {
         unsafe { uv_pipe_open(self, file) }
     }
     #[inline]
-    pub fn bind(&mut self, named_pipe: &[u8], flags: c_uint) -> ReturnCode {
+    pub(crate) fn bind(&mut self, named_pipe: &[u8], flags: c_uint) -> ReturnCode {
         // SAFETY: pipe was `init`ed; libuv copies the name.
         unsafe { uv_pipe_bind2(self, named_pipe.as_ptr(), named_pipe.len(), flags) }
     }
     /// Caller supplies a plain
     /// `uv_connection_cb` and recovers its context from `handle.data` itself.
     #[inline]
-    pub fn listen(
+    pub(crate) fn listen(
         &mut self,
         backlog: i32,
         context: *mut c_void,
@@ -1644,7 +1647,7 @@ pub struct uv_fs_event_t {
     pub cb: uv_fs_event_cb,
     pub filew: *mut WCHAR,
     pub short_filew: *mut WCHAR,
-    pub dirw: *mut WCHAR,
+    pub(crate) dirw: *mut WCHAR,
     pub buffer: *mut u8,
 }
 impl uv_fs_event_t {
@@ -1910,11 +1913,11 @@ pub struct fs_t {
     pub loop_: *mut Loop,
     pub cb: uv_fs_cb,
     pub result: ReturnCodeI64,
-    pub ptr: *mut c_void,
+    pub(crate) ptr: *mut c_void,
     pub path: *const c_char,
     pub statbuf: uv_stat_t,
     pub work_req: uv__work,
-    pub flags: c_int,
+    pub(crate) flags: c_int,
     pub sys_errno_: DWORD,
     file: fs_file,
     fs: fs_fs,
@@ -2224,9 +2227,106 @@ pub const fn uv_err_to_e_discriminant(code: c_int) -> Option<u16> {
     })
 }
 
+/// Reverse of [`uv_err_to_e_discriminant`]: map a `bun.sys.E` / `bun_errno::E`
+/// discriminant to the negative `UV_E*` code node reports in `err.errno` on
+/// Windows (`2` → `UV_ENOENT (-4058)`). Same layering rule (no `bun_errno`
+/// dep) and same keep-in-sync note as the forward table above; the arms are
+/// its rows flipped. Unmapped discriminants return `None`.
+#[inline]
+pub const fn e_discriminant_to_uv(discriminant: u16) -> Option<c_int> {
+    Some(match discriminant {
+        1 => UV_EPERM,            // E::PERM
+        2 => UV_ENOENT,           // E::NOENT
+        3 => UV_ESRCH,            // E::SRCH
+        4 => UV_EINTR,            // E::INTR
+        5 => UV_EIO,              // E::IO
+        6 => UV_ENXIO,            // E::NXIO
+        7 => UV_E2BIG,            // E::_2BIG
+        8 => UV_ENOEXEC,          // E::NOEXEC
+        9 => UV_EBADF,            // E::BADF
+        11 => UV_EAGAIN,          // E::AGAIN
+        12 => UV_ENOMEM,          // E::NOMEM
+        13 => UV_EACCES,          // E::ACCES
+        14 => UV_EFAULT,          // E::FAULT
+        16 => UV_EBUSY,           // E::BUSY
+        17 => UV_EEXIST,          // E::EXIST
+        18 => UV_EXDEV,           // E::XDEV
+        19 => UV_ENODEV,          // E::NODEV
+        20 => UV_ENOTDIR,         // E::NOTDIR
+        21 => UV_EISDIR,          // E::ISDIR
+        22 => UV_EINVAL,          // E::INVAL
+        23 => UV_ENFILE,          // E::NFILE
+        24 => UV_EMFILE,          // E::MFILE
+        25 => UV_ENOTTY,          // E::NOTTY
+        137 => UV_EFTYPE,         // E::FTYPE
+        26 => UV_ETXTBSY,         // E::TXTBSY
+        27 => UV_EFBIG,           // E::FBIG
+        28 => UV_ENOSPC,          // E::NOSPC
+        29 => UV_ESPIPE,          // E::SPIPE
+        30 => UV_EROFS,           // E::ROFS
+        31 => UV_EMLINK,          // E::MLINK
+        32 => UV_EPIPE,           // E::PIPE
+        34 => UV_ERANGE,          // E::RANGE
+        36 => UV_ENAMETOOLONG,    // E::NAMETOOLONG
+        38 => UV_ENOSYS,          // E::NOSYS
+        39 => UV_ENOTEMPTY,       // E::NOTEMPTY
+        40 => UV_ELOOP,           // E::LOOP
+        49 => UV_EUNATCH,         // E::UNATCH
+        61 => UV_ENODATA,         // E::NODATA
+        64 => UV_ENONET,          // E::NONET
+        71 => UV_EPROTO,          // E::PROTO
+        75 => UV_EOVERFLOW,       // E::OVERFLOW
+        84 => UV_EILSEQ,          // E::ILSEQ
+        88 => UV_ENOTSOCK,        // E::NOTSOCK
+        89 => UV_EDESTADDRREQ,    // E::DESTADDRREQ
+        90 => UV_EMSGSIZE,        // E::MSGSIZE
+        91 => UV_EPROTOTYPE,      // E::PROTOTYPE
+        92 => UV_ENOPROTOOPT,     // E::NOPROTOOPT
+        93 => UV_EPROTONOSUPPORT, // E::PROTONOSUPPORT
+        94 => UV_ESOCKTNOSUPPORT, // E::SOCKTNOSUPPORT
+        95 => UV_ENOTSUP,         // E::NOTSUP
+        97 => UV_EAFNOSUPPORT,    // E::AFNOSUPPORT
+        98 => UV_EADDRINUSE,      // E::ADDRINUSE
+        99 => UV_EADDRNOTAVAIL,   // E::ADDRNOTAVAIL
+        100 => UV_ENETDOWN,       // E::NETDOWN
+        101 => UV_ENETUNREACH,    // E::NETUNREACH
+        103 => UV_ECONNABORTED,   // E::CONNABORTED
+        104 => UV_ECONNRESET,     // E::CONNRESET
+        105 => UV_ENOBUFS,        // E::NOBUFS
+        106 => UV_EISCONN,        // E::ISCONN
+        107 => UV_ENOTCONN,       // E::NOTCONN
+        108 => UV_ESHUTDOWN,      // E::SHUTDOWN
+        110 => UV_ETIMEDOUT,      // E::TIMEDOUT
+        111 => UV_ECONNREFUSED,   // E::CONNREFUSED
+        112 => UV_EHOSTDOWN,      // E::HOSTDOWN
+        113 => UV_EHOSTUNREACH,   // E::HOSTUNREACH
+        114 => UV_EALREADY,       // E::ALREADY
+        121 => UV_EREMOTEIO,      // E::REMOTEIO
+        125 => UV_ECANCELED,      // E::CANCELED
+        135 => UV_ECHARSET,       // E::CHARSET
+        136 => UV_EOF,            // E::EOF
+        134 => UV_UNKNOWN,        // E::UNKNOWN
+        d if d == (-UV_EAI_ADDRFAMILY) as u16 => UV_EAI_ADDRFAMILY,
+        d if d == (-UV_EAI_AGAIN) as u16 => UV_EAI_AGAIN,
+        d if d == (-UV_EAI_BADFLAGS) as u16 => UV_EAI_BADFLAGS,
+        d if d == (-UV_EAI_BADHINTS) as u16 => UV_EAI_BADHINTS,
+        d if d == (-UV_EAI_CANCELED) as u16 => UV_EAI_CANCELED,
+        d if d == (-UV_EAI_FAIL) as u16 => UV_EAI_FAIL,
+        d if d == (-UV_EAI_FAMILY) as u16 => UV_EAI_FAMILY,
+        d if d == (-UV_EAI_MEMORY) as u16 => UV_EAI_MEMORY,
+        d if d == (-UV_EAI_NODATA) as u16 => UV_EAI_NODATA,
+        d if d == (-UV_EAI_NONAME) as u16 => UV_EAI_NONAME,
+        d if d == (-UV_EAI_OVERFLOW) as u16 => UV_EAI_OVERFLOW,
+        d if d == (-UV_EAI_PROTOCOL) as u16 => UV_EAI_PROTOCOL,
+        d if d == (-UV_EAI_SERVICE) as u16 => UV_EAI_SERVICE,
+        d if d == (-UV_EAI_SOCKTYPE) as u16 => UV_EAI_SOCKTYPE,
+        _ => return None,
+    })
+}
+
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct ReturnCode(pub c_int);
+pub struct ReturnCode(pub(crate) c_int);
 
 // ──────────────────────────────────────────────────────────────────────────
 // `bun_core::ffi::Zeroable` impls (S021). Every libuv handle/request struct
@@ -2253,6 +2353,7 @@ unsafe impl bun_core::ffi::Zeroable for uv_fs_event_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_getaddrinfo_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_tty_t {}
 unsafe impl bun_core::ffi::Zeroable for fs_t {}
+unsafe impl bun_core::ffi::Zeroable for uv_stat_t {}
 impl ReturnCode {
     pub const ZERO: ReturnCode = ReturnCode(0);
     #[inline]
@@ -2271,7 +2372,7 @@ impl ReturnCode {
     /// (e.g. 4082 for `UV_EBUSY`). Use [`errno`] for the translated POSIX
     /// `bun.sys.E` value (e.g. 16 for `BUSY`).
     #[inline]
-    pub const fn raw_errno(self) -> Option<u16> {
+    pub(crate) const fn raw_errno(self) -> Option<u16> {
         if self.0 < 0 {
             Some(self.0.unsigned_abs() as u16)
         } else {
@@ -2320,7 +2421,7 @@ impl fmt::Display for ReturnCode {
 
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ReturnCodeI64(pub i64);
+pub struct ReturnCodeI64(pub(crate) i64);
 impl ReturnCodeI64 {
     #[inline]
     pub const fn init(i: i64) -> ReturnCodeI64 {
@@ -2373,10 +2474,10 @@ impl fmt::Display for ReturnCodeI64 {
 // these fns map to/from libuv's MSVC `_O_*` values that `uv_fs_open` expects.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod O {
-    pub const APPEND: i32 = 0x0008;
+    pub(crate) const APPEND: i32 = 0x0008;
     pub const CREAT: i32 = 0x0100;
-    pub const EXCL: i32 = 0x0400;
-    pub const FILEMAP: i32 = 0x2000_0000;
+    pub(crate) const EXCL: i32 = 0x0400;
+    pub(crate) const FILEMAP: i32 = 0x2000_0000;
     pub const RANDOM: i32 = 0x0010;
     pub const RDONLY: i32 = 0x0000;
     pub const RDWR: i32 = 0x0002;
@@ -2385,15 +2486,15 @@ pub mod O {
     pub const TEMPORARY: i32 = 0x0040;
     pub const TRUNC: i32 = 0x0200;
     pub const WRONLY: i32 = 0x0001;
-    pub const DIRECT: i32 = 0x0200_0000;
-    pub const DSYNC: i32 = 0x0400_0000;
-    pub const SYNC: i32 = 0x0800_0000;
+    pub(crate) const DIRECT: i32 = 0x0200_0000;
+    pub(crate) const DSYNC: i32 = 0x0400_0000;
+    pub(crate) const SYNC: i32 = 0x0800_0000;
     // No-ops on Windows.
     pub const DIRECTORY: i32 = 0;
     pub const EXLOCK: i32 = 0x1000_0000;
     pub const NOATIME: i32 = 0;
     pub const NOCTTY: i32 = 0;
-    pub const NOFOLLOW: i32 = 0;
+    pub(crate) const NOFOLLOW: i32 = 0;
     pub const NONBLOCK: i32 = 0;
     pub const SYMLINK: i32 = 0;
 
@@ -2628,7 +2729,7 @@ pub const UV_TTY_MODE_RAW: c_int = 1;
 pub const UV_TTY_MODE_IO: c_int = 2;
 pub const UV_TTY_SUPPORTED: c_int = 0;
 pub const UV_TTY_UNSUPPORTED: c_int = 1;
-pub const UV_PIPE_NO_TRUNCATE: c_uint = 1;
+pub(crate) const UV_PIPE_NO_TRUNCATE: c_uint = 1;
 pub const UV_FS_SYMLINK_DIR: c_int = 0x0001;
 pub const UV_FS_SYMLINK_JUNCTION: c_int = 0x0002;
 pub const UV_FS_COPYFILE_EXCL: c_int = 0x0001;
@@ -2720,11 +2821,11 @@ pub const UV_FS_O_NONBLOCK: i32 = 0;
 pub const UV_FS_O_SYMLINK: i32 = 0;
 pub const UV_FS_O_SYNC: i32 = O::SYNC;
 
-pub const UV_HANDLE_CLOSED: c_uint = 0x0000_0002;
+pub(crate) const UV_HANDLE_CLOSED: c_uint = 0x0000_0002;
 
 /// Non-ABI helper: `flags & UV_HANDLE_CLOSED != 0`.
 #[inline]
-pub fn uv_is_closed(handle: &uv_handle_t) -> bool {
+pub(crate) fn uv_is_closed(handle: &uv_handle_t) -> bool {
     handle.flags & UV_HANDLE_CLOSED != 0
 }
 

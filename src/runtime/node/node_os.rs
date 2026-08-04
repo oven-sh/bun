@@ -35,7 +35,6 @@ pub(crate) fn freemem() -> u64 {
 
 mod _impl {
     use super::*;
-    use crate::node::ErrorCode;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use bun_core::ZStr;
     use bun_core::ZigString;
@@ -56,7 +55,7 @@ mod _impl {
     // ─── local shims for upstream API gaps (Phase D) ──────────────────────────
 
     /// Unified error for `cpus_impl_*` so `?` works on both `JsResult` and
-    /// `bun_core::Error`/`bun_sys::Error`. The variant payload is discarded by
+    /// `crate::Error`/`bun_sys::Error`. The variant payload is discarded by
     /// `cpus()`, which throws a `SystemError`.
     pub(crate) enum OsError {
         Js,
@@ -67,30 +66,14 @@ mod _impl {
             Self::Js
         }
     }
-    impl From<bun_core::Error> for OsError {
-        fn from(_: bun_core::Error) -> Self {
+    impl From<crate::Error> for OsError {
+        fn from(_: crate::Error) -> Self {
             Self::Any
         }
     }
     impl From<bun_sys::Error> for OsError {
         fn from(_: bun_sys::Error) -> Self {
             Self::Any
-        }
-    }
-
-    /// `bun_jsc::SystemError` has no `Default` (see src/jsc/SystemError.rs).
-    /// Local zero-value for the extern-struct fields.
-    #[inline]
-    fn system_error_default() -> SystemError {
-        SystemError {
-            errno: 0,
-            code: BunString::empty(),
-            message: BunString::empty(),
-            path: BunString::empty(),
-            syscall: BunString::empty(),
-            hostname: BunString::empty(),
-            fd: c_int::MIN,
-            dest: BunString::empty(),
         }
     }
 
@@ -195,14 +178,7 @@ mod _impl {
         /// `#[repr(C)]`.
         #[repr(C)]
         pub struct UserInfoOptions {
-            pub encoding: BunString,
-        }
-        impl Default for UserInfoOptions {
-            fn default() -> Self {
-                Self {
-                    encoding: BunString::empty(),
-                }
-            }
+            pub(crate) encoding: BunString,
         }
     }
 
@@ -243,7 +219,7 @@ mod _impl {
     }
 
     impl CPUTimes {
-        pub(crate) fn to_value(self, global_this: &JSGlobalObject) -> JSValue {
+        fn to_value(self, global_this: &JSGlobalObject) -> JSValue {
             let ret = JSValue::create_empty_object(global_this, 5);
             ret.put(
                 global_this,
@@ -288,9 +264,9 @@ mod _impl {
             Ok(v) => Ok(v),
             Err(_) => {
                 let err = SystemError {
-                    message: BunString::static_("Failed to get CPU information"),
-                    code: BunString::static_(<&'static str>::from(ErrorCode::ERR_SYSTEM_ERROR)),
-                    ..system_error_default()
+                    message: BunString::static_("Failed to get CPU information").into(),
+                    code: BunString::static_("ERR_SYSTEM_ERROR").into(),
+                    ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance(global)))
             }
@@ -365,13 +341,13 @@ mod _impl {
                 let scale: u64 = 10;
 
                 let times = CPUTimes {
-                    user: scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?,
-                    nice: scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?,
-                    sys: scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?,
-                    idle: scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?,
+                    user: scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?,
+                    nice: scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?,
+                    sys: scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?,
+                    idle: scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?,
                     irq: {
-                        let _ = toks.next().ok_or_else(|| bun_core::err!("eol"))?; // skip iowait
-                        scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?
+                        let _ = toks.next().ok_or(crate::Error::eol)?; // skip iowait
+                        scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?
                     },
                 };
 
@@ -473,7 +449,7 @@ mod _impl {
                     "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq\0",
                     cpu_index
                 )
-                .map_err(|_| bun_core::err!("fmt"))?;
+                .map_err(|_| crate::Error::fmt)?;
                 let remaining = cursor.len();
                 let written = path_buf.len() - remaining;
                 // SAFETY: we wrote a NUL terminator at path_buf[written-1]
@@ -712,14 +688,14 @@ mod _impl {
         let result = get_process_priority(pid);
         if result == i32::MAX {
             let err = SystemError {
-                message: BunString::static_("no such process"),
-                code: BunString::static_("ESRCH"),
+                message: BunString::static_("no such process").into(),
+                code: BunString::static_("ESRCH").into(),
                 #[cfg(not(windows))]
                 errno: -(bun_sys::posix::E::ESRCH as c_int),
                 #[cfg(windows)]
                 errno: libuv::UV_ESRCH,
-                syscall: BunString::static_("uv_os_getpriority"),
-                ..system_error_default()
+                syscall: BunString::static_("uv_os_getpriority").into(),
+                ..Default::default()
             };
             return Err(global.throw_value(err.to_error_instance_with_info_object(global)));
         }
@@ -955,11 +931,12 @@ mod _impl {
             let err = SystemError {
                 message: BunString::static_(
                     "A system error occurred: getifaddrs returned an error",
-                ),
-                code: BunString::static_("ERR_SYSTEM_ERROR"),
+                )
+                .into(),
+                code: BunString::static_("ERR_SYSTEM_ERROR").into(),
                 errno: errno as c_int,
-                syscall: BunString::static_("getifaddrs"),
-                ..system_error_default()
+                syscall: BunString::static_("getifaddrs").into(),
+                ..Default::default()
             };
 
             return Err(global_this.throw_value(err.to_error_instance(global_this)));
@@ -1237,12 +1214,12 @@ mod _impl {
         let err = unsafe { libuv::uv_interface_addresses(&mut ifaces, &mut count) };
         if err != 0 {
             let sys_err = SystemError {
-                message: BunString::static_("uv_interface_addresses failed"),
-                code: BunString::static_("ERR_SYSTEM_ERROR"),
+                message: BunString::static_("uv_interface_addresses failed").into(),
+                code: BunString::static_("ERR_SYSTEM_ERROR").into(),
                 //.info = info,
                 errno: err,
-                syscall: BunString::static_("uv_interface_addresses"),
-                ..system_error_default()
+                syscall: BunString::static_("uv_interface_addresses").into(),
+                ..Default::default()
             };
             return Err(global_this.throw_value(sys_err.to_error_instance(global_this)));
         }
@@ -1406,7 +1383,7 @@ mod _impl {
         Ok(ret)
     }
 
-    pub fn release() -> BunString {
+    pub(crate) fn release() -> BunString {
         let mut name_buffer = [0u8; HOST_NAME_MAX];
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1445,7 +1422,7 @@ mod _impl {
         pub(crate) safe fn set_process_priority(pid: i32, priority: i32) -> i32;
     }
 
-    pub(crate) fn set_process_priority_impl(pid: i32, priority: i32) -> bun_sys::E {
+    fn set_process_priority_impl(pid: i32, priority: i32) -> bun_sys::E {
         if pid < 0 {
             return bun_sys::E::ESRCH;
         }
@@ -1468,40 +1445,40 @@ mod _impl {
         match errcode {
             bun_sys::E::ESRCH => {
                 let err = SystemError {
-                    message: BunString::static_("no such process"),
-                    code: BunString::static_("ESRCH"),
+                    message: BunString::static_("no such process").into(),
+                    code: BunString::static_("ESRCH").into(),
                     #[cfg(not(windows))]
                     errno: -(bun_sys::posix::E::ESRCH as c_int),
                     #[cfg(windows)]
                     errno: libuv::UV_ESRCH,
-                    syscall: BunString::static_("uv_os_getpriority"),
-                    ..system_error_default()
+                    syscall: BunString::static_("uv_os_getpriority").into(),
+                    ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))
             }
             bun_sys::E::EACCES => {
                 let err = SystemError {
-                    message: BunString::static_("permission denied"),
-                    code: BunString::static_("EACCES"),
+                    message: BunString::static_("permission denied").into(),
+                    code: BunString::static_("EACCES").into(),
                     #[cfg(not(windows))]
                     errno: -(bun_sys::posix::E::EACCES as c_int),
                     #[cfg(windows)]
                     errno: libuv::UV_EACCES,
-                    syscall: BunString::static_("uv_os_getpriority"),
-                    ..system_error_default()
+                    syscall: BunString::static_("uv_os_getpriority").into(),
+                    ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))
             }
             bun_sys::E::EPERM => {
                 let err = SystemError {
-                    message: BunString::static_("operation not permitted"),
-                    code: BunString::static_("EPERM"),
+                    message: BunString::static_("operation not permitted").into(),
+                    code: BunString::static_("EPERM").into(),
                     #[cfg(not(windows))]
                     errno: -(bun_sys::posix::E::ESRCH as c_int),
                     #[cfg(windows)]
                     errno: libuv::UV_ESRCH,
-                    syscall: BunString::static_("uv_os_getpriority"),
-                    ..system_error_default()
+                    syscall: BunString::static_("uv_os_getpriority").into(),
+                    ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))
             }
@@ -1548,7 +1525,7 @@ mod _impl {
         }
     }
 
-    pub fn uptime(global: &JSGlobalObject) -> JsResult<f64> {
+    pub(crate) fn uptime(global: &JSGlobalObject) -> JsResult<f64> {
         #[cfg(windows)]
         {
             let mut uptime_value: f64 = 0.0;
@@ -1556,11 +1533,11 @@ mod _impl {
             let err = unsafe { libuv::uv_uptime(&mut uptime_value) };
             if err != 0 {
                 let sys_err = SystemError {
-                    message: BunString::static_("failed to get system uptime"),
-                    code: BunString::static_("ERR_SYSTEM_ERROR"),
+                    message: BunString::static_("failed to get system uptime").into(),
+                    code: BunString::static_("ERR_SYSTEM_ERROR").into(),
                     errno: err,
-                    syscall: BunString::static_("uv_uptime"),
-                    ..system_error_default()
+                    syscall: BunString::static_("uv_uptime").into(),
+                    ..Default::default()
                 };
                 return Err(global.throw_value(sys_err.to_error_instance(global)));
             }
@@ -1723,13 +1700,13 @@ impl NetmaskInt for u128 {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[inline]
-fn parse_u64(s: &[u8]) -> Result<u64, bun_core::Error> {
-    bun_core::fmt::parse_int(s, 10).map_err(|_| bun_core::err!("InvalidCharacter"))
+fn parse_u64(s: &[u8]) -> crate::Result<u64> {
+    bun_core::fmt::parse_int(s, 10).map_err(|_| crate::Error::InvalidCharacter)
 }
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[inline]
-fn parse_u32(s: &[u8]) -> Result<u32, bun_core::Error> {
-    bun_core::fmt::parse_int(s, 10).map_err(|_| bun_core::err!("InvalidCharacter"))
+fn parse_u32(s: &[u8]) -> crate::Result<u32> {
+    bun_core::fmt::parse_int(s, 10).map_err(|_| crate::Error::InvalidCharacter)
 }
 
 #[cfg(windows)]

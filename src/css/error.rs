@@ -16,19 +16,12 @@ fn bs(p: Str) -> &'static BStr {
 /// A printer error.
 pub type PrinterError = Err<PrinterErrorKind>;
 
-pub fn fmt_printer_error() -> PrinterError {
-    Err {
-        kind: PrinterErrorKind::fmt_error,
-        loc: None,
-    }
-}
-
 /// An error with a source location.
 pub struct Err<T> {
     /// The type of error that occurred.
     pub kind: T,
     /// The location where the error occurred.
-    pub loc: Option<ErrorLocation>,
+    pub(crate) loc: Option<ErrorLocation>,
 }
 
 impl<T: fmt::Display> fmt::Display for Err<T> {
@@ -40,7 +33,10 @@ impl<T: fmt::Display> fmt::Display for Err<T> {
 // `to_error_instance` lives as an extension-trait method in `bun_css_jsc`.
 
 impl Err<ParserError> {
-    pub fn from_parse_error(err: ParseError<ParserError>, filename: &[u8]) -> Err<ParserError> {
+    pub(crate) fn from_parse_error(
+        err: ParseError<ParserError>,
+        filename: &[u8],
+    ) -> Err<ParserError> {
         let kind = match err.kind {
             ParserErrorKind::basic(b) => match b {
                 BasicParseErrorKind::unexpected_token(t) => ParserError::unexpected_token(t),
@@ -69,10 +65,9 @@ impl<T: fmt::Display> Err<T> {
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
     ) -> Result<(), bun_core::Error> {
-        use bun_core::OrWriteFailed as _;
         use std::io::Write as _;
         let mut text: Vec<u8> = Vec::new();
-        write!(&mut text, "{}", self.kind).or_write_failed()?;
+        write!(&mut text, "{}", self.kind).map_err(|_| bun_core::Error::WriteFailed)?;
 
         log.add_msg(bun_ast::Msg {
             kind: bun_ast::Kind::Err,
@@ -94,9 +89,9 @@ impl<T: fmt::Display> Err<T> {
 /// Extensible parse errors that can be encountered by client parsing implementations.
 pub struct ParseError<T> {
     /// Details of this error
-    pub kind: ParserErrorKind<T>,
+    pub(crate) kind: ParserErrorKind<T>,
     /// Location where this error occurred
-    pub location: SourceLocation,
+    pub(crate) location: SourceLocation,
 }
 
 impl<T> ParseError<T> {
@@ -171,23 +166,15 @@ impl fmt::Display for BasicParseErrorKind {
 /// A line and column location within a source file.
 pub struct ErrorLocation {
     /// The filename in which the error occurred.
-    pub filename: Str,
+    pub(crate) filename: Str,
     /// The line number, starting from 0.
-    pub line: u32,
+    pub(crate) line: u32,
     /// The column number, starting from 1.
-    pub column: u32,
+    pub(crate) column: u32,
 }
 
 impl ErrorLocation {
-    pub fn with_filename(&self, filename: &[u8]) -> ErrorLocation {
-        ErrorLocation {
-            filename,
-            line: self.line,
-            column: self.column,
-        }
-    }
-
-    pub fn to_location(
+    pub(crate) fn to_location(
         &self,
         source: &bun_ast::Source,
     ) -> Result<bun_ast::Location, bun_core::Error> {
@@ -348,19 +335,12 @@ pub struct BasicParseError {
     /// Details of this error
     pub kind: BasicParseErrorKind,
     /// Location where this error occurred
-    pub location: SourceLocation,
+    pub(crate) location: SourceLocation,
 }
 
 impl BasicParseError {
-    pub fn into_parse_error<T>(self) -> ParseError<T> {
-        ParseError {
-            kind: ParserErrorKind::basic(self.kind),
-            location: self.location,
-        }
-    }
-
     #[inline]
-    pub fn into_default_parse_error(self) -> ParseError<ParserError> {
+    pub(crate) fn into_default_parse_error(self) -> ParseError<ParserError> {
         ParseError {
             kind: ParserErrorKind::basic(self.kind),
             location: self.location,
@@ -480,8 +460,8 @@ impl fmt::Display for SelectorError {
 }
 
 pub struct ErrorWithLocation<T> {
-    pub kind: T,
-    pub loc: Location,
+    pub(crate) kind: T,
+    pub(crate) loc: Location,
 }
 
 #[derive(strum::IntoStaticStr, Debug)]
@@ -490,7 +470,6 @@ pub enum MinifyErr {
     minify_err,
 }
 bun_core::impl_tag_error!(MinifyErr);
-bun_core::named_error_set!(MinifyErr);
 
 pub type MinifyError = ErrorWithLocation<MinifyErrorKind>;
 

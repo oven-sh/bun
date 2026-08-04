@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { join } from "path";
 
 describe("FormData", () => {
@@ -296,6 +296,45 @@ describe("FormData", () => {
 
       it(`${C.name}: unrelated content-type still rejects`, async () => {
         await expect(make(body, "text/plain").formData()).rejects.toThrow();
+      });
+    }
+  });
+
+  // RFC 2183 §2: the disposition type is a case-insensitive token.
+  // RFC 9112 §5.6.3: OWS = *( SP / HTAB ), so HTAB is valid after the colon.
+  describe("Content-Disposition: form-data token + OWS", () => {
+    const boundary = "BX7";
+    const mk = (hdr: string) => `--${boundary}\r\n${hdr}\r\n\r\nv\r\n--${boundary}--\r\n`;
+    const headers = { "Content-Type": `multipart/form-data; boundary=${boundary}` };
+
+    for (const C of [Response, Request] as const) {
+      const make = (body: string) =>
+        C === Response ? new Response(body, { headers }) : new Request("http://x/", { method: "POST", body, headers });
+
+      it.each([
+        ["lowercase", `Content-Disposition: form-data; name="k"`],
+        ["Form-Data", `Content-Disposition: Form-Data; name="k"`],
+        ["FORM-DATA", `Content-Disposition: FORM-DATA; name="k"`],
+        ["mixed case header + token", `CONTENT-DISPOSITION: Form-Data; NAME="k"`],
+        ["HTAB after colon", `Content-Disposition:\tform-data; name="k"`],
+        ["SP + HTAB after colon", `Content-Disposition: \t form-data; name="k"`],
+        ["HTAB after semicolon", `Content-Disposition: form-data;\tname="k"`],
+      ])(`${C.name}: %s`, async (_label, hdr) => {
+        const fd = await make(mk(hdr)).formData();
+        expect([...fd.entries()]).toEqual([["k", "v"]]);
+      });
+
+      it(`${C.name}: file part with Form-Data + HTAB OWS`, async () => {
+        const body =
+          `--${boundary}\r\n` +
+          `Content-Disposition:\tForm-Data; name="f"; filename="a.txt"\r\n` +
+          `Content-Type: text/plain\r\n\r\n` +
+          `hello\r\n--${boundary}--\r\n`;
+        const fd = await make(body).formData();
+        const file = fd.get("f") as File;
+        expect(file).toBeInstanceOf(File);
+        expect(file.name).toBe("a.txt");
+        expect(await file.text()).toBe("hello");
       });
     }
   });
@@ -709,14 +748,17 @@ describe("FormData", () => {
       formData.get("foo")!.type;
       return formData;
     }
-    for (let i = 0; i < 100000; i++) {
+    // Release needs 100k iterations so the freed name string's memory is actually
+    // reused; ASAN/debug detect the use-after-free deterministically, so far fewer
+    // iterations (with the same 20 forced GC cycles) are enough there.
+    const iterations = isASAN || isDebug ? 2000 : 100000;
+    const gcEvery = iterations / 20;
+    for (let i = 0; i < iterations; i++) {
       test();
-      if (i % 5000 === 0) {
+      if (i % gcEvery === 0) {
         Bun.gc();
       }
     }
-    // 100k iterations of allocate-and-GC is fast on release but slow under a
-    // debug/ASAN build, where it runs well past the default 5s test timeout.
   }, 180000);
 });
 

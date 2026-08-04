@@ -75,7 +75,7 @@ type Constants = IdMap<IdentifierId, Constant>;
 // Public entry point
 // =============================================================================
 
-pub fn constant_propagation(func: &mut HirFunction, env: &mut Environment) {
+pub(crate) fn constant_propagation(func: &mut HirFunction, env: &mut Environment) {
     let mut constants: Constants = IdMap::new();
     constant_propagation_impl(func, env, &mut constants);
 }
@@ -449,6 +449,7 @@ fn evaluate_instruction(
             operator,
             value,
             loc,
+            ..
         } => match operator {
             UnaryOperator::Not => {
                 let operand = read(constants, value);

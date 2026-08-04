@@ -1,6 +1,7 @@
 use core::ffi::c_void;
 use core::marker::PhantomData;
 
+use crate::error::ThrowSqlError;
 use crate::jsc::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
 use bun_core::String as BunString;
 
@@ -272,7 +273,7 @@ impl MySQLQuery {
         Ok(())
     }
 
-    fn run_simple_query(&mut self, connection: &MySQLConnection) -> Result<(), bun_core::Error> {
+    fn run_simple_query(&mut self, connection: &MySQLConnection) -> crate::Result<()> {
         if self.status != Status::Pending || !connection.can_execute_query() {
             debug!("cannot execute query");
             // cannot execute query
@@ -300,7 +301,7 @@ impl MySQLQuery {
         global_object: &JSGlobalObject,
         columns_value: JSValue,
         binding_value: JSValue,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let mut query_str: Option<bun_core::zig_string::Slice> = None;
         // `defer if (query_str) |str| str.deinit()` — deleted: `Utf8Slice` impls `Drop`.
 
@@ -315,12 +316,9 @@ impl MySQLQuery {
                 Ok(s) => s,
                 Err(err) => {
                     if !global_object.has_exception() {
-                        // `Signature::generate` returns a wider `bun_core::Error`. Use
-                        // `throw_error` (which builds an `Error` instance from the error
-                        // name + message) instead of forcing into the MySQL enum.
-                        let _ = global_object.throw_error(err, "failed to generate signature");
+                        let _ = global_object.throw_sql_error(err, "failed to generate signature");
                     }
-                    return Err(bun_core::err!("JSError"));
+                    return Err(crate::Error::JSError);
                 }
             };
             query_str = Some(query);
@@ -330,9 +328,10 @@ impl MySQLQuery {
                 Ok(e) => e,
                 Err(err) => {
                     // `err` is `bun_core::AllocError`; `throw_error` takes
-                    // `bun_core::Error` (`From<AllocError>` → OutOfMemory).
-                    let _ = global_object.throw_error(err.into(), "failed to allocate statement");
-                    return Err(bun_core::err!("JSError"));
+                    // `crate::Error` (`From<AllocError>` → OutOfMemory).
+                    let _ = global_object
+                        .throw_error(crate::Error::from(err), "failed to allocate statement");
+                    return Err(crate::Error::JSError);
                 }
             };
 
@@ -351,7 +350,7 @@ impl MySQLQuery {
                     let error_response = stmt_ref.error_response.to_js(global_object);
                     // If the statement failed, we need to throw the error
                     let _ = global_object.throw_value(error_response);
-                    return Err(bun_core::err!("JSError"));
+                    return Err(crate::Error::JSError);
                 }
                 self.statement = stmt;
                 stmt_ref.ref_();
@@ -386,7 +385,7 @@ impl MySQLQuery {
                 let error_response = stmt_ref.error_response.to_js(global_object);
                 // If the statement failed, we need to throw the error
                 let _ = global_object.throw_value(error_response);
-                return Err(bun_core::err!("JSError"));
+                return Err(crate::Error::JSError);
             }
             my_sql_statement::Status::Prepared => {
                 if connection.can_pipeline() {
@@ -407,7 +406,7 @@ impl MySQLQuery {
                                 err,
                             ));
                         }
-                        return Err(bun_core::err!("JSError"));
+                        return Err(crate::Error::JSError);
                     }
                     self.flags.set_pipelined(true);
                 }
@@ -424,8 +423,9 @@ impl MySQLQuery {
                         None => self.query.to_utf8(),
                     };
                     if let Err(err) = mysql_request::prepare_request(query.slice(), writer) {
-                        let _ = global_object.throw_error(err, "failed to prepare query");
-                        return Err(bun_core::err!("JSError"));
+                        let _ =
+                            global_object.throw_sql_error(err.into(), "failed to prepare query");
+                        return Err(crate::Error::JSError);
                     }
                     // `self.statement` was set in both branches above; route
                     // through the single-unsafe accessor instead of a raw
@@ -442,7 +442,7 @@ impl MySQLQuery {
 
     /// Takes ownership of `query` (caller must have already ref'd it, e.g. via
     /// `JSValue.toBunString`). `cleanup()` will deref it exactly once.
-    pub fn init(query: BunString, bigint: bool, simple: bool) -> Self {
+    pub(crate) fn init(query: BunString, bigint: bool, simple: bool) -> Self {
         Self {
             statement: core::ptr::null_mut(),
             query,
@@ -451,13 +451,13 @@ impl MySQLQuery {
         }
     }
 
-    pub fn run_query(
+    pub(crate) fn run_query(
         &mut self,
         connection: &MySQLConnection,
         global_object: &JSGlobalObject,
         columns_value: JSValue,
         binding_value: JSValue,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         if self.flags.simple() {
             debug!("runSimpleQuery");
             return self.run_simple_query(connection);
@@ -480,12 +480,12 @@ impl MySQLQuery {
     }
 
     #[inline]
-    pub fn set_result_mode(&mut self, result_mode: SQLQueryResultMode) {
+    pub(crate) fn set_result_mode(&mut self, result_mode: SQLQueryResultMode) {
         self.flags.set_result_mode(result_mode);
     }
 
     #[inline]
-    pub fn result(&mut self, is_last_result: bool) -> bool {
+    pub(crate) fn result(&mut self, is_last_result: bool) -> bool {
         if self.status == Status::Success || self.status == Status::Fail {
             return false;
         }
@@ -498,7 +498,7 @@ impl MySQLQuery {
         true
     }
 
-    pub fn fail(&mut self) -> bool {
+    pub(crate) fn fail(&mut self) -> bool {
         if self.status == Status::Fail || self.status == Status::Success {
             return false;
         }
@@ -507,7 +507,7 @@ impl MySQLQuery {
         true
     }
 
-    pub fn cleanup(&mut self) {
+    pub(crate) fn cleanup(&mut self) {
         if !self.statement.is_null() {
             let s = self.statement;
             self.statement = core::ptr::null_mut();
@@ -521,12 +521,12 @@ impl MySQLQuery {
     }
 
     #[inline]
-    pub fn is_completed(&self) -> bool {
+    pub(crate) fn is_completed(&self) -> bool {
         self.status == Status::Success || self.status == Status::Fail
     }
 
     #[inline]
-    pub fn is_running(&self) -> bool {
+    pub(crate) fn is_running(&self) -> bool {
         match self.status {
             Status::Running | Status::Binding | Status::PartialResponse => true,
             Status::Success | Status::Fail | Status::Pending => false,
@@ -534,12 +534,12 @@ impl MySQLQuery {
     }
 
     #[inline]
-    pub fn is_pending(&self) -> bool {
+    pub(crate) fn is_pending(&self) -> bool {
         self.status == Status::Pending
     }
 
     #[inline]
-    pub fn is_being_prepared(&self) -> bool {
+    pub(crate) fn is_being_prepared(&self) -> bool {
         self.status == Status::Pending
             && self
                 .get_statement()
@@ -547,27 +547,27 @@ impl MySQLQuery {
     }
 
     #[inline]
-    pub fn is_pipelined(&self) -> bool {
+    pub(crate) fn is_pipelined(&self) -> bool {
         self.flags.pipelined()
     }
 
     #[inline]
-    pub fn is_simple(&self) -> bool {
+    pub(crate) fn is_simple(&self) -> bool {
         self.flags.simple()
     }
 
     #[inline]
-    pub fn is_bigint_supported(&self) -> bool {
+    pub(crate) fn is_bigint_supported(&self) -> bool {
         self.flags.bigint()
     }
 
     #[inline]
-    pub fn get_result_mode(&self) -> SQLQueryResultMode {
+    pub(crate) fn get_result_mode(&self) -> SQLQueryResultMode {
         self.flags.result_mode()
     }
 
     #[inline]
-    pub fn mark_as_prepared(&mut self) {
+    pub(crate) fn mark_as_prepared(&mut self) {
         if self.status == Status::Pending {
             if let Some(statement) = self.get_statement() {
                 if statement.status == my_sql_statement::Status::Parsing
@@ -582,7 +582,7 @@ impl MySQLQuery {
 
     #[inline]
     #[allow(clippy::mut_from_ref)] // goes through a raw intrusive pointer; see SAFETY note below
-    pub fn get_statement(&self) -> Option<&mut MySQLStatement> {
+    pub(crate) fn get_statement(&self) -> Option<&mut MySQLStatement> {
         // SAFETY: when non-null, `self.statement` is a live boxed `MySQLStatement`
         // kept alive by the intrusive ref we hold. Returning `&mut` permits
         // shared mutation through the intrusive pointer; the

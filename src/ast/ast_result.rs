@@ -27,12 +27,9 @@ pub struct Ast<'a> {
 
     pub nested_scope_slot_counts: SlotCounts,
 
-    pub runtime_import_record_id: Option<u32>,
-    pub needs_runtime: bool,
     // This is a list of CommonJS features. When a file uses CommonJS features,
     // it's not a candidate for "flat bundling" and must be wrapped in its own
     // closure.
-    pub has_top_level_return: bool,
     pub uses_exports_ref: bool,
     pub uses_module_ref: bool,
     pub uses_require_ref: bool,
@@ -43,7 +40,6 @@ pub struct Ast<'a> {
 
     // This is a list of ES6 features. They are ranges instead of booleans so
     // that they can be used in log messages. Check to see if "Len > 0".
-    pub import_keyword: Range, // Does not include TypeScript-specific syntax or "import()"
     pub export_keyword: Range, // Does not include TypeScript-specific syntax
     pub top_level_await_keyword: Range,
 
@@ -103,16 +99,12 @@ impl<'a> Ast<'a> {
             has_lazy_export: false,
             runtime_imports: Default::default(),
             nested_scope_slot_counts: SlotCounts::default(),
-            runtime_import_record_id: None,
-            needs_runtime: false,
-            has_top_level_return: false,
             uses_exports_ref: false,
             uses_module_ref: false,
             uses_require_ref: false,
             commonjs_module_exports_assigned_deoptimized: false,
             force_cjs_to_esm: false,
             exports_kind: ExportsKind::None,
-            import_keyword: Range::NONE,
             export_keyword: Range::NONE,
             top_level_await_keyword: Range::NONE,
             import_records: ImportRecordList::new_in(arena),
@@ -185,5 +177,3 @@ impl<'a> Ast<'a> {
     // with, so arena-vs-heap conditional-free is encoded in the type — no
     // explicit body needed.
 }
-
-pub use crate::g::Class;

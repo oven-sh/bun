@@ -15,9 +15,9 @@ use crate::dependency::{Behavior, DependencyExt as _, TagExt as _};
 use crate::repository::RepositoryExt as _;
 use crate::{
     self as install, Aligner, Bin, Dependency, ExternalStringList, ExternalStringMap, Features,
-    Npm, PackageID, PackageJSON, PackageManager, PackageNameHash, Repository,
-    TruncatedPackageNameHash, UpdateRequest, bin, default_trusted_dependencies, dependency,
-    initialize_store, invalid_package_id,
+    Npm, PackageID, PackageManager, PackageNameHash, Repository, TruncatedPackageNameHash,
+    UpdateRequest, bin, default_trusted_dependencies, dependency, initialize_store,
+    invalid_package_id,
 };
 // `Package.rs` is mounted as `crate::lockfile_real::package`; the parent module
 // (`super`) is the real `lockfile.rs`, distinct from the `crate::lockfile`
@@ -116,14 +116,14 @@ fn invalid_trusted_dependencies(
     log: &mut bun_ast::Log,
     source: &bun_ast::Source,
     loc: bun_ast::Loc,
-) -> bun_core::Error {
+) -> crate::Error {
     let _ = bun_ast::add_error_pretty!(
         log,
         source,
         loc,
         "trustedDependencies expects an array of strings, e.g.\n  <r><green>\"trustedDependencies\"<r>: [\n    <green>\"package_name\"<r>\n  ]"
     );
-    bun_core::err!("InvalidPackageJSON")
+    crate::Error::InvalidPackageJSON
 }
 
 // `SemverIntType` defaults to `u64`, the only instantiation the lockfile/PM
@@ -138,7 +138,7 @@ fn invalid_trusted_dependencies(
 #[derive(Clone, Copy)]
 pub struct Package<SemverIntType: VersionInt = u64> {
     pub name: String,
-    pub name_hash: PackageNameHash,
+    pub(crate) name_hash: PackageNameHash,
 
     /// How this package has been resolved
     /// When .tag is uninitialized, that means the package is not resolved yet.
@@ -160,9 +160,9 @@ pub struct Package<SemverIntType: VersionInt = u64> {
     ///
     /// By default, the underlying buffer is filled with "invalid_id" to indicate this package ID
     /// was not resolved
-    pub resolutions: PackageIDSlice,
+    pub(crate) resolutions: PackageIDSlice,
 
-    pub meta: Meta,
+    pub(crate) meta: Meta,
     pub bin: Bin,
 
     /// If any of these scripts run, they will run in order:
@@ -172,10 +172,10 @@ pub struct Package<SemverIntType: VersionInt = u64> {
     /// 4. preprepare
     /// 5. prepare
     /// 6. postprepare
-    pub scripts: Scripts,
+    pub(crate) scripts: Scripts,
 }
 
-pub type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
+pub(crate) type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
 
 // ─── ResolverContext ─────────────────────────────────────────────────────────
 //
@@ -205,7 +205,7 @@ pub trait ResolverContext {
         &mut self,
         builder: &mut StringBuilder<'_>,
         json: &Expr,
-    ) -> Result<ResolutionType<u64>, bun_core::Error>;
+    ) -> crate::Result<ResolutionType<u64>>;
 
     // ── GitResolver-only surface ────────────────────────────────────────────
     // Trait methods so non-git
@@ -245,7 +245,7 @@ impl ResolverContext for () {
         &mut self,
         _builder: &mut StringBuilder<'_>,
         _json: &Expr,
-    ) -> Result<ResolutionType<u64>, bun_core::Error> {
+    ) -> crate::Result<ResolutionType<u64>> {
         // The call site gates on `!IS_VOID`; return the zero value for
         // trait completeness.
         Ok(ResolutionType::default())
@@ -264,7 +264,7 @@ impl ResolverContext for () {
 //
 // `count`/`resolve` keep their `StringBuilder<'_>` borrow — lifetimes are
 // permitted on object-safe trait methods, only type generics are not.
-pub(crate) trait ResolverContextDyn {
+trait ResolverContextDyn {
     fn is_void(&self) -> bool;
     fn is_git(&self) -> bool;
     fn check_bundled_dependencies(&self) -> bool;
@@ -274,7 +274,7 @@ pub(crate) trait ResolverContextDyn {
         &mut self,
         builder: &mut StringBuilder<'_>,
         json: &Expr,
-    ) -> Result<ResolutionType<u64>, bun_core::Error>;
+    ) -> crate::Result<ResolutionType<u64>>;
 
     fn resolution(&self) -> &ResolutionType<u64>;
     fn dep_id(&self) -> install::DependencyID;
@@ -306,7 +306,7 @@ impl<R: ResolverContext> ResolverContextDyn for R {
         &mut self,
         builder: &mut StringBuilder<'_>,
         json: &Expr,
-    ) -> Result<ResolutionType<u64>, bun_core::Error> {
+    ) -> crate::Result<ResolutionType<u64>> {
         ResolverContext::resolve(self, builder, json)
     }
 
@@ -368,7 +368,7 @@ pub(crate) enum PackageField {
 }
 
 impl PackageField {
-    pub(crate) const ALL: [PackageField; 8] = [
+    const ALL: [PackageField; 8] = [
         PackageField::Name,
         PackageField::NameHash,
         PackageField::Resolution,
@@ -448,7 +448,7 @@ impl<SemverIntType: VersionInt> Alphabetizer<SemverIntType> {
 
 impl<SemverIntType: VersionInt> Package<SemverIntType> {
     #[inline]
-    pub fn is_disabled(&self, cpu: Npm::Architecture, os: Npm::OperatingSystem) -> bool {
+    pub(crate) fn is_disabled(&self, cpu: Npm::Architecture, os: Npm::OperatingSystem) -> bool {
         self.meta.is_disabled(cpu, os)
     }
 }
@@ -461,7 +461,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
 // `Package<SemverIntType>` ≠ `Package<u64>` mismatches at every Lockfile call
 // site.
 impl Package<u64> {
-    pub fn clone(&self, cloner: &mut Cloner) -> Result<PackageID, bun_core::Error> {
+    pub(crate) fn clone(&self, cloner: &mut Cloner) -> crate::Result<PackageID> {
         // `cloner` already owns `&mut` to `pm`, `old`, `new`, and
         // `package_id_mapping`; route everything through its disjoint fields.
         // `old`/`new`/`mapping` are reborrowed for the whole body (disjoint
@@ -586,7 +586,7 @@ impl Package<u64> {
         // defend here as well since an error returned from `clean_with_logger`
         // is not recoverable — it aborts the install instead of re-resolving.
         if self.meta.id as usize >= package_id_mapping.len() {
-            return Err(bun_core::err!("InvalidLockfile"));
+            return Err(crate::Error::InvalidLockfile);
         }
         package_id_mapping[self.meta.id as usize] = new_package.meta.id;
 
@@ -600,11 +600,18 @@ impl Package<u64> {
         let resolutions: &mut [PackageID] =
             &mut new.buffers.resolutions[prev_len as usize..end as usize];
         debug_assert_eq!(old_resolutions.len(), resolutions.len());
+        debug_assert_eq!(old_dependencies.len(), resolutions.len());
         for (i, (old_resolution, resolution)) in old_resolutions
             .iter()
             .zip(resolutions.iter_mut())
             .enumerate()
         {
+            // Optional-peer slots are re-derived by `hoist` (Cloner::flush), not carried over.
+            if old_dependencies[i].behavior.is_optional_peer() {
+                *resolution = invalid_package_id;
+                continue;
+            }
+
             if *old_resolution >= max_package_id {
                 *resolution = invalid_package_id;
                 continue;
@@ -616,7 +623,6 @@ impl Package<u64> {
             } else {
                 cloner.clone_queue.push(PendingResolution {
                     old_resolution: *old_resolution,
-                    parent: new_package.meta.id,
                     resolve_id: new_package.resolutions.off
                         + PackageID::try_from(i).expect("int cast"),
                 });
@@ -626,119 +632,7 @@ impl Package<u64> {
         Ok(new_package.meta.id)
     }
 
-    pub fn from_package_json(
-        lockfile: &mut Lockfile,
-        pm: &mut PackageManager,
-        package_json: &mut PackageJSON,
-        features: Features,
-    ) -> Result<Self, bun_core::Error> {
-        #[allow(non_snake_case)]
-        let FEATURES = features;
-        let mut package = Self::default();
-
-        // var string_buf = package_json;
-
-        // split-borrow `string_bytes`/`string_pool` so the disjoint
-        // `lockfile.buffers.dependencies/resolutions` borrows below pass.
-        let mut string_builder = crate::string_builder!(lockfile);
-
-        let mut total_dependencies_count: u32 = 0;
-        // var bin_extern_strings_count: u32 = 0;
-
-        // --- Counting
-        {
-            string_builder.count(&package_json.name);
-            string_builder.count(&package_json.version);
-            let dependencies = package_json.dependencies.map.values();
-            for dep in dependencies {
-                if dep.behavior.is_enabled(FEATURES) {
-                    dep.count(package_json.dependencies.source_buf, &mut string_builder);
-                    total_dependencies_count += 1;
-                }
-            }
-        }
-
-        // string_builder.count(manifest.str(&package_version_ptr.tarball_url));
-
-        string_builder.allocate()?;
-        // defer string_builder.clamp(); — handled at end of scope below
-        // var extern_strings_list = &lockfile.buffers.extern_strings;
-        let dependencies_list = &mut lockfile.buffers.dependencies;
-        let resolutions_list = &mut lockfile.buffers.resolutions;
-        dependencies_list.reserve(total_dependencies_count as usize);
-        resolutions_list.reserve(total_dependencies_count as usize);
-        // try extern_strings_list.ensureUnusedCapacity(lockfile.allocator, bin_extern_strings_count);
-        // extern_strings_list.items.len += bin_extern_strings_count;
-
-        // -- Cloning
-        {
-            let package_name: ExternalString =
-                string_builder.append::<ExternalString>(&package_json.name);
-            package.name_hash = package_name.hash;
-            package.name = package_name.value;
-
-            package.resolution = Resolution::<u64>::init(TaggedValue::Root);
-
-            let total_len = dependencies_list.len() + total_dependencies_count as usize;
-            if cfg!(debug_assertions) {
-                debug_assert!(dependencies_list.len() == resolutions_list.len());
-            }
-
-            let dep_start = dependencies_list.len();
-            bun_core::vec::extend_from_fn(
-                dependencies_list,
-                total_dependencies_count as usize,
-                |_| Dependency::default(),
-            );
-            debug_assert_eq!(dependencies_list.len(), total_len);
-            let mut dependencies: &mut [Dependency] = &mut dependencies_list[dep_start..total_len];
-
-            let package_dependencies = package_json.dependencies.map.values();
-            let source_buf = package_json.dependencies.source_buf;
-            for dep in package_dependencies {
-                if !dep.behavior.is_enabled(FEATURES) {
-                    continue;
-                }
-
-                dependencies[0] = dep.clone_in(pm, source_buf, &mut string_builder)?;
-                dependencies = &mut dependencies[1..];
-                if dependencies.is_empty() {
-                    break;
-                }
-            }
-
-            // We lose the bin info here
-            // package.bin = package_version.bin.clone(string_buf, manifest.extern_strings_bin_entries, extern_strings_list.items, extern_strings_slice, @TypeOf(&string_builder), &string_builder);
-            // and the integriy hash
-            // package.meta.integrity = package_version.integrity;
-
-            package.meta.arch = package_json.arch;
-            package.meta.os = package_json.os;
-
-            package.dependencies.off = dep_start as u32;
-            package.dependencies.len = total_dependencies_count - (dependencies.len() as u32);
-            package.resolutions.off = package.dependencies.off;
-            package.resolutions.len = package.dependencies.len;
-
-            let new_length = package.dependencies.len as usize + dep_start;
-
-            debug_assert_eq!(resolutions_list.len(), dep_start);
-            bun_core::vec::extend_from_fn(
-                resolutions_list,
-                package.dependencies.len as usize,
-                |_| invalid_package_id,
-            );
-            debug_assert_eq!(resolutions_list.len(), new_length);
-
-            // Shrink off the unused default-initialized tail (`new_length <= total_len`).
-            dependencies_list.truncate(new_length);
-
-            string_builder.clamp();
-            return Ok(package);
-        }
-    }
-
-    pub fn from_npm(
+    pub(crate) fn from_npm(
         pm: &mut PackageManager,
         lockfile: &mut Lockfile,
         log: &mut bun_ast::Log,
@@ -746,7 +640,7 @@ impl Package<u64> {
         version: SemverVersion,
         package_version_ptr: &Npm::PackageVersion,
         features: Features,
-    ) -> Result<Self, bun_core::Error> {
+    ) -> crate::Result<Self> {
         #[allow(non_snake_case)]
         let FEATURES = features;
         let mut package = Self::default();
@@ -788,9 +682,7 @@ impl Package<u64> {
                 let version_strings = map.value.get(&manifest.external_strings_for_versions);
                 total_dependencies_count += map.value.len;
 
-                if cfg!(debug_assertions) {
-                    debug_assert!(keys.len() == version_strings.len());
-                }
+                debug_assert!(keys.len() == version_strings.len());
 
                 debug_assert_eq!(keys.len(), version_strings.len());
                 for (key, ver) in keys.iter().zip(version_strings.iter()) {
@@ -835,9 +727,7 @@ impl Package<u64> {
                 }));
 
             let total_len = dependencies_list.len() + total_dependencies_count as usize;
-            if cfg!(debug_assertions) {
-                debug_assert!(dependencies_list.len() == resolutions_list.len());
-            }
+            debug_assert!(dependencies_list.len() == resolutions_list.len());
 
             let dep_start = dependencies_list.len();
             bun_core::vec::extend_from_fn(
@@ -854,9 +744,7 @@ impl Package<u64> {
                 let keys = map.name.get(&manifest.external_strings);
                 let version_strings = map.value.get(&manifest.external_strings_for_versions);
 
-                if cfg!(debug_assertions) {
-                    debug_assert!(keys.len() == version_strings.len());
-                }
+                debug_assert!(keys.len() == version_strings.len());
                 let is_peer = group.field == b"peer_dependencies";
 
                 debug_assert_eq!(keys.len(), version_strings.len());
@@ -1012,23 +900,23 @@ pub struct AddedTrustedDependency {
     /// Whether this dependency should be added to lockfile trusted
     /// dependencies. It is false when the new trusted dependency is coming
     /// from the default list.
-    pub add_to_lockfile: bool,
-    pub name: Box<[u8]>,
+    pub(crate) add_to_lockfile: bool,
+    pub(crate) name: Box<[u8]>,
 }
 
 #[derive(Default)]
 pub struct DiffSummary {
-    pub add: u32,
-    pub remove: u32,
-    pub update: u32,
-    pub overrides_changed: bool,
-    pub catalogs_changed: bool,
+    pub(crate) add: u32,
+    pub(crate) remove: u32,
+    pub(crate) update: u32,
+    pub(crate) overrides_changed: bool,
+    pub(crate) catalogs_changed: bool,
 
-    pub added_trusted_dependencies:
+    pub(crate) added_trusted_dependencies:
         ArrayHashMap<TruncatedPackageNameHash, AddedTrustedDependency, ArrayIdentityContext>,
-    pub removed_trusted_dependencies: TrustedDependenciesSet,
+    pub(crate) removed_trusted_dependencies: TrustedDependenciesSet,
 
-    pub patched_dependencies_changed: bool,
+    pub(crate) patched_dependencies_changed: bool,
 }
 
 impl DiffSummary {
@@ -1059,7 +947,7 @@ impl Diff {
         to: &Package,
         update_requests: Option<&[UpdateRequest]>,
         mut id_mapping: Option<&mut [PackageID]>,
-    ) -> Result<DiffSummary, bun_core::Error> {
+    ) -> crate::Result<DiffSummary> {
         let mut summary = DiffSummary::default();
         let is_root = id_mapping.is_some();
         // `parseWithJSON` may grow `to_lockfile.buffers.dependencies` and
@@ -1658,19 +1546,6 @@ impl Diff {
 }
 
 impl Package<u64> {
-    pub fn hash(name: &[u8], version: SemverVersion) -> u64 {
-        let mut hasher = bun_wyhash::Wyhash::init(0);
-        hasher.update(name);
-        // SAFETY: Semver.Version is POD; reading its raw bytes is sound.
-        hasher.update(unsafe {
-            bun_core::ffi::slice(
-                (&raw const version).cast::<u8>(),
-                mem::size_of::<SemverVersion>(),
-            )
-        });
-        hasher.final_()
-    }
-
     pub fn parse<R: ResolverContext>(
         &mut self,
         lockfile: &mut Lockfile,
@@ -1679,7 +1554,7 @@ impl Package<u64> {
         source: &bun_ast::Source,
         resolver: &mut R,
         features: Features,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         initialize_store();
         let parsed = match crate::bun_json::ParsedJson::parse_package_json(source, log) {
             Ok(p) => p,
@@ -1707,13 +1582,13 @@ impl Package<u64> {
     /// `manager` must point to a live `PackageManager` for the duration of the
     /// call, and its `lockfile` / `log` fields must point to live allocations
     /// disjoint from `*manager` itself.
-    pub unsafe fn parse_from_real_manager<R: ResolverContext>(
+    pub(crate) unsafe fn parse_from_real_manager<R: ResolverContext>(
         &mut self,
         manager: *mut crate::package_manager_real::PackageManager,
         source: &bun_ast::Source,
         resolver: &mut R,
         features: Features,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // SAFETY: `manager` points to a live `PackageManager` for the duration
         // of this call (caller passes `self as *mut _`); `lockfile` and `log`
         // are disjoint fields, and `parse_with_json` only reaches `manager`
@@ -1749,7 +1624,7 @@ impl Package<u64> {
         external_alias: ExternalString,
         version: &[u8],
         key_loc: bun_ast::Loc,
-    ) -> Result<Option<Dependency>, bun_core::Error> {
+    ) -> crate::Result<Option<Dependency>> {
         #[cfg(windows)]
         let external_version = 'brk: {
             match tag.unwrap_or_else(|| dependency::version::Tag::infer(version)) {
@@ -1866,7 +1741,7 @@ impl Package<u64> {
                             bstr::BStr::new(external_alias.slice(buf)),
                         ),
                     );
-                    return Err(bun_core::err!("InstallFailed"));
+                    return Err(crate::Error::InstallFailed);
                 };
                 let relative =
                     resolve_path::relative(FileSystem::instance().top_level_dir(), joined);
@@ -1950,7 +1825,7 @@ impl Package<u64> {
                                 bstr::BStr::new(dependency_version.literal.slice(buf)),
                             ),
                         );
-                        return Err(bun_core::err!("InstallFailed"));
+                        return Err(crate::Error::InstallFailed);
                     }
 
                     dependency_version.value.workspace = path;
@@ -2008,10 +1883,8 @@ impl Package<u64> {
                                 break 'brk rel;
                             }
                         });
-                    if cfg!(debug_assertions) {
-                        debug_assert!(path.len() > 0);
-                        debug_assert!(!bun_paths::is_absolute(path.slice(buf)));
-                    }
+                    debug_assert!(path.len() > 0);
+                    debug_assert!(!bun_paths::is_absolute(path.slice(buf)));
                     dependency_version.value.workspace = path;
 
                     let workspace_entry = workspace_paths.get_or_put(name_hash)?;
@@ -2063,7 +1936,7 @@ impl Package<u64> {
                                 return Ok(None);
                             }
                         }
-                        return Err(bun_core::err!("InstallFailed"));
+                        return Err(crate::Error::InstallFailed);
                     }
 
                     *workspace_entry.value_ptr = path;
@@ -2135,7 +2008,7 @@ impl Package<u64> {
         Ok(Some(this_dep))
     }
 
-    pub fn parse_with_json<R: ResolverContext>(
+    pub(crate) fn parse_with_json<R: ResolverContext>(
         &mut self,
         lockfile: &mut Lockfile,
         pm: &mut PackageManager,
@@ -2144,7 +2017,7 @@ impl Package<u64> {
         json: Expr,
         resolver: &mut R,
         features: Features,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // Thin monomorphic shim: erase `R` to `dyn ResolverContextDyn` so the
         // ~960-line body below is codegen'd once. The half-dozen vtable calls
         // are noise next to the JSON walking / string-building this does.
@@ -2161,7 +2034,7 @@ impl Package<u64> {
         json: Expr,
         resolver: &mut dyn ResolverContextDyn,
         features: Features,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         #[allow(non_snake_case)]
         let FEATURES = features;
         // Function-local arena for `asString` transcoding (transcoded strings
@@ -2339,7 +2212,7 @@ impl Package<u64> {
                                 "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
                                 bstr::BStr::new(group.prop)
                             );
-                            return Err(bun_core::err!("InvalidPackageJSON"));
+                            return Err(crate::Error::InvalidPackageJSON);
                         }
                         let arr = workspace_map::NamesArray::from_expr(
                             &dependencies_q.expr,
@@ -2385,7 +2258,7 @@ impl Package<u64> {
                                             "\"workspaces.packages\" expects an array of strings, e.g.\n  \"workspaces\": {{\n    \"packages\": [\n      \"path/to/package\"\n    ]\n  }}"
                                         ),
                                     );
-                                    return Err(bun_core::err!("InvalidPackageJSON"));
+                                    return Err(crate::Error::InvalidPackageJSON);
                                 }
                                 let packages_arr = workspace_map::NamesArray::from_expr(
                                     &packages_expr,
@@ -2414,7 +2287,7 @@ impl Package<u64> {
                                     "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
                                     bstr::BStr::new(group.prop)
                                 );
-                                return Err(bun_core::err!("InvalidPackageJSON"));
+                                return Err(crate::Error::InvalidPackageJSON);
                             };
 
                             string_builder.count(key);
@@ -2449,7 +2322,7 @@ impl Package<u64> {
                             bstr::BStr::new(group.prop)
                         );
                     }
-                    return Err(bun_core::err!("InvalidPackageJSON"));
+                    return Err(crate::Error::InvalidPackageJSON);
                 }
             }
         }
@@ -2511,11 +2384,7 @@ impl Package<u64> {
 
         let off = lockfile.buffers.dependencies.len();
         let total_len = off + total_dependencies_count as usize;
-        if cfg!(debug_assertions) {
-            debug_assert!(
-                lockfile.buffers.dependencies.len() == lockfile.buffers.resolutions.len()
-            );
-        }
+        debug_assert!(lockfile.buffers.dependencies.len() == lockfile.buffers.resolutions.len());
 
         // `parse_dependency` can return early with an error
         // (e.g. `InstallFailed` for a non-matching `workspace:` range), and the caller
@@ -2629,9 +2498,7 @@ impl Package<u64> {
                                 extern_strings[i] = string_builder.append::<ExternalString>(v);
                                 i += 1;
                             }
-                            if cfg!(debug_assertions) {
-                                debug_assert!(i == extern_strings.len());
-                            }
+                            debug_assert!(i == extern_strings.len());
                             self.bin = Bin {
                                 tag: bin::Tag::Map,
                                 value: bin::Value {
@@ -2836,7 +2703,7 @@ impl Package<u64> {
                                 bstr::BStr::new(&entry.name),
                             ),
                         );
-                        return Err(bun_core::err!("InstallFailed"));
+                        return Err(crate::Error::InstallFailed);
                     }
 
                     let external_name = string_builder.append::<ExternalString>(&entry.name);
@@ -3067,17 +2934,12 @@ pub mod serializer {
     use super::*;
 
     /// Number of columns in the on-disk package table.
-    pub(crate) const FIELD_COUNT: usize = PackageField::ALL.len();
+    const FIELD_COUNT: usize = PackageField::ALL.len();
 
-    pub struct Sizes {
-        pub bytes: [usize; FIELD_COUNT],
-        pub fields: [usize; FIELD_COUNT],
-    }
-
-    pub fn save<SemverIntType: VersionInt, S>(
+    pub(crate) fn save<SemverIntType: VersionInt, S>(
         list: &List<SemverIntType>,
         stream: &mut S,
-    ) -> Result<(), bun_core::Error>
+    ) -> crate::Result<()>
     where
         // A separate `stream` and `writer` over the same buffer would be two
         // `&mut` to one object — UB regardless of access order — so both
@@ -3176,15 +3038,13 @@ pub mod serializer {
         stream: &mut Stream,
         end: usize,
         migrate_from_v2: bool,
-    ) -> Result<PackagesLoadResult<u64>, bun_core::Error> {
+    ) -> crate::Result<PackagesLoadResult<u64>> {
         type SemverIntType = u64;
         let reader = stream.reader();
 
         let list_len = reader.read_int_le::<u64>()?;
         if list_len > u32::MAX as u64 - 1 {
-            return Err(bun_core::err!(
-                "Lockfile validation failed: list is impossibly long"
-            ));
+            return Err(crate::Error::LockfileValidationFailedListIsImpossiblyLong);
         }
 
         let input_alignment = reader.read_int_le::<u64>()?;
@@ -3195,9 +3055,7 @@ pub mod serializer {
         // *pointer* itself, i.e. pointer alignment.
         let expected_alignment = mem::align_of::<*mut u8>() as u64;
         if expected_alignment != input_alignment {
-            return Err(bun_core::err!(
-                "Lockfile validation failed: alignment mismatch"
-            ));
+            return Err(crate::Error::LockfileValidationFailedAlignmentMismatch);
         }
 
         let field_count = reader.read_int_le::<u64>()? as usize;
@@ -3207,18 +3065,14 @@ pub mod serializer {
             // we will back-fill from each package.json
             n if n == FIELD_COUNT - 1 => {}
             _ => {
-                return Err(bun_core::err!(
-                    "Lockfile validation failed: unexpected number of package fields"
-                ));
+                return Err(crate::Error::LockfileValidationFailedUnexpectedNumberOfPackageFields);
             }
         }
 
         let begin_at = reader.read_int_le::<u64>()? as usize;
         let end_at = reader.read_int_le::<u64>()? as usize;
         if begin_at > end || end_at > end || begin_at > end_at {
-            return Err(bun_core::err!(
-                "Lockfile validation failed: invalid package list range"
-            ));
+            return Err(crate::Error::LockfileValidationFailedInvalidPackageListRange);
         }
         stream.pos = begin_at;
         list.ensure_total_capacity(list_len as usize)?;
@@ -3304,7 +3158,7 @@ pub mod serializer {
         end_at: u64,
         list: &mut List<SemverIntType>,
         needs_update: &mut bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let _n = list.len();
         let mut sliced = list.slice();
 
@@ -3339,9 +3193,7 @@ pub mod serializer {
                     debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
                     for raw in src.chunks_exact(stride) {
                         if !matches!(raw[0], 0 | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 72 | 80 | 100) {
-                            return Err(bun_core::err!(
-                                "Lockfile validation failed: invalid resolution tag"
-                            ));
+                            return Err(crate::Error::LockfileValidationFailedInvalidResolutionTag);
                         }
                     }
                 }
@@ -3359,9 +3211,7 @@ pub mod serializer {
                         if !matches!(raw[origin_at], 0..=2)
                             || !matches!(raw[install_script_at], 0..=2)
                         {
-                            return Err(bun_core::err!(
-                                "Lockfile validation failed: invalid package meta"
-                            ));
+                            return Err(crate::Error::LockfileValidationFailedInvalidPackageMeta);
                         }
                     }
                 }
@@ -3373,9 +3223,7 @@ pub mod serializer {
                     debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
                     for raw in src.chunks_exact(stride) {
                         if !matches!(raw[tag_at], 0..=4) {
-                            return Err(bun_core::err!(
-                                "Lockfile validation failed: invalid bin tag"
-                            ));
+                            return Err(crate::Error::LockfileValidationFailedInvalidBinTag);
                         }
                     }
                 }
@@ -3387,9 +3235,9 @@ pub mod serializer {
                     debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
                     for raw in src.chunks_exact(stride) {
                         if !matches!(raw[filled_at], 0 | 1) {
-                            return Err(bun_core::err!(
-                                "Lockfile validation failed: invalid package scripts"
-                            ));
+                            return Err(
+                                crate::Error::LockfileValidationFailedInvalidPackageScripts,
+                            );
                         }
                     }
                 }
@@ -3410,9 +3258,7 @@ pub mod serializer {
             } else if matches!(field, PackageField::Scripts) {
                 bytes.fill(0);
             } else {
-                return Err(bun_core::err!(
-                    "Lockfile validation failed: invalid package list range"
-                ));
+                return Err(crate::Error::LockfileValidationFailedInvalidPackageListRange);
             }
         }
         Ok(())

@@ -9,13 +9,13 @@ use crate::{PrintErr, Printer};
 /// }
 pub struct ScopeRule<R> {
     /// A selector list used to identify the scoping root(s).
-    pub scope_start: Option<SelectorList>,
+    pub(crate) scope_start: Option<SelectorList>,
     /// A selector list used to identify any scoping limits.
-    pub scope_end: Option<SelectorList>,
+    pub(crate) scope_end: Option<SelectorList>,
     /// Nested rules within the `@scope` rule.
-    pub rules: CssRuleList<R>,
+    pub(crate) rules: CssRuleList<R>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl<R> ScopeRule<R> {
@@ -80,7 +80,7 @@ impl<R> ScopeRule<R> {
 }
 
 impl<R> ScopeRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: crate::generics::DeepClone<'bump>,
     {

@@ -28,9 +28,7 @@ const empty = Buffer.alloc(0);
 
 describe.concurrent("fetch() with streaming", () => {
   [-1, 0, 20, 50, 100].forEach(timeout => {
-    // This test is flaky.
-    // Sometimes, we don't throw if signal.abort(). We need to fix that.
-    it.todo(`should be able to fail properly when reading from readable stream with timeout ${timeout}`, async () => {
+    it(`should be able to fail properly when reading from readable stream with timeout ${timeout}`, async () => {
       using server = Bun.serve({
         port: 0,
         async fetch(req) {
@@ -164,11 +162,10 @@ describe.concurrent("fetch() with streaming", () => {
       },
     });
     // A locked (or disturbed) body init is rejected at Request construction with a
-    // TypeError (fetch spec; Node agrees on the error). Like Bun's other fetch
-    // argument errors, it surfaces synchronously.
+    // TypeError (fetch spec; Node agrees on the error), surfaced as a rejected promise.
     stream.getReader();
 
-    expect(() => fetch(server.url, { method: "POST", body: stream })).toThrow(
+    await expect(fetch(server.url, { method: "POST", body: stream })).rejects.toThrow(
       expect.objectContaining({ name: "TypeError", message: "Body object should not be disturbed or locked" }),
     );
   });
@@ -1266,17 +1263,14 @@ describe.concurrent("fetch() with streaming", () => {
             gcTick(false);
             expect(buffer.toString("utf8")).toBe("unreachable");
           } catch (err) {
+            expect(err).toBeInstanceOf(TypeError);
             if (compression === "br") {
-              expect((err as Error).name).toBe("Error");
               expect((err as Error).code).toBe("BrotliDecompressionError");
             } else if (compression === "deflate-libdeflate") {
-              expect((err as Error).name).toBe("Error");
               expect((err as Error).code).toBe("ZlibError");
             } else if (compression === "zstd") {
-              expect((err as Error).name).toBe("Error");
               expect((err as Error).code).toBe("ZstdDecompressionError");
             } else {
-              expect((err as Error).name).toBe("Error");
               expect((err as Error).code).toBe("ZlibError");
             }
           }
@@ -1368,7 +1362,7 @@ describe.concurrent("fetch() with streaming", () => {
         gcTick(false);
         expect(buffer.toString("utf8")).toBe("unreachable");
       } catch (err) {
-        expect((err as Error).name).toBe("Error");
+        expect(err).toBeInstanceOf(TypeError);
         expect((err as Error).code).toBe("ECONNRESET");
       }
     });

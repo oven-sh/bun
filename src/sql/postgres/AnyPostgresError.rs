@@ -49,14 +49,12 @@ pub enum AnyPostgresError {
 
 bun_core::impl_tag_error!(AnyPostgresError);
 
-bun_core::named_error_set!(AnyPostgresError);
-
-// Reverse of the above: `bun_core::Error` is just an interned name; recover the
+// Reverse of the above: `crate::Error` is just an interned name; recover the
 // matching variant by name (or `JSError` as a catch-all). Needed because the
-// protocol `write_internal` helpers were widened to `bun_core::Error` while
+// protocol `write_internal` helpers were widened to `crate::Error` while
 // callers (e.g. `PostgresRequest`) still propagate `AnyPostgresError`.
-impl From<bun_core::Error> for AnyPostgresError {
-    fn from(e: bun_core::Error) -> Self {
+impl From<crate::Error> for AnyPostgresError {
+    fn from(e: crate::Error) -> Self {
         e.name().parse().unwrap_or(AnyPostgresError::JSError)
     }
 }

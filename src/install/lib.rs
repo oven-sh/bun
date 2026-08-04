@@ -64,6 +64,9 @@ use core::fmt;
 // Module declarations — explicit #[path] attrs for PascalCase files.
 // ──────────────────────────────────────────────────────────────────────────
 
+pub mod error;
+pub use error::{Error, Result};
+
 pub mod npm;
 #[path = "PackageManifestMap.rs"]
 pub mod package_manifest_map;
@@ -74,13 +77,24 @@ pub mod auto_installer;
 #[path = "ConfigVersion.rs"]
 pub mod config_version;
 pub mod dependency;
-#[path = "ExternalSlice.rs"]
-pub mod external_slice;
 pub mod hosted_git_info;
 pub mod integrity;
 pub mod padding_checker;
 pub mod postinstall_optimizer;
-pub mod versioned_url;
+
+/// `ExternalSlice<T>` and `VersionedURLType<I>` live in `bun_install_types`
+/// so `bun_resolver` can name them without a `bun_install` dep. Re-exported
+/// here under the original `crate::external_slice` / `crate::versioned_url`
+/// paths.
+pub mod external_slice {
+    pub use bun_install_types::resolver_hooks::{
+        ExternalPackageNameHashList, ExternalSlice, ExternalStringList, ExternalStringMap,
+        VersionSlice,
+    };
+}
+pub mod versioned_url {
+    pub use bun_install_types::resolver_hooks::{VersionedURL, VersionedURLType};
+}
 
 pub mod extract_tarball;
 #[path = "lockfile.rs"]
@@ -134,12 +148,7 @@ pub mod lockfile {
     // Back-compat aliases for names the inline stub spelled differently.
     pub use crate::Origin;
     pub use crate::lockfile_real::LockfileFormat as Format;
-    pub use crate::lockfile_real::Serializer::SerializerLoadResult;
     pub use crate::lockfile_real::package_index::Entry as PackageIndexEntry;
-    /// Callers pass a `Resolution.Tag` literal when invoking
-    /// `Scripts.createList` for the root package; alias the tag enum here so
-    /// `lockfile::ScriptsListKind::Root` resolves.
-    pub use crate::resolution::Tag as ScriptsListKind;
     /// `MultiArrayList<Package>.append` row type — the real `PackageList`
     /// (`package::List<u64>`) takes a `Package` value, so alias the row type
     /// for callers (e.g. `migration.rs`) that spell it `PackageListEntry`.
@@ -153,7 +162,6 @@ pub mod lockfile {
     }
     pub use package::{HasInstallScript, Meta};
     pub mod tree {
-        pub use crate::lockfile_real::tree::IteratorPathStyle as PathStyle;
         pub use crate::lockfile_real::tree::*;
     }
 }
@@ -190,14 +198,6 @@ pub mod package_manager {
         MapEntry as WorkspacePackageJsonCacheEntry, WorkspacePackageJSONCache,
     };
 
-    /// `populateManifestCache` `Packages` union.
-    pub enum ManifestCacheOptions<'a> {
-        Ids(&'a [crate::PackageID]),
-        Names(&'a [&'a [u8]]),
-    }
-    /// Alias used by `outdated_command.rs`.
-    pub type ManifestCacheRequest<'a> = ManifestCacheOptions<'a>;
-
     /// `PackageManifestMap.load` `When` enum — re-export the real enum so
     /// callers naming either path agree on one type.
     pub use crate::package_manifest_map::CacheBehavior as ManifestLoad;
@@ -231,6 +231,7 @@ pub(crate) mod install {
 // synthetic `windows_shim/` directory, which doesn't exist on disk. Hoist the
 // file-backed module to crate level with an absolute-ish path and re-export
 // through the inline mod so `windows_shim::bin_linking_shim` keeps resolving.
+#[cfg(windows)]
 #[path = "windows-shim/BinLinkingShim.rs"]
 pub mod _bin_linking_shim;
 // `bun_shim_impl` is a *freestanding Windows PE* (no CRT, raw NT syscalls)
@@ -243,13 +244,12 @@ pub mod _bin_linking_shim;
 #[path = "windows-shim/bun_shim_impl.rs"]
 pub mod _bun_shim_impl;
 pub mod windows_shim {
+    #[cfg(windows)]
     pub use crate::_bin_linking_shim as bin_linking_shim;
     #[cfg(windows)]
     pub use crate::_bun_shim_impl as bun_shim_impl;
-    pub use bin_linking_shim::{
-        BinLinkingShim, Decoded, EMBEDDED_EXECUTABLE_DATA, Flags, Shebang,
-        embedded_executable_data, loose_decode,
-    };
+    #[cfg(windows)]
+    pub(crate) use bin_linking_shim::{BinLinkingShim, Shebang, embedded_executable_data};
 }
 
 #[path = "resolvers/folder_resolver.rs"]
@@ -294,33 +294,27 @@ pub use extract_tarball::ExtractTarball;
 pub use lockfile::{LoadResult, LoadStep, Lockfile, PatchedDep};
 pub use package_manager::Options::LogLevel;
 pub use package_manager::{
-    GetJsonOptions, GetJsonResult, ManifestCacheOptions, ManifestCacheRequest, ManifestLoad,
-    WorkspaceFilter, WorkspacePackageJsonCacheEntry,
+    GetJsonOptions, GetJsonResult, ManifestLoad, WorkspaceFilter, WorkspacePackageJsonCacheEntry,
 };
 pub use repository::{Repository, RepositoryExt};
 pub use resolution::Tag as ResolutionTag;
 
 // Real types — previously shadowed by inline ZST stubs in this file.
 pub use _folder_resolver::FolderResolution;
+pub use isolated_install::Store;
 pub use lifecycle_script_runner::LifecycleScriptSubprocess;
 pub use network_task::NetworkTask;
-pub use package_install::PackageInstall;
+pub(crate) use package_install::PackageInstall;
+pub use package_manager_real::security_scanner::SecurityScanSubprocess;
 pub use package_manager_task::Task;
 pub use package_manifest_map::PackageManifestMap;
+pub use patch_install::PatchTask;
 pub use postinstall_optimizer::PostinstallOptimizer;
 pub use tarball_stream::TarballStream;
-// `FileCopier` was hoisted out of `PackageInstall.rs` into
-// `isolated_install/FileCopier.rs` (shared by both linkers); re-export from
-// the new home so `bun_install::FileCopier` keeps resolving.
-pub use isolated_install::FileCopier;
-pub use isolated_install::Store;
-pub use package_manager_real::security_scanner::SecurityScanSubprocess;
-pub use patch_install::PatchTask;
 
 // PackageManager + its associated types — re-exported from the file-backed
 // `package_manager_real` so `crate::PackageManager` and
 // `package_manager_real::PackageManager` are the SAME type.
-pub use package_manager_real::package_manager_directories::CacheDirAndSubpath;
 pub use package_manager_real::{
     AsyncNetworkTaskQueue, CommandLineArguments, PackageManager, PatchTaskQueue, RootPackageId,
     Subcommand,
@@ -334,65 +328,12 @@ pub use package_manager_real::{
 pub type PackageManagerDoStub = package_manager_real::package_manager_options::Do;
 pub use package_manager_real::package_manager_options::{Access, AuthType};
 
-/// Callback bundle passed to `PackageManager.runTasks`. Generic over each
-/// slot so call sites can pass `()` for unused hooks and a
-/// fn item for active ones. The trait-based dispatch lives in
-/// `package_manager_real::run_tasks::RunTasksCallbacks`; this value-level
-/// struct is only the call-site spelling.
-pub struct RunTasksCallbacks<E = (), R = (), M = (), D = ()> {
-    pub on_extract: E,
-    pub on_resolve: R,
-    pub on_package_manifest_error: M,
-    pub on_package_download_error: D,
-    pub progress_bar: bool,
-    pub manifests_only: bool,
-}
-impl<E: Default, R: Default, M: Default, D: Default> Default for RunTasksCallbacks<E, R, M, D> {
-    fn default() -> Self {
-        Self {
-            on_extract: E::default(),
-            on_resolve: R::default(),
-            on_package_manifest_error: M::default(),
-            on_package_download_error: D::default(),
-            progress_bar: false,
-            manifests_only: false,
-        }
-    }
-}
-
-/// MOVE_DOWN: `bun_resolver::package_json::PackageJSON` — the resolver crate
-/// depends on `bun_install` (for `Dependency`), so re-importing `PackageJSON`
-/// from there would create a cycle. Mounted here with the install-side field
-/// surface (`name`/`version`/`dependencies`/`arch`/`os`) so
-/// `lockfile::Package::from_package_json` can type-check; the resolver-only
-/// fields (`browser_map`, `exports`, …) stay in `bun_resolver` until the type
-/// is split into install-layer / resolver-layer halves.
-#[derive(Default)]
-pub struct PackageJSON {
-    pub name: Box<[u8]>,
-    pub version: Box<[u8]>,
-    pub arch: npm::Architecture,
-    pub os: npm::OperatingSystem,
-    pub package_manager_package_id: PackageID,
-    pub dependencies: PackageJSONDependencyMap,
-}
-
-#[derive(Default)]
-pub struct PackageJSONDependencyMap {
-    pub map: bun_collections::ArrayHashMap<bun_semver::String, Dependency>,
-    // Erased borrow of the package.json source contents (mirrors
-    // `bun_resolver::package_json::DependencyMap::source_buf`, which is
-    // likewise `'static`-erased); kept alive by the originating
-    // `PackageJSON::source_contents` for the lifetime of the map.
-    pub source_buf: &'static [u8],
-}
-
 /// `crate::ci_info` — install-tier shim for `bun_runtime::cli::ci_info`
 /// (`src/runtime/cli/ci_info.rs`). Only `detect_ci_name` is exposed; the
 /// CI-probe table itself is generated at build time in `bun_runtime` and is
 /// not reachable from this tier, so the shim returns the `CI` env var name
 /// when set (the same fallback `npm-registry-fetch` uses) and `None` otherwise.
-pub mod ci_info {
+pub(crate) mod ci_info {
     pub(crate) fn detect_ci_name() -> Option<&'static [u8]> {
         // The per-vendor probes live in `bun_runtime` (T6) and are wired in
         // there; install only needs *some* answer for the user-agent string.
@@ -457,6 +398,7 @@ pub struct RunCommand;
 pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+#[cfg(not(windows))]
 use bun_core::ZStr;
 
 impl RunCommand {
@@ -491,54 +433,47 @@ impl RunCommand {
         concatcp!(TMP, SUFFIX)
     };
 
+    #[cfg(not(windows))]
     fn find_shell_impl<'a>(
         buf: &'a mut bun_paths::PathBuffer,
         path: &[u8],
         cwd: &[u8],
     ) -> Option<&'a ZStr> {
-        #[cfg(windows)]
-        {
-            let _ = (buf, path, cwd);
-            return Some(bun_core::zstr!("C:\\Windows\\System32\\cmd.exe"));
+        for shell in Self::SHELLS_TO_SEARCH {
+            if let Some(found) = bun_which::which(buf, path, cwd, shell) {
+                // `which()` writes a NUL-terminated path into `buf` and
+                // returns a borrow of it; reborrow as `&ZStr`.
+                let len = found.len();
+                return Some(ZStr::from_buf(buf, len));
+            }
         }
 
-        #[cfg(not(windows))]
-        {
-            for shell in Self::SHELLS_TO_SEARCH {
-                if let Some(found) = bun_which::which(buf, path, cwd, shell) {
-                    // `which()` writes a NUL-terminated path into `buf` and
-                    // returns a borrow of it; reborrow as `&ZStr`.
-                    let len = found.len();
-                    return Some(ZStr::from_buf(buf, len));
-                }
+        const HARDCODED_POPULAR_ONES: &[&ZStr] = &[
+            bun_core::zstr!("/bin/bash"),
+            bun_core::zstr!("/usr/bin/bash"),
+            bun_core::zstr!("/usr/local/bin/bash"), // don't think this is a real one
+            bun_core::zstr!("/bin/sh"),
+            bun_core::zstr!("/usr/bin/sh"), // don't think this is a real one
+            bun_core::zstr!("/usr/bin/zsh"),
+            bun_core::zstr!("/usr/local/bin/zsh"),
+            bun_core::zstr!("/system/bin/sh"), // Android
+        ];
+        for &shell in HARDCODED_POPULAR_ONES {
+            if bun_sys::is_executable_file_path(shell) {
+                let body = shell.as_bytes();
+                buf[..body.len()].copy_from_slice(body);
+                buf[body.len()] = 0;
+                return Some(ZStr::from_buf(buf, body.len()));
             }
-
-            const HARDCODED_POPULAR_ONES: &[&ZStr] = &[
-                bun_core::zstr!("/bin/bash"),
-                bun_core::zstr!("/usr/bin/bash"),
-                bun_core::zstr!("/usr/local/bin/bash"), // don't think this is a real one
-                bun_core::zstr!("/bin/sh"),
-                bun_core::zstr!("/usr/bin/sh"), // don't think this is a real one
-                bun_core::zstr!("/usr/bin/zsh"),
-                bun_core::zstr!("/usr/local/bin/zsh"),
-                bun_core::zstr!("/system/bin/sh"), // Android
-            ];
-            for &shell in HARDCODED_POPULAR_ONES {
-                if bun_sys::is_executable_file_path(shell) {
-                    let body = shell.as_bytes();
-                    buf[..body.len()].copy_from_slice(body);
-                    buf[body.len()] = 0;
-                    return Some(ZStr::from_buf(buf, body.len()));
-                }
-            }
-
-            None
         }
+
+        None
     }
 
     /// Find the "best" shell to use. Cached to only run once.
     /// Returns a slice into a process-lifetime static buffer (includes trailing NUL).
-    pub fn find_shell(path: &[u8], cwd: &[u8]) -> Option<&'static [u8]> {
+    #[cfg(not(windows))]
+    pub(crate) fn find_shell(path: &[u8], cwd: &[u8]) -> Option<&'static [u8]> {
         // PORTING.md §Concurrency: `bun.once` + static buf → OnceLock. Store the
         // result bytes (including NUL) directly in the OnceLock so the borrow is
         // trivially `'static` — avoids the Mutex+data_ptr dance from the draft.
@@ -565,7 +500,7 @@ impl RunCommand {
     pub fn create_fake_temporary_node_executable(
         path: &mut Vec<u8>,
         optional_bun_path: &mut &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // If we are already running as "node", the path should exist
         if PRETEND_TO_BE_NODE.load(core::sync::atomic::Ordering::Relaxed) {
             return Ok(());
@@ -577,27 +512,56 @@ impl RunCommand {
 
             let argv0: &ZStr = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("bun"));
 
-            // if we are already an absolute path, use that
-            // if the user started the application via a shebang, it's likely that the path is absolute already
-            let argv0_z: &ZStr = if argv0.as_bytes().first() == Some(&b'/') {
-                *optional_bun_path = argv0.as_bytes();
-                argv0
-            } else if optional_bun_path.is_empty() {
-                // otherwise, ask the OS for the absolute path
-                let self_path = bun_core::self_exe_path()?;
-                if !self_path.as_bytes().is_empty() {
-                    *optional_bun_path = self_path.as_bytes();
-                    self_path
-                } else {
-                    argv0
-                }
-            } else {
-                // When argv[0] is
-                // not absolute and the caller pre-supplied a path, that path is the
-                // symlink target (NOT argv[0]).
+            // PREFER `self_exe_path()` OVER `argv[0]`: on a nested `--bun`, the
+            // OUTER bun prepends `BUN_NODE_DIR` to `PATH` and the INNER bun is
+            // execve'd with `argv[0] = <BUN_NODE_DIR>/bun` — exactly the shim
+            // we're about to (re)write. Using that as the symlink target
+            // produces `<BUN_NODE_DIR>/bun -> <BUN_NODE_DIR>/bun` (self-loop),
+            // and the next `/usr/bin/env node` bails with ELOOP "Too many
+            // levels of symbolic links" (#30711). `self_exe_path()` readlinks
+            // `/proc/self/exe` (Linux) / canonicalizes `_NSGetExecutablePath`
+            // (macOS), so it always resolves to the REAL bun regardless of
+            // how the process was invoked. It's memoized via `Once`, so the
+            // cost is paid once per process.
+            let argv0_z: &ZStr = if !optional_bun_path.is_empty() {
+                // When the caller pre-supplied a path, that path is the symlink
+                // target.
                 // SAFETY: callers pass a slice borrowed from a `ZStr` (argv[0] /
                 // self_exe_path / static literal), so `ptr[len] == 0` holds.
                 unsafe { ZStr::from_raw(optional_bun_path.as_ptr(), optional_bun_path.len()) }
+            } else {
+                // Ask the OS for the real absolute path first. Fall back to an
+                // absolute `argv[0]` only if that fails — never trust a bare
+                // `argv[0]` as the target here, because on nested `--bun` the
+                // inner process's `argv[0]` IS `<BUN_NODE_DIR>/bun`.
+                match bun_core::self_exe_path() {
+                    Ok(self_path) if !self_path.as_bytes().is_empty() => {
+                        *optional_bun_path = self_path.as_bytes();
+                        self_path
+                    }
+                    result => {
+                        let argv0_bytes = argv0.as_bytes();
+                        if argv0_bytes.starts_with(Self::BUN_NODE_DIR.as_bytes()) {
+                            // `self_exe_path()` failed and `argv[0]` is the shim
+                            // under `BUN_NODE_DIR` (nested `--bun`). Using it as
+                            // the target would recreate the #30711 self-loop; the
+                            // OUTER bun already planted working shims and PATH, so
+                            // leave them untouched.
+                            return Ok(());
+                        }
+                        if argv0_bytes.first() == Some(&b'/') {
+                            *optional_bun_path = argv0_bytes;
+                            argv0
+                        } else {
+                            // No usable target — propagate the OS error when we
+                            // have one, otherwise leave PATH unmodified.
+                            return match result {
+                                Err(e) => Err(e.into()),
+                                Ok(_) => Ok(()),
+                            };
+                        }
+                    }
+                }
             };
 
             #[cfg(bun_debug)]
@@ -823,13 +787,13 @@ impl RunCommand {
     /// out-param. This shim performs the init + the env-var seeding that has
     /// no T6 dependency; the `*mut ()` return stands in for `*mut DirInfo`
     /// (opaque to install — every caller discards it).
-    pub fn configure_env_for_run(
+    pub(crate) fn configure_env_for_run(
         ctx: &mut bun_options_types::context::ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<bun_transpiler::Transpiler<'static>>,
-        env: Option<*mut bun_dotenv::Loader<'static>>,
+        env: Option<*mut bun_dotenv::Loader>,
         _log_errors: bool,
         store_root_fd: bool,
-    ) -> Result<*mut (), bun_core::Error> {
+    ) -> Result<*mut (), crate::Error> {
         use bun_core::Global;
 
         let args = ctx.args.clone();
@@ -898,10 +862,10 @@ impl RunCommand {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) const BUN_HASH_TAG: &[u8] = b".bun-tag-";
+const BUN_HASH_TAG: &[u8] = b".bun-tag-";
 
 /// Length of `u64::MAX` formatted as lowercase hex (`ffffffffffffffff`).
-pub(crate) const MAX_HEX_HASH_LEN: usize = {
+const MAX_HEX_HASH_LEN: usize = {
     // u64::MAX in hex is always 16 nibbles.
     let mut n = u64::MAX;
     let mut len = 0usize;
@@ -913,7 +877,7 @@ pub(crate) const MAX_HEX_HASH_LEN: usize = {
 };
 const _: () = assert!(MAX_HEX_HASH_LEN == 16);
 
-pub(crate) const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + BUN_HASH_TAG.len() + 1;
+const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + BUN_HASH_TAG.len() + 1;
 pub(crate) type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
 
 pub(crate) fn buntaghashbuf_make(buf: &mut BuntagHashBuf, patch_hash: u64) -> &mut [u8] {
@@ -934,7 +898,7 @@ impl<'a> StorePathFormatter<'a> {
     /// Emits raw bytes
     /// verbatim (mapping `/` and `\` to `+`). This is the byte-faithful sink; callers that
     /// need an on-disk store path (legal non-UTF-8 on Linux) must use this, not `Display`.
-    pub fn write_to<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+    pub(crate) fn write_to<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
         // if (!this.opts.replace_slashes) {
         //     try writer.writeAll(this.str);
         //     return;
@@ -963,7 +927,7 @@ impl<'a> fmt::Display for StorePathFormatter<'a> {
     }
 }
 
-pub(crate) fn fmt_store_path(str: &[u8]) -> StorePathFormatter<'_> {
+fn fmt_store_path(str: &[u8]) -> StorePathFormatter<'_> {
     StorePathFormatter { str }
 }
 
@@ -1033,14 +997,14 @@ pub use bun_install_types::{
 // Phase-A drafts use the field-style lowercase names; alias both spellings.
 pub(crate) const invalid_package_id: PackageID = INVALID_PACKAGE_ID;
 pub(crate) const invalid_dependency_id: DependencyID = INVALID_DEPENDENCY_ID;
-pub const bun_hash_tag: &[u8] = BUN_HASH_TAG;
+pub(crate) const bun_hash_tag: &[u8] = BUN_HASH_TAG;
 
 pub(crate) type PackageNameAndVersionHash = u64;
 
 pub(crate) struct Aligner;
 
 impl Aligner {
-    pub(crate) fn write<T, W: bun_io::Write>(writer: &mut W, pos: u64) -> bun_io::Result<usize> {
+    fn write<T, W: bun_io::Write>(writer: &mut W, pos: u64) -> bun_io::Result<usize> {
         let to_write = Self::skip_amount::<T>(pos as usize);
 
         let remainder: &[u8] = &ALIGNMENT_BYTES_TO_REPEAT_BUFFER
@@ -1053,7 +1017,7 @@ impl Aligner {
     /// Runtime-alignment variant of [`Aligner::write`] for call sites that
     /// compute `align_of::<T>()` at the caller (callers without a nameable
     /// `T` pass the alignment as a value).
-    pub(crate) fn write_with_align<W: bun_io::Write>(
+    fn write_with_align<W: bun_io::Write>(
         align: usize,
         writer: &mut W,
         pos: u64,
@@ -1068,12 +1032,12 @@ impl Aligner {
     }
 
     #[inline]
-    pub(crate) fn skip_amount<T>(pos: usize) -> usize {
+    fn skip_amount<T>(pos: usize) -> usize {
         Self::skip_amount_with_align(core::mem::align_of::<T>(), pos)
     }
 
     #[inline]
-    pub(crate) fn skip_amount_with_align(align: usize, pos: usize) -> usize {
+    fn skip_amount_with_align(align: usize, pos: usize) -> usize {
         pos.next_multiple_of(align) - pos
     }
 }
@@ -1095,19 +1059,19 @@ pub use bun_install_types::resolver_hooks::{Features, PreinstallState};
 
 #[derive(Default)]
 pub struct ExtractDataJson {
-    pub path: Box<[u8]>,
-    pub buf: Vec<u8>,
+    pub(crate) path: Box<[u8]>,
+    pub(crate) buf: Vec<u8>,
 }
 
 #[derive(Default)]
 pub struct ExtractData {
-    pub url: Box<[u8]>,
-    pub resolved: Box<[u8]>,
-    pub json: Option<ExtractDataJson>,
+    pub(crate) url: Box<[u8]>,
+    pub(crate) resolved: Box<[u8]>,
+    pub(crate) json: Option<ExtractDataJson>,
     /// Integrity hash computed from the raw tarball bytes.
     /// Used for HTTPS/local tarball dependencies where the hash
     /// is not available from a registry manifest.
-    pub integrity: Integrity,
+    pub(crate) integrity: Integrity,
 }
 
 /// `path` is an owned, growable buffer. An earlier draft modelled it as a
@@ -1116,9 +1080,9 @@ pub struct ExtractData {
 /// and aliases caller memory with no lifetime. Own the buffer.
 #[derive(Clone, Default)]
 pub struct DependencyInstallContext {
-    pub tree_id: lockfile::tree::Id,
-    pub path: Vec<u8>,
-    pub dependency_id: DependencyID,
+    pub(crate) tree_id: lockfile::tree::Id,
+    pub(crate) path: Vec<u8>,
+    pub(crate) dependency_id: DependencyID,
 }
 
 #[derive(Clone)]
@@ -1136,7 +1100,7 @@ pub enum TaskCallbackContext {
 // 2.
 
 #[derive(strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
-pub(crate) enum PackageManifestError {
+pub enum PackageManifestError {
     PackageManifestHTTP400,
     PackageManifestHTTP401,
     PackageManifestHTTP402,
@@ -1147,5 +1111,3 @@ pub(crate) enum PackageManifestError {
 }
 
 bun_core::impl_tag_error!(PackageManifestError);
-
-bun_core::named_error_set!(PackageManifestError);

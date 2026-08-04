@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { describe, test } from "bun:test";
-import "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -96,6 +96,35 @@ describe("css tests", () => {
         padding: var(--custom-padding);
        }`,
     );
+
+    // Adjacent `/` and `*` delim tokens must not be printed as `/*` or `*/`
+    // when minifying, which would open/close a comment and swallow the rest of
+    // the stylesheet.
+    minify_test(":root { --a: x / * y }\n.k { color: red }", ":root{--a:x/ *y}.k{color:red}");
+    minify_test(":root { --a: x * / y }\n.k { color: red }", ":root{--a:x* /y}.k{color:red}");
+    minify_test(":root { --a: x / * / * y }", ":root{--a:x/ * / *y}");
+    minify_test(".foo { unknown-prop: a / * b }", ".foo{unknown-prop:a/ *b}");
+    minify_test(":root { --a: f(x / * y) }", ":root{--a:f(x/ *y)}");
+    minify_test(":root { --a: x / *= y }", ":root{--a:x/ *= y}");
+    // A lone `/` or `*` delim must still minify without extra whitespace.
+    minify_test(":root { --a: 16 / 9 }", ":root{--a:16/9}");
+    minify_test(":root { --a: x * y }", ":root{--a:x*y}");
+    minify_test(":root { --a: x / / y }", ":root{--a:x//y}");
+    // Non-minified output is unchanged.
+    cssTest(":root { --a: x / * y }", ":root {\n  --a: x / * y;\n}\n");
+
+    // Leading/trailing whitespace around a custom-property value is dropped.
+    minify_test(":root{--a: x}", ":root{--a:x}");
+    minify_test(":root{--a:x }", ":root{--a:x}");
+    minify_test(":root{--a: x }", ":root{--a:x}");
+    minify_test(":root{--a:x y}", ":root{--a:x y}");
+    minify_test(":root{--a: x y }", ":root{--a:x y}");
+    // A value that is only whitespace is preserved as a single space.
+    minify_test(":root{--a: }", ":root{--a: }");
+    minify_test(":root{--a:  }", ":root{--a: }");
+    // Same trimming applies inside function arguments.
+    minify_test(":root{--a:f(x y z)}", ":root{--a:f(x y z)}");
+    minify_test(":root{--a:f( x y z )}", ":root{--a:f(x y z)}");
   });
 
   describe("pseudo-class edge case", () => {
@@ -5238,6 +5267,8 @@ describe("css tests", () => {
     minify_test('[foo="foo bar"] {color:red}', "[foo=foo\\ bar]{color:red}");
     minify_test('[foo="foo bar baz"] {color:red}', '[foo="foo bar baz"]{color:red}');
     minify_test('[foo=""] {color:red}', '[foo=""]{color:red}');
+    minify_test('[foo="123"] {color:red}', '[foo="123"]{color:red}');
+    minify_test('[foo="\\\\"] {color:red}', "[foo=\\\\]{color:red}");
     minify_test('.test:not([foo="bar"]) {color:red}', ".test:not([foo=bar]){color:red}");
     minify_test(".test + .foo {color:red}", ".test+.foo{color:red}");
     minify_test(".test ~ .foo {color:red}", ".test~.foo{color:red}");
@@ -7835,5 +7866,27 @@ describe("css tests", () => {
       const output = await Bun.file(join(__dirname, "unicode_expected.css")).text();
       cssTest(input, output);
     });
+  });
+
+  test("deeply nested rules keep two spaces of indentation per level", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { _test } = require("bun:internal-for-testing").cssInternals;
+let css = "color: red";
+for (let i = 0; i < 150; i++) css = ".a { " + css + " }";
+const output = _test(css, "");
+const line = output.split("\\n").find(l => l.includes("color: red"));
+console.log(line.length - line.trimStart().length);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("300");
+    expect(exitCode).toBe(0);
   });
 });

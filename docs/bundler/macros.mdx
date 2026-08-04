@@ -158,9 +158,8 @@ export async function getText() {
 }
 ```
 
-The transpiler implements special logic for serializing common data formats like `Response`, `Blob`, `TypedArray`.
+The transpiler implements special logic for serializing common data formats like `Response` and `Blob`.
 
-- **TypedArray**: Resolves to a base64-encoded string.
 - **Response**: Bun reads the `Content-Type` and serializes accordingly; for example, a Response with type `application/json` is parsed into an object and `text/plain` is inlined as a string. Responses with an unrecognized or undefined type are base64-encoded.
 - **Blob**: As with Response, the serialization depends on the `type` property.
 

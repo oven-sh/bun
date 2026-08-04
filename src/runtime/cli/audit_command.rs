@@ -46,7 +46,7 @@ struct AuditResult {
 }
 
 impl AuditResult {
-    pub(crate) fn init() -> AuditResult {
+    fn init() -> AuditResult {
         AuditResult {
             vulnerable_packages: StringArrayHashMap::default(),
             all_vulnerabilities: Vec::new(),
@@ -60,9 +60,7 @@ pub(crate) struct AuditCommand;
 
 impl AuditCommand {
     // `!noreturn` → `Result<Infallible, _>` so callers can `?`; all Ok paths Global::exit.
-    pub(crate) fn exec(
-        ctx: Command::Context,
-    ) -> Result<core::convert::Infallible, bun_core::Error> {
+    pub(crate) fn exec(ctx: Command::Context) -> crate::Result<core::convert::Infallible> {
         let cli = CommandLineArguments::parse(Subcommand::Audit)?;
         // Note: `init` consumes `cli`; capture the fields read after it.
         let audit_level = cli.audit_level;
@@ -73,7 +71,7 @@ impl AuditCommand {
         {
             Ok(v) => v,
             Err(err) => {
-                if err == bun_core::err!("MissingPackageJSON") {
+                if err == bun_install::Error::MissingPackageJSON {
                     let mut cwd_buf = bun_paths::PathBuffer::uninit();
                     if let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) {
                         Output::err_generic(
@@ -87,7 +85,7 @@ impl AuditCommand {
                     Global::exit(1);
                 }
 
-                return Err(err);
+                return Err(err.into());
             }
         };
         let json_output = manager.options.json_output;
@@ -106,7 +104,7 @@ impl AuditCommand {
     /// Returns the exit code of the command. 0 if no vulnerabilities were found, 1 if vulnerabilities were found.
     /// The exception is when you pass --json, it will simply return 0 as that was considered a successful "request
     /// for the audit information"
-    pub(crate) fn audit(
+    fn audit(
         _ctx: Command::Context,
         pm: &mut PackageManager,
         json_output: bool,
@@ -397,18 +395,24 @@ fn collect_packages_for_audit(
         if pkg_idx > 0 {
             body.push(b',');
         }
-        body.push(b'"');
-        body.extend_from_slice(&package.name);
-        body.push(b'"');
+        write!(
+            &mut body,
+            "{}",
+            bun_core::fmt::format_json_string_utf8(&package.name, Default::default())
+        )
+        .expect("unreachable");
         body.push(b':');
         body.push(b'[');
         for (ver_idx, version) in package.versions.iter().enumerate() {
             if ver_idx > 0 {
                 body.push(b',');
             }
-            body.push(b'"');
-            body.extend_from_slice(version);
-            body.push(b'"');
+            write!(
+                &mut body,
+                "{}",
+                bun_core::fmt::format_json_string_utf8(version, Default::default())
+            )
+            .expect("unreachable");
         }
         body.push(b']');
     }
@@ -477,13 +481,12 @@ fn send_audit_request(
         url,
         headers.entries,
         headers_buf,
-        &raw mut response_buf,
         &final_compressed_body,
         http_proxy,
         None,
         http::FetchRedirect::Follow,
     );
-    let res = match req.send_sync() {
+    let res = match req.send_sync(&mut response_buf) {
         Ok(r) => r,
         Err(err) => {
             Output::err(err, "audit request failed", ());
@@ -491,10 +494,10 @@ fn send_audit_request(
         }
     };
 
-    if res.status_code >= 400 {
+    if res.status_code() >= 400 {
         bun_core::pretty_errorln!(
             "<red>error<r>: audit request failed (status {})",
-            res.status_code
+            res.status_code()
         );
         Global::crash();
     }

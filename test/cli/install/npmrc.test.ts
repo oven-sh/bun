@@ -659,12 +659,14 @@ registry=https://:TOK@somehost.com/
     using dir = tempDir("npmrc-empty-auth-ancestor-2", {
       "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
       ".npmrc": `@myorg:registry=http://${host}/deep/\n//${host}/:_auth=\n`,
+      "home/.gitkeep": "",
     });
+    const home = join(String(dir), "home");
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install", "--no-save"],
       cwd: String(dir),
-      env,
+      env: { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -680,12 +682,14 @@ registry=https://:TOK@somehost.com/
     using dir = tempDir("npmrc-empty-auth-exact", {
       "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
       ".npmrc": `@myorg:registry=http://${host}/deep/\n//${host}/deep/:_auth=\n`,
+      "home/.gitkeep": "",
     });
+    const home = join(String(dir), "home");
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install", "--no-save"],
       cwd: String(dir),
-      env,
+      env: { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -845,11 +849,10 @@ describe("scoped registry routing", () => {
     // The request must have been attempted against scopeA's own registry.
     expect(reqsA.some(r => r.path.includes("probe"))).toBe(true);
   });
-
-  // npm keys on a WHATWG URL's `host`, which is lowercased and drops a default port.
-  // The config key's path stays case-sensitive; only its authority is folded.
 });
 
+// npm keys on a WHATWG URL's `host`, which is lowercased and drops a default port.
+// The config key's path stays case-sensitive; only its authority is folded.
 describe("the config key's authority is normalized like a WHATWG URL", () => {
   const token = (ini: string) => loadNpmrc(ini).default_registry_token;
 
@@ -999,26 +1002,48 @@ describe("a config key that differs from the registry only by host case", () => 
   // A credential can be arbitrary bytes. `bun pm view` panicked on non-UTF-8 (lossy
   // Display expanded U+FFFD past the reserved byte count) until the header append went
   // raw. A JS `\xff` escape lands as valid UTF-8, so the bytes are written raw here.
-  for (const opt of ["_auth", "_authToken"]) {
-    it(`a non-UTF-8 ${opt} does not panic bun pm view`, async () => {
+  for (const [opt, scheme] of [
+    ["_auth", "Basic"],
+    ["_authToken", "Bearer"],
+  ] as const) {
+    it(`a non-UTF-8 ${opt} reaches the registry verbatim from bun pm view`, async () => {
+      const seen: Buffer[] = [];
+      await using registry = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          seen.push(Buffer.from(req.headers.get("authorization") ?? "", "binary"));
+          return Response.json({
+            "name": "pkg",
+            "dist-tags": { latest: "1.0.0" },
+            "versions": { "1.0.0": { name: "pkg", version: "1.0.0" } },
+          });
+        },
+      });
+      const host = `127.0.0.1:${registry.port}`;
       using dir = tempDir("npmrc-raw-bytes", {
         "package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
         "home/.gitkeep": "",
       });
-      const prefix = Buffer.from(`registry=https://example.com/\n//example.com/:${opt}=`);
+      const prefix = Buffer.from(`registry=http://${host}/\n//${host}/:${opt}=`);
       await write(join(String(dir), ".npmrc"), Buffer.concat([prefix, Buffer.from([0xff, 0xfe, 0xfd, 0x0a])]));
       const home = join(String(dir), "home");
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "pm", "view", "left-pad"],
+        cmd: [bunExe(), "pm", "view", "pkg", "version"],
         cwd: String(dir),
         env: { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
         stdout: "pipe",
         stderr: "pipe",
         stdin: "ignore",
       });
-      const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).not.toContain("panic");
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(seen).toEqual([Buffer.concat([Buffer.from(`${scheme} `), Buffer.from([0xff, 0xfe, 0xfd])])]);
       expect(stderr).not.toContain("invalid _auth");
+      expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: "1.0.0\n",
+        exitCode: 0,
+        signalCode: null,
+      });
     });
   }
 
@@ -1028,5 +1053,73 @@ describe("a config key that differs from the registry only by host case", () => 
     );
     expect(stderr).toContain('the .npmrc key "//Example.COM/" matches no registry');
     expect(stderr).toContain('npm writes this key as "//example.com/"');
+  });
+});
+
+describe("--registry override", () => {
+  test("does not send the token configured for the previous registry host to the --registry host", async () => {
+    const tgz = join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz");
+
+    type Req = { path: string; auth: string | null };
+    const reqsA: Req[] = [];
+    const reqsB: Req[] = [];
+
+    await using serverA = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        reqsA.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization") });
+        return new Response("not found", { status: 404 });
+      },
+    });
+    await using serverB = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const url = new URL(req.url);
+        reqsB.push({ path: url.pathname, auth: req.headers.get("authorization") });
+        if (url.pathname.endsWith(".tgz")) return new Response(Bun.file(tgz));
+        if (url.pathname === "/no-deps") {
+          return Response.json({
+            name: "no-deps",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "no-deps",
+                version: "1.0.0",
+                dist: { tarball: `http://127.0.0.1:${serverB.port}/no-deps/-/no-deps-1.0.0.tgz` },
+              },
+            },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    using dir = tempDir("npmrc-registry-override", {
+      ".npmrc":
+        `registry=http://127.0.0.1:${serverA.port}/\n` +
+        `//127.0.0.1:${serverA.port}/:_authToken=first-host-SECRET-token\n`,
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--registry", `http://127.0.0.1:${serverB.port}/`],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(reqsA).toEqual([]);
+    expect(reqsB.length).toBeGreaterThan(0);
+    expect(reqsB.map(r => r.auth)).toEqual(reqsB.map(() => null));
+    expect(stdout).toContain("+ no-deps@1.0.0");
+    expect(exitCode).toBe(0);
   });
 });

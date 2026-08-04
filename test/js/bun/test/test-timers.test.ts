@@ -1,3 +1,6 @@
+import { bunEnv, bunExe } from "harness";
+import path from "node:path";
+
 test("we can go back in time", () => {
   const DateBeforeMocked = Date;
   const orig = new Date();
@@ -72,4 +75,42 @@ test("setSystemTime accepts pre-epoch and epoch times and resets with no argumen
   } finally {
     jest.useRealTimers();
   }
+});
+
+test.each(["'x'", "Symbol()", "1n"])("useFakeTimers does not crash when globalThis.setTimeout is %s", async value => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `globalThis.setTimeout = ${value};
+         const jest = Bun.jest().jest;
+         jest.useFakeTimers();
+         jest.useRealTimers();
+         console.log("ok");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  expect(proc.signalCode).toBeNull();
+});
+
+test("real timer heap is ticked against the real clock under useFakeTimers", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", path.join(import.meta.dir, "test-timers-gc-spin-fixture.ts")],
+    env: { ...bunEnv, BUN_GC_TIMER_DISABLE: undefined, BUN_GC_TIMER_INTERVAL: undefined },
+    stdout: "pipe",
+    stderr: "pipe",
+    // Pre-fix the child spins at 100% CPU; bound it so it doesn't outlive the
+    // runner by long when the parent test times out on the unfixed build.
+    timeout: 20_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) console.error(stderr);
+  expect(stdout).toContain("DRAIN_OK");
+  // null => exited on its own; non-null => killed by the spawn timeout (spun).
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
 });

@@ -2,6 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::DiffFormatter;
 use super::mock;
+use super::throw;
 use super::Expect;
 
 pub(crate) fn to_have_been_called_with(
@@ -64,25 +65,23 @@ pub(crate) fn to_have_been_called_with(
 
     if this.flags.get().not() {
         let signature = Expect::get_signature("toHaveBeenCalledWith", "<green>...expected<r>", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\nExpected mock function not to have been called with: <green>{}<r>\nBut it was.",
-                expected_args_js_array.to_fmt(&mut formatter),
-            ),
+            "\n\nExpected mock function not to have been called with: <green>{}<r>\nBut it was.",
+            expected_args_js_array.to_fmt(&mut formatter),
         );
     }
     let signature = Expect::get_signature("toHaveBeenCalledWith", "<green>...expected<r>", false);
 
     if calls_count == 0 {
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\nExpected: <green>{}<r>\nBut it was not called.",
-                expected_args_js_array.to_fmt(&mut formatter),
-            ),
+            "\n\nExpected: <green>{}<r>\nBut it was not called.",
+            expected_args_js_array.to_fmt(&mut formatter),
         );
     }
 
@@ -97,7 +96,7 @@ pub(crate) fn to_have_been_called_with(
             global_this: Some(global),
             not: false,
         };
-        return this.throw(global, signature, format_args!("\n\n{}\n", diff_format));
+        return throw!(this, global, signature, "\n\n{}\n", diff_format);
     }
 
     // If there are multiple calls, list them all to help debugging.
@@ -110,14 +109,13 @@ pub(crate) fn to_have_been_called_with(
         formatter: core::cell::RefCell::new(&mut list_fmt),
     };
 
-    this.throw(
+    throw!(
+        this,
         global,
         signature,
-        format_args!(
-            "\n\n    <green>Expected<r>: {}\n    <red>Received<r>:\n{}\n\n    Number of calls: {}\n",
-            expected_args_js_array.to_fmt(&mut formatter),
-            list_formatter,
-            calls_count,
-        ),
+        "\n\n    <green>Expected<r>: {}\n    <red>Received<r>:\n{}\n\n    Number of calls: {}\n",
+        expected_args_js_array.to_fmt(&mut formatter),
+        list_formatter,
+        calls_count,
     )
 }

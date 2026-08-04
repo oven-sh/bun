@@ -16,6 +16,7 @@
 pub mod Global;
 pub mod atomic_cell;
 pub mod comptime_string_map;
+pub mod error;
 pub mod hint;
 pub mod result;
 pub mod thread_id;
@@ -47,20 +48,21 @@ pub mod wtf;
 // `bun_core ↔ bun_string` dep cycle. The `bun_string` crate is now a
 // one-line re-export shim over this module.
 // ──────────────────────────────────────────────────────────────────────────
+pub mod ip_address;
 pub mod string;
 pub use ::bstr::{BStr, BString, ByteSlice};
 pub use string::string_joiner::StringJoiner;
-pub use string::{
-    ByteString, STRING_ALLOCATION_LIMIT, ZigStringGithubActionFormatter, cheap_prefix_normalizer,
-    escape_reg_exp, identifier, lexer, lexer_tables, parse_double, printer, quote_for_json,
-    string_joiner, write, zig_string,
-};
 pub use string::{
     HashedString, MutableString, NodeEncoding, OwnedString, OwnedStringCell,
     SliceWithUnderlyingString, SmolStr, String, StringBuilder, WTFStringImpl, WTFStringImplExt,
     WTFStringImplStruct, ZigString, ZigStringSlice,
 };
-pub use string::{StringPointer, Tag, slice_to_nul, slice_to_nul_mut};
+pub use string::{
+    STRING_ALLOCATION_LIMIT, ZigStringGithubActionFormatter, cheap_prefix_normalizer,
+    escape_reg_exp, identifier, lexer, lexer_tables, parse_double, printer, quote_for_json,
+    string_joiner, write, zig_string,
+};
+pub use string::{StringPointer, Tag, slice_to_nul};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Low-tier homes for types the merged `string` module needs that previously
@@ -288,11 +290,6 @@ pub mod path_sep {
     }
 
     #[inline(always)]
-    pub fn is_sep_win32_t<T: PathByte>(c: T) -> bool {
-        c == T::from_u8(b'\\')
-    }
-
-    #[inline(always)]
     pub fn is_sep_any_t<T: PathByte>(c: T) -> bool {
         c == T::from_u8(b'/') || c == T::from_u8(b'\\')
     }
@@ -382,23 +379,6 @@ pub mod vec {
         // already-written prefix stays in spare capacity and is *leaked* (not
         // dropped) — sound, and acceptable for the constant/`Default`/index
         // fills this helper targets.
-        unsafe { v.set_len(prev + n) };
-    }
-
-    /// Append `n` copies of `value` to `v`.
-    ///
-    /// Unlike `v.extend(repeat_n(value, n))` or a `for _ { v.push(value) }` loop,
-    /// this reserves once and fills via `[MaybeUninit<T>]::fill` (lowers to
-    /// `memset` for byte-sized `T`, vectorized stores for wider `Copy` types) —
-    /// no per-element `RawVec` capacity branch in the hot loop.
-    #[inline]
-    pub fn push_n<T: Copy>(v: &mut Vec<T>, value: T, n: usize) {
-        v.reserve(n);
-        let prev = v.len();
-        v.spare_capacity_mut()[..n].fill(core::mem::MaybeUninit::new(value));
-        // SAFETY: `reserve(n)` ⇒ `spare_capacity_mut().len() >= n`, so `[..n]`
-        // is in-bounds; every slot in it was just initialized via `fill`, and
-        // `T: Copy` means no drop obligations are skipped.
         unsafe { v.set_len(prev + n) };
     }
 
@@ -597,7 +577,7 @@ bun_dispatch::link_interface! {
 }
 
 impl OutputSink {
-    pub const SYS: Self = Self {
+    pub(crate) const SYS: Self = Self {
         kind: OutputSinkKind::Sys,
         owner: core::ptr::null_mut(),
     };
@@ -617,7 +597,7 @@ bun_dispatch::link_interface! {
 }
 
 impl ErrnoNames {
-    pub const SYS: Self = Self {
+    pub(crate) const SYS: Self = Self {
         kind: ErrnoNamesKind::Sys,
         owner: core::ptr::null_mut(),
     };
@@ -647,8 +627,9 @@ pub use bun_alloc::{
 // can write `bun_core::assert_ffi_layout!(...)` without naming `bun_opaque`.
 pub use Global::*;
 pub use bun_opaque::{FfiLayout, assert_ffi_discr, assert_ffi_layout};
+pub use error::{Error, Error as CrateError, Result as CrateResult};
 pub use ffi::{Zeroable, boxed_zeroed, boxed_zeroed_unchecked};
-pub use result::*;
+pub use result::coreutils_error_map;
 pub use tty::Winsize;
 pub use util::*;
 
@@ -680,13 +661,6 @@ pub const unsafe fn container_of<P, F>(field: *const F, offset: usize) -> *mut P
     // SAFETY: per fn contract — `field` is interior to a `P`; `byte_sub`
     // preserves provenance and yields the allocation base.
     unsafe { field.byte_sub(offset).cast::<P>().cast_mut() }
-}
-
-/// `*const`-out variant of [`container_of`]. Same safety contract.
-#[inline(always)]
-pub const unsafe fn container_of_const<P, F>(field: *const F, offset: usize) -> *const P {
-    // SAFETY: per fn contract.
-    unsafe { field.byte_sub(offset).cast::<P>() }
 }
 
 /// Recover a typed `&mut T` from a C-callback's opaque user-data pointer.
@@ -914,12 +888,8 @@ pub type OOM = AllocError;
 
 /// `bun.JSError` — the canonical JS error union. Tier-0 so every layer of
 /// the runtime can name it directly; `bun_jsc` re-exports
-/// it as `bun_jsc::JsError` and `bun_event_loop` re-exports it as `ErasedJsError` for
+/// it as `bun_jsc::JsError` and `bun_event_loop` exposes it (tier-0) for
 /// historical call sites.
-///
-/// `#[repr(u8)]` with explicit discriminants: `AnyTask` stores
-/// `fn(*mut c_void) -> Result<(), JsError>` and the dispatcher relies on the 1-byte layout
-/// surviving the type-erased round-trip.
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum JsError {
@@ -938,22 +908,6 @@ impl From<crate::Error> for JsError {
         // Mapping to `Thrown` here lets `?` propagate while the actual throw
         // is handled by the host-fn wrapper.
         JsError::Thrown
-    }
-}
-
-impl From<JsError> for crate::Error {
-    /// Widen a `bun.JSError` value back into the `anyerror` newtype. Preserves
-    /// the exact tag name so call sites that round-trip through
-    /// `bun_core::Error` (e.g. the `bun_bundler::dispatch::DevServerVTable`
-    /// boundary) keep `error.OutOfMemory` distinguishable from `error.JSError`.
-    #[inline]
-    fn from(e: JsError) -> Self {
-        match e {
-            JsError::OutOfMemory => crate::err!("OutOfMemory"),
-            // `Terminated` (worker shutdown) has no distinct `error.` tag, so
-            // collapse into `JSError` like every other thrown JS exception.
-            JsError::Thrown | JsError::Terminated => crate::err!("JSError"),
-        }
     }
 }
 
@@ -1107,11 +1061,11 @@ pub fn handle_error_return_trace<E>(_err: E) {}
 #[macro_export]
 macro_rules! todo_panic {
     ($($arg:tt)*) => {{
-        // Recorded in the tier-0 `Global::features` counter (same as
-        // css_parser's todo store). `bun_analytics::features::todo_panic` —
-        // the set the crash report serializes via `packed_features()` — is a
-        // re-export of this same static (see `define_features!`'s `core =`
-        // entries in src/analytics/lib.rs), so the bit reaches crash reports.
+        // Recorded in the tier-0 `Global::features` counter.
+        // `bun_analytics::features::todo_panic` — the set the crash report
+        // serializes via `packed_features()` — is a re-export of this same
+        // static (see `define_features!`'s `core =` entries in
+        // src/analytics/lib.rs), so the bit reaches crash reports.
         $crate::Global::features::TODO_PANIC.store(1, ::core::sync::atomic::Ordering::Relaxed);
         $crate::output::panic(::core::format_args!(
             "TODO: {} ({}:{})",
@@ -1122,37 +1076,6 @@ macro_rules! todo_panic {
     }};
 }
 
-// `err!(Name)` / `err!("Name")` — interned error-name literal.
-//
-// Expands to a per-site `AtomicU16` slot that interns the stringified name on
-// first hit, then hands back the cached `NonZeroU16` forever after. Two
-// `err!(Foo)` at different sites resolve to the *same* code (the table is
-// process-global), so `e == err!(Foo)` is a plain u16 compare — the property
-// h2 `error_code_for`, install retry loops, etc. were blocked on.
-//
-// Layout: `AtomicU16::new(0)` is 2 bytes of all-zeros (vs `OnceLock<Error>` at
-// 8+), so the ~1.3k call-site statics shrink and land in `.bss` for free. On
-// ELF targets they're additionally clustered into a dedicated `.bun_err`
-// section so the whole set occupies one page. The cold miss path is a single
-// non-generic `#[cold]` function (`intern_cached`) — no per-closure
-// `get_or_init` monomorphization, one `.text` body instead of thousands.
-#[macro_export]
-macro_rules! err {
-    ($name:ident) => { $crate::err!(@__cached ::core::stringify!($name)) };
-    ($name:literal) => { $crate::err!(@__cached $name) };
-    // `err!(from e)` — convert a strum::IntoStaticStr enum error to bun_core::Error.
-    (from $e:expr) => { $crate::Error::intern(<&'static str>::from(&$e)) };
-    (@__cached $name:expr) => {{
-        #[cfg_attr(any(target_os = "linux", target_os = "android"), unsafe(link_section = ".bun_err"))]
-        static __E: ::core::sync::atomic::AtomicU16 = ::core::sync::atomic::AtomicU16::new(0);
-        let __v = __E.load(::core::sync::atomic::Ordering::Relaxed);
-        if __v != 0 {
-            $crate::Error::from_raw(__v)
-        } else {
-            $crate::intern_cached(&__E, $name)
-        }
-    }};
-}
 // `mark_binding!` and `zstr!` are defined in Global.rs / util.rs respectively.
 
 pub use env as Environment;
@@ -1186,10 +1109,10 @@ pub mod time {
     }
     impl Timer {
         #[inline]
-        pub fn start() -> core::result::Result<Self, crate::Error> {
-            Ok(Self {
+        pub fn start() -> Self {
+            Self {
                 started: std::time::Instant::now(),
-            })
+            }
         }
         #[inline]
         pub fn read(&self) -> u64 {
@@ -1222,36 +1145,19 @@ pub use fmt::{
 // ──────────────────────────────────────────────────────────────────────────
 pub use crate::string::immutable::{
     CodePoint, DecodeHexError, LineRange, PercentEncodeError, QuoteEscapeFormatFlags,
-    SplitIterator, StringOrTinyString, UNICODE_REPLACEMENT, UNICODE_REPLACEMENT_STR, UUID_LEN,
-    WHITESPACE_CHARS, append, cat, concat_alloc_t, concat_with_length, contains_char,
-    contains_scalar, copy, count_char, decode_hex_to_bytes, decode_hex_to_bytes_truncate,
-    encode_bytes_to_hex, ends_with_any, ends_with_char, ends_with_char_or_is_zero_length,
-    ends_with_comptime, eql_any_comptime, eql_comptime, eql_comptime_utf16, format_escapes,
-    has_prefix, has_prefix_case_insensitive, has_prefix_comptime, has_prefix_comptime_utf16,
-    has_suffix_comptime, index_of, index_of_scalar, index_of_t, is_all_whitespace, is_ip_address,
-    is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
-    is_utf8_char_boundary, is_valid_utf8, join, last_index_of, last_index_of_t,
+    SplitIterator, StringOrTinyString, UNICODE_REPLACEMENT, WHITESPACE_CHARS, append, cat,
+    concat_with_length, contains_char, copy, count_char, decode_hex_to_bytes,
+    decode_hex_to_bytes_truncate, encode_bytes_to_hex, ends_with_any, ends_with_char,
+    ends_with_char_or_is_zero_length, eql_any_comptime, eql_comptime, eql_comptime_utf16,
+    format_escapes, has_prefix, has_prefix_case_insensitive, has_prefix_comptime,
+    has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar, index_of_t,
+    is_all_whitespace, is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
+    is_utf8_char_boundary, is_valid_utf8, last_index_of, last_index_of_t,
     length_of_leading_whitespace_ascii, memmem, order, order_t, percent_encode_write, sort_asc,
     sort_desc, split, starts_with_case_insensitive_ascii, starts_with_char, str_utf8,
     to_ascii_hex_value, to_utf16_alloc, trim_leading_char, trim_prefix, trim_prefix_comptime,
-    trim_spaces, trim_suffix, trim_suffix_comptime, utf8_byte_sequence_length, utf16_eql_string,
-    without_prefix, without_prefix_comptime, without_suffix_comptime, without_utf8_bom,
-};
-
-#[allow(deprecated)]
-pub use crate::fmt::{
-    DigitCount, DoubleFormatter, FormatDouble, FormatOSPath, FormatUTF8, FormatUTF16,
-    HEX_DECODE_TABLE, HEX_INVALID, LOWER_HEX_TABLE, PathFormatOptions, QuotedFormatter, Raw,
-    SizeFormatter, SizeFormatterOptions, SliceCursor, TruncatedHash32, UPPER_HEX_TABLE, VecWriter,
-    buf_print, buf_print_infallible, buf_print_len, buf_print_z, buf_print_z_infallible, bytes,
-    bytes_to_hex_lower, bytes_to_hex_lower_string, count, count_float, count_int, digit_count,
-    digit_count_i64, digit_count_u64, double, fast_digit_count, fmt_os_path, fmt_path, fmt_path_u8,
-    fmt_path_u16, format_ip, format_latin1, format_utf16_type, hex_byte_lower, hex_byte_upper,
-    hex_char_lower, hex_char_upper, hex_digit_value, hex_lower, hex_pair_value, hex_u8, hex_u16,
-    hex_upper, hex2_lower, hex2_upper, hex4_lower, hex4_upper, int_as_bytes, parse_ascii,
-    parse_f32, parse_f64, parse_hex_prefix, parse_hex_to_int, parse_hex4,
-    parse_int as parse_int_radix, parse_num, print_int, quote, raw, s, size, size_f64, size_i64,
-    truncated_hash32, truncated_hash32_bytes, utf16,
+    trim_suffix, utf8_byte_sequence_length, utf16_eql_string, without_prefix,
+    without_prefix_comptime, without_suffix_comptime, without_utf8_bom,
 };
 
 /// Tier-0 surrogate/transcode primitives that [`crate::string::immutable`]
@@ -1512,7 +1418,7 @@ pub(crate) mod strings_impl {
     /// [`crate::strings::first_non_ascii`] (`Option<u32>`), a thin view over
     /// this; `_usize` is the raw form for callers that index with the result.
     #[inline]
-    pub fn first_non_ascii_usize(slice: &[u8]) -> Option<usize> {
+    pub(crate) fn first_non_ascii_usize(slice: &[u8]) -> Option<usize> {
         // Short-string fast path: see is_all_ascii() above for the FFI-dispatch
         // cost rationale. position() autovectorizes; ≤32B beats the shim.
         if slice.len() <= 32 {
@@ -1577,12 +1483,6 @@ pub(crate) mod strings_impl {
     #[inline]
     pub const fn u16_is_trail(c: u16) -> bool {
         (c & 0xFC00) == 0xDC00
-    }
-
-    /// ICU `U16_IS_SURROGATE` — either half, `0xD800..=0xDFFF`.
-    #[inline]
-    pub const fn u16_is_surrogate(c: u16) -> bool {
-        (c & 0xF800) == 0xD800
     }
 
     /// ICU `U16_GET_SUPPLEMENTARY` — combine a *known-valid* lead+trail into a
@@ -1891,15 +1791,17 @@ pub(crate) mod strings_impl {
 
         const HIGH_BITS: u64 = 0x8080_8080_8080_8080;
         let mut copied = 0usize;
-        for (d, s) in dst.chunks_exact_mut(8).zip(src.chunks_exact(8)) {
-            let word = u64::from_ne_bytes(s.try_into().expect("infallible: size matches"));
+        let (dst_chunks, _) = dst.as_chunks_mut::<8>();
+        let (src_chunks, _) = src.as_chunks::<8>();
+        for (d, s) in dst_chunks.iter_mut().zip(src_chunks) {
+            let word = u64::from_ne_bytes(*s);
             let mask = word & HIGH_BITS;
             if mask != 0 {
                 let ascii = (mask.trailing_zeros() / 8) as usize;
                 d[..ascii].copy_from_slice(&s[..ascii]);
                 return copied + ascii;
             }
-            d.copy_from_slice(&word.to_ne_bytes());
+            *d = word.to_ne_bytes();
             copied += 8;
         }
         for (d, &s) in dst[copied..].iter_mut().zip(&src[copied..]) {
@@ -2010,7 +1912,7 @@ pub(crate) mod strings_impl {
             .any(|h| eql_case_insensitive_ascii(needle, h, true))
     }
 
-    pub fn starts_with_uuid(s: &[u8]) -> bool {
+    pub(crate) fn starts_with_uuid(s: &[u8]) -> bool {
         // 8-4-4-4-12 hex with dashes
         if s.len() < 36 {
             return false;
@@ -2027,10 +1929,10 @@ pub(crate) mod strings_impl {
         true
     }
     #[inline]
-    pub fn is_uuid(s: &[u8]) -> bool {
+    pub(crate) fn is_uuid(s: &[u8]) -> bool {
         s.len() == 36 && starts_with_uuid(s)
     }
-    pub fn starts_with_npm_secret(s: &[u8]) -> usize {
+    pub(crate) fn starts_with_npm_secret(s: &[u8]) -> usize {
         // Case-insensitive
         // `npm`, then `_` or `s_`/`S_`, then 36..=48 alnum. Returns consumed length or 0.
         if s.len() < 3 {
@@ -2140,7 +2042,7 @@ pub(crate) mod strings_impl {
     }
 
     /// Returns offset and length of first secret found.
-    pub fn starts_with_secret(str: &[u8]) -> Option<(usize, usize)> {
+    pub(crate) fn starts_with_secret(str: &[u8]) -> Option<(usize, usize)> {
         if let Some(r) = starts_with_redacted_item(str, b"_auth") {
             return Some(r);
         }
@@ -2176,9 +2078,9 @@ pub(crate) mod strings_impl {
     /// Port of `bun.fmt.URLFormatter.findUrlPassword` — returns
     /// `(offset, len)` of the password segment, or None.
     /// Only matches http:// and https:// schemes and rejects empty pw.
-    pub fn find_url_password(s: &[u8]) -> Option<(usize, usize)> {
+    pub(crate) fn find_url_password(s: &[u8]) -> Option<(usize, usize)> {
         // Case-sensitive prefix match; the search region is truncated at the
-        // first '\n' before scanning for '@'/':'.
+        // first '\n' and at the end of the authority before scanning for '@'/':'.
         let scheme_end = if s.starts_with(b"http://") {
             7
         } else if s.starts_with(b"https://") {
@@ -2189,6 +2091,9 @@ pub(crate) mod strings_impl {
         let mut rest = &s[scheme_end..];
         if let Some(nl) = rest.iter().position(|&b| b == b'\n') {
             rest = &rest[..nl];
+        }
+        if let Some(end) = rest.iter().position(|&b| matches!(b, b'/' | b'?' | b'#')) {
+            rest = &rest[..end];
         }
         let at = rest.iter().position(|&b| b == b'@')?;
         let userinfo = &rest[..at];
@@ -2231,19 +2136,6 @@ pub(crate) mod strings_impl {
     #[inline]
     pub const fn wtf8_byte_sequence_length_with_invalid(first_byte: u8) -> u8 {
         wtf8_byte_sequence_length(first_byte)
-    }
-
-    /// Port of `bun.strings.codepointSize` — UTF-8 byte length for an
-    /// already-decoded code point (NOT a lead byte). Returns 0 for >U+10FFFF.
-    #[inline]
-    pub fn codepoint_size<R: Into<u32> + Copy>(r: R) -> u8 {
-        match r.into() {
-            0x0000..=0x007F => 1,
-            0x0080..=0x07FF => 2,
-            0x0800..=0xFFFF => 3,
-            0x1_0000..=0x10_FFFF => 4,
-            _ => 0,
-        }
     }
 
     /// `strings.convertUTF16ToUTF8InBuffer` — write UTF-8 into `out`, return
@@ -2382,7 +2274,7 @@ pub use crate::string::immutable as strings;
 // `true` when mimalloc is the `#[global_allocator]`; `false` under ASAN where
 // `std::alloc::System` is installed instead. Mirrors `bun_alloc::USE_MIMALLOC`.
 pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
-pub mod debug_allocator_data {
+pub(crate) mod debug_allocator_data {
     /// Only referenced from `debug_assert!` — dead in release builds.
     #[allow(dead_code)]
     #[inline]
@@ -2494,13 +2386,6 @@ pub mod ffi {
     #[inline]
     pub fn slice_to_nul(buf: &[u8]) -> &[u8] {
         &buf[..buf.iter().position(|&b| b == 0).unwrap_or(buf.len())]
-    }
-
-    /// Mutable variant of [`slice_to_nul`].
-    #[inline]
-    pub fn slice_to_nul_mut(buf: &mut [u8]) -> &mut [u8] {
-        let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-        &mut buf[..n]
     }
 
     /// Heap-allocate a `T` filled with zero bytes. Safe by virtue of the
@@ -2738,9 +2623,17 @@ pub mod ffi {
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::FILE_BASIC_INFORMATION {}
     #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::FILE_ALL_INFORMATION {}
+    #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::FILE_FS_DEVICE_INFORMATION {}
+    #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::FILE_FS_VOLUME_INFORMATION {}
+    #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::BY_HANDLE_FILE_INFORMATION {}
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::WIN32_FILE_ATTRIBUTE_DATA {}
+    #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::WIN32_FIND_DATAW {}
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::OBJECT_ATTRIBUTES {}
     #[cfg(windows)]
@@ -2902,14 +2795,6 @@ pub mod asan {
         let _ = (ptr, size);
     }
     #[inline]
-    pub fn poison_slice<T>(s: &[T]) {
-        poison(s.as_ptr().cast(), core::mem::size_of_val(s))
-    }
-    #[inline]
-    pub fn unpoison_slice<T>(s: &[T]) {
-        unpoison(s.as_ptr().cast(), core::mem::size_of_val(s))
-    }
-    #[inline]
     pub fn assert_unpoisoned<T>(ptr: *const T) {
         #[cfg(bun_asan)]
         if __asan_address_is_poisoned(ptr.cast()) {
@@ -2946,7 +2831,7 @@ pub mod asan {
 // ────────────────────────────────────────────────────────────────────────────
 #[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn __wrap_gettid() -> libc::pid_t {
+extern "C" fn __wrap_gettid() -> libc::pid_t {
     // SAFETY: SYS_gettid takes no arguments and never fails.
     unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
 }

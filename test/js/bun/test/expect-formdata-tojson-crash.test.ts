@@ -25,10 +25,11 @@ test("failing matcher on FormData without a callable toJSON does not abort the t
     cmd: [bunExe(), "test", "formdata.test.ts"],
     env: bunEnv,
     cwd: String(dir),
+    stdout: "pipe",
     stderr: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toContain("Received: FormData");
   expect(stderr).toContain("2 fail");

@@ -1743,7 +1743,8 @@ impl VirtualMachine {
 
             // Release tasks the HTTP daemon posted before observing `is_shutting_down` (else the
             // tasklet ⇄ `Box<AsyncHTTP>` cycle leaks); must precede `destructOnExit`. Wait for
-            // work-pool fs completions first — they post ungated; a post after the drain leaks.
+            // work-pool fs completions first — they post without a shutdown check, so a post
+            // landing after the drain leaks.
             self.event_loop_mut().wait_for_concurrent_posters();
             self.event_loop_mut().release_queued_tasks_for_shutdown();
 

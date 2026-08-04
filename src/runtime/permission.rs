@@ -5,10 +5,10 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::ZigString;
-use bun_threading::RwLock;
 use bun_jsc::{
     CallFrame, ErrorCode, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, ZigStringJsc as _,
 };
+use bun_threading::RwLock;
 
 unsafe extern "C" {
     safe fn Bun__Permission__requireInternalPermissionModule(global: &JSGlobalObject) -> JSValue;

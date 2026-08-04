@@ -351,7 +351,6 @@ pub struct Bufs {
     // `MaybeUninit` and `assume_init_{ref,mut}` at the (linear write-then-read)
     // use sites in `dir_info_cached_maybe_log`.
     pub(crate) dir_entry_paths_to_resolve: [core::mem::MaybeUninit<DirEntryResolveQueueItem>; 256],
-    pub(crate) open_dirs: [FD; 256],
     pub(crate) resolve_without_remapping: PathBuffer,
     pub(crate) index: PathBuffer,
     pub(crate) dir_info_uncached_filename: PathBuffer,
@@ -416,13 +415,11 @@ fn bufs_storage_get() -> *mut Bufs {
 #[cold]
 fn bufs_storage_init() -> *mut Bufs {
     // SAFETY: every field of `Bufs` is a byte/integer array
-    // (`PathBuffer` = `[u8; N]`, `[FD; 256]` where `Fd` is a
-    // `#[repr(C)]` integer newtype, `[MaybeUninit<_>; 256]` which has
-    // no validity requirement, `()`), so EVERY bit-pattern — not just
-    // all-zero — is a valid `Bufs`. Each
-    // field is scratch (write-then-read within a single resolve call,
-    // including `open_dirs` which is bounded by `open_dir_count`), so
-    // there is no need to pay for zero-filling ~100 KiB on first use.
+    // (`PathBuffer` = `[u8; N]`, `[MaybeUninit<_>; 256]` which has no
+    // validity requirement, `()`), so EVERY bit-pattern — not just
+    // all-zero — is a valid `Bufs`. Each field is scratch
+    // (write-then-read within a single resolve call), so there is no
+    // need to pay for zero-filling ~100 KiB on first use.
     let p: *mut Bufs = Box::leak(unsafe { Box::<Bufs>::new_uninit().assume_init() });
     BUFS_PTR.with(|s| s.0.set(p));
     p
@@ -4290,26 +4287,6 @@ impl<'a> Resolver<'a> {
 
         let mut queue_slice_len = i;
         debug_assert!(queue_slice_len > 0);
-        let open_dir_count = core::cell::Cell::new(0usize);
-
-        // When this function halts, any item not processed means it's not found.
-        // NOTE: capture only what the cleanup needs by-value (store_fd) / by-Cell
-        // (open_dir_count) so the guard doesn't pin `&mut self` across the loop
-        // body. `need_to_close_files()` is evaluated AT DROP TIME,
-        // not snapshotted up-front — the loop body calls
-        // `Fs.FileSystem.setMaxFd()` which can flip `needToCloseFiles()`
-        // mid-walk. Reach the RealFS via the `&'static` singleton accessor
-        // instead of capturing a raw `*mut RealFS` (the read is `&self`-only).
-        let close_dirs_store_fd = self.store_fd;
-        scopeguard::defer! {
-            let n = open_dir_count.get();
-            if n > 0 && (!close_dirs_store_fd || Fs::FileSystem::get().fs.need_to_close_files()) {
-                let open_dirs = &bufs!(open_dirs)[0..n];
-                for open_dir in open_dirs {
-                    open_dir.close();
-                }
-            }
-        }
 
         // We want to walk in a straight line from the topmost directory to the desired directory
         // For each directory we visit, we get the entries, but not traverse into child directories
@@ -4456,24 +4433,13 @@ impl<'a> Resolver<'a> {
             let open_dir_freshly_opened = !queue_top.fd.is_valid() && open_dir.is_valid();
             if open_dir_freshly_opened {
                 Fs::FileSystem::set_max_fd(open_dir.native());
-                // these objects mostly just wrap the file descriptor, so it's fine to keep it.
-                bufs!(open_dirs)[open_dir_count.get()] = open_dir;
-                open_dir_count.set(open_dir_count.get() + 1);
             }
-            // When `open_dir` is not stored as `DirEntry.fd` (entry already
-            // fresh, or an existing handle carried over), release it at the
-            // end of this iteration. When it IS stored, remove it from
-            // `open_dirs` so the `close_dirs` defer above cannot close what
-            // `DirEntry.fd` now owns (its `need_to_close_files()` arm would).
+            // A freshly opened handle is released at the end of this iteration
+            // unless it was stored as `DirEntry.fd` (the entry then owns it).
             let open_dir_adopted = core::cell::Cell::new(false);
             let _close_unadopted = scopeguard::guard((), |()| {
-                if open_dir_freshly_opened {
-                    let n = open_dir_count.get();
-                    debug_assert!(n > 0 && bufs!(open_dirs)[n - 1] == open_dir);
-                    open_dir_count.set(n - 1);
-                    if !open_dir_adopted.get() {
-                        let _ = ::bun_sys::close(open_dir);
-                    }
+                if open_dir_freshly_opened && !open_dir_adopted.get() {
+                    let _ = ::bun_sys::close(open_dir);
                 }
             });
 

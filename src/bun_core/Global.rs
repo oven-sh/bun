@@ -47,6 +47,8 @@ pub fn top_level_dir() -> &'static [u8] {
 /// handlers. `raise_ignoring_panic_handler` consults this to decide whether
 /// the crash signals need resetting to `SIG_DFL` before re-raising.
 pub static CRASH_HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
+/// Set when this process was resumed from a heap image; OS-thread/CF/kqueue-backed state from the build process is stale.
+pub static IMAGE_RESTORED: AtomicBool = AtomicBool::new(false);
 
 /// VEH handle returned by `AddVectoredExceptionHandler`, written by
 /// `bun_crash_handler::init()` on Windows. `raise_ignoring_panic_handler`

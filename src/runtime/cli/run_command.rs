@@ -1657,6 +1657,7 @@ impl Run {
 pub extern "C" fn Bun__imageAdoptMainThreadVM() {
     let vm_ptr = bun_jsc::virtual_machine::VirtualMachine::main_thread_vm_ptr();
     assert!(!vm_ptr.is_null(), "image has no main-thread VM");
+    bun_core::Global::IMAGE_RESTORED.store(true, ::core::sync::atomic::Ordering::Relaxed);
     bun_jsc::virtual_machine::VirtualMachine::adopt_on_current_thread(vm_ptr);
     crate::jsc_hooks::adopt_main_thread_runtime_state();
 }

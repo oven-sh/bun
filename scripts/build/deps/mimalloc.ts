@@ -34,7 +34,8 @@ export const mimalloc: Dependency = {
     //   Windows: OFF — Bun links the static CRT and calls mi_* directly;
     //            alloc-override.c emits _expand/_msize/free which duplicate
     //            against libucrt(d) at link time.
-    const override = cfg.linux && !cfg.asan;
+    const override = (cfg.linux && !cfg.asan) || (cfg.darwin && !!process.env.BUN_MIMALLOC_OVERRIDE_DARWIN);
+    const osxZone = cfg.darwin && !!process.env.BUN_MIMALLOC_OVERRIDE_DARWIN;
 
     const defines: Record<string, string | number | true> = {
       // The .a path; gates symbol visibility in mimalloc/internal.h.
@@ -67,6 +68,7 @@ export const mimalloc: Dependency = {
 
     if (cfg.abi === "musl") defines.MI_LIBC_MUSL = 1;
     if (override) defines.MI_MALLOC_OVERRIDE = true;
+    if (osxZone) defines.MI_OSX_ZONE = 1;
 
     if (cfg.debug) {
       // Heavy debug checks: guard bytes, freed-memory poisoning, double-free

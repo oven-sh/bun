@@ -489,6 +489,9 @@ impl FSEventsLoop {
     }
 
     fn enqueue_task_concurrent(&self, task: Task) {
+        if bun_core::Global::IMAGE_RESTORED.load(Ordering::Relaxed) {
+            return;
+        } // CF run loop thread did not survive the image
         let cf = CoreFoundation::get();
         let concurrent = bun_core::heap::into_raw(Box::new(ConcurrentTask {
             task: Task {

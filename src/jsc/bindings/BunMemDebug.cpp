@@ -20,6 +20,7 @@
 #include <JavaScriptCore/JSFunctionInlines.h>
 #include <JavaScriptCore/SourceProvider.h>
 #include <vector>
+#include <span>
 #include <algorithm>
 #include <string>
 #include <chrono>
@@ -116,9 +117,9 @@ static void imageRestoreAndRun(const char* path);
 extern "C" void Bun__imageMaybeRestore()
 {
     if (const char* in = getenv("BUN_IMAGE_IN")) {
-        WTF::String path = WTF::String::fromUTF8(in);
+        char path[1024]; strlcpy(path, in, sizeof path);
         unsetenv("BUN_IMAGE_IN");
-        imageRestoreAndRun(path.utf8().data());
+        imageRestoreAndRun(path);
     }
 }
 extern "C" void Bun__memdebugInstall()
@@ -750,6 +751,7 @@ struct us_loop_t;
 extern "C" void us_loop_reinit_for_image(struct us_loop_t*);
 extern "C" struct us_loop_t* uws_get_loop();
 extern "C" void Bun__imageContinueEventLoop();
+void _mi_scavenger_forked_child(void); // C++-mangled (mimalloc is built as C++ here)
 extern "C" void Bun__imageAdoptMainThreadVM();
 // ===== v0 heap image experiment (macOS, no-ASLR, JIT off): dump all mimalloc/JSC memory + __DATA at idle; a fresh process maps it back and runs JS on the image VM.
 struct ImageHeader { char magic[8]; uint64_t textBase; uint64_t vm; uint64_t globalObject; uint64_t mainThread; uint64_t nregions; uint64_t reserved[8]; };
@@ -759,8 +761,10 @@ static void imageDump(JSC::VM& vm, const char* path)
 {
 #if OS(DARWIN)
     JSC::JSLockHolder lock(vm);
-    vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
-    mi_collect(true);
+    if (getenv("BUN_IMAGE_NOFREEZE")) vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+    else vm.heap.freezeCurrentHeapAsImmortalImage(); // GC never writes image blocks again (frozen marks = liveness, side remembered set)
+    mi_option_set(mi_option_purge_delay, 0);
+    mi_collect(true); // free spans get decommitted so "resident" below means "image payload"
     size_t pg = getpagesize();
     std::vector<ImageRegion> regions;
     // 1. anonymous writable regions (mimalloc arenas + page map, structure heap, misc JSC/WTF OS allocations); skip stacks & malloc zones & JIT
@@ -789,7 +793,16 @@ static void imageDump(JSC::VM& vm, const char* path)
                 }
                 if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] JIT region %llx+%llx resident=%u dirty=%u\n", (unsigned long long)addr, (unsigned long long)size, info.pages_resident, info.pages_dirtied);
             } else if (ours && writable && anon && !isStack && !isMallocZone && !isGuard && info.share_mode != SM_SHARED && (info.pages_resident > 0 || info.pages_dirtied > 0 || info.pages_swapped_out > 0)) {
-                regions.push_back({ addr, size, 0, (uint64_t)tag << 8 });
+                regions.push_back({ addr, size, 0, ((uint64_t)tag << 8) | 4 }); // anonymous reserve, then resident runs as file-backed data
+                size_t npages = size / pg; std::vector<int> disp(npages); mach_vm_size_t dispCount = npages;
+                if (mach_vm_page_range_query(mach_task_self(), addr, size, (mach_vm_address_t)disp.data(), &dispCount) == KERN_SUCCESS) {
+                    for (size_t i = 0; i < dispCount;) {
+                        if (!disp[i]) { i++; continue; }
+                        size_t j = i; while (j < dispCount && disp[j]) j++;
+                        regions.push_back({ addr + i * pg, (j - i) * pg, 0, (uint64_t)tag << 8 });
+                        i = j;
+                    }
+                } else regions.back().kind = (uint64_t)tag << 8;
                 if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] region %llx+%llx tag=%d prot=%x/%x share=%d resident=%u dirty=%u\n", (unsigned long long)addr, (unsigned long long)size, tag, info.protection, 0, info.share_mode, info.pages_resident, info.pages_dirtied);
             }
             addr += size;
@@ -816,10 +829,10 @@ static void imageDump(JSC::VM& vm, const char* path)
     hdr.nregions = out.size();
     size_t tableOff = sizeof(ImageHeader); size_t dataOff = (tableOff + out.size() * sizeof(ImageRegion) + pg - 1) & ~(pg - 1);
     size_t fileOff = dataOff, total = 0;
-    for (auto& r : out) { size_t used = (r.kind & 0xff) == 3 ? 0 : r.len; r.fileOff = fileOff; fileOff += used; }
+    for (auto& r : out) { size_t used = ((r.kind & 0xff) == 3 || (r.kind & 0xff) == 4) ? 0 : r.len; r.fileOff = fileOff; fileOff += used; }
     for (auto& r : out) {
         // write region contents; non-resident anon pages read as zero which is what a fresh mapping would give anyway
-        size_t used = (r.kind & 0xff) == 3 ? 0 : r.len;
+        size_t used = ((r.kind & 0xff) == 3 || (r.kind & 0xff) == 4) ? 0 : r.len;
         if (pwrite(fd, (void*)r.addr, used, r.fileOff) != (ssize_t)used) { fprintf(stderr, "[image] pwrite failed for %llx+%llx errno %d\n", r.addr, (unsigned long long)used, errno); }
         total += used;
     }
@@ -839,8 +852,11 @@ static void imageRestoreAndRun(const char* path)
     ImageHeader hdr; pread(fd, &hdr, sizeof hdr, 0);
     const struct mach_header_64* mh = (const struct mach_header_64*)_dyld_get_image_header(0);
     if (memcmp(hdr.magic, "BUNIMG0", 8) || hdr.textBase != (uint64_t)mh) { fprintf(stderr, "[image] bad magic or ASLR slide differs (image text %llx vs ours %p) — run both under noaslr\n", hdr.textBase, mh); _exit(2); }
-    std::vector<ImageRegion> regions(hdr.nregions);
-    pread(fd, regions.data(), regions.size() * sizeof(ImageRegion), sizeof(ImageHeader));
+    mi_scavenger_stop(); // this process's scavenger thread must not touch allocator state while/after we overlay it
+    // No heap use from here until the overlay is done: with malloc routed to mimalloc, this process's heap sits at the same VA as the image's.
+    if (hdr.nregions > 8192) { fprintf(stderr, "[image] too many regions\n"); _exit(2); }
+    static ImageRegion regionsBuf[8192]; pread(fd, regionsBuf, hdr.nregions * sizeof(ImageRegion), sizeof(ImageHeader));
+    std::span<ImageRegion> regions(regionsBuf, hdr.nregions);
     size_t mapped = 0, copied = 0;
     bool verbose = !!getenv("BUN_IMAGE_VERBOSE");
     for (auto& r : regions) {
@@ -851,16 +867,24 @@ static void imageRestoreAndRun(const char* path)
             continue;
         }
         if ((r.kind & 0xff) == 2) {
-            std::vector<uint8_t> buf(r.len); if (pread(fd, buf.data(), r.len, r.fileOff) != (ssize_t)r.len) { fprintf(stderr, "[image] pread JIT failed errno %d\n", errno); _exit(3); }
-            pthread_jit_write_protect_np(0); memcpy((void*)r.addr, buf.data(), r.len); pthread_jit_write_protect_np(1);
+            void* buf = mmap(nullptr, r.len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+            if (pread(fd, buf, r.len, r.fileOff) != (ssize_t)r.len) { fprintf(stderr, "[image] pread JIT failed errno %d\n", errno); _exit(3); }
+            pthread_jit_write_protect_np(0); memcpy((void*)r.addr, buf, r.len); pthread_jit_write_protect_np(1);
+            munmap(buf, r.len);
             sys_icache_invalidate((void*)r.addr, r.len);
             copied += r.len;
+            continue;
+        }
+        if ((r.kind & 0xff) == 4) {
+            mach_vm_deallocate(mach_task_self(), r.addr, r.len);
+            void* m = mmap((void*)r.addr, r.len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
+            if (m == MAP_FAILED) { fprintf(stderr, "[image] mmap reserve %llx+%llx failed errno %d\n", r.addr, r.len, errno); _exit(3); }
             continue;
         }
         if ((r.kind & 0xff) == 1) {
             // __DATA of the running binary: make writable and copy (mmap over a segment mapping also works but keep it simple)
             if (mprotect((void*)r.addr, r.len, PROT_READ | PROT_WRITE)) { fprintf(stderr, "[image] mprotect __DATA %llx failed errno %d\n", r.addr, errno); _exit(3); }
-            std::vector<uint8_t> buf(r.len); pread(fd, buf.data(), r.len, r.fileOff); memcpy((void*)r.addr, buf.data(), r.len); copied += r.len;
+            if (pread(fd, (void*)r.addr, r.len, r.fileOff) != (ssize_t)r.len) { fprintf(stderr, "[image] pread __DATA failed errno %d\n", errno); _exit(3); } copied += r.len;
         } else {
             void* m = mmap((void*)r.addr, r.len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, r.fileOff);
             if (m == MAP_FAILED) {
@@ -875,6 +899,15 @@ static void imageRestoreAndRun(const char* path)
     }
     // Re-seat allocator TLS: this thread's default theap must be the image's main theap, not whatever this process created before the overlay.
     if (hdr.reserved[0]) mi_theap_set_default((mi_theap_t*)hdr.reserved[0]);
+    _mi_scavenger_forked_child(); // same situation as a fork child: the image says a scavenger runs, but no such thread exists here
+    if (!getenv("BUN_IMAGE_NOFRESHHEAP")) {
+        // Image payload pages are immortal: never free into them (that would dirty a clean file-backed page for allocator metadata) and allocate from fresh pages.
+        s_frozenRanges.clear();
+        for (auto& r : regions) if ((r.kind & 0xff) == 0 && (r.kind >> 8) == 240) s_frozenRanges.push_back({ r.addr, r.addr + r.len });
+        std::sort(s_frozenRanges.begin(), s_frozenRanges.end());
+        mi_free_set_filter(frozenFreeFilter);
+        mi_theap_set_default(mi_heap_theap(mi_heap_new()));
+    }
     // pthread TLS keys created by the build process (WTF::ThreadSpecific etc.) must exist here too, or setspecific silently fails; burn keys up to the image's high-water mark.
     if (hdr.reserved[1]) { for (int i = 0; i < 1024; i++) { pthread_key_t k = 0; if (pthread_key_create(&k, nullptr)) break; if ((uint64_t)k + 1 >= hdr.reserved[1]) break; } }
     fprintf(stderr, "[image] restored %zu regions: %.1fMB mapped clean, %.1fMB __DATA copied\n", regions.size(), mapped / 1048576.0, copied / 1048576.0);

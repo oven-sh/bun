@@ -963,7 +963,7 @@ static JSValue rsisSinkWrite(JSC::VM& vm, JSGlobalObject* globalObject, JSReadSt
     if (auto* view = dynamicDowncast<JSArrayBufferView>(chunk)) {
         if (auto* ctrl = dynamicDowncast<WebCore::JSReadableSinkControllerBase>(op->m_sink.get())) {
             if (void* sinkPtr = ctrl->wrapped())
-                return JSValue::decode(WebCore::JSSink__writeBytes(ctrl->sinkId(), sinkPtr, globalObject, static_cast<const uint8_t*>(view->vector()), view->byteLength()));
+                return JSValue::decode(Bun__NativeTransformSink__writeBytes(static_cast<uint8_t>(ctrl->sinkId()), sinkPtr, globalObject, static_cast<const uint8_t*>(view->vector()), view->byteLength()));
         }
     }
     MarkedArgumentBuffer args;

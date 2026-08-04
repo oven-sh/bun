@@ -279,6 +279,45 @@ struct HttpResponseData;
             return std::string_view(nullptr, 0);
         }
 
+        /* RFC 9112 9.6: the "close" connection option is a token in the
+         * Connection field's comma-separated list. Scan every Connection header
+         * line and compare OWS-trimmed tokens case-insensitively, matching
+         * llhttp's h_matching_connection_close state and sharing the token-list
+         * shape with getTransferEncoding() below. */
+        bool hasConnectionClose()
+        {
+            if (!bf.mightHave("connection")) {
+                return false;
+            }
+            for (Header *h = headers; (++h)->key.length();) {
+                if (h->key.length() != 10 || strncasecmp(h->key.data(), "connection", 10)) {
+                    continue;
+                }
+                const auto value = h->value;
+                size_t pos = 0;
+                while (pos < value.length()) {
+                    while (pos < value.length() && (value[pos] == ' ' || value[pos] == '\t')) {
+                        pos++;
+                    }
+                    size_t tokenStart = pos;
+                    while (pos < value.length() && value[pos] != ',') {
+                        pos++;
+                    }
+                    size_t tokenEnd = pos;
+                    while (tokenEnd > tokenStart && (value[tokenEnd - 1] == ' ' || value[tokenEnd - 1] == '\t')) {
+                        tokenEnd--;
+                    }
+                    if (tokenEnd - tokenStart == 5 && !strncasecmp(value.data() + tokenStart, "close", 5)) {
+                        return true;
+                    }
+                    if (pos < value.length()) {
+                        pos++;
+                    }
+                }
+            }
+            return false;
+        }
+
         struct TransferEncoding {
             bool has: 1 = false;
             bool chunked: 1 = false;
@@ -606,10 +645,11 @@ struct HttpResponseData;
         std::string fallback;
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
         uint64_t remainingStreamingBytes = 0;
-        /* node:http compat: a completed request on this connection forbade keep-alive
-         * (Connection: close, or HTTP/1.0), so no further message may be dispatched
-         * (llhttp parses nothing after such a message: HPE_CLOSED_CONNECTION). */
-        bool nodeHttpSawConnectionClose = false;
+        /* A completed request on this connection forbade keep-alive (Connection:
+         * close, or HTTP/1.0) so no further message may be dispatched (RFC 9112
+         * 9.6). node:http surfaces further bytes as HPE_CLOSED_CONNECTION like
+         * llhttp; Bun.serve discards them and closes after the final response. */
+        bool sawConnectionClose = false;
 
         const size_t MAX_FALLBACK_SIZE = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
 
@@ -1129,6 +1169,18 @@ struct HttpResponseData;
                 consumedTotal += length;
                 return HttpParserResult::success(consumedTotal, returnedUser);
             }
+            /* RFC 9112 9.6: a prior request forbade keep-alive, so everything
+             * after it is never parsed. Bun.serve discards it so onData's tail
+             * closes after the final response; node:http raises
+             * HPE_CLOSED_CONNECTION ('clientError') like Node's own parser.
+             * Runs after the tunnel check above: a switched-protocol connection
+             * is no longer HTTP, so 9.6 does not apply to it. */
+            if (sawConnectionClose) {
+                if constexpr (IsNodeHttp) {
+                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_CLOSED_CONNECTION);
+                }
+                return HttpParserResult::success(consumedTotal + length, user);
+            }
             /* RFC 9112 2.2: ignore empty lines (CRLF) received prior to the
              * request-line, like Node/llhttp - e.g. a stray "\r\n" sent on an
              * idle keep-alive connection must not be treated as a bad request.
@@ -1175,17 +1227,10 @@ struct HttpResponseData;
             for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
                 req->bf.add(h->key);
             }
-            /* node:http compat: a pipelined request behind one that forbade keep-alive is
-             * never dispatched - node's parser is closed after that message and raises
-             * HPE_CLOSED_CONNECTION ('clientError') on further bytes. The predicate is the
-             * same one that marks the connection for close at dispatch (HttpContext). */
-            if constexpr (IsNodeHttp) {
-                if (nodeHttpSawConnectionClose) {
-                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_CLOSED_CONNECTION);
-                }
-                if (req->isAncient() || req->getHeader("connection").length() == 5) {
-                    nodeHttpSawConnectionClose = true;
-                }
+            /* Latch for the loop-top sawConnectionClose gate: mirrors the
+             * predicate that marks the connection for close at dispatch. */
+            if (req->isAncient() || req->hasConnectionClose()) {
+                sawConnectionClose = true;
             }
             /* RFC 9112 6.3
             * If a message is received with both a Transfer-Encoding and a Content-Length header field,

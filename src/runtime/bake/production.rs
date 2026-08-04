@@ -140,23 +140,13 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         b.options.install = install_ptr;
         b.resolver.opts.install = install_ptr;
         b.resolver.opts.global_cache = ctx.debug.global_cache;
-        b.resolver.opts.prefer_offline_install = ctx
+        let offline = ctx
             .debug
             .offline_mode_setting
-            .unwrap_or(OfflineMode::Online)
-            == OfflineMode::Offline;
-        // Note: `bun_resolver::options::BundleOptions` has no
-        // `prefer_latest_install` field; compute the value once
-        // and assign only to `b.options` (which does carry it). The resolver
-        // never reads it.
-        let prefer_latest = ctx
-            .debug
-            .offline_mode_setting
-            .unwrap_or(OfflineMode::Online)
-            == OfflineMode::Latest;
+            .unwrap_or(OfflineMode::Online);
+        b.resolver.opts.install_preference = offline;
         b.options.global_cache = b.resolver.opts.global_cache;
-        b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
-        b.options.prefer_latest_install = prefer_latest;
+        b.options.install_preference = offline;
         // SAFETY: `b.env` is the Transpiler-owned `*mut Loader`; store it
         // as `NonNull` (not `&Loader`) because `configure_defines()` below
         // reborrows the same allocation as `&mut Loader` via `run_env_loader()`,
@@ -1146,7 +1136,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                         route.r#type.get(),
                         pt.output_file(main_file_route_index)
                             .bake_extra
-                            .fully_static,
+                            .route
+                            .is_fully_static(),
                     )
                     .bits(),
                 ),
@@ -1456,11 +1447,7 @@ pub struct PerThread {
     pub(crate) source_maps: StringArrayHashMap<OutputFileIndex>,
 
     // Thread-local
-    // Note: stored as `BackRef` (the VM
-    // is process-lifetime and outlives every `PerThread`); `load_module`
-    // re-derives a mutable VM via the per-thread singleton, so no write
-    // provenance is needed here.
-    pub(crate) vm: bun_ptr::BackRef<VirtualMachine>,
+    pub(crate) vm: bun_ptr::BackRef<VirtualMachine, bun_ptr::Mut>,
     /// Indexed by entry point index (OpaqueFileId)
     pub(crate) loaded_files: AutoBitSet,
     /// JSArray of JSString, indexed by entry point index (OpaqueFileId)
@@ -1505,7 +1492,9 @@ impl PerThread {
             module_keys: Vec::new(),
             module_map: StringArrayHashMap::default(),
             source_maps: StringArrayHashMap::default(),
-            vm: bun_ptr::BackRef::from(NonNull::new(vm).expect("vm non-null")),
+            // SAFETY: `vm` is the live per-thread VM from `init_bake` (non-null,
+            // write provenance); outlives `PerThread`.
+            vm: unsafe { bun_ptr::BackRef::from_raw_mut(vm) },
             loaded_files: AutoBitSet::init_empty(0).expect("unreachable"),
             all_server_files: None,
             attached: false,
@@ -1525,8 +1514,9 @@ impl PerThread {
         let loaded_files = AutoBitSet::init_empty(n)?;
         // errdefer loaded_files.deinit() — handled by Drop on error path
 
-        // BackRef invariant: vm is the live per-thread VM; outlives PerThread.
-        let vm = bun_ptr::BackRef::from(NonNull::new(vm).expect("vm non-null"));
+        // SAFETY: BackRef invariant — vm is the live per-thread VM from `init_bake`
+        // (non-null, write provenance); outlives PerThread.
+        let vm = unsafe { bun_ptr::BackRef::from_raw_mut(vm) };
         let global = vm.global();
         let all_server_files = Some(bun_jsc::Strong::create(
             JSValue::create_empty_array(global, n).map_err(js_err)?,

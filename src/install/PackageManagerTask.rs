@@ -37,7 +37,7 @@ pub struct Task<'a> {
     pub(crate) err: Option<crate::Error>,
     /// BACKREF — owned by `PackageManager.preallocated_resolve_tasks`.
     /// `None` only in `uninit()`; every scheduled task overwrites it.
-    pub(crate) package_manager: Option<bun_ptr::ParentRef<PackageManager>>,
+    pub(crate) package_manager: Option<bun_ptr::ParentRef<PackageManager, bun_ptr::Mut>>,
     /// default: `None`
     pub(crate) apply_patch_task: Option<Box<PatchTask>>,
     /// INTRUSIVE — `bun.UnboundedQueue(Task, .next)`
@@ -222,9 +222,18 @@ impl<'a> Task<'a> {
 
         // SAFETY: `task` points to the `threadpool_task` field of a `Task`
         // (this is the only place this `thread_pool::Task` callback is registered).
-        let this: *mut Task<'a> = unsafe { bun_core::from_field_ptr!(Task, threadpool_task, task) };
+        let this_raw: *mut Task<'a> =
+            unsafe { bun_core::from_field_ptr!(Task, threadpool_task, task) };
+        // The terminal `resolve_tasks.push` hands the task to the main thread
+        // (which may recycle it while this fn still runs `Output::flush()`),
+        // so the pushed pointer is derived from the raw receiver, not from the
+        // `&mut` below, and nothing touches `this` after the push.
+        // SAFETY: `Task<'a>` is layout-identical for all `'a` (the lifetime is
+        // a phantom on `&mut NetworkTask` borrows that the queue never reads
+        // through); erasing to `'static` is sound for the queue.
+        let task = unsafe { core::ptr::NonNull::new_unchecked(this_raw) }.cast::<Task<'static>>();
         // SAFETY: exclusive access — task runs on exactly one worker thread
-        let this: &mut Task<'a> = unsafe { &mut *this };
+        let this: &mut Task<'a> = unsafe { &mut *this_raw };
         // BACKREF (LIFETIMES.tsv:598) — `package_manager` outlives every task it
         // owns. The `ParentRef` is `Copy` and gives safe `Deref` for the
         // shared-read sites below; `manager` is kept as a raw `*mut` for the
@@ -558,12 +567,8 @@ impl<'a> Task<'a> {
                 }
             }
         }
-        let task = core::ptr::NonNull::from(this).cast::<Task<'static>>();
-        // SAFETY: `Task<'a>` is layout-identical for all `'a` (the lifetime is
-        // a phantom on `&mut NetworkTask` borrows that the queue never reads
-        // through); erasing to `'static` is sound for the queue.
-        // `UnboundedQueue::push` takes `&self` (lock-free), so reach it via a
-        // shared raw deref — no `&mut PackageManager` is formed.
+        // SAFETY: `UnboundedQueue::push` takes `&self` (lock-free), so reach it
+        // via a shared raw deref — no `&mut PackageManager` is formed.
         unsafe {
             (*core::ptr::addr_of!((*manager).resolve_tasks)).push(task);
             PackageManager::wake_raw(manager);

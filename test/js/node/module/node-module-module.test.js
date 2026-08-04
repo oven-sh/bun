@@ -150,6 +150,43 @@ describe.concurrent("node-module-module", () => {
       ospath(root + "a/node_modules"),
       ospath(root + "node_modules"),
     ]);
+    // Node resolves `from` through `path.resolve`, so a trailing separator is
+    // dropped rather than producing an extra ".../<sep>/node_modules" entry.
+    expect(_nodeModulePaths("/a/b/c/d/")).toEqual(_nodeModulePaths("/a/b/c/d"));
+    expect(_nodeModulePaths(ospath("/a/b/c/d") + path.sep)).toEqual(_nodeModulePaths("/a/b/c/d"));
+  });
+
+  test("_nodeModulePaths() is stable across process.chdir()", async () => {
+    // process.chdir() re-seeds the resolver's cached top-level dir with a
+    // trailing separator; _nodeModulePaths("") then used to emit a duplicate
+    // `<cwd>//node_modules` entry, which surfaced as a `--parallel` flake when
+    // an earlier test file in the same worker had chdir'd.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const m = require("module");
+         const before = m._nodeModulePaths("");
+         const here = process.cwd();
+         process.chdir(require("os").tmpdir());
+         process.chdir(here);
+         process.stdout.write(JSON.stringify({
+           before,
+           empty: m._nodeModulePaths(""),
+           dot: m._nodeModulePaths("."),
+         }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { before, empty, dot } = JSON.parse(stdout);
+    expect(empty).toEqual(before);
+    expect(empty).toEqual(dot);
+    for (const p of empty) expect(p).not.toMatch(/[/\\]{2}node_modules$/);
+    expect(exitCode).toBe(0);
   });
 
   test("_nodeModulePaths() does not leak the input string", async () => {

@@ -540,6 +540,9 @@ JSC::JSPromise* readStreamIntoSink(JSC::JSGlobalObject*, JSReadableStream*, JSC:
 // Installs a JSDirectStreamController of the given flavor on the stream, nulls the stream's
 // m_directUnderlyingSource, and sets m_bunMode = Default.
 void setUpDirectStreamController(JSC::JSGlobalObject*, JSReadableStream*, DirectSinkKind, double highWaterMark); // userJS: yes — JSDirectStreamController.cpp
+// Drop the direct controller's retained user-source state once no further pull/close callbacks
+// can run (m_closed set, or the stream has left Readable). Idempotent.
+void directStreamControllerClearSource(JSDirectStreamController*); // userJS: no — JSDirectStreamController.cpp
 
 // BunStreamConsumers.cpp — Bun.readableStreamTo*, the buffered fast path, the direct
 // consumers, and the generic accumulators. These are the native entry points; their

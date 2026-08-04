@@ -64,8 +64,6 @@ using namespace JSC;
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_parse);
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_canParse);
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLPrototypeFunction_toJSON);
-static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_createObjectURL);
-static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_revokeObjectURL);
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLPrototypeFunction_toString);
 
 BUN_DECLARE_HOST_FUNCTION(Bun__createObjectURL);
@@ -192,18 +190,6 @@ template<> void JSDOMURLDOMConstructor::initializeProperties(VM& vm, JSDOMGlobal
     putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     putDirect(vm, vm.propertyNames->prototype, JSDOMURL::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
     reifyStaticProperties(vm, JSDOMURL::info(), JSDOMURLConstructorTableValues, *this);
-    // if (!((&globalObject)->inherits<JSDOMWindowBase>() || (&globalObject)->inherits<JSDedicatedWorkerGlobalScope>() || (&globalObject)->inherits<JSSharedWorkerGlobalScope>())) {
-    //     auto propertyName = Identifier::fromString(vm, "createObjectURL"_s);
-    //     VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-    //     DeletePropertySlot slot;
-    //     JSObject::deleteProperty(this, &globalObject, propertyName, slot);
-    // }
-    // if (!((&globalObject)->inherits<JSDOMWindowBase>() || (&globalObject)->inherits<JSDedicatedWorkerGlobalScope>() || (&globalObject)->inherits<JSSharedWorkerGlobalScope>())) {
-    //     auto propertyName = Identifier::fromString(vm, "revokeObjectURL"_s);
-    //     VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-    //     DeletePropertySlot slot;
-    //     JSObject::deleteProperty(this, &globalObject, propertyName, slot);
-    // }
 }
 
 /* Hash table for prototype */
@@ -687,73 +673,10 @@ JSC_DEFINE_HOST_FUNCTION(jsDOMURLPrototypeFunction_toJSON, (JSGlobalObject * lex
     return IDLOperation<JSDOMURL>::call<jsDOMURLPrototypeFunction_toJSONBody>(*lexicalGlobalObject, *callFrame, "toJSON");
 }
 
-static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_createObjectURL1Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
-{
-    // auto& vm = JSC::getVM(lexicalGlobalObject);
-    // auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(lexicalGlobalObject);
-    UNUSED_PARAM(callFrame);
-    // auto* context = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext();
-    // if (!context) [[unlikely]]
-    return JSValue::encode(jsUndefined());
-    // EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    // auto blob = convert<IDLInterface<Blob>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "blob", "URL", "createObjectURL", "Blob"); });
-    // RETURN_IF_EXCEPTION(throwScope, {});
-    // RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, DOMURL::createObjectURL(*context, *blob))));
-}
-
-static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_revokeObjectURLBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
-{
-    // auto& vm = JSC::getVM(lexicalGlobalObject);
-    // auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(lexicalGlobalObject);
-    UNUSED_PARAM(callFrame);
-    // if (callFrame->argumentCount() < 1) [[unlikely]]
-    //     return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-    // auto* context = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext();
-    // if (!context) [[unlikely]]
-    return JSValue::encode(jsUndefined());
-    // EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    // auto url = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
-    // RETURN_IF_EXCEPTION(throwScope, {});
-    // RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return DOMURL::revokeObjectURL(*context, WTF::move(url)); })));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsDOMURLConstructorFunction_revokeObjectURL, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSDOMURL>::callStatic<jsDOMURLConstructorFunction_revokeObjectURLBody>(*lexicalGlobalObject, *callFrame, "revokeObjectURL");
-}
-
 void JSDOMURL::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-}
-
-static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_createObjectURLOverloadDispatcher(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(throwScope);
-    UNUSED_PARAM(callFrame);
-    size_t argsCount = std::min<size_t>(1, callFrame->argumentCount());
-    if (argsCount == 1) {
-        JSValue distinguishingArg = callFrame->uncheckedArgument(0);
-        if (distinguishingArg.isObject()) {
-            return JSValue::encode(jsUndefined());
-        }
-        //         if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSBlob>())
-        //             RELEASE_AND_RETURN(throwScope, (jsDOMURLConstructorFunction_createObjectURL1Body(lexicalGlobalObject, callFrame)));
-        // #if ENABLE(MEDIA_SOURCE)
-        //         if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSMediaSource>())
-        //             RELEASE_AND_RETURN(throwScope, (jsDOMURLConstructorFunction_createObjectURL2Body(lexicalGlobalObject, callFrame)));
-    }
-    return argsCount < 1 ? throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject)) : throwVMTypeError(lexicalGlobalObject, throwScope);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsDOMURLConstructorFunction_createObjectURL, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSDOMURL>::callStatic<jsDOMURLConstructorFunction_createObjectURLOverloadDispatcher>(*lexicalGlobalObject, *callFrame, "createObjectURL");
 }
 
 static inline JSC::EncodedJSValue jsDOMURLPrototypeFunction_toStringBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSDOMURL>::ClassParameter castedThis)

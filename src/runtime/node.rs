@@ -7,10 +7,6 @@
 // link time.
 
 // ─── compiling submodules ─────────────────────────────────────────────────
-#[path = "node/nodejs_error_code.rs"]
-pub mod nodejs_error_code;
-pub(crate) use nodejs_error_code::Code as ErrorCode;
-
 #[path = "node/assert/myers_diff.rs"]
 pub mod myers_diff_impl;
 pub mod assert {
@@ -139,9 +135,6 @@ pub mod node_assert;
 
 #[path = "node/node_assert_binding.rs"]
 pub mod node_assert_binding;
-
-#[path = "node/node_error_binding.rs"]
-pub mod node_error_binding;
 
 #[path = "node/node_zlib_binding.rs"]
 pub mod node_zlib_binding;

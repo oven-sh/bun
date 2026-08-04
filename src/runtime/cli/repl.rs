@@ -37,7 +37,7 @@ use bun_sys::{self as sys, Fd};
 // FFI handle (zero Rust-visible bytes). All mutation happens on the C++ side;
 // Rust only ever holds `&JSGlobalObject`, so deriving a `*mut` from that shared
 // reference would violate provenance. This matches the convention in
-// `src/jsc/lib.rs` / `src/jsc/ipc.rs`.
+// `src/jsc/lib.rs`.
 unsafe extern "C" {
     fn Bun__REPL__evaluate(
         globalObject: *const JSGlobalObject,
@@ -781,12 +781,15 @@ fn cmd_save(repl: &mut Repl, args: &[u8]) -> ReplResult {
 }
 
 fn cmd_editor(repl: &mut Repl, _: &[u8]) -> ReplResult {
+    if repl.input_mode == InputMode::Multiline {
+        return ReplResult::SkipEval;
+    }
     repl.print(format_args!(
         "{}// Entering editor mode (Ctrl+D to finish, Ctrl+C to cancel){}\n",
         Color::DIM,
         Color::RESET
     ));
-    repl.editor_mode = true;
+    repl.input_mode = InputMode::Editor;
     repl.editor_buffer.clear();
     ReplResult::SkipEval
 }
@@ -794,7 +797,7 @@ fn cmd_editor(repl: &mut Repl, _: &[u8]) -> ReplResult {
 fn cmd_break(repl: &mut Repl, _: &[u8]) -> ReplResult {
     repl.line_editor.clear();
     repl.multiline_buffer.clear();
-    repl.in_multiline = false;
+    repl.input_mode = InputMode::Normal;
     ReplResult::SkipEval
 }
 
@@ -827,6 +830,13 @@ fn cmd_history(repl: &mut Repl, _: &[u8]) -> ReplResult {
 // Main REPL Struct
 // ============================================================================
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InputMode {
+    Normal,
+    Multiline,
+    Editor,
+}
+
 pub(super) struct Repl<'a> {
     line_editor: LineEditor,
     history: History,
@@ -834,8 +844,7 @@ pub(super) struct Repl<'a> {
     editor_buffer: Vec<u8>,
 
     // State
-    in_multiline: bool,
-    editor_mode: bool,
+    input_mode: InputMode,
     running: bool,
     is_tty: bool,
     use_colors: bool,
@@ -873,8 +882,7 @@ impl<'a> Repl<'a> {
             history: History::init(),
             multiline_buffer: Vec::new(),
             editor_buffer: Vec::new(),
-            in_multiline: false,
-            editor_mode: false,
+            input_mode: InputMode::Normal,
             running: false,
             is_tty: false,
             use_colors: false,
@@ -1170,7 +1178,7 @@ impl<'a> Repl<'a> {
     // ========================================================================
 
     fn get_prompt(&self) -> &'static [u8] {
-        if self.in_multiline || self.editor_mode {
+        if self.input_mode != InputMode::Normal {
             if self.use_colors {
                 return concat!("\x1b[2m", "... ", "\x1b[0m").as_bytes();
             } else {
@@ -1186,7 +1194,7 @@ impl<'a> Repl<'a> {
     }
 
     fn get_prompt_length(&self) -> usize {
-        if self.in_multiline || self.editor_mode {
+        if self.input_mode != InputMode::Normal {
             return 4; // "... "
         }
         2 // "> " or "\u{276f} "
@@ -2011,8 +2019,8 @@ impl<'a> Repl<'a> {
             match key {
                 Key::Enter => self.handle_enter()?,
                 Key::CtrlC => self.handle_ctrl_c(),
-                Key::CtrlD => {
-                    if self.editor_mode {
+                Key::CtrlD => match self.input_mode {
+                    InputMode::Editor => {
                         // Finish editor mode
                         self.print(format_args!("\n"));
                         // Note: reshaped for borrowck — clone editor_buffer slice before evaluate
@@ -2021,17 +2029,19 @@ impl<'a> Repl<'a> {
                             self.evaluate_and_print(&code);
                             self.editor_buffer = code;
                         }
-                        self.editor_mode = false;
+                        self.input_mode = InputMode::Normal;
                         self.editor_buffer.clear();
                         self.refresh_line();
-                    } else if self.line_editor.buffer.is_empty() && !self.in_multiline {
+                    }
+                    InputMode::Normal if self.line_editor.buffer.is_empty() => {
                         self.print(format_args!("\n"));
                         self.running = false;
-                    } else {
+                    }
+                    _ => {
                         self.line_editor.delete_char();
                         self.refresh_line();
                     }
-                }
+                },
                 Key::CtrlL => {
                     self.write(Cursor::CLEAR_SCREEN.as_bytes());
                     self.write(Cursor::HOME.as_bytes());
@@ -2139,7 +2149,7 @@ impl<'a> Repl<'a> {
         // Note: reshaped for borrowck — copy line out so we can call &mut self methods
         let line: Vec<u8> = self.line_editor.get_line().to_vec();
 
-        if self.editor_mode {
+        if self.input_mode == InputMode::Editor {
             if strings::trim(&line, b" \t").is_empty() {
                 self.editor_buffer.extend_from_slice(b"\n");
             } else {
@@ -2193,13 +2203,13 @@ impl<'a> Repl<'a> {
         }
 
         // Handle empty line
-        if line.is_empty() && !self.in_multiline {
+        if line.is_empty() && self.input_mode != InputMode::Multiline {
             self.refresh_line();
             return Ok(());
         }
 
         // Check for multi-line input
-        let full_code: &[u8] = if self.in_multiline {
+        let full_code: &[u8] = if self.input_mode == InputMode::Multiline {
             self.multiline_buffer.extend_from_slice(&line);
             self.multiline_buffer.push(b'\n');
             &self.multiline_buffer
@@ -2208,8 +2218,8 @@ impl<'a> Repl<'a> {
         };
 
         if is_incomplete_code(full_code) {
-            if !self.in_multiline {
-                self.in_multiline = true;
+            if self.input_mode != InputMode::Multiline {
+                self.input_mode = InputMode::Multiline;
                 self.multiline_buffer.extend_from_slice(&line);
                 self.multiline_buffer.push(b'\n');
             }
@@ -2219,7 +2229,7 @@ impl<'a> Repl<'a> {
         }
 
         // Complete code - evaluate it
-        let code_to_eval: Box<[u8]> = if self.in_multiline {
+        let code_to_eval: Box<[u8]> = if self.input_mode == InputMode::Multiline {
             Box::<[u8]>::from(self.multiline_buffer.as_slice())
         } else {
             Box::<[u8]>::from(line.as_slice())
@@ -2232,40 +2242,46 @@ impl<'a> Repl<'a> {
         // Reset state
         self.line_editor.clear();
         self.multiline_buffer.clear();
-        self.in_multiline = false;
+        self.input_mode = InputMode::Normal;
         self.history.reset_position();
         self.refresh_line();
         Ok(())
     }
 
     fn handle_ctrl_c(&mut self) {
-        if self.editor_mode {
-            self.print(format_args!(
-                "\n{}// Editor mode cancelled{}\n",
-                Color::DIM,
-                Color::RESET
-            ));
-            self.editor_mode = false;
-            self.editor_buffer.clear();
-        } else if self.in_multiline {
-            self.print(format_args!("\n"));
-            self.in_multiline = false;
-            self.multiline_buffer.clear();
-        } else if !self.line_editor.buffer.is_empty() {
-            self.print(format_args!("^C\n"));
-            self.line_editor.clear();
-        } else if self.ctrl_c_pressed {
-            // Second Ctrl+C on empty line - exit
-            self.print(format_args!("\n"));
-            self.running = false;
-            return;
-        } else {
-            self.ctrl_c_pressed = true;
-            self.print(format_args!(
-                "\n{}(press Ctrl+C again to exit, or Ctrl+D){}\n",
-                Color::DIM,
-                Color::RESET
-            ));
+        match self.input_mode {
+            InputMode::Editor => {
+                self.print(format_args!(
+                    "\n{}// Editor mode cancelled{}\n",
+                    Color::DIM,
+                    Color::RESET
+                ));
+                self.input_mode = InputMode::Normal;
+                self.editor_buffer.clear();
+            }
+            InputMode::Multiline => {
+                self.print(format_args!("\n"));
+                self.input_mode = InputMode::Normal;
+                self.multiline_buffer.clear();
+            }
+            InputMode::Normal if !self.line_editor.buffer.is_empty() => {
+                self.print(format_args!("^C\n"));
+                self.line_editor.clear();
+            }
+            InputMode::Normal if self.ctrl_c_pressed => {
+                // Second Ctrl+C on empty line - exit
+                self.print(format_args!("\n"));
+                self.running = false;
+                return;
+            }
+            InputMode::Normal => {
+                self.ctrl_c_pressed = true;
+                self.print(format_args!(
+                    "\n{}(press Ctrl+C again to exit, or Ctrl+D){}\n",
+                    Color::DIM,
+                    Color::RESET
+                ));
+            }
         }
         self.history.reset_position();
         self.refresh_line();

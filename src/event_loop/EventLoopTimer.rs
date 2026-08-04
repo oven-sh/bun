@@ -184,6 +184,7 @@ pub enum Tag {
     StatWatcherScheduler,
     UpgradedDuplex,
     DNSResolver,
+    DnsSdConnection,
     WindowsNamedPipe,
     WTFTimer,
     PostgresSQLConnectionTimeout,
@@ -213,6 +214,7 @@ impl Tag {
             | Tag::StatWatcherScheduler
             | Tag::GcRepeating // internal GC pacing
             | Tag::QuicEndpoint
+            | Tag::DnsSdConnection // internal lookup pacing
             => false,
             _ => true,
         }

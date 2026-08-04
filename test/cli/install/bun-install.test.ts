@@ -799,6 +799,25 @@ describe.concurrent("bun-install", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("--silent suppresses verbose output even when RUNNER_DEBUG is set", async () => {
+    using dir = tempDir("install-silent-verbose", {
+      "package.json": JSON.stringify({ name: "app", dependencies: {} }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--silent"],
+      cwd: String(dir),
+      env: { ...env, RUNNER_DEBUG: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   it("fails cleanly for a git dependency specifier longer than the path buffer", async () => {
     const longPath = Buffer.alloc(isWindows ? 100_000 : 8192, "a").toString();
     using dir = tempDir("long-git-dep", {

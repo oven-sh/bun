@@ -36,7 +36,7 @@ pub mod fetch_tasklet;
 
 #[path = "fetch/FetchRequestBodySink.rs"]
 pub mod fetch_request_body_sink;
-pub use self::fetch_request_body_sink::{FetchRequestBodySink, FetchRequestBodySinkJSSink};
+pub use self::fetch_request_body_sink::FetchRequestBodySink;
 
 #[path = "fetch/compress_body.rs"]
 pub mod compress_body;
@@ -396,9 +396,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let vm = VirtualMachine::get().as_mut();
 
     let mut upgraded_connection = false;
-    let mut force_http2 = false;
-    let mut force_http3 = false;
-    let mut force_http1 = false;
+    let mut forced_protocol: Option<http::Protocol> = None;
 
     if callframe.arguments_count() == 0 {
         let err = ctx.to_type_error(
@@ -834,11 +832,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         let str =
                             bun_core::OwnedString::new(protocol_val.to_bun_string(global_this)?);
                         if str.eql_comptime(b"http2") || str.eql_comptime(b"h2") {
-                            force_http2 = true;
+                            forced_protocol = Some(http::Protocol::Http2);
                         } else if str.eql_comptime(b"http3") || str.eql_comptime(b"h3") {
-                            force_http3 = true;
+                            forced_protocol = Some(http::Protocol::Http3);
                         } else if str.eql_comptime(b"http1.1") || str.eql_comptime(b"h1") {
-                            force_http1 = true;
+                            forced_protocol = Some(http::Protocol::Http1_1);
                         } else {
                             return Err(global_this.throw_invalid_arguments(
                                 format_args!("fetch: 'protocol' must be \"http2\", \"h2\", \"http3\", \"h3\", \"http1.1\", or \"h1\""),
@@ -1390,10 +1388,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
 
             if let Some(upgrade_) = headers_ref.fast_get(HTTPHeaderName::Upgrade) {
-                let upgrade = upgrade_.to_slice();
-                // `defer upgrade.deinit()` → Drop.
-                let slice = upgrade.slice();
-                if slice != b"h2" && slice != b"h2c" {
+                if http::upgrade_header_is_not_h2(upgrade_.to_slice().slice()) {
                     upgraded_connection = true;
                 }
             }
@@ -1751,11 +1746,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
                     let original_size = body.any_blob().blob().size.get();
                     let stat_size = blob::SizeType::try_from(stat.st_size).expect("int cast");
-                    let blob_size = if bun_sys::S::ISREG(stat.st_mode as u32) {
-                        stat_size
-                    } else {
-                        original_size.min(stat_size)
-                    };
                     let blob_offset = body.any_blob().blob().offset.get();
 
                     // `http::SendFile` fields are `usize`; blob sizes/offsets
@@ -1764,7 +1754,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         fd: opened_fd,
                         remain: (blob_offset + original_size) as usize,
                         offset: blob_offset as usize,
-                        content_size: blob_size as usize,
+                        content_size: original_size.min(stat_size) as usize,
                     };
 
                     if bun_sys::S::ISREG(stat.st_mode as u32) {
@@ -1775,6 +1765,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             .max(sf.offset)
                             .min(stat_size_usize)
                             .saturating_sub(sf.offset);
+                        // `remain` is now the exact byte count we will send (the slice
+                        // window clamped to the file); that is the Content-Length.
+                        sf.content_size = sf.remain;
                     }
                     body.detach();
                     body = HTTPRequestBody::Sendfile(sf);
@@ -2093,9 +2086,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ssl_config: ssl_config.take(),
         hostname: hostname.take(),
         upgraded_connection,
-        force_http2,
-        force_http3,
-        force_http1,
+        forced_protocol,
         is_node_http_client: ALLOW_GET_BODY,
         compress,
         check_server_identity: if check_server_identity.is_empty_or_undefined_or_null() {

@@ -8,6 +8,7 @@ const classes = [
   "H3ResponseSink",
   "NetworkSink",
   "FetchRequestBodySink",
+  "HTMLRewriterSink",
 ];
 
 function names(name) {
@@ -526,8 +527,15 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
     }
 
     sink->detach();
-    RETURN_IF_EXCEPTION(scope, {});
     ${name}__close(lexicalGlobalObject, ptr);
+    // detach() nulled m_sinkPtr so ~${className} won't finalize ptr; do the
+    // destructor's teardown (onDestroy first so Subprocess clears its weak
+    // back-pointer, then __finalize) here instead, even if __close threw.
+    if (auto destroy = std::exchange(sink->m_onDestroy, 0)) {
+        Bun__onSinkDestroyed(destroy, ptr);
+    }
+    ${name}__finalize(ptr);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -1054,6 +1062,7 @@ function rustSink() {
     H3ResponseSink: "crate::webcore::streams::H3ResponseSink",
     NetworkSink: "crate::webcore::streams::NetworkSink",
     FetchRequestBodySink: "crate::webcore::fetch::fetch_request_body_sink::FetchRequestBodySink",
+    HTMLRewriterSink: "crate::api::html_rewriter::RewriterPipe",
   };
 
   const symbols: string[] = [];
@@ -1134,8 +1143,9 @@ pub extern "C" fn ${name}__memoryCost(this: &${name}) -> usize {
 
 `;
 
-    // ZIG_DECL void ${name}__finalize(void* sinkPtr) — called from JS${name}::~JS${name}.
-    // C++ caller null-checks `m_sinkPtr` before calling.
+    // ZIG_DECL void ${name}__finalize(void* sinkPtr) — called from
+    // JS${name}::~JS${name} and from ${name}__doClose. C++ caller null-checks
+    // `m_sinkPtr` / `ptr` before calling.
     symbols.push(`${name}__finalize`);
     templ += `#[allow(dead_code, unreachable_pub, unused)]
 #[unsafe(no_mangle)]

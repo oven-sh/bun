@@ -117,7 +117,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.pop_and_discard_scope(if_stmt_scope_index);
                 }
 
-                if opts.is_typescript_declare && opts.is_namespace_scope && opts.is_export {
+                if opts.is_typescript_declare && opts.scope.is_namespace() && opts.is_export {
                     p.has_non_local_export_declare_inside_namespace = true;
                 }
 

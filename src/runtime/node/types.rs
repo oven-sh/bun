@@ -248,6 +248,36 @@ impl Default for StringOrBuffer {
     }
 }
 
+/// Type-tag classification of a value that [`StringOrBuffer::from_js`] would
+/// accept. Computing it runs no user JS, so callers can classify an argument
+/// up front, coerce later arguments (which may run `toString`/getters), and
+/// only then decode via [`StringOrBuffer::from_js_with_kind`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum StringOrBufferKind {
+    String,
+    StringObject,
+    ArrayBuffer,
+}
+
+impl StringOrBufferKind {
+    #[inline]
+    pub fn of(value: JSValue) -> Option<Self> {
+        if !value.is_cell() {
+            return None;
+        }
+        let ty = value.js_type();
+        if ty.is_string() {
+            Some(Self::String)
+        } else if ty.is_string_object_like() {
+            Some(Self::StringObject)
+        } else if ty.is_array_buffer_like() {
+            Some(Self::ArrayBuffer)
+        } else {
+            None
+        }
+    }
+}
+
 impl StringOrBuffer {
     pub(crate) const EMPTY: StringOrBuffer = StringOrBuffer::EncodedSlice(ZigStringSlice::EMPTY);
 
@@ -388,12 +418,38 @@ impl StringOrBuffer {
         is_async: bool,
         allow_string_object: bool,
     ) -> JsResult<bool> {
-        use jsc::JSType;
-        match value.js_type() {
-            str_type @ (JSType::String | JSType::StringObject | JSType::DerivedStringObject) => {
-                if !allow_string_object && str_type != JSType::String {
-                    return Ok(false);
-                }
+        let Some(kind) = StringOrBufferKind::of(value) else {
+            return Ok(false);
+        };
+        if !allow_string_object && kind == StringOrBufferKind::StringObject {
+            return Ok(false);
+        }
+        Self::from_js_with_kind_into(out, global, value, kind, is_async)?;
+        Ok(true)
+    }
+
+    /// Decode a value already classified by [`StringOrBufferKind::of`].
+    #[inline]
+    pub fn from_js_with_kind(
+        global: &JSGlobalObject,
+        value: JSValue,
+        kind: StringOrBufferKind,
+    ) -> JsResult<StringOrBuffer> {
+        let mut out = Self::EMPTY;
+        Self::from_js_with_kind_into(&mut out, global, value, kind, false)?;
+        Ok(out)
+    }
+
+    #[inline]
+    fn from_js_with_kind_into(
+        out: &mut StringOrBuffer,
+        global: &JSGlobalObject,
+        value: JSValue,
+        kind: StringOrBufferKind,
+        is_async: bool,
+    ) -> JsResult<()> {
+        match kind {
+            StringOrBufferKind::String | StringOrBufferKind::StringObject => {
                 let mut str = bun_core::String::from_js(value, global)?;
                 if is_async {
                     let mut possible_clone = str;
@@ -410,7 +466,7 @@ impl StringOrBuffer {
                         // partial-move out of `SliceWithUnderlyingString` —
                         // take `utf8` and leave the rest defaulted (no Drop on the type).
                         *out = Self::EncodedSlice(core::mem::take(&mut sliced.utf8));
-                        return Ok(true);
+                        return Ok(());
                     }
 
                     *out = Self::ThreadsafeString(sliced);
@@ -420,23 +476,9 @@ impl StringOrBuffer {
                     // the old scopeguard's closure was always a no-op on this arm.
                     *out = Self::String(str.to_slice());
                 }
-                Ok(true)
             }
 
-            JSType::ArrayBuffer
-            | JSType::Int8Array
-            | JSType::Uint8Array
-            | JSType::Uint8ClampedArray
-            | JSType::Int16Array
-            | JSType::Uint16Array
-            | JSType::Int32Array
-            | JSType::Uint32Array
-            | JSType::Float32Array
-            | JSType::Float16Array
-            | JSType::Float64Array
-            | JSType::BigInt64Array
-            | JSType::BigUint64Array
-            | JSType::DataView => {
+            StringOrBufferKind::ArrayBuffer => {
                 let buffer = if is_async {
                     Buffer::from_js_pinned(global, value)
                         .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
@@ -449,10 +491,9 @@ impl StringOrBuffer {
                 }
 
                 *out = Self::Buffer(buffer);
-                Ok(true)
             }
-            _ => Ok(false),
         }
+        Ok(())
     }
 
     #[inline]

@@ -5,7 +5,7 @@ use bun_options_types::TargetExt as _;
 use std::io::Write as _;
 
 use crate::Error;
-use crate::node::{Encoding, StringOrBuffer};
+use crate::node::{Encoding, StringOrBuffer, StringOrBufferKind};
 use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
 use bun_ast::Expr;
 use bun_ast::Loader;
@@ -130,11 +130,6 @@ fn source_map_option_from_js(
 
 fn level_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<bun_ast::Level>> {
     bun_ast::Level::MAP.from_js(global, value)
-}
-
-#[inline]
-fn is_string_or_buffer_like(value: JSValue) -> bool {
-    value.is_string() || (value.is_cell() && value.js_type().is_array_buffer_like())
 }
 
 /// Deep-clone a [`MacroMap`]. The keys are `Box<[u8]>`, so an owned copy
@@ -1323,9 +1318,9 @@ impl JSTranspiler {
             return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
         };
         args.eat();
-        if !is_string_or_buffer_like(code_arg) {
+        let Some(code_kind) = StringOrBufferKind::of(code_arg) else {
             return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
-        }
+        };
 
         let loader: Option<Loader> = 'brk: {
             if let Some(arg) = args.next() {
@@ -1339,10 +1334,7 @@ impl JSTranspiler {
             return Ok(JSValue::ZERO);
         }
 
-        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
-            return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
-        };
-        // defer code_holder.deinit() → Drop
+        let code_holder = StringOrBuffer::from_js_with_kind(global, code_arg, code_kind)?;
         let code = code_holder.slice();
 
         let arena = Arena::new();
@@ -1488,13 +1480,13 @@ impl JSTranspiler {
         };
 
         args.eat();
-        if !is_string_or_buffer_like(code_arg) {
+        let Some(code_kind) = StringOrBufferKind::of(code_arg) else {
             return Err(global.throw_invalid_argument_type(
                 "transformSync",
                 "code",
                 "string or Uint8Array",
             ));
-        }
+        };
 
         let mut js_ctx_value: JSValue = JSValue::ZERO;
         let loader: Option<Loader> = 'brk: {
@@ -1513,14 +1505,7 @@ impl JSTranspiler {
         };
 
         let arena = Arena::new();
-        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
-            return Err(global.throw_invalid_argument_type(
-                "transformSync",
-                "code",
-                "string or Uint8Array",
-            ));
-        };
-        // defer code_holder.deinit() → Drop
+        let code_holder = StringOrBuffer::from_js_with_kind(global, code_arg, code_kind)?;
         let code = code_holder.slice();
         arguments[0].ensure_still_alive();
         let _keep0 = bun_jsc::EnsureStillAlive(arguments[0]);
@@ -1708,13 +1693,13 @@ impl JSTranspiler {
         };
 
         args.eat();
-        if !is_string_or_buffer_like(code_arg) {
+        let Some(code_kind) = StringOrBufferKind::of(code_arg) else {
             return Err(global.throw_invalid_argument_type(
                 "scanImports",
                 "code",
                 "string or Uint8Array",
             ));
-        }
+        };
 
         let mut loader: Loader = self.config.get().default_loader;
         if let Some(arg) = args.next() {
@@ -1724,20 +1709,7 @@ impl JSTranspiler {
             args.eat();
         }
 
-        let code_holder = match StringOrBuffer::from_js(global, code_arg)? {
-            Some(h) => h,
-            None => {
-                if !global.has_exception() {
-                    return Err(global.throw_invalid_argument_type(
-                        "scanImports",
-                        "code",
-                        "string or Uint8Array",
-                    ));
-                }
-                return Ok(JSValue::ZERO);
-            }
-        };
-        // defer code_holder.deinit() → Drop
+        let code_holder = StringOrBuffer::from_js_with_kind(global, code_arg, code_kind)?;
         let code = code_holder.slice();
 
         if !loader.is_java_script_like() {

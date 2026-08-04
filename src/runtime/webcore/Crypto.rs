@@ -2,7 +2,7 @@ use bun_core::String as BunString;
 use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
 use bun_jsc::{CallFrame, JSGlobalObject, JSType, JSValue, JsClass, JsResult, StringJsc};
 
-use crate::node::Encoding;
+use crate::node::{Encoding, StringOrBuffer, StringOrBufferKind};
 
 // `.classes.ts`-backed type: the C++ JSCell wrapper stays generated C++.
 // This struct is the `m_ctx` payload. `toJS`/`fromJS`/`fromJSDirect` are
@@ -280,16 +280,14 @@ fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     let name_value = arguments.ptr[0];
     let namespace_value = arguments.ptr[1];
 
-    if !(name_value.is_string()
-        || (name_value.is_cell() && name_value.js_type().is_array_buffer_like()))
-    {
+    let Some(name_kind) = StringOrBufferKind::of(name_value) else {
         return Err(global
             .err(
                 bun_jsc::ErrorCode::INVALID_ARG_TYPE,
                 format_args!("The \"name\" argument must be of type string or BufferSource"),
             )
             .throw());
-    }
+    };
 
     let namespace: [u8; 16] = 'brk: {
         if namespace_value.is_string() {
@@ -339,20 +337,7 @@ fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
             .throw());
     };
 
-    // `bun_core::ZigStringSlice` is a borrow-or-own UTF-8 slice.
-    let name: bun_core::ZigStringSlice = if name_value.is_string() {
-        bun_core::OwnedString::new(name_value.to_bun_string(global)?).to_utf8()
-    } else if let Some(array_buffer) = name_value.as_array_buffer(global) {
-        bun_core::ZigStringSlice::from_utf8_never_free(array_buffer.byte_slice())
-    } else {
-        return Err(global
-            .err(
-                bun_jsc::ErrorCode::INVALID_ARG_TYPE,
-                format_args!("The \"name\" argument must be of type string or BufferSource"),
-            )
-            .throw());
-    };
-    // `defer name.deinit()` — Utf8Slice's Drop handles cleanup.
+    let name = StringOrBuffer::from_js_with_kind(global, name_value, name_kind)?;
 
     let uuid = UUID5::init(&namespace, name.slice());
 

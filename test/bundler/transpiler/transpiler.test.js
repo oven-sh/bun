@@ -4795,8 +4795,9 @@ it("deeply nested statement blocks error instead of crashing the process", () =>
 });
 
 it("running a file with deeply nested unary operators does not crash the process", () => {
-  // Leading space so the argument doesn't start with '-'; Node-style -e
-  // parsing treats a '-'-leading separate arg as a missing value.
+  // Leading space so the -e value does not start with "-": Node (and Bun, for
+  // Node compat) treats a dash-leading value as a flag and rejects it with
+  // "requires an argument", which would mask the parser check this test exists for.
   const code = " " + Buffer.alloc(2 * 4000, "- ").toString() + "1";
   const { exitCode, signalCode } = Bun.spawnSync({
     cmd: [bunExe(), "-e", code],

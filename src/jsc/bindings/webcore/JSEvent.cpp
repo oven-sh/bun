@@ -299,6 +299,7 @@ JSC_DEFINE_HOST_FUNCTION(jsEventPrototype_inspectCustom, (JSC::JSGlobalObject * 
         jsNumber(context ? event->timeStampForBindings(*context) : 0.0), 0);
 
     JSFunction* utilInspect = globalObject->utilInspectFunction();
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto callData = JSC::getCallData(utilInspect);
     MarkedArgumentBuffer arguments;
     arguments.append(fields);

@@ -1219,18 +1219,53 @@ describe("bun test", () => {
       });
 
       test("surfaces a throwing custom formatter in the interpolated value as a test error", () => {
+        // The declaration throw aborts module evaluation, so each variant
+        // needs its own file to be verified independently.
+        const throwing = (message: string) =>
+          `({ [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error(${JSON.stringify(message)}); } })`;
         const stderr = runTest({
           args: [],
           expectExitCode: 1,
-          input: `
-            import { test } from "bun:test";
-
-            test.each([{ a: { b: { [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("boom from inspect.custom"); } } } }])("case $a.b", () => {});
-            test.each([[{ [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("boom from inspect.custom"); } }]])("case %p", () => {});
-          `,
+          input: [
+            {
+              filename: "test-each-path.test.ts",
+              contents: `
+                import { test } from "bun:test";
+                test.each([{ a: { b: ${throwing("boom from test.each $path")} } }])("case $a.b", () => {});
+              `,
+            },
+            {
+              filename: "test-each-p.test.ts",
+              contents: `
+                import { test } from "bun:test";
+                test.each([[${throwing("boom from test.each %p")}]])("case %p", () => {});
+              `,
+            },
+            {
+              filename: "describe-each-path.test.ts",
+              contents: `
+                import { test, describe } from "bun:test";
+                describe.each([{ a: { b: ${throwing("boom from describe.each $path")} } }])("suite $a.b", () => {
+                  test("inner", () => {});
+                });
+              `,
+            },
+            {
+              filename: "describe-each-p.test.ts",
+              contents: `
+                import { test, describe } from "bun:test";
+                describe.each([[${throwing("boom from describe.each %p")}]])("suite %p", () => {
+                  test("inner", () => {});
+                });
+              `,
+            },
+          ],
         });
 
-        expect(stderr).toContain("boom from inspect.custom");
+        expect(stderr).toContain("boom from test.each $path");
+        expect(stderr).toContain("boom from test.each %p");
+        expect(stderr).toContain("boom from describe.each $path");
+        expect(stderr).toContain("boom from describe.each %p");
       });
 
       test("handles missing properties gracefully", () => {

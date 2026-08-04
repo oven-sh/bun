@@ -27,14 +27,14 @@ function tagBuffers(value: unknown): [unknown, unknown[]] | null {
       continue;
     }
     if ($isMap(current)) {
-      for (const { 0: key, 1: entry } of current) {
+      current.$forEach((entry, key) => {
         stack.push(key);
         stack.push(entry);
-      }
+      });
       continue;
     }
     if ($isSet(current)) {
-      for (const entry of current) stack.push(entry);
+      current.$forEach(entry => stack.push(entry));
       continue;
     }
     // Objects, arrays and errors: the serializer walks own enumerable

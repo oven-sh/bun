@@ -107,11 +107,8 @@ pub fn set_override_module_run_main_promise(
     }
 }
 
-/// Exported as `Bun__VM__setEntryPointEvalResultESM`.
-///
-/// `is_async_capability`: `result` is the module's internal async-capability
-/// promise (top-level-await path), not the user-visible completion value, so
-/// `--print` must unwrap it rather than log it.
+/// Exported as `Bun__VM__setEntryPointEvalResultESM`. `is_async_capability`: `result` is
+/// the internal TLA capability promise, so `--print` must unwrap it rather than log it.
 // HOST_EXPORT(Bun__VM__setEntryPointEvalResultESM, c)
 pub fn set_entry_point_eval_result_esm(
     this: &mut VirtualMachine,

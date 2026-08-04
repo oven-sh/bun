@@ -1822,10 +1822,8 @@ fn index_of_char_t<T: PathCharCwd>(haystack: &[T], needle: T, from: usize) -> Op
         .map(|i| i + from)
 }
 
-/// Node's `WINDOWS_RESERVED_NAMES` membership test, case-insensitive.
-/// The `COM¹`/`LPT²` spellings carry U+00B9/U+00B2/U+00B3, which is one code
-/// unit in WTF-16 and the two bytes `C2 B9` in UTF-8.
-/// https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L72-L84
+/// Node's `WINDOWS_RESERVED_NAMES` test; `COM¹`/`LPT²` carry U+00B9–B3 (1 UTF-16 unit,
+/// 2 UTF-8 bytes): https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L72-L84
 fn is_windows_reserved_name_t<T: PathCharCwd>(device_part: &[T]) -> bool {
     if device_part.len() == 3 {
         return eql_ignore_case_t(device_part, l::<T>(b"CON"))
@@ -1849,10 +1847,8 @@ fn is_windows_reserved_name_t<T: PathCharCwd>(device_part: &[T]) -> bool {
     }
 }
 
-/// Leading slots `normalize_windows_t` reserves in its output buffer for the
-/// `.\` prefix Node prepends for CVE-2024-36139 and for reserved device names.
-/// Reserving them up front keeps that a write instead of a shift of the whole
-/// result. Callers must size the buffer to include them.
+/// Leading slots `normalize_windows_t` reserves for the `.\` prefix Node prepends
+/// (CVE-2024-36139 / reserved device names). Callers must size the buffer to include them.
 const WIN32_NORMALIZE_RESERVE: usize = 2;
 
 /// Based on Node v26.3.0 path.win32.normalize
@@ -1994,11 +1990,8 @@ fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [T]) -> &'a 
                                 buf[PFX + buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
                                 return &buf[PFX..PFX + buf_size];
                             }
-                            // We matched a UNC root with leftovers
-
-                            // Translated from the following JS code:
-                            //   device =
-                            //     `\\\\${firstPart}\\${StringPrototypeSlice(path, last, j)}`;
+                            // We matched a UNC root with leftovers. JS:
+                            //   device = `\\\\${firstPart}\\${StringPrototypeSlice(path, last, j)}`;
                             //   rootEnd = j;
                             buf_size = 2;
                             buf[PFX] = T::from_u8(CHAR_BACKWARD_SLASH);
@@ -2068,10 +2061,8 @@ fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [T]) -> &'a 
 
     buf_size = buf_offset + tail_len;
 
-    // If the original path was not absolute and we could not resolve it relative
-    // to a particular device, `tail` must not have become something Windows would
-    // read as an absolute path. See CVE-2024-36139.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L437-L456
+    // Non-absolute path with no device: `tail` must not have become Windows-absolute.
+    // CVE-2024-36139: https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L437-L456
     if !_is_absolute && device_len.is_none() {
         if let Some(first_colon) = colon_index {
             let mut needs_dot = tail_len >= 2
@@ -2098,11 +2089,7 @@ fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [T]) -> &'a 
         }
     }
 
-    // Translated from the following JS code:
-    //   const colonIndex = StringPrototypeIndexOf(path, ':');
-    //   if (isWindowsReservedName(path, colonIndex)) {
-    //     return `.\\${device ?? ''}${tail}`;
-    //   }
+    // JS: `if (isWindowsReservedName(path, colonIndex)) return `.\\${device ?? ''}${tail}`;`
     // `slice(0, -1)` drops the last code unit when there is no colon.
     if is_windows_reserved_name_t(match colon_index {
         Some(ci) => &path[0..ci],
@@ -3082,7 +3069,7 @@ pub(crate) fn resolve_posix_t<'a, T: PathCharCwd>(
 
 /// Based on Node v21.6.1 path.win32.resolve:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L162
-fn resolve_windows_t<'a, T: PathCharCwd>(
+pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
     paths: &[&[T]],
     buf: &'a mut [T],
     buf2: &mut [T],
@@ -3318,22 +3305,14 @@ fn resolve_windows_t<'a, T: PathCharCwd>(
                                 // We matched a UNC root
 
                                 if resolved_device_len > 0 {
-                                    // resolvedDevice is already set to a drive
-                                    // letter (`X:`). A UNC device can never match
-                                    // it, and building the UNC string below would
-                                    // overwrite tmpBuf which backs resolvedDevice.
+                                    // resolvedDevice is a drive letter; a UNC device never
+                                    // matches and building it would overwrite tmpBuf.
                                     i_i64 -= 1;
                                     continue 'paths;
                                 }
 
-                                // Translated from the following JS code:
-                                //   } else {
-                                //     // We matched a device root (e.g. \\\\.\\PHYSICALDRIVE0)
-                                //     device = `\\\\${firstPart}`;
-                                //     rootEnd = 4;
-                                //   }
-                                // `firstPart` is a single `.` or `?` here, so the
-                                // device is always 3 chars and the root always 4.
+                                // JS: `device = `\\\\${firstPart}`; rootEnd = 4;` (device root,
+                                // e.g. \\.\PHYSICALDRIVE0). firstPart is `.`/`?`: device=3, root=4.
                                 let first_part_is_device_root = first_part_end - first_part_start
                                     == 1
                                     && (path!()[first_part_start] == T::from_u8(CHAR_DOT)
@@ -3350,12 +3329,8 @@ fn resolve_windows_t<'a, T: PathCharCwd>(
                                     break 'root;
                                 }
 
-                                // Translated from the following JS code:
-                                //   device =
-                                //     `\\\\${firstPart}\\${StringPrototypeSlice(path, last, j)}`;
-                                //   rootEnd = j;
-                                // path may alias tmp_buf (cwd branch); use
-                                // ptr::copy (memmove semantics).
+                                // JS: `device = `\\\\${firstPart}\\${StringPrototypeSlice(path, last, j)}`;
+                                // rootEnd = j;`. path may alias tmp_buf; use ptr::copy (memmove).
                                 buf_size = 2;
                                 tmp_buf[0] = T::from_u8(CHAR_BACKWARD_SLASH);
                                 tmp_buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);

@@ -2,12 +2,9 @@
 let dns = Bun.dns;
 const permission = require("internal/permission");
 if (permission.enabled) {
-  // cares_wrap.cc gates every query on the net scope per call
-  // (ERR_ACCESS_DENIED_IF_INSUFFICIENT_PERMISSIONS), so a later
-  // `process.permission.drop('net')` takes effect immediately. Swap the
-  // binding for a checking facade so every query path — callback, promises,
-  // and Resolver instances — goes through one gate; server management stays
-  // available either way.
+  // cares_wrap.cc gates every query on the net scope per call, so swap the binding
+  // for a checking facade so every query path goes through one gate.
+  // https://github.com/nodejs/node/blob/main/src/cares_wrap.cc
   dns = makePermissionCheckedDnsFacade(dns);
 }
 
@@ -318,9 +315,8 @@ function translateLookupOptions(options) {
   };
 }
 
-// node reports a 'dns' performance entry for every successful lookup,
-// lookupService and resolver query. Resolver entries are named after the
-// c-ares binding (queryAny, queryA, ...) rather than the JS method.
+// node reports a 'dns' performance entry for every successful lookup/lookupService/
+// resolver query; resolver entries are named after the c-ares binding (queryAny, …).
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/dns/callback_resolver.js#L38-L81
 const kPerfHooksDnsContext = Symbol("kPerfHooksDnsContext");
 

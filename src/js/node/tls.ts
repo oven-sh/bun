@@ -221,10 +221,8 @@ function validateSecureContextOptions(options) {
     validateString(sigalgs, "options.sigalgs");
     if (sigalgs === "") throw $ERR_INVALID_ARG_VALUE("options.sigalgs", sigalgs);
   }
-  // Engine-backed private keys: BoringSSL (which Bun always uses) has no
-  // OpenSSL ENGINE support, so a well-formed engine/identifier pair fails the
-  // way Node's no-engine builds do (setEngineKey is absent). Validation
-  // ordering matches Node:
+  // BoringSSL has no OpenSSL ENGINE support, so engine-backed keys fail like Node's
+  // no-engine builds; validation ordering matches Node:
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L221
   if (privateKeyIdentifier !== undefined && privateKeyIdentifier !== null) {
     if (privateKeyEngine === undefined || privateKeyEngine === null) {

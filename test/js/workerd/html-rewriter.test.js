@@ -1808,6 +1808,58 @@ describe("output ByteStream backpressured when a native sink is wired", () => {
     expect(stdout).toBe(out);
     expect(exitCode).toBe(0);
   });
+
+  // Streaming input, `input_ended=false`: the handler itself emits the >16 KiB
+  // output chunk, and the direct-stream's `pull()` is parked on `flush(true)`
+  // with more bytes to write. `signal_drained()` must wake the rewriter into
+  // `drain_pending_input()`'s upstream-`src.ready()` + `pending.run()` tail
+  // so the direct stream's second `c.write()` is delivered.
+  const streamed = prefix + "<x>" + suffix.slice(3, -4) + "</x>" + suffix;
+  async function makeParkedStreaming() {
+    const gate = Promise.withResolvers();
+    const input = new ReadableStream({
+      type: "direct",
+      async pull(c) {
+        c.write("<x></x>");
+        await c.flush(true);
+        c.write(suffix);
+        c.close();
+      },
+    });
+    const res = new HTMLRewriter()
+      .on("x", {
+        element: e => {
+          e.before(prefix, { html: true });
+          e.setInnerContent(suffix.slice(3, -4));
+          return gate.promise;
+        },
+      })
+      .transform(new Response(input));
+    const body = res.body;
+    gate.resolve();
+    await 0;
+    return { body };
+  }
+
+  it("completes with a streaming input (second HTMLRewriter)", async () => {
+    const { body } = await makeParkedStreaming();
+    const text = await new HTMLRewriter().transform(new Response(body)).text();
+    expect(text).toBe(streamed);
+  });
+
+  it("completes with a streaming input (Bun.serve)", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: async () => new Response((await makeParkedStreaming()).body),
+    });
+    const text = await (await fetch(server.url)).text();
+    expect(text).toBe(streamed);
+  });
+
+  it("completes with a streaming input (.text())", async () => {
+    const { body } = await makeParkedStreaming();
+    expect(await new Response(body).text()).toBe(streamed);
+  });
 });
 
 const payloads = [

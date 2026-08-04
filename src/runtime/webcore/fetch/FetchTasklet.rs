@@ -2681,10 +2681,8 @@ impl FetchTasklet {
 
             if let BodyValue::Locked(locked) = body {
                 if locked.on_receive_value.is_some() {
-                    // Scenario 2b: a consumer registered `on_receive_value`
-                    // (e.g. `Bun.write(path, response)`) and is waiting on
-                    // `resolve()`. Keep `native_response` so `on_body_received`
-                    // can still reach the body after the JS wrapper is gone.
+                    // Scenario 2b: a consumer (e.g. `Bun.write`) is waiting on
+                    // `resolve()`, so keep `native_response` reachable.
                     return;
                 }
                 if let Some(promise) = locked.promise {

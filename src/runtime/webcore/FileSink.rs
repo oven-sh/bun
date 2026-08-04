@@ -39,11 +39,8 @@ pub struct FileSink {
     pub(crate) writer: JsCell<IOWriter>,
     pub(crate) event_loop_handle: EventLoopHandle,
     pub(crate) written: Cell<usize>,
-    /// Total UTF-8 bytes `write`/`write_latin1`/`write_utf16` accepted, each
-    /// chunk counted exactly once. `written` mixes the writer's buffered and
-    /// flushed progress reports and can count the same bytes twice (e.g. a
-    /// direct stream's buffer-then-flush), so it cannot report how many bytes
-    /// a piped `ReadableStream` wrote (`Blob::pipe_readable_stream_to_blob`).
+    /// UTF-8 bytes the three write fns accepted, each chunk credited once.
+    /// `written` can double-count (buffer + flush), so it is unfit for this.
     pub(crate) received_bytes: Cell<u64>,
     pub(crate) pending: JsCell<streams::WritablePending>,
     pub(crate) source: JsCell<streams::SourceHandle>,
@@ -202,9 +199,7 @@ bun_io::impl_streaming_writer_parent! {
 
 pub struct Options {
     pub(crate) input_path: PathOrFileDescriptor,
-    /// Truncate the destination on open. Defaults to `false`:
-    /// `Bun.file(path).writer()` has always overwritten in place. Replace-style
-    /// writers (`Blob::pipe_readable_stream_to_blob`, i.e. `Bun.write`) opt in.
+    /// `O_TRUNC` on open. Default `false` (in-place overwrite); `Bun.write` opts in.
     pub(crate) truncate: bool,
     pub close: bool,
     pub(crate) mode: bun_sys::Mode,
@@ -1031,10 +1026,8 @@ impl FileSink {
         this
     }
 
-    /// Credit one accepted chunk's emitted UTF-8 length into `received_bytes`.
-    /// `Wrote`/`Pending` mean the writer took the whole chunk, buffering any
-    /// remainder. A `Done(n)` is an EOF mid-chunk whose `n` can include a drain
-    /// of already-credited buffered bytes, so it (and `Err`) credits nothing.
+    /// Credit one chunk's emitted UTF-8 length into `received_bytes`.
+    /// `Done(n)` credits nothing: its `n` can include already-credited bytes.
     fn count_received(&self, rc: &WriteResult, emitted_len: usize) {
         if matches!(rc, WriteResult::Wrote(_) | WriteResult::Pending(_)) {
             self.received_bytes
@@ -1073,9 +1066,7 @@ impl FileSink {
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_utf16` buffers/writes; no JS.
         let rc = self.writer.with_mut(|w| w.write_utf16(data.slice16()));
-        // The writer replaces each lone surrogate with U+FFFD (3 bytes);
-        // `le_with_replacement` is the exact length of that encoding. Plain
-        // `le` assumes valid UTF-16 and would undercount those by a byte.
+        // `le_with_replacement`: lone surrogates emit U+FFFD (3 bytes), not 2.
         self.count_received(
             &rc,
             simdutf::length::utf8::from::utf16::le_with_replacement(data.slice16()),

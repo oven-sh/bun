@@ -301,8 +301,7 @@ pub(crate) fn spawn_sync(
     spawn_maybe_sync::<true, false>(global_this, args, secondary_args_value)
 }
 
-/// Bun.spawnAndWait() calls this. Async spawn that resolves with the same
-/// result shape as `Bun.spawnSync` (buffered stdout/stderr, exitCode, etc.).
+/// Bun.spawnAndWait() calls this.
 pub(crate) fn spawn_and_wait(
     global_this: &JSGlobalObject,
     args: JSValue,
@@ -1817,8 +1816,6 @@ fn spawn_maybe_sync<const IS_SYNC: bool, const BUFFERED_ASYNC: bool>(
         }
 
         if BUFFERED_ASYNC {
-            // `out` keeps the JS Subprocess cell reachable for this frame; the
-            // returned promise is what the caller receives.
             out.ensure_still_alive();
             let promise = jsc::JSPromise::create(global_this).to_js();
             subprocess
@@ -1827,10 +1824,6 @@ fn spawn_maybe_sync<const IS_SYNC: bool, const BUFFERED_ASYNC: bool>(
             // Balanced by the `deref()` in `maybe_resolve_spawn_and_wait`.
             subprocess.ref_();
             subprocess.update_has_pending_activity();
-            // Process may already have exited and pipes closed before we got
-            // here; resolve immediately if so. Otherwise the `on_process_exit`
-            // / `on_close_io` hooks (including the `send_exit_notification`
-            // scopeguard above) resolve it.
             subprocess.maybe_resolve_spawn_and_wait();
             return Ok(promise);
         }

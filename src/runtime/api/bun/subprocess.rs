@@ -164,13 +164,8 @@ pub struct Subprocess<'a> {
     pub(crate) stderr_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
     pub(crate) exited_due_to_maxbuf: Cell<Option<MaxBuf::Kind>>,
 
-    /// Pending promise for `Bun.spawnAndWait()`. Resolved with the same result
-    /// shape as `Bun.spawnSync` once the process has exited and both
-    /// stdout/stderr pipes have closed.
+    /// Pending `Bun.spawnAndWait()` promise; resolved once exited and pipes closed.
     pub(crate) spawn_and_wait_promise: JsCell<jsc::StrongOptional>,
-    /// Whether `timeout` / `maxBuffer` were passed to `Bun.spawnAndWait()`, so
-    /// the result includes `exitedDueToTimeout` / `exitedDueToMaxBuffer` only
-    /// when the caller asked for a bound (matches `Bun.spawnSync`).
     pub(crate) spawn_and_wait_had_timeout: Cell<bool>,
     pub(crate) spawn_and_wait_had_max_buffer: Cell<bool>,
 }
@@ -553,9 +548,6 @@ impl Subprocess<'_> {
         }
     }
 
-    /// Resolve the pending `Bun.spawnAndWait()` promise once the process has
-    /// exited and neither stdout nor stderr is still an active pipe reader.
-    /// Balances the extra `ref_()` taken in `spawn_and_wait`.
     pub(crate) fn maybe_resolve_spawn_and_wait(&self) {
         if !self.process().has_exited() {
             return;

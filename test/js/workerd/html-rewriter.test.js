@@ -1754,12 +1754,15 @@ describe("output consumed via pipeThrough after a native-sink input transform", 
   const chunk = Buffer.alloc(50 * unit.length, unit).toString();
   const expected = Buffer.alloc(50 * 16, '<p x="1">abc</p>').toString();
 
-  function makeRewritten() {
+  // The pull() macrotask yield is load-bearing: a synchronous pull lets the
+  // rewrite drain into the pre-stream output_buffer before the downstream
+  // reader attaches, so the ByteStream drain() path under test is never hit.
+  function makeRewritten(chunks = [chunk]) {
     let i = 0;
     const body = new ReadableStream({
       async pull(c) {
         await Bun.sleep(0);
-        if (i++ === 0) c.enqueue(chunk);
+        if (i < chunks.length) c.enqueue(chunks[i++]);
         else c.close();
       },
     });
@@ -1797,18 +1800,7 @@ describe("output consumed via pipeThrough after a native-sink input transform", 
   // Two input chunks → the second chunk is what the Backpressure wake must
   // re-pull from upstream (the single-chunk case only owes the end() call).
   it("completes across multiple input chunks", async () => {
-    let i = 0;
-    const body = new ReadableStream({
-      async pull(c) {
-        await Bun.sleep(0);
-        if (i++ < 2) c.enqueue(chunk);
-        else c.close();
-      },
-    });
-    const rewritten = new HTMLRewriter()
-      .on("p", { element: e => e.setAttribute("x", "1") })
-      .transform(new Response(body.pipeThrough(new TextEncoderStream())));
-    const compressed = rewritten.body.pipeThrough(new CompressionStream("gzip"));
+    const compressed = makeRewritten([chunk, chunk]).body.pipeThrough(new CompressionStream("gzip"));
     const text = await new Response(compressed.pipeThrough(new DecompressionStream("gzip"))).text();
     expect(text).toBe(expected + expected);
   });

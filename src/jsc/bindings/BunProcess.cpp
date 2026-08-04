@@ -546,7 +546,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     if (!fromEmbedded) {
         char soname[64] = { 0 };
         if (Bun__addonNeedsGlibcOnMusl(utf8.data(), utf8.length(), soname, sizeof(soname))) [[unlikely]] {
-            tryToDeleteIfNecessary();
             WTF::StringBuilder msg;
             msg.append(filename);
             msg.append(" is linked against glibc (DT_NEEDED "_s);

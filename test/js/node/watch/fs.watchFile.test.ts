@@ -446,17 +446,19 @@ describe("fs.watchFile", () => {
       const ROUNDS = 12;
       let late = 0;
       let done = 0;
+      let exercised = 0;
 
       function round() {
         if (done >= ROUNDS) {
-          console.log("late=" + late);
-          process.exit(late === 0 ? 0 : 1);
+          console.log("late=" + late + " exercised=" + exercised);
+          process.exit(late === 0 && exercised > 0 ? 0 : 1);
         }
         done++;
         let raced = false;
         const w = fs.watchFile(target, { interval: 1 }, () => {
           if (raced) return;
           raced = true;
+          exercised++;
           clearInterval(kick);
           fs.appendFileSync(target, "z");
           setTimeout(() => { spin(10); }, 1);
@@ -472,9 +474,10 @@ describe("fs.watchFile", () => {
           }, 6);
         });
         const kick = setInterval(() => {
-          try { fs.appendFileSync(target, "y"); } catch {}
+          fs.appendFileSync(target, "y");
         }, 10);
         // a round that never sees a change callback proves nothing; skip it
+        // (the child exits nonzero at the end if no round anchored at all)
         setTimeout(() => {
           if (!raced) {
             raced = true;
@@ -496,7 +499,7 @@ describe("fs.watchFile", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-      stdout: "late=0",
+      stdout: expect.stringMatching(/^late=0 exercised=[1-9]\d*$/),
       stderr: expect.not.stringContaining("ASSERTION"),
       exitCode: 0,
       signalCode: null,

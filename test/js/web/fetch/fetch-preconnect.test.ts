@@ -144,6 +144,7 @@ describe.concurrent.todoIf(isWindows)("fetch.preconnect", () => {
           await Bun.sleep(25);
         }
         listener.stop(true);
+        console.log("connections:", sockets.length);
         console.log("OK");`,
       ],
       env: {
@@ -159,6 +160,12 @@ describe.concurrent.todoIf(isWindows)("fetch.preconnect", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("AddressSanitizer");
     expect(stdout).toContain("OK");
+    // Prove the pooled-reuse precondition was exercised: most iterations must
+    // have reused the parked socket instead of opening a fresh connection,
+    // otherwise this test passes without ever reaching the path it guards.
+    const connections = Number(/connections: (\d+)/.exec(stdout)?.[1]);
+    expect(connections).toBeGreaterThanOrEqual(1);
+    expect(connections).toBeLessThan(10);
     expect(exitCode).toBe(0);
   });
 

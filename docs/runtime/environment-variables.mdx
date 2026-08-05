@@ -105,7 +105,7 @@ FOO=`hello`
 
 ### Expansion
 
-Bun automatically _expands_ environment variables in unquoted and backtick-quoted values, so you can reference previously-defined variables. Single- and double-quoted values are not expanded.
+Bun automatically _expands_ environment variables in unquoted and backtick-quoted values, so you can reference variables defined anywhere in the file, including in later assignments. Single- and double-quoted values are not expanded.
 
 ```ini .env icon="settings"
 FOO=world

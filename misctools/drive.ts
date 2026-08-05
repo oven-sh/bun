@@ -18,7 +18,9 @@ const env = has("--bare") ? { ...process.env, TERM: "xterm-256color", BUN_MEMDEB
   ...(img ? { BUN_IMAGE_IN: img } : {}), ...envs,
 };
 const pre = has("--setsid") ? ["/usr/bin/perl", "-e", "use POSIX; POSIX::setsid(); exec @ARGV", "--"] : [];
-const proc = Bun.spawn([...pre, ...(has("--noaslr-launcher") ? [`${process.env.HOME}/code/tmp/noaslr/noaslr`] : []), cli], {
+const errFile = has("--stderr-file") ? args[args.indexOf("--stderr-file") + 1] : "";
+const wrap = errFile ? ["/bin/sh", "-c", `exec "$@" 2>>${errFile}`, "--"] : [];
+const proc = Bun.spawn([...wrap, ...pre, ...(has("--noaslr-launcher") ? [`${process.env.HOME}/code/tmp/noaslr/noaslr`] : []), cli], {
   env, cwd: process.cwd(),
   terminal: { cols: 150, rows: 45, data: (_t, d) => { const s = new TextDecoder().decode(d); buf += s; out.push(s); } },
 });

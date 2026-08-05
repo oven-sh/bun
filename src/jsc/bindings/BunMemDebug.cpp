@@ -1305,13 +1305,21 @@ static void imageDump(JSC::VM& vm, const char* path)
 #endif
         }
     }
+    size_t settledStrings = 0;
     { // Error objects keep raw StackFrames (CodeBlock pointers) until .stack is first read; resolve them now so nothing in the image points at code we drop or re-link
         JSC::HeapIterationScope scope(vm.heap);
         vm.heap.objectSpace().forEachLiveCell(scope, [&](JSC::HeapCell* heapCell, JSC::HeapCell::Kind kind) {
-            if (isJSCellKind(kind)) { if (auto* error = dynamicDowncast<JSC::ErrorInstance>(static_cast<JSC::JSCell*>(heapCell))) error->materializeErrorInfoIfNeeded(vm); }
+            if (isJSCellKind(kind)) {
+                JSC::JSCell* cell = static_cast<JSC::JSCell*>(heapCell);
+                if (auto* error = dynamicDowncast<JSC::ErrorInstance>(cell)) error->materializeErrorInfoIfNeeded(vm);
+                // Lazy one-time StringImpl header writes (hash, did-report-cost) would otherwise dirty image pages the first time a string is used after restore.
+                if (auto* str = dynamicDowncast<JSC::JSString>(cell)) { if (!str->isRope()) if (auto* impl = str->tryGetValueImpl()) { impl->settleLazyHeaderWritesForImage(); settledStrings++; } }
+            }
             return IterationStatus::Continue;
         });
     }
+    if (auto* table = vm.atomStringTable()) for (auto& packed : table->table()) if (auto* impl = packed.get()) { impl->settleLazyHeaderWritesForImage(); settledStrings++; }
+    if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] settled %zu StringImpl headers\n", settledStrings);
     { // linked CodeBlocks, metadata (value profiles/ICs), UnlinkedCodeBlocks and JIT code are per-run hot state: measured 11-17MB cheaper to re-create them fresh than to dirty them in the image
         const char* dc = getenv("BUN_IMAGE_DELETE_CODE"); // =0 keep all, =linked keep unlinked; default: drop everything
         JSC::sanitizeStackForVM(vm);

@@ -741,11 +741,7 @@ describe("Bun.Terminal", () => {
             env: bunEnv,
             stderr: "pipe",
           });
-          const [stdout, stderr, exitCode] = await Promise.all([
-            proc.stdout.text(),
-            proc.stderr.text(),
-            proc.exited,
-          ]);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           return { stdout: stdout.trim(), stderr, exitCode };
         };
 

@@ -723,9 +723,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
 }
 }
 
-// Weak-referenced by JSC::ErrorInstance::finalizeUnconditionally in the
-// vendored WebKit (ErrorInstance.cpp declares it __attribute__((weak)) and the
-// JSC cmake config force-loads it with -Wl,-u).
+// Weak-referenced by JSC::ErrorInstance::finalizeUnconditionally in vendor/WebKit.
 extern "C" void Bun__errorInstance__finalize(void* bunErrorData)
 {
     UNUSED_PARAM(bunErrorData);

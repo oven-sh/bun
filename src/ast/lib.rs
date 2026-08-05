@@ -1817,6 +1817,35 @@ impl Log {
         )
     }
 
+    /// `add_warning` with `AddErrorOptions`, formatted, plus a free-standing `note:` line.
+    /// `redact_sensitive_information` masks a credential value in the warned line's
+    /// source frame; the note carries no frame.
+    #[cold]
+    pub fn add_warning_fmt_opts_with_note(
+        &mut self,
+        args: fmt::Arguments<'_>,
+        note_args: fmt::Arguments<'_>,
+        opts: AddErrorOptions<'_>,
+    ) {
+        if !Kind::Warn.should_print(self.level) {
+            return;
+        }
+        let notes: Box<[Data]> = Box::new([range_data(None, Range::NONE, alloc_print(note_args))]);
+        let text = alloc_print(args);
+        self.add_formatted_msg(
+            Kind::Warn,
+            opts.source,
+            Range {
+                loc: opts.loc,
+                len: opts.len,
+            },
+            text,
+            notes,
+            true,
+            opts.redact_sensitive_information,
+        )
+    }
+
     /// Use a bun.sys.Error's message in addition to some extra context.
     pub fn add_sys_error(&mut self, e: &bun_sys::Error, args: fmt::Arguments<'_>) {
         let Some((tag_name, sys_errno)) = e.get_error_code_tag_name() else {

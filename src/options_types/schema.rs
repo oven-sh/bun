@@ -229,11 +229,14 @@ pub mod api {
         pub token: Box<[u8]>,
         /// email
         pub email: Box<[u8]>,
+        /// `.npmrc`'s `_auth`, verbatim. npm never decodes it, so neither may we.
+        /// Not read from `bunfig.toml`; it only carries the value to `Scope::from_api`.
+        pub auth: Box<[u8]>,
     }
 
     impl NpmRegistry {
-        /// Plain field-wise clone. PERF: could pack all five strings into one
-        /// contiguous allocation and reslice, but Rust can't hand back five
+        /// Plain field-wise clone. PERF: could pack all six strings into one
+        /// contiguous allocation and reslice, but Rust can't hand back six
         /// `Box<[u8]>` views into one buffer without leaking.
         #[inline]
         pub fn dupe(&self) -> NpmRegistry {

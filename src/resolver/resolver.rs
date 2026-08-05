@@ -2115,7 +2115,7 @@ impl<'a> Resolver<'a> {
         {
             let len = abs_path.len();
             let buf = bufs!(relative_abs_path);
-            if len + 1 >= buf.len() {
+            if len >= buf.len() {
                 return ResultUnion::NotFound;
             }
             buf[len] = SEP;

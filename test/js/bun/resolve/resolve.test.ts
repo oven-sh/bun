@@ -1146,10 +1146,10 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     expect(exitCode).toBe(0);
   });
 
-  it('import ".." ignores a sibling of the parent directory', async () => {
+  it.each(["..", "./.."])('import %j ignores a sibling of the parent directory', async (specifier: string) => {
     using dir = tempDir("resolve-dotdot-dir", {
       ...conflictFixture,
-      "lib/sub/run.ts": `import { fromIndex } from ".."; console.log(fromIndex);`,
+      "lib/sub/run.ts": `import { fromIndex } from ${JSON.stringify(specifier)}; console.log(fromIndex);`,
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "lib/sub/run.ts"],

@@ -332,8 +332,8 @@ impl PatchTask {
                     // yields initialized bytes even when the active variant
                     // is not `npm` — possibly stale, never uninit. This arm
                     // is reachable for non-npm resolutions too (git/github/
-                    // tarball; see the TODO below), which then read garbage
-                    // version bytes into the task id, not UB.
+                    // tarball), which then read garbage version bytes into
+                    // the npm-shaped task id below, not UB.
                     let pkg_npm_version = unsafe {
                         manager.lockfile.packages.items_resolution()[pkg_id as usize]
                             .value
@@ -350,7 +350,6 @@ impl PatchTask {
                     let pkg_again: Package = *manager.lockfile.packages.get(pkg_id as usize);
                     match package_manager::generate_network_task_for_tarball(
                         manager,
-                        // TODO: not just npm package
                         task_id,
                         url,
                         is_required,

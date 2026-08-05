@@ -999,6 +999,77 @@ extern "C" void uws_adopt_loop_for_current_thread(struct us_loop_t*);
 void _mi_scavenger_forked_child(void); // C++-mangled (mimalloc is built as C++ here)
 extern "C" void Bun__imageAdoptMainThreadVM();
 // ===== v0 heap image experiment (macOS, no-ASLR, JIT off): dump all mimalloc/JSC memory + __DATA at idle; a fresh process maps it back and runs JS on the image VM.
+
+// ---- platform seam for the image product path (region walk, residency, data segments, JIT copy) ----
+struct PlatformRegion { uint64_t addr, size; bool writable, executable, anon, shared, isStack, isMallocZone, isGuard; int tag; unsigned pagesResident, pagesDirtied, pagesSwapped; };
+#if OS(DARWIN)
+template<typename F> static void platformEnumerateRegions(F&& f)
+{
+    mach_vm_address_t addr = 0;
+    for (;;) {
+        mach_vm_size_t size = 0; vm_region_extended_info_data_t info; mach_msg_type_number_t count = VM_REGION_EXTENDED_INFO_COUNT; mach_port_t objName;
+        if (mach_vm_region(mach_task_self(), &addr, &size, VM_REGION_EXTENDED_INFO, (vm_region_info_t)&info, &count, &objName) != KERN_SUCCESS) break;
+        int tag = info.user_tag;
+        PlatformRegion r { addr, size, !!(info.protection & VM_PROT_WRITE), !!(info.protection & VM_PROT_EXECUTE), info.external_pager == 0, info.share_mode == SM_SHARED,
+            tag == VM_MEMORY_STACK, tag >= VM_MEMORY_MALLOC && tag <= VM_MEMORY_MALLOC_NANO, tag == VM_MEMORY_GUARD || tag == 22, tag, info.pages_resident, info.pages_dirtied, info.pages_swapped_out };
+        f(r);
+        addr += size;
+    }
+}
+static bool platformResidentPages(uint64_t addr, uint64_t size, std::vector<int>& disp)
+{
+    size_t pg = getpagesize(); disp.assign(size / pg, 0); mach_vm_size_t dispCount = disp.size();
+    return mach_vm_page_range_query(mach_task_self(), addr, size, (mach_vm_address_t)disp.data(), &dispCount) == KERN_SUCCESS;
+}
+template<typename F> static void platformDataSegments(F&& f)
+{
+    const struct mach_header_64* mh = (const struct mach_header_64*)_dyld_get_image_header(0);
+    for (const char* seg : { "__DATA_CONST", "__DATA", "__DATA_DIRTY", "__AUTH", "__AUTH_CONST" }) {
+        unsigned long segSize = 0; uint8_t* segData = getsegmentdata(mh, seg, &segSize);
+        if (segData && segSize) f((uint64_t)segData, (uint64_t)segSize);
+    }
+}
+static void platformWriteJIT(void* dst, const void* src, size_t len)
+{
+    pthread_jit_write_protect_np(0); memcpy(dst, src, len); pthread_jit_write_protect_np(1);
+    sys_icache_invalidate(dst, len);
+}
+static bool platformIsJITRegion(const PlatformRegion& r) { return r.tag == 64 && r.executable && r.anon; }
+static uint64_t platformTextBase() { return (uint64_t)&_mh_execute_header; }
+#elif OS(LINUX)
+extern "C" char __executable_start[];
+extern "C" char __data_start[], _edata[], __bss_start[], _end[];
+template<typename F> static void platformEnumerateRegions(F&& f)
+{
+    FILE* maps = fopen("/proc/self/maps", "r"); if (!maps) return;
+    char line[512];
+    while (fgets(line, sizeof line, maps)) {
+        unsigned long lo, hi, off, inode = 0; char perms[8] = "", dev[16] = ""; char path[256] = "";
+        if (sscanf(line, "%lx-%lx %7s %lx %15s %lu %255s", &lo, &hi, perms, &off, dev, &inode, path) < 6) continue;
+        bool anon = inode == 0 && (path[0] == 0 || path[0] == '[');
+        PlatformRegion r { lo, hi - lo, perms[1] == 'w', perms[2] == 'x', anon, perms[3] == 's', !strncmp(path, "[stack", 6), false, perms[0] == '-' && perms[1] == '-', 0, 1, 1, 0 };
+        // Linux has no VM tags: callers identify "ours" by address windows; JIT by the fixed pool address.
+        f(r);
+    }
+    fclose(maps);
+}
+static bool platformResidentPages(uint64_t addr, uint64_t size, std::vector<int>& disp)
+{
+    size_t pg = getpagesize(); std::vector<unsigned char> vec(size / pg); disp.assign(size / pg, 0);
+    if (mincore((void*)addr, size, vec.data())) return false;
+    for (size_t i = 0; i < vec.size(); i++) disp[i] = vec[i] & 1;
+    return true;
+}
+template<typename F> static void platformDataSegments(F&& f)
+{
+    size_t pg = getpagesize(); uint64_t lo = (uint64_t)__data_start & ~(pg - 1), hi = ((uint64_t)_end + pg - 1) & ~(pg - 1);
+    f(lo, hi - lo); // .data + .bss (relro/.got would need dl_iterate_phdr; the writable PT_LOAD covers what we mutate)
+}
+static void platformWriteJIT(void* dst, const void* src, size_t len) { memcpy(dst, src, len); __builtin___clear_cache((char*)dst, (char*)dst + len); }
+static bool platformIsJITRegion(const PlatformRegion& r) { return r.executable && r.anon && r.addr >= 0x3c0000000ull && r.addr < 0x400000000ull; } // BUN_IMAGE_JIT_ADDR window
+static uint64_t platformTextBase() { return (uint64_t)__executable_start; }
+#endif
+
 struct ImageHeader { char magic[8]; uint64_t textBase; uint64_t vm; uint64_t globalObject; uint64_t mainThread; uint64_t nregions; uint64_t reserved[8]; };
 struct ImageRegion { uint64_t addr; uint64_t len; uint64_t fileOff; uint64_t kind; }; // kind: 0 heap(anon), 1 __DATA segment
 
@@ -1108,60 +1179,44 @@ static void imageDump(JSC::VM& vm, const char* path)
     { size_t fb = 0; for (auto& r : freeRanges) fb += r.second - r.first; fprintf(stderr, "[image] arena free ranges: %zu, %.1fMB\n", freeRanges.size(), fb / 1048576.0); }
     auto inFreeRange = [&](uintptr_t a) { auto it = std::upper_bound(freeRanges.begin(), freeRanges.end(), std::make_pair(a, UINTPTR_MAX)); return it != freeRanges.begin() && a < std::prev(it)->second; };
     std::vector<ImageRegion> regions;
-    // 1. anonymous writable regions (mimalloc arenas + page map, structure heap, misc JSC/WTF OS allocations); skip stacks & malloc zones & JIT
-    {
-        mach_vm_address_t addr = 0;
-        for (;;) {
-            mach_vm_size_t size = 0; vm_region_extended_info_data_t info; mach_msg_type_number_t count = VM_REGION_EXTENDED_INFO_COUNT; mach_port_t objName;
-            if (mach_vm_region(mach_task_self(), &addr, &size, VM_REGION_EXTENDED_INFO, (vm_region_info_t)&info, &count, &objName) != KERN_SUCCESS) break;
-            bool writable = (info.protection & VM_PROT_WRITE) && !(info.protection & VM_PROT_EXECUTE);
-            int tag = info.user_tag;
-            bool isStack = tag == VM_MEMORY_STACK; bool isMallocZone = tag >= VM_MEMORY_MALLOC && tag <= VM_MEMORY_MALLOC_NANO; bool isGuard = tag == VM_MEMORY_GUARD || tag == 22 /* VM_RECLAIM ring (kernel) */;
-            bool anon = info.external_pager == 0;
-            // Only memory we own and place deterministically: mimalloc (tag 240) + Bun bss arenas (hint area >= 0x1f0'0000'0000), JSC OSAllocator regions (tags 63/65).
-            // Kernel-placed libSystem regions (OS_ALLOC_ONCE, malloc zones, activity tracing...) belong to the *new* process and must not be overlaid.
-            bool ours = tag == 240 || tag == 63 || tag == 65 || (addr >= 0x1f000000000ull && addr < 0x30000000000ull) || (addr >= 0x2e0000000000ull && addr < 0x2f0000000000ull) /* bun bss + mimalloc / WTF OSAllocator hint windows */;
-            if (tag == 64 /* JS JIT */ && (info.protection & VM_PROT_EXECUTE) && anon) {
-                regions.push_back({ addr, size, 0, ((uint64_t)tag << 8) | 3 }); // reservation, no data
-                size_t npages = size / pg; std::vector<int> disp(npages); mach_vm_size_t dispCount = npages;
-                if (mach_vm_page_range_query(mach_task_self(), addr, size, (mach_vm_address_t)disp.data(), &dispCount) == KERN_SUCCESS) {
-                    { // freed JIT pages are MADV_FREE_REUSABLE'd and still read as present; keep only pages the executable allocator has handed out
-                        Locker locker { JSC::ExecutableAllocator::singleton().getLock() };
-                        size_t dropped = 0;
-                        for (size_t i = 0; i < dispCount; i++) if (disp[i] && !JSC::ExecutableAllocator::singleton().isValidExecutableMemory(locker, (void*)(addr + i * pg)) && !JSC::ExecutableAllocator::singleton().isValidExecutableMemory(locker, (void*)(addr + i * pg + pg / 2))) { disp[i] = 0; dropped++; }
-                        if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] JIT: dropped %zu resident-but-free pages\n", dropped);
-                    }
-                    for (size_t i = 0; i < dispCount;) {
-                        if (!disp[i]) { i++; continue; }
-                        size_t j = i; while (j < dispCount && disp[j]) j++;
-                        regions.push_back({ addr + i * pg, (j - i) * pg, 0, ((uint64_t)tag << 8) | 2 });
-                        i = j;
-                    }
+    // 1. anonymous writable regions we own (mimalloc arenas + page map, JSC/WTF OS allocations in the hint windows) + the JIT pool
+    platformEnumerateRegions([&](const PlatformRegion& r) {
+        uint64_t addr = r.addr, size = r.size; int tag = r.tag;
+        // Only memory we own and place deterministically. Kernel-placed libSystem regions belong to the *new* process and must not be overlaid.
+        bool ours = tag == 240 || tag == 63 || tag == 65 || (addr >= 0x1f000000000ull && addr < 0x30000000000ull) || (addr >= 0x2e0000000000ull && addr < 0x2f0000000000ull);
+        if (platformIsJITRegion(r)) {
+            regions.push_back({ addr, size, 0, ((uint64_t)tag << 8) | 3 }); // reservation, no data
+            std::vector<int> disp;
+            if (platformResidentPages(addr, size, disp)) {
+                { // freed JIT pages are MADV_FREE'd and may still read as present; keep only pages the executable allocator has handed out
+                    Locker locker { JSC::ExecutableAllocator::singleton().getLock() };
+                    for (size_t i = 0; i < disp.size(); i++) if (disp[i] && !JSC::ExecutableAllocator::singleton().isValidExecutableMemory(locker, (void*)(addr + i * pg)) && !JSC::ExecutableAllocator::singleton().isValidExecutableMemory(locker, (void*)(addr + i * pg + pg / 2))) disp[i] = 0;
                 }
-                if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] JIT region %llx+%llx resident=%u dirty=%u\n", (unsigned long long)addr, (unsigned long long)size, info.pages_resident, info.pages_dirtied);
-            } else if (ours && writable && anon && !isStack && !isMallocZone && !isGuard && info.share_mode != SM_SHARED && (info.pages_resident > 0 || info.pages_dirtied > 0 || info.pages_swapped_out > 0)) {
-                regions.push_back({ addr, size, 0, ((uint64_t)tag << 8) | 4 }); // anonymous reserve, then resident runs as file-backed data
-                size_t npages = size / pg; std::vector<int> disp(npages); mach_vm_size_t dispCount = npages;
-                if (mach_vm_page_range_query(mach_task_self(), addr, size, (mach_vm_address_t)disp.data(), &dispCount) == KERN_SUCCESS) {
-                    auto live = [&](size_t k) { return disp[k] && !inFreeRange(addr + k * pg); }; // purged spans can still read as present; mimalloc knows they are free
-                    for (size_t i = 0; i < dispCount;) {
-                        if (!live(i)) { i++; continue; }
-                        size_t j = i; while (j < dispCount && live(j)) j++;
-                        regions.push_back({ addr + i * pg, (j - i) * pg, 0, (uint64_t)tag << 8 });
-                        i = j;
-                    }
-                } else regions.back().kind = (uint64_t)tag << 8;
-                if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] region %llx+%llx tag=%d prot=%x/%x share=%d resident=%u dirty=%u\n", (unsigned long long)addr, (unsigned long long)size, tag, info.protection, 0, info.share_mode, info.pages_resident, info.pages_dirtied);
+                for (size_t i = 0; i < disp.size();) {
+                    if (!disp[i]) { i++; continue; }
+                    size_t j = i; while (j < disp.size() && disp[j]) j++;
+                    regions.push_back({ addr + i * pg, (j - i) * pg, 0, ((uint64_t)tag << 8) | 2 });
+                    i = j;
+                }
             }
-            addr += size;
+            if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] JIT region %llx+%llx resident=%u dirty=%u\n", (unsigned long long)addr, (unsigned long long)size, r.pagesResident, r.pagesDirtied);
+        } else if (ours && r.writable && !r.executable && r.anon && !r.isStack && !r.isMallocZone && !r.isGuard && !r.shared && (r.pagesResident > 0 || r.pagesDirtied > 0 || r.pagesSwapped > 0)) {
+            regions.push_back({ addr, size, 0, ((uint64_t)tag << 8) | 4 }); // anonymous reserve, then resident runs as file-backed data
+            std::vector<int> disp;
+            if (platformResidentPages(addr, size, disp)) {
+                auto live = [&](size_t k) { return disp[k] && !inFreeRange(addr + k * pg); }; // purged spans can still read as present; mimalloc knows they are free
+                for (size_t i = 0; i < disp.size();) {
+                    if (!live(i)) { i++; continue; }
+                    size_t j = i; while (j < disp.size() && live(j)) j++;
+                    regions.push_back({ addr + i * pg, (j - i) * pg, 0, (uint64_t)tag << 8 });
+                    i = j;
+                }
+            } else regions.back().kind = (uint64_t)tag << 8;
+            if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] region %llx+%llx tag=%d resident=%u dirty=%u\n", (unsigned long long)addr, (unsigned long long)size, tag, r.pagesResident, r.pagesDirtied);
         }
-    }
-    // 2. main binary __DATA* segments (globals of Bun/JSC/WTF/mimalloc)
-    const struct mach_header_64* mh = (const struct mach_header_64*)_dyld_get_image_header(0);
-    for (const char* seg : { "__DATA_CONST", "__DATA", "__DATA_DIRTY", "__AUTH", "__AUTH_CONST" }) {
-        unsigned long segSize = 0; uint8_t* segData = getsegmentdata(mh, seg, &segSize);
-        if (segData && segSize) regions.push_back({ (uint64_t)segData, (uint64_t)((segSize + pg - 1) & ~(pg - 1)), 0, 1 });
-    }
+    });
+    // 2. main binary data segments (globals of Bun/JSC/WTF/mimalloc)
+    platformDataSegments([&](uint64_t a, uint64_t len) { regions.push_back({ a, (len + pg - 1) & ~(uint64_t)(pg - 1), 0, 1 }); });
     // drop anon regions overlapping __DATA entries (region scan sees them as file-backed anyway) and our own stack
     uintptr_t sp = (uintptr_t)__builtin_frame_address(0);
     std::vector<ImageRegion> out;
@@ -1169,7 +1224,7 @@ static void imageDump(JSC::VM& vm, const char* path)
     int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) { fprintf(stderr, "[image] open %s failed\n", path); return; }
     ImageHeader hdr {}; memcpy(hdr.magic, "BUNIMG0", 8);
-    hdr.textBase = (uint64_t)mh; hdr.vm = (uint64_t)&vm;
+    hdr.textBase = platformTextBase(); hdr.vm = (uint64_t)&vm;
     hdr.globalObject = (uint64_t)defaultGlobalObject();
     hdr.mainThread = (uint64_t)&WTF::Thread::currentSingleton();
     hdr.reserved[0] = (uint64_t)mi_theap_get_default(); // main thread's mimalloc theap (TLS-referenced, lives in the heap)
@@ -1231,9 +1286,8 @@ static void imageRestoreAndRun(const char* path)
         if ((r.kind & 0xff) == 2) {
             void* buf = mmap(nullptr, r.len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
             if (pread(fd, buf, r.len, r.fileOff) != (ssize_t)r.len) { fprintf(stderr, "[image] pread JIT failed errno %d\n", errno); _exit(3); }
-            pthread_jit_write_protect_np(0); memcpy((void*)r.addr, buf, r.len); pthread_jit_write_protect_np(1);
+            platformWriteJIT((void*)r.addr, buf, r.len);
             munmap(buf, r.len);
-            sys_icache_invalidate((void*)r.addr, r.len);
             copied += r.len;
             continue;
         }

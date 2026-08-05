@@ -367,7 +367,9 @@ it("should preserve package.json indentation from the template", async () => {
   const packageJson = await Bun.file(join(x_dir, "dest", "package.json")).text();
   // `name` is rewritten to the destination, so the file is re-printed; the
   // template's tab indentation must survive the round-trip.
-  expect(packageJson).toBe(`{\n\t"name": "dest",\n\t"version": "1.0.0",\n\t"scripts": {\n\t\t"start": "bun index.js"\n\t}\n}\n`);
+  expect(packageJson).toBe(
+    `{\n\t"name": "dest",\n\t"version": "1.0.0",\n\t"scripts": {\n\t\t"start": "bun index.js"\n\t}\n}\n`,
+  );
 });
 
 // `bun create <github-url>` hits https://api.github.com/repos/{owner}/{repo}/tarball.

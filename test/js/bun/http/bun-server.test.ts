@@ -602,7 +602,7 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
   // still open. Previously it counted only in-flight requests (plus the
   // listener and websockets), so an idle keep-alive socket let the promise
   // resolve in 0 ms and the socket kept answering requests.
-  async function runDrainFixture(mode: "idle" | "inflight" | "force") {
+  async function runDrainFixture(mode: "idle" | "inflight" | "force" | "closeIdle") {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -650,8 +650,10 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
           while (!buf.includes("\\r\\nok")) await new Promise(r => setImmediate(r));
           await new Promise(r => setImmediate(r));
           const resolvedWhileOpen = resolved;
-          // Drain it: either the client hangs up or the caller escalates.
-          if (mode === "force") server.stop(true); else c.destroy();
+          // Drain it: the client hangs up or the caller escalates or sweeps.
+          if (mode === "force") server.stop(true);
+          else if (mode === "closeIdle") server.closeIdleConnections();
+          else c.destroy();
           await stopped;
           // The client socket's 'close' and the server-side filter → promise
           // resolution race; poll so the assertion is order-independent.
@@ -693,6 +695,65 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     expect(await runDrainFixture("force")).toEqual({
       stderr: "",
       out: { resolvedEarly: false, resolvedWhileOpen: false, resolved: true, closed: true },
+      exitCode: 0,
+    });
+  });
+
+  test("closeIdleConnections() after stop(false) drains the surviving connection", async () => {
+    // close_idle_connections suppresses the filter's own dispatch while the
+    // uWS call runs (re-entrance guard); its trailing deinit_if_we_can() is
+    // what resolves the promise on this path.
+    expect(await runDrainFixture("closeIdle")).toEqual({
+      stderr: "",
+      out: { resolvedEarly: false, resolvedWhileOpen: false, resolved: true, closed: true },
+      exitCode: 0,
+    });
+  });
+
+  test("websocket-only server: a second stop() returns the still-pending promise", async () => {
+    // After upgrade() the filter fires -1, so a websocket-only server has
+    // active_connection_count == 0 and only the has_active_web_sockets() term
+    // in get_all_closed_promise's early-return keeps a repeat stop() call from
+    // handing back a fresh resolved promise while the first one is pending.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            fetch(req, server) {
+              if (server.upgrade(req)) return;
+              return new Response("no");
+            },
+            websocket: { open() {}, message() {}, close() {} },
+          });
+          const ws = new WebSocket("ws://127.0.0.1:" + server.port + "/");
+          await new Promise((resolve, reject) => {
+            ws.onopen = resolve;
+            ws.onerror = reject;
+          });
+          let resolved1 = false, resolved2 = false;
+          const p1 = server.stop(false).then(() => { resolved1 = true; });
+          await new Promise(r => setImmediate(r));
+          const p2 = server.stop(false).then(() => { resolved2 = true; });
+          await new Promise(r => setImmediate(r));
+          const resolvedEarly = resolved1 || resolved2;
+          ws.close();
+          await Promise.all([p1, p2]);
+          console.log(JSON.stringify({ resolvedEarly, resolved: resolved1 && resolved2 }));
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
+      stderr: "",
+      out: { resolvedEarly: false, resolved: true },
       exitCode: 0,
     });
   });

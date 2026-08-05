@@ -3927,9 +3927,7 @@ impl<'a> HTTPClient<'a> {
             if self.state.stage == Stage::Fail {
                 self.dispatch_result_and_reset(true);
             } else if self.flags.is_preconnect_only && self.state.stage == Stage::Done {
-                // Deferred preconnect completion (see `on_preconnect`): the
-                // dispatch frees the AsyncHTTP clone embedding `self`, so it
-                // runs here, where every caller returns straight afterwards.
+                // Deferred preconnect success (see `on_preconnect`).
                 self.dispatch_preconnect_result();
             }
         }
@@ -4414,22 +4412,17 @@ impl<'a> HTTPClient<'a> {
         self.state.request_stage = RequestStage::Done;
         self.state.stage = Stage::Done;
         self.flags.proxy_tunneling = false;
-        // A preconnect that reuses a pooled keep-alive socket gets here
-        // synchronously inside `start_` → `connect` → `first_call`, and the
-        // terminal dispatch frees the ThreadlocalAsyncHTTP clone that embeds
-        // this client while those frames still use it. Defer the dispatch to
-        // `complete_connecting_process` — the same mechanism `fail()` uses
-        // for synchronous connect failures.
+        // Pooled-socket reuse reaches here synchronously inside `start_` →
+        // `connect`, whose frames still use `self`; defer the clone-freeing
+        // dispatch to `complete_connecting_process`, as `fail()` does.
         if self.flags.defer_fail_until_connecting_is_complete {
             return;
         }
         self.dispatch_preconnect_result();
     }
 
-    /// Terminal result for a preconnect-only request: the socket is already
-    /// back in the keep-alive pool and there is no response. Frees the
-    /// HTTP-thread AsyncHTTP clone embedding `self`; nothing may touch `self`
-    /// after this call.
+    /// Terminal result for a preconnect-only request. Frees the HTTP-thread
+    /// AsyncHTTP clone embedding `self`; nothing may touch `self` afterwards.
     fn dispatch_preconnect_result(&mut self) {
         self.result_callback.run(
             self.parent_async_http(),

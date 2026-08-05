@@ -75,7 +75,10 @@ declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
   {
     prototype: ReadableStream;
     new <R = any>(underlyingSource?: Bun.UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
-    new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
+    new (
+      underlyingSource: Bun.DirectUnderlyingSource,
+      strategy?: QueuingStrategy<Uint8Array<ArrayBuffer>>,
+    ): ReadableStream<Uint8Array<ArrayBuffer>>;
   }
 >;
 

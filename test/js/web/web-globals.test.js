@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { expect, it, test } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, withoutAggressiveGC } from "harness";
 
 test("exists", () => {
@@ -350,6 +350,70 @@ test("confirm (no) windows newline", async () => {
   await proc.exited;
 
   expect(await proc.stderr.text()).toBe("No\n");
+});
+
+// prompt()/confirm() must treat EOF after some input as a completed response,
+// not as an abort. This is what `printf ans | bun`, `echo -n ans | bun`, and a
+// TTY user typing then pressing Ctrl-D all produce.
+describe.concurrent("prompt()/confirm() with unterminated stdin (EOF before newline)", () => {
+  async function runPrompt(stdin, src) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdin: Buffer.from(stdin),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.each([
+    ["answer", '"answer"'],
+    ["answer\n", '"answer"'],
+    ["answer\r\n", '"answer"'],
+    ["answer\r", '"answer"'],
+    ["hello world", '"hello world"'],
+  ])("prompt() with stdin %j returns %s", async (stdin, expected) => {
+    const { stderr, exitCode } = await runPrompt(stdin, 'console.error(JSON.stringify(prompt("Q?")))');
+    expect(stderr).toBe(expected + "\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    ["", "null"],
+    ["\n", '"DEF"'],
+    ["\r\n", '"DEF"'],
+    ["\r", '"DEF"'],
+    ["x", '"x"'],
+  ])("prompt() with default, stdin %j returns %s", async (stdin, expected) => {
+    const { stderr, exitCode } = await runPrompt(stdin, 'console.error(JSON.stringify(prompt("Q?", "DEF")))');
+    expect(stderr).toBe(expected + "\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("prompt() with a long unterminated line returns the full line", async () => {
+    // Crosses the 2048 and 4096 internal buffer thresholds.
+    const { stderr, exitCode } = await runPrompt(
+      Buffer.alloc(5000, "A"),
+      'const r = prompt("Q?"); console.error(JSON.stringify({ len: r?.length ?? null, ok: r === Buffer.alloc(5000, "A").toString() }))',
+    );
+    expect(JSON.parse(stderr)).toEqual({ len: 5000, ok: true });
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    ["y", "Yes"],
+    ["Y", "Yes"],
+    ["y\r", "Yes"],
+    ["n", "No"],
+    ["", "No"],
+    ["yes", "No"],
+  ])("confirm() with stdin %j returns %s", async (stdin, expected) => {
+    const { stderr, exitCode } = await runPrompt(stdin, 'console.error(confirm("Q?") ? "Yes" : "No")');
+    expect(stderr).toBe(expected + "\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 test("globalThis.self = 123 works", () => {

@@ -1991,9 +1991,16 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             let _ = self.flush_no_wait();
             self.done = true;
 
-            if let Some(res) = self.any_res() {
-                // is actually fine to call this if the socket is closed because of flushNoWait, the free will be defered by usockets
-                res.end_stream(false);
+            // When the sink already ended the response through uWS
+            // (`res.end()`/`try_end` drained, which wrote the terminating
+            // chunk and `markDone()`d the response), `end_stream()` would
+            // write a second `0\r\n\r\n` that corrupts the next response on a
+            // keep-alive connection.
+            if !self.ended_response {
+                if let Some(res) = self.any_res() {
+                    // is actually fine to call this if the socket is closed because of flushNoWait, the free will be defered by usockets
+                    res.end_stream(false);
+                }
             }
         }
 

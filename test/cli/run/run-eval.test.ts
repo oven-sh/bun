@@ -187,13 +187,15 @@ describe.concurrent("-e builtin module globals", () => {
   }
 
   // zlib captures buffer.kMaxLength when its module first loads (same as
-  // Node). A top-level `const zlib = ...` must not make the lazy `zlib`
+  // Node). A top-level declaration named `zlib` must not make the lazy `zlib`
   // global load node:zlib during declaration instantiation, before the
   // kMaxLength patch has run.
   const probes = {
     "const zlib = require(...)": 'const zlib = require("node:zlib");',
     "const zlib = <plain value>": "const zlib = 123;",
     "let zlib = <plain value>": "let zlib = 123;",
+    "class zlib {}": "class zlib {}",
+    "function zlib() {}": "function zlib() {}",
   };
   for (const [name, decl] of Object.entries(probes)) {
     test(`top-level ${name} does not eagerly load the module`, async () => {

@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { beforeEach, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
@@ -776,3 +776,282 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
   },
   longTimeout,
 );
+
+describe("import.meta.hot", () => {
+  it("is undefined and unguarded calls are no-ops without --hot", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          if (import.meta.hot !== undefined) throw new Error("expected undefined, got " + typeof import.meta.hot);
+          if (typeof import.meta.hot?.dispose !== "undefined") throw new Error("optional chain");
+          // Unguarded calls to the HMR API must not throw at runtime; outside
+          // --hot the transpiler folds these away.
+          import.meta.hot.dispose(() => { throw new Error("should not run"); });
+          import.meta.hot.accept();
+          import.meta.hot.on("bun:beforeUpdate", () => {});
+          console.log("ok");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  });
+
+  it(
+    "runs dispose callbacks and persists data across reloads",
+    async () => {
+      const root = join(cwd, "import-meta-hot-app.ts");
+      const source = `
+        const gen = (globalThis.__gen = (globalThis.__gen ?? 0) + 1);
+        const listener = () => {};
+        process.on("beforeExit", listener);
+        const iv = setInterval(() => {}, 1_000_000);
+
+        const hot = import.meta.hot;
+        if (typeof hot !== "object" || hot === null) {
+          console.log(JSON.stringify({ gen, error: "hot is " + typeof hot }));
+          process.exit(1);
+        }
+        const prevGen = hot.data.prevGen;
+        hot.data.prevGen = gen;
+        const intervalsAtStart = globalThis.__intervals ??= new Set();
+        intervalsAtStart.add(iv);
+        hot.dispose((data) => {
+          clearInterval(iv);
+          intervalsAtStart.delete(iv);
+          process.off("beforeExit", listener);
+          globalThis.__disposed = { gen, data: { ...data } };
+        });
+
+        const noopNames = ["accept", "decline", "on", "off", "prune", "invalidate", "send"];
+        console.log(JSON.stringify({
+          gen,
+          hasHot: true,
+          keys: Object.keys(hot).sort(),
+          prevGen: prevGen ?? null,
+          listenerCount: process.listenerCount("beforeExit"),
+          liveIntervals: intervalsAtStart.size,
+          disposed: globalThis.__disposed ?? null,
+          noops: noopNames.filter(n => typeof hot[n] === "function" && hot[n]() === undefined),
+        }));
+      `;
+      writeFileSync(root, source);
+
+      await using runner = spawn({
+        cmd: [bunExe(), "--hot", "--no-clear-screen", root],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+
+      let stderr = "";
+      const stderrDone = (async () => {
+        for await (const chunk of runner.stderr) stderr += new TextDecoder().decode(chunk);
+      })().catch(() => {});
+
+      const lines: Record<string, unknown>[] = [];
+      let buf = "";
+      for await (const chunk of runner.stdout) {
+        buf += new TextDecoder().decode(chunk);
+        let nl;
+        while ((nl = buf.indexOf("\n")) !== -1) {
+          const line = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          if (!line.startsWith("{")) continue;
+          const obj = JSON.parse(line);
+          lines.push(obj);
+          if (lines.length < 3) {
+            // Trigger the next reload by rewriting the file.
+            writeFileSync(root, source + `\n// reload ${lines.length}\n`);
+          } else {
+            runner.kill();
+            break;
+          }
+        }
+        if (lines.length >= 3) break;
+      }
+
+      runner.kill();
+      await runner.exited;
+      await stderrDone;
+
+      const keys = ["accept", "data", "decline", "dispose", "invalidate", "off", "on", "prune", "send"];
+      const noops = ["accept", "decline", "on", "off", "prune", "invalidate", "send"];
+      try {
+        expect(lines).toEqual([
+          {
+            gen: 1,
+            hasHot: true,
+            keys,
+            prevGen: null,
+            listenerCount: 1,
+            liveIntervals: 1,
+            disposed: null,
+            noops,
+          },
+          {
+            gen: 2,
+            hasHot: true,
+            keys,
+            prevGen: 1,
+            listenerCount: 1,
+            liveIntervals: 1,
+            disposed: { gen: 1, data: { prevGen: 1 } },
+            noops,
+          },
+          {
+            gen: 3,
+            hasHot: true,
+            keys,
+            prevGen: 2,
+            listenerCount: 1,
+            liveIntervals: 1,
+            disposed: { gen: 2, data: { prevGen: 2 } },
+            noops,
+          },
+        ]);
+      } catch (e) {
+        console.error("stderr:", stderr);
+        throw e;
+      }
+    },
+    timeout,
+  );
+
+  it(
+    "reloads even if a dispose callback throws",
+    async () => {
+      const root = join(cwd, "import-meta-hot-throws.ts");
+      const source = `
+        const gen = (globalThis.__gen = (globalThis.__gen ?? 0) + 1);
+        import.meta.hot.dispose(() => { throw new Error("dispose-error-from-gen-" + gen); });
+        import.meta.hot.dispose(() => { globalThis.__second = gen; });
+        console.log(JSON.stringify({ gen, secondRan: globalThis.__second ?? null }));
+      `;
+      writeFileSync(root, source);
+
+      await using runner = spawn({
+        cmd: [bunExe(), "--hot", "--no-clear-screen", root],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+
+      let stderr = "";
+      const stderrDone = (async () => {
+        for await (const chunk of runner.stderr) stderr += new TextDecoder().decode(chunk);
+      })().catch(() => {});
+
+      const lines: Record<string, unknown>[] = [];
+      let buf = "";
+      for await (const chunk of runner.stdout) {
+        buf += new TextDecoder().decode(chunk);
+        let nl;
+        while ((nl = buf.indexOf("\n")) !== -1) {
+          const line = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          if (!line.startsWith("{")) continue;
+          lines.push(JSON.parse(line));
+          if (lines.length < 2) {
+            writeFileSync(root, source + `\n// reload ${lines.length}\n`);
+          } else {
+            runner.kill();
+            break;
+          }
+        }
+        if (lines.length >= 2) break;
+      }
+
+      runner.kill();
+      await runner.exited;
+      await stderrDone;
+
+      expect(lines).toEqual([
+        { gen: 1, secondRan: null },
+        { gen: 2, secondRan: 1 },
+      ]);
+      expect(stderr).toContain("dispose-error-from-gen-1");
+    },
+    timeout,
+  );
+
+  it("dispose() validates its argument", async () => {
+    const root = join(cwd, "import-meta-hot-invalid.ts");
+    writeFileSync(
+      root,
+      `
+        try {
+          import.meta.hot.dispose(123);
+          console.log("no-throw");
+        } catch (e) {
+          console.log(e?.code ?? e?.name, String(e?.message ?? e));
+        }
+        process.exit(0);
+      `,
+    );
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", root],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "ERR_INVALID_ARG_TYPE import.meta.hot.dispose() expects a function",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("is undefined inside workers even under --hot", async () => {
+    const workerPath = join(cwd, "import-meta-hot-worker.ts");
+    const mainPath = join(cwd, "import-meta-hot-worker-main.ts");
+    writeFileSync(
+      workerPath,
+      `
+        // Workers are not reloaded under --hot, so import.meta.hot is undefined
+        // and unguarded calls fold away at transpile time.
+        import.meta.hot.dispose(() => { throw new Error("should not run"); });
+        self.postMessage({ hot: typeof import.meta.hot });
+      `,
+    );
+    writeFileSync(
+      mainPath,
+      `
+        const w = new Worker(${JSON.stringify(workerPath)});
+        w.onmessage = (e) => {
+          console.log(JSON.stringify({ main: typeof import.meta.hot, worker: e.data.hot }));
+          w.terminate();
+          process.exit(0);
+        };
+        w.onerror = (e) => {
+          console.error(String(e?.message ?? e));
+          process.exit(1);
+        };
+      `,
+    );
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", mainPath],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ main: "object", worker: "undefined" }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

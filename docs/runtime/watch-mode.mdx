@@ -96,20 +96,18 @@ bun --hot server.ts
 Starting from the entrypoint (`server.ts` in this example), Bun builds a registry of all imported source files (excluding those in `node_modules`) and watches them for changes. When a file changes, Bun performs a "soft reload". All files are re-evaluated, but global state (notably, the `globalThis` object) persists.
 
 ```ts title="server.ts" icon="/icons/typescript.svg"
-// make TypeScript happy
-declare global {
-  var count: number;
-}
-
 globalThis.count ??= 0;
 console.log(`Reloaded ${globalThis.count} times`);
 globalThis.count++;
 
 // prevent `bun run` from exiting
-setInterval(function () {}, 1000000);
+const interval = setInterval(function () {}, 1000000);
+
+// clear the interval from the previous evaluation before the next one starts
+import.meta.hot.dispose(() => clearInterval(interval));
 ```
 
-If you run this file with `bun --hot server.ts`, you'll see the reload count increment every time you save the file.
+If you run this file with `bun --hot server.ts`, you'll see the reload count increment every time you save the file. Because `--hot` does not restart the process, resources like timers and event listeners created at the top level will otherwise accumulate across reloads; use `import.meta.hot.dispose()` to release them.
 
 ```bash terminal icon="terminal"
 bun --hot index.ts
@@ -139,9 +137,40 @@ Bun.serve({
 });
 ```
 
-<Note>
-Support for Vite's `import.meta.hot` is planned, to enable better lifecycle management for hot reloading and to align with the ecosystem.
+### `import.meta.hot`
 
+When running under `bun --hot`, `import.meta.hot` is defined and provides a subset of the [Vite HMR API](https://vite.dev/guide/api-hmr):
+
+```ts title="server.ts" icon="/icons/typescript.svg"
+// `data` is persisted across reloads for the same module, so state can be
+// carried between generations.
+import.meta.hot.data.reloads ??= 0;
+console.log(`reloaded ${import.meta.hot.data.reloads++} times`);
+
+const interval = setInterval(() => console.log("tick"), 1000);
+
+import.meta.hot.dispose(() => {
+  // Runs right before this module is re-evaluated on the next save.
+  // Clean up timers, listeners, workers, sockets, etc. here.
+  clearInterval(interval);
+});
+```
+
+| Property    | Description                                                                                             |
+| ----------- | ------------------------------------------------------------------------------------------------------- |
+| `data`      | A plain object that is persisted across reloads for the same module. Use it to pass state between runs. |
+| `dispose()` | Register a callback that runs just before this module is replaced. The callback receives `data`.        |
+| `accept()`  | No-op. Under `bun --hot` every module is re-evaluated on each change, so all modules implicitly accept. |
+
+Dispose callbacks run synchronously. Unlike the bundler's dev server, `bun --hot` does not await a Promise returned from a dispose callback before starting the next reload, so call cleanup APIs directly (for example `clearInterval`, `clearTimeout`, `worker.terminate()`, or `server.stop(true)`) rather than awaiting them; any Promise they return is not awaited before the next reload begins.
+
+The remaining Vite HMR methods (`decline`, `on`, `off`, `prune`, `invalidate`, `send`) exist as no-ops for compatibility with code written for Vite or Bun's bundler dev server.
+
+When not running under `--hot`, `import.meta.hot` is `undefined`, and direct calls like `import.meta.hot.dispose(cb)` are compiled away so that the same source runs either way. Guard with `if (import.meta.hot) { ... }` if you need the distinction at runtime.
+
+<Note>
+  The bundler's dev server exposes a fuller `import.meta.hot` API with module-level accept boundaries; see [Hot
+  reloading](/bundler/hot-reloading) for that API.
 </Note>
 
 <Accordion title="Implementation details">

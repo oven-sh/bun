@@ -49,13 +49,16 @@ console.log("caught:", caught, "phase:", phase);`,
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // "phase: 1" proves the builder re-entered the Bun object mid-lookup; if the
   // sql module stops reading Error.prototype at evaluation time, this test no
   // longer exercises the code path and needs a new trigger.
-  expect(stdout).toBe("caught: boom phase: 1\n");
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "caught: boom phase: 1\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test("require('bun')", () => {

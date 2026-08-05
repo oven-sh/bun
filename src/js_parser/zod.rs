@@ -1,56 +1,21 @@
-//! Zod schema transform.
-//!
-//! Rewrites statically-analyzable zod v4 schema expressions like
-//!
-//! ```js
-//! import { z } from "zod";
-//! const User = z.object({ name: z.string(), age: z.number().int().optional() });
-//! ```
-//!
-//! into lazy compiled wrappers:
-//!
-//! ```js
-//! const User = __zod(() => z.object({ ... }), '{"v":1,"n":{...}}');
-//! ```
-//!
-//! `__zod` (from `bun:wrap`) returns a small wrapper object exposing
-//! `parse`/`safeParse`/`parseAsync`/`safeParseAsync` backed by a validator
-//! compiled from the serialized IR. The real zod schema is only constructed
-//! (by calling the thunk) when something beyond those methods is touched, or
-//! when validation fails and zod's own error machinery is needed. Untouched
-//! schemas therefore cost one small object instead of a full zod instance
-//! tree, and successful parses never build zod objects at all.
-//!
-//! Correctness model: the compiled fast path only ever proves *success*. If
-//! it cannot prove a parse succeeds (any failed check, any construct it does
-//! not model), the wrapper materializes the real schema and re-runs the parse
-//! through zod, so error objects, custom messages, error maps, `.catch()`
-//! recovery, and async validation are always zod's own.
-//!
-//! Scope rules (anything outside them leaves the expression untouched):
-//! - Only expressions rooted at a binding imported from `"zod"` or `"zod/v4"`.
-//! - Every non-zod argument expression in the tree must be side-effect-free
-//!   by syntax (literals, arrow/function literals, identifiers, pure
-//!   object/array literals), because the thunk re-evaluates them on
-//!   materialization.
-//! - Schema-producing calls the IR cannot model (`.transform()`, `z.lazy()`,
-//!   string formats, ...) still get a wrapper (the laziness win) with an
-//!   "opaque" IR that always materializes on first parse.
+//! Zod schema transform (`BUN_FEATURE_FLAG_EXPERIMENTAL_ZOD`): rewrites statically-analyzable zod v4 schema expressions into `__zod(() => original, "<ir json>"[, refs])` calls (`__zod` lives in src/runtime.js).
+
+//! The wrapper exposes parse/safeParse/parseAsync/safeParseAsync backed by a validator compiled from the IR, and only constructs the real schema (by calling the thunk) when anything else is touched.
+
+//! The fast path only proves success: any failed check or unmodeled construct materializes the real schema and re-runs the parse through zod, so errors and async validation are always zod's own.
+
+//! Expressions stay untouched unless rooted at a `"zod"`/`"zod/v4"` import with side-effect-free arguments (the thunk re-evaluates them); recognized-but-unmodeled constructs keep the wrapper with an opaque IR that materializes on first parse.
 
 use crate::p::P;
 use bun_ast::{self as js_ast, E, Expr, Flags, G, OpCode};
 use bun_collections::{ArrayHashMap, VecExt};
 
 pub(crate) struct ZodState {
-    /// Local bindings that hold the zod module namespace (`import { z }`,
-    /// `import * as z`, default import).
+    /// Local bindings holding the zod module namespace (`import { z }`, `import * as z`, default import).
     pub(crate) refs: ArrayHashMap<js_ast::Ref, ()>,
-    /// Named imports from zod other than `z`/default: local ref -> imported
-    /// name (`import { object, coerce } from "zod"`).
+    /// Named imports from zod other than `z`/default: local ref -> imported name.
     pub(crate) member_refs: ArrayHashMap<js_ast::Ref, Vec<u8>>,
-    /// Wrapper calls emitted by this pass, keyed by the address of their
-    /// thunk arrow node, so enclosing schema expressions can absorb
-    /// already-wrapped children into a single flat wrapper.
+    /// Wrapper calls emitted by this pass, keyed by thunk arrow node address, so enclosing schema expressions can absorb wrapped children.
     pub(crate) wrapped: ArrayHashMap<usize, WrappedSchema>,
 }
 
@@ -186,8 +151,7 @@ pub(crate) enum Ir {
     },
     Object {
         props: Vec<(String, Ir)>,
-        /// `None` = strip (default). `Some(Never)` = strict,
-        /// `Some(Unknown)` = passthrough/loose, otherwise `.catchall(s)`.
+        /// `None` = strip (default), `Some(Never)` = strict, `Some(Unknown)` = passthrough/loose, otherwise `.catchall(s)`.
         catchall: Option<Box<Ir>>,
     },
     Array {
@@ -209,19 +173,16 @@ pub(crate) enum Ir {
         disc: String,
         options: Vec<Ir>,
     },
-    /// Runtime schema value at refs[i] (an identifier the extractor could
-    /// not fold, or an unabsorbable wrapped child).
+    /// Runtime schema value at refs[i] (an unfoldable identifier or an unabsorbable wrapped child).
     Ref(u32),
-    /// Recognized schema-producing expression the IR cannot model. The
-    /// wrapper materializes on first parse.
+    /// Recognized schema-producing expression the IR cannot model; the wrapper materializes on first parse.
     Opaque,
 }
 
 /// Outcome of extracting one expression in schema position.
 enum Extracted {
     Ir(Ir),
-    /// Not statically modelable or not provably pure: leave the whole
-    /// outermost expression untouched.
+    /// Not statically modelable or not provably pure: leave the outermost expression untouched.
     Bail,
 }
 
@@ -240,8 +201,7 @@ enum ZodBinding {
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    /// Track local bindings of the zod namespace as imports are processed.
-    /// `alias` is `None` for `import * as ns`, otherwise the imported name.
+    /// Track local bindings of the zod namespace; `alias` is `None` for `import * as ns`, otherwise the imported name.
     pub(crate) fn zod_maybe_track_import(
         &mut self,
         path_text: &[u8],
@@ -264,15 +224,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Entry point, called from `e_call` after target and arguments have been
-    /// visited. `expr` must be the (already-visited) call expression. Returns
-    /// the replacement wrapper expression, or `None` to leave it untouched.
+    /// Entry point from `e_call` after target and arguments are visited; returns the replacement wrapper expression, or `None` to leave the call untouched.
     pub(crate) fn maybe_transform_zod_call(&mut self, expr: Expr) -> Option<Expr> {
-        if SCAN_ONLY || self.zod.refs.is_empty() {
+        if SCAN_ONLY || (self.zod.refs.is_empty() && self.zod.member_refs.is_empty()) {
             return None;
         }
-        // Cheap pre-filter: only call chains whose innermost target touches a
-        // zod binding or an already-wrapped child can produce a schema.
+        // Cheap pre-filter: only call chains rooted at a zod binding or an already-wrapped child can produce a schema.
         {
             let call = match &expr.data {
                 js_ast::ExprData::ECall(call) => call,
@@ -289,9 +246,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Walk the call-target chain down to its root and check whether it could
-    /// be a zod schema expression. Avoids running extraction on every call in
-    /// the file.
+    /// Walk the call-target chain to its root to check whether it could be a zod schema expression, so extraction does not run on every call in the file.
     fn zod_chain_might_be_schema(&self, call: &E::Call) -> bool {
         let mut target = call.target;
         loop {
@@ -318,10 +273,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.zod_binding_kind(r#ref).is_some()
     }
 
-    /// How a zod-module binding is spelled. `Namespace` covers `import * as
-    /// z`, `import { z }`, and default imports. `Member(alias)` is a folded
-    /// namespace member or a named import (`import { coerce } from "zod"`,
-    /// or `z.union` rewritten to a per-member import symbol in bundle mode).
+    /// How a zod binding is spelled: `Namespace` covers `import * as z`/`import { z }`/default imports; `Member(alias)` is a folded namespace member or a named import.
     fn zod_binding_kind(&self, r#ref: js_ast::Ref) -> Option<ZodBinding> {
         if self.zod.refs.contains_key(&r#ref) {
             return Some(ZodBinding::Namespace);
@@ -329,10 +281,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(name) = self.zod.member_refs.get(&r#ref) {
             return Some(ZodBinding::Member(name.clone()));
         }
-        // Namespace members folded by bundle-mode visiting (`z.union` ->
-        // generated `union` import item) are registered only in
-        // import_items_for_namespace, keyed by name; reverse-check through
-        // the tracked namespace refs.
+        // Bundle-mode visiting folds `z.union` into a per-name import item registered only in import_items_for_namespace; reverse-check through the tracked namespace refs.
         let name: &[u8] = self.symbols[r#ref.inner_index() as usize]
             .original_name
             .slice();
@@ -351,8 +300,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         None
     }
 
-    /// If `expr` is a call to a known-schema zod constructor (directly or via
-    /// `z.coerce`), classify it.
+    /// Classify `expr` if it is a call to a known-schema zod constructor (directly or via `z.coerce`).
     fn zod_root_of(&self, call: &E::Call) -> Option<ZodRoot> {
         if call.optional_chain.is_some() {
             return None;
@@ -376,8 +324,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ZodBinding::Member(alias) if alias == b"coerce" => {
                             Some(ZodRoot::CoerceCtor(dot.name.slice().to_vec()))
                         }
-                        // Unknown nested namespace (z.iso.date(), z.core.*):
-                        // not a modeled constructor.
+                        // Unknown nested namespace (z.iso.date(), z.core.*): not a modeled constructor.
                         ZodBinding::Member(_) => None,
                     };
                 }
@@ -393,9 +340,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 None
             }
-            // Direct ctor binding: folded namespace member or named import,
-            // e.g. `union([...])` after `import * as z` folding, or
-            // `import { object } from "zod"`.
+            // Direct ctor binding: folded namespace member or named import, e.g. `union([...])` or `import { object } from "zod"`.
             js_ast::ExprData::EIdentifier(_) | js_ast::ExprData::EImportIdentifier(_) => {
                 let r = ref_of(&call.target)?;
                 match self.zod_binding_kind(r)? {
@@ -423,25 +368,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Extract the IR for one expression in schema position. `outermost` is
-    /// true only for the expression the wrapper is being built for; inner
-    /// schema-position expressions that cannot be modeled become `Ref`s (if
-    /// pure) rather than bailing the whole tree.
+    /// Extract the IR for one schema-position expression. `outermost` is true only for the wrapper root; unmodelable inner expressions become `Ref`s (if pure) rather than bailing the tree.
     fn zod_extract(&mut self, expr: Expr, refs: &mut Vec<Expr>, outermost: bool) -> Extracted {
         match &expr.data {
             js_ast::ExprData::ECall(call_ref) => {
-                // Re-absorb a child this pass already wrapped. Opaque
-                // children dissolve too: their IR node makes any parent parse
-                // that reaches them delegate to the materialized schema, while
-                // parses that never reach them (e.g. the key is absent on an
-                // optional opaque field) stay on the fast path.
+                // Re-absorb a child this pass already wrapped; opaque children dissolve too, delegating only when a parse actually reaches them.
                 if let Some(key) = self.zod_wrapped_lookup(call_ref) {
                     if let Some(mut wrapped) = self.zod.wrapped.get(&key).cloned() {
-                        // Dissolve the child wrapper into the parent: the
-                        // wrapper call node reverts in place to the original
-                        // schema expression (its thunk body), its refs join
-                        // the parent's refs, and the __zod usage it recorded
-                        // goes away.
+                        // Dissolve the child wrapper into the parent: revert the call node to its thunk body, append its refs to the parent's, and drop its recorded __zod usage.
                         self.zod.wrapped.swap_remove(&key);
                         let mut call_mut: js_ast::StoreRef<E::Call> = *call_ref;
                         let arrow_expr = call_mut.args.slice()[0];
@@ -496,10 +430,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let method: &[u8] = dot.name.slice();
                         let base = dot.target;
                         let args: Vec<Expr> = call.args.slice().to_vec();
-                        let is_schema_base = match &base.data {
-                            js_ast::ExprData::ECall(_) => true,
-                            _ => false,
-                        };
+                        let is_schema_base = matches!(&base.data, js_ast::ExprData::ECall(_));
                         if is_schema_base {
                             let method = method.to_vec();
                             match self.zod_extract(base, refs, false) {
@@ -512,10 +443,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                // Not a schema expression we recognize. As a child, treat it
-                // as an unknown runtime value (it may legitimately be a
-                // schema built elsewhere); at the root there is nothing to
-                // wrap.
+                // Unrecognized expression: as a child it is an unknown runtime value (it may be a schema built elsewhere); at the root there is nothing to wrap.
                 if outermost {
                     Extracted::Bail
                 } else {
@@ -532,10 +460,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// A recognized schema-producing expression the IR cannot model still
-    /// gets a lazy wrapper, but only when deferring its arguments cannot be
-    /// observed: every argument must be side-effect-free. Otherwise the whole
-    /// expression is left untouched so evaluation order is preserved.
+    /// A recognized schema call the IR cannot model keeps the lazy wrapper only when every argument is side-effect-free; otherwise the expression is left untouched to preserve evaluation order.
     fn zod_opaque_or_bail(&self, args: &[Expr]) -> Extracted {
         if args.iter().all(|a| self.zod_is_pure_value(*a)) {
             Extracted::Ir(Ir::Opaque)
@@ -544,8 +469,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Child expression that is not a recognized zod call: allowed as a
-    /// runtime ref when provably pure, otherwise the whole tree bails.
+    /// Child expression that is not a recognized zod call: allowed as a runtime ref when provably pure, otherwise the whole tree bails.
     fn zod_pure_ref(&mut self, expr: Expr, refs: &mut Vec<Expr>) -> Extracted {
         if !self.zod_is_pure_value(expr) {
             return Extracted::Bail;
@@ -555,9 +479,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Extracted::Ir(Ir::Ref(idx))
     }
 
-    /// Side-effect-free-by-syntax whitelist. These expressions may be
-    /// evaluated once eagerly (in the refs array) and again lazily (in the
-    /// thunk) without observable divergence beyond object identity.
+    /// Side-effect-free-by-syntax whitelist: safe to evaluate eagerly (refs array) and again lazily (thunk) with no divergence beyond object identity.
     fn zod_is_pure_value(&self, expr: Expr) -> bool {
         match &expr.data {
             js_ast::ExprData::EString(_)
@@ -572,11 +494,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             | js_ast::ExprData::EIdentifier(_)
             | js_ast::ExprData::EImportIdentifier(_)
             | js_ast::ExprData::EMissing(_) => true,
-            // Operators are treated as pure on pure operands. A pathological
-            // operand (an identifier bound to an object with a side-effecting
-            // valueOf/toString) could observe the thunk's re-evaluation; zod
-            // schema arguments are primitives in practice, and zod itself
-            // applies these operators to the same values during parsing.
+            // Operators on pure operands count as pure: a side-effecting valueOf/toString could observe the re-run, but zod applies the same operators to the same values while parsing.
             js_ast::ExprData::EUnary(u) => {
                 matches!(
                     u.op,
@@ -622,9 +540,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && self.zod_is_pure_value(i.yes)
                     && self.zod_is_pure_value(i.no)
             }
-            // Wrapper calls this pass emitted are pure by construction
-            // (thunk + IR string + pure refs); they appear as arguments of
-            // enclosing schema-producing calls, e.g. inside z.lazy(...).
+            // Wrapper calls this pass emitted are pure by construction (thunk + IR string + pure refs), e.g. as arguments inside z.lazy(...).
             js_ast::ExprData::ECall(c) => self.zod_wrapped_lookup(c).is_some(),
             js_ast::ExprData::ETemplate(t) => {
                 t.tag.is_none()
@@ -666,9 +582,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         args: &[Expr],
         refs: &mut Vec<Expr>,
     ) -> Extracted {
-        // Constructors taking an optional trailing params object/string. The
-        // params only affect error reporting, which always goes through the
-        // real schema, so they are ignorable when recognizable.
+        // Constructors taking an optional trailing params object/string; params only affect error reporting, which always goes through the real schema.
         macro_rules! params_ok {
             ($idx:expr) => {
                 match args.get($idx) {
@@ -766,9 +680,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         Extracted::Ir(Ir::Enum { values })
                     }
                     js_ast::ExprData::EIdentifier(_) | js_ast::ExprData::EImportIdentifier(_) => {
-                        // Array of strings by const reference; TS enum objects
-                        // also land here and are handled at runtime (the
-                        // helper falls back to delegation for non-arrays).
+                        // Array of strings by const reference; TS enum objects also land here and the helper delegates for non-arrays at runtime.
                         let idx = refs.len() as u32;
                         refs.push(args[0]);
                         Extracted::Ir(Ir::EnumRef(idx))
@@ -828,9 +740,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
                 match self.zod_extract_schema_array(args[1], refs) {
                     Some(Extracted::Ir(Ir::Union { options })) => {
-                        // The helper needs statically-derivable discriminator
-                        // values on every option; otherwise parse through the
-                        // real schema.
+                        // Needs statically-derivable discriminator values on every option; otherwise parse through the real schema.
                         if options.iter().all(|o| o.derivable_disc_values(&disc)) {
                             Extracted::Ir(Ir::DUnion { disc, options })
                         } else {
@@ -872,8 +782,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if args.len() != 2 {
                     return self.zod_opaque_or_bail(args);
                 }
-                // Only plain-string keys compile; enum/literal keys have
-                // required-key semantics and go through the real schema.
+                // Only plain-string keys compile; enum/literal keys have required-key semantics and go through the real schema.
                 let key_is_plain_string = match self.zod_extract(args[0], refs, false) {
                     Extracted::Ir(Ir::Prim {
                         prim: Prim::Str,
@@ -925,9 +834,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Constructors known to produce schemas that the IR cannot model. They
-    /// still get the lazy wrapper (ir = opaque). Anything not in this list is
-    /// not provably a schema, so the expression is left untouched.
+    /// Constructors known to produce schemas the IR cannot model: lazy wrapper with opaque IR. Anything not listed is not provably a schema and stays untouched.
     fn zod_schema_valued_fallback(&mut self, name: &[u8], args: &[Expr]) -> Extracted {
         const OPAQUE_SCHEMA_CTORS: &[&[u8]] = &[
             b"email",
@@ -1023,8 +930,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             let key_expr = key?;
             let key_str = self.zod_string_value(key_expr)?;
-            // "__proto__" as a shape key interacts with plain-object
-            // assignment; let the real schema handle it.
+            // "__proto__" as a shape key interacts with plain-object assignment; let the real schema handle it.
             if key_str == "__proto__" {
                 return Some(Extracted::Bail);
             }
@@ -1062,11 +968,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         args: &[Expr],
         refs: &mut Vec<Expr>,
     ) -> Extracted {
-        // Methods with construction-time side effects must not be deferred:
-        // `.register()` writes to a user registry, and `.describe()`/`.meta()`
-        // write to zod's globalRegistry keyed by schema identity, which a
-        // wrapper cannot replay faithfully. Leave the whole expression
-        // untouched.
+        // Construction-time side effects cannot be deferred: .register() writes a user registry and .describe()/.meta() write zod's globalRegistry keyed by schema identity, so leave the expression untouched.
         if method == b"register" || method == b"describe" || method == b"meta" {
             return Extracted::Bail;
         }
@@ -1123,9 +1025,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let Some(arg) = args.first() else {
                     return self.zod_opaque_or_bail(args);
                 };
-                // The catch value only matters on the failure path, which
-                // always goes through the real schema, but it must still be
-                // safe to re-evaluate in the thunk.
+                // The catch value only matters on the failure path (always through the real schema) but must still be safe to re-evaluate in the thunk.
                 if !self.zod_is_pure_value(*arg) {
                     return Extracted::Bail;
                 }
@@ -1152,9 +1052,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if !self.zod_is_pure_value(*params) {
                             return Extracted::Bail;
                         }
-                        // Unrecognized but pure params (e.g. { abort: true })
-                        // change which issues are collected, not whether a
-                        // fully-valid input succeeds; still safe to compile.
+                        // Unrecognized but pure params (e.g. { abort: true }) change which issues are collected, never whether fully-valid input succeeds.
                     }
                 }
                 let idx = refs.len() as u32;
@@ -1322,8 +1220,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     });
                 }
                 _ => {
-                    // Fall through to check-style methods below with the
-                    // object reassembled.
+                    // Fall through to the check-style methods below with the object reassembled.
                     return self.zod_apply_check_method(
                         Ir::Object { props, catchall },
                         method,
@@ -1344,8 +1241,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         args: &[Expr],
         refs: &mut Vec<Expr>,
     ) -> Extracted {
-        // Numeric-argument checks (second arg, if any, is an error message /
-        // params object and only affects failures).
+        // Numeric-argument checks; an optional second arg is a message/params object and only affects failures.
         let num_arg = |p: &mut Self, refs: &mut Vec<Expr>| -> Option<NumArg> {
             let arg = args.first()?;
             if let Some(n) = p.zod_number_value(*arg) {
@@ -1444,9 +1340,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             _ => {
-                // Unknown method on a schema expression. If it is a known
-                // schema-returning method, keep the lazy wrapper; otherwise
-                // leave the expression alone (it may not be a schema at all).
+                // Unknown method on a schema expression: known schema-returning methods keep the lazy wrapper; anything else leaves the expression alone.
                 const OPAQUE_SCHEMA_METHODS: &[&[u8]] = &[
                     b"transform",
                     b"superRefine",
@@ -1490,10 +1384,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let Some(check) = check else {
             return self.zod_opaque_or_bail(args);
         };
-        // Extra args past the check value: a recognizable message/params
-        // object cannot change the success path and stays compiled. Anything
-        // else that is pure (e.g. `{ position: 2 }` on `.includes`) might
-        // change acceptance, so the schema defers to zod; impure args bail.
+        // Extra args past the check value: a recognizable message/params object stays compiled, other pure args might change acceptance so the schema defers to zod, impure args bail.
         for extra in args.iter().skip(1) {
             if self.zod_is_ignorable_params(*extra) {
                 continue;
@@ -1521,8 +1412,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 _ => self.zod_opaque_or_bail(args),
             },
-            // Checks on wrappers/objects (e.g. `.min` on something we folded
-            // differently) are out of model.
+            // Checks on wrappers/objects (e.g. .min on something folded differently) are out of model.
             _ => self.zod_opaque_or_bail(args),
         }
     }
@@ -1561,9 +1451,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Some(keys)
     }
 
-    /// A trailing params argument that provably does not change the success
-    /// path: a string message, or an object literal whose keys all only
-    /// affect error reporting.
+    /// A trailing params argument that provably cannot change the success path: a string message, or an object literal whose keys only affect error reporting.
     fn zod_is_ignorable_params(&mut self, expr: Expr) -> bool {
         match &expr.data {
             js_ast::ExprData::EString(_) => true,
@@ -1640,8 +1528,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// JSON-serializable literal (for inline default values). Returns the
-    /// serialized JSON text.
+    /// JSON-serializable literal (for inline default values); returns the serialized JSON text.
     fn zod_json_value(&mut self, expr: Expr) -> Option<String> {
         match &expr.data {
             js_ast::ExprData::EString(_) => {
@@ -1665,8 +1552,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Build the `__zod(() => original, "<ir json>"[, [refs...]])` call and
-    /// register it for absorption by enclosing schema expressions.
+    /// Build the `__zod(() => original, "<ir json>"[, [refs...]])` call and register it for absorption by enclosing schema expressions.
     fn zod_emit_wrapper(
         &mut self,
         loc: bun_ast::Loc,
@@ -1733,8 +1619,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 }
 
 impl Ir {
-    /// Shift every refs-array index by `delta` (when a child wrapper's refs
-    /// are appended to its parent's).
+    /// Shift every refs-array index by `delta` (when a child wrapper's refs are appended to its parent's).
     fn shift_refs(&mut self, delta: u32) {
         if delta == 0 {
             return;
@@ -1819,8 +1704,7 @@ impl Ir {
         }
     }
 
-    /// Whether a discriminated-union option statically exposes literal/enum
-    /// values for `disc`.
+    /// Whether a discriminated-union option statically exposes literal/enum values for `disc`.
     fn derivable_disc_values(&self, disc: &str) -> bool {
         match self {
             Ir::Object { props, .. } => props.iter().any(|(k, ir)| {
@@ -2170,8 +2054,7 @@ fn write_json_string(out: &mut String, s: &str) {
             c if (c as u32) < 0x20 => {
                 out.push_str(&format!("\\u{:04x}", c as u32));
             }
-            // The IR string is printed into JS source; escape the JS line
-            // separators so the literal stays valid.
+            // Escape JS line separators so the IR literal printed into JS source stays valid.
             '\u{2028}' => out.push_str("\\u2028"),
             '\u{2029}' => out.push_str("\\u2029"),
             c => out.push(c),

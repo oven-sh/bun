@@ -146,6 +146,24 @@ itBundled("zod/NamespaceImport", {
   },
 });
 
+itBundled("zod/NamedCtorImportsOnly", {
+  install: ["zod@4.4.3"],
+  backend: "cli",
+  env: zodEnv,
+  target: "bun",
+  files: {
+    "/entry.ts": /* ts */ `
+      import { object, string, number } from "zod";
+      const S = object({ name: string().min(1), n: number().int() });
+      console.log(JSON.stringify(S.parse({ name: "a", n: 2 })), S.safeParse({ name: "", n: 2 }).success);
+    `,
+  },
+  run: { stdout: '{"name":"a","n":2} false' },
+  onAfterBundle(api) {
+    expect(api.readFile("/out.js")).toContain("__zod(() =>");
+  },
+});
+
 itBundled("zod/ZodV4Specifier", {
   install: ["zod@4.4.3"],
   backend: "cli",

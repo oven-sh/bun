@@ -838,7 +838,17 @@ impl FetchTasklet {
             bun_output::scoped_log!(FetchTasklet, "onBodyReceived Current Response");
             let size_hint = self.get_size_hint();
             response.set_size_hint(size_hint);
-            if let Some(readable) = response.get_body_readable_stream(&global_this) {
+            // Not `get_body_readable_stream`: this deferred callback reaches
+            // the Response through `native_response` (no JS root), so the
+            // wrapper may be unmarked but not yet swept and the `js_ref()` raw
+            // read is not liveness-checked. `Locked.readable` is a real
+            // `JSC::Weak` on the stream and reads `None` exactly when the
+            // stream is gone. Same guard as `BodyAbortListener::on_abort`.
+            let readable = match response.get_body_value() {
+                BodyValue::Locked(locked) => locked.readable.get(&global_this),
+                _ => None,
+            };
+            if let Some(readable) = readable {
                 bun_output::scoped_log!(
                     FetchTasklet,
                     "onBodyReceived CurrentResponse BodyReadableStream"

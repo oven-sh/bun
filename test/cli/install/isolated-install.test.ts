@@ -2534,9 +2534,9 @@ describe("hoist", () => {
     expect(readlinkSync(join(packageDir, "node_modules", "two-range-deps"))).toBe(
       join(".bun", "two-range-deps@1.0.0", "node_modules", "two-range-deps"),
     );
-    expect(
-      await file(join(packageDir, "node_modules", "two-range-deps", "package.json")).json(),
-    ).toMatchObject({ name: "two-range-deps" });
+    expect(await file(join(packageDir, "node_modules", "two-range-deps", "package.json")).json()).toMatchObject({
+      name: "two-range-deps",
+    });
     expect(
       await file(
         join(packageDir, "node_modules", ".bun", "no-deps@1.1.0", "node_modules", "no-deps", "package.json"),

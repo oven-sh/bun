@@ -190,11 +190,21 @@ void Clipboard::ItemWriter::write(const Vector<RefPtr<ClipboardItem>>& items)
     // write before anything reaches the clipboard.
     for (auto& item : items) {
         auto types = item->types();
+        Vector<String> essences;
+        essences.reserveInitialCapacity(types.size());
         for (auto& type : types) {
             if (!clipboardSupportsType(type)) {
                 reject(ExceptionCode::NotAllowedError, makeString("The type \""_s, type, "\" is not supported on this platform."_s));
                 return;
             }
+            // Platform formats carry no MIME parameters, so two same-essence
+            // representations would silently overwrite each other.
+            auto essence = ClipboardItem::parseMIMETypeEssence(type);
+            if (essences.contains(essence)) {
+                reject(ExceptionCode::NotAllowedError, makeString("Writing two \""_s, essence, "\" representations is not supported."_s));
+                return;
+            }
+            essences.append(WTF::move(essence));
         }
         if (clipboardWritesSingleRepresentation() && types.size() > 1) {
             reject(ExceptionCode::NotAllowedError, "Writing more than one representation per item is not supported on this platform."_s);

@@ -59,9 +59,17 @@ Vector<String> ClipboardItemPlatformDataSource::types() const
 
 void ClipboardItemPlatformDataSource::getType(const String& type, Ref<DeferredPromise>&& promise)
 {
+    // Exact match first, essence as the lenient fallback, like the bindings
+    // data source.
     auto matchIndex = m_data.findIf([&](auto& representation) {
-        return ClipboardItem::essenceMatches(representation.key, type);
+        return representation.key == type;
     });
+    if (matchIndex == notFound) {
+        auto essence = ClipboardItem::parseMIMETypeEssence(type);
+        matchIndex = m_data.findIf([&](auto& representation) {
+            return ClipboardItem::essenceMatches(representation.key, essence);
+        });
+    }
 
     if (matchIndex == notFound) {
         promise->reject(ExceptionCode::NotFoundError, makeString("The type \""_s, type, "\" was not found"_s));

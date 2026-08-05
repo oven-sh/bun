@@ -200,6 +200,17 @@ describe("ClipboardItem", () => {
     expect(await (await item.getType(" text/plain;charset=utf-8 ")).text()).toBe("essence");
   });
 
+  // Two same-essence entries are stored distinctly, so each must stay
+  // reachable: the exact serialization wins before the essence fallback.
+  test("getType() prefers an exact serialization match over the essence", async () => {
+    const twoReps = new ClipboardItem({ "text/plain": "a", "text/plain;charset=utf-8": "b" });
+    expect(await (await twoReps.getType("text/plain")).text()).toBe("a");
+    expect(await (await twoReps.getType(" Text/Plain ;charset=utf-8")).text()).toBe("b");
+    // Platform formats carry no parameters, so writing both would silently
+    // overwrite one; the write rejects before touching the OS.
+    await expectDOMException(navigator.clipboard.write([twoReps]), "NotAllowedError");
+  });
+
   test("MIME types are normalized to their lowercased serialization", async () => {
     const item = new ClipboardItem({ "TeXt/PlAiN": "upper" });
     expect(item.types).toEqual(["text/plain"]);

@@ -88,9 +88,17 @@ static RefPtr<Blob> blobFromResolvedValue(JSC::JSGlobalObject& globalObject, JSC
 
 void ClipboardItemBindingsDataSource::getType(const String& type, Ref<DeferredPromise>&& promise)
 {
+    // Exact serialization first (spec record equality), so same-essence
+    // entries stay individually reachable; essence as the lenient fallback.
     auto matchIndex = m_itemPromises.findIf([&](auto& item) {
-        return ClipboardItem::essenceMatches(item.key, type);
+        return item.key == type;
     });
+    if (matchIndex == notFound) {
+        auto essence = ClipboardItem::parseMIMETypeEssence(type);
+        matchIndex = m_itemPromises.findIf([&](auto& item) {
+            return ClipboardItem::essenceMatches(item.key, essence);
+        });
+    }
 
     if (matchIndex == notFound) {
         promise->reject(ExceptionCode::NotFoundError, makeString("The type \""_s, type, "\" was not found"_s));

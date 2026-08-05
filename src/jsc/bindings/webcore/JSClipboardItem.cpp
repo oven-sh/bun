@@ -304,11 +304,11 @@ static inline JSC::EncodedJSValue jsClipboardItemPrototypeFunction_getTypeBody(J
     auto type = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     throwScope.release();
-    // Stored keys are serialized MIME types, matched by essence; fall back to
-    // a plain lowercase so an unparsable argument still hits the data
-    // source's own NotFoundError.
-    String essence = ClipboardItem::parseMIMETypeEssence(type);
-    impl.getType(essence.isEmpty() ? type.convertToASCIILowercase() : essence, WTF::move(promise));
+    // Stored keys are serialized MIME types; the data source matches the
+    // serialization exactly first (spec record equality, parameters included),
+    // then by essence. An unparsable argument still hits its NotFoundError.
+    String serialized = ClipboardItem::parseAndSerializeMIMEType(type);
+    impl.getType(serialized.isEmpty() ? type.convertToASCIILowercase() : serialized, WTF::move(promise));
     return JSValue::encode(jsUndefined());
 }
 

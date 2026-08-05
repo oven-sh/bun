@@ -76,7 +76,7 @@ itBundled("zod/ImpureArgumentBailsOut", {
   run: { stdout: "false true\ntrue" },
   onAfterBundle(api) {
     const code = api.readFile("/out.js");
-    expect(code).toContain('min(limit())');
+    expect(code).toContain("min(limit())");
     expect(code.split("__zod(() =>").length - 1).toBe(1);
   },
 });

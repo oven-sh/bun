@@ -1212,12 +1212,10 @@ it.skipIf(!isWindows)("should not crash on corrupted .bunx file with missing quo
     subprocess1.exited,
   ]);
 
-  // Find the .bunx file
   const binDir = join(x_dir, "node_modules", ".bin");
-  const bunxFile = join(binDir, "tsc.bunx");
-
-  // Verify the file exists before corrupting it
-  expect(await Bun.file(bunxFile).exists()).toBe(true);
+  expect(await Bun.file(join(binDir, "tsc.exe")).exists()).toBe(true);
+  const adsFile = join(binDir, "tsc.exe:bunx");
+  const bunxFile = (await Bun.file(adsFile).exists()) ? adsFile : join(binDir, "tsc.bunx");
 
   // Create a corrupted .bunx file:
   // Valid format: [bin_path UTF-16LE]["(quote)][null][shebang][bin_len u32][args_len u32][flags u16]

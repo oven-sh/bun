@@ -1204,9 +1204,9 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
 
       expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "what-bin"]);
-      const what_bin_bins = !isWindows ? ["what-bin"] : ["what-bin.bunx", "what-bin.exe"];
-      // prettier-ignore
-      expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(what_bin_bins);
+      const what_bin_bins = isWindows ? ["what-bin.exe"] : ["what-bin"];
+      const filterBunx = (entries: string[]) => entries.filter(n => !n.endsWith(".bunx"));
+      expect(filterBunx(await readdirSorted(join(packageDir, "node_modules", ".bin")))).toEqual(what_bin_bins);
 
       ({ stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
@@ -1267,7 +1267,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
 
       expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "what-bin"]);
-      expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(what_bin_bins);
+      expect(filterBunx(await readdirSorted(join(packageDir, "node_modules", ".bin")))).toEqual(what_bin_bins);
 
       ({ stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
@@ -1292,7 +1292,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
 
       expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "what-bin"]);
-      expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(what_bin_bins);
+      expect(filterBunx(await readdirSorted(join(packageDir, "node_modules", ".bin")))).toEqual(what_bin_bins);
 
       // add it to trusted dependencies
       await writeFile(
@@ -1330,7 +1330,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
 
       expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "what-bin"]);
-      expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(what_bin_bins);
+      expect(filterBunx(await readdirSorted(join(packageDir, "node_modules", ".bin")))).toEqual(what_bin_bins);
     });
 
     test("lifecycle scripts run if node_modules is deleted", async () => {

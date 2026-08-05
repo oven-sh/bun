@@ -985,22 +985,43 @@ export function toHaveBins(actual: string[], expectedBins: string[]) {
   const message = () => `Expected ${actual} to be package bins ${expectedBins}`;
 
   if (isWindows) {
-    for (var i = 0; i < actual.length; i += 2) {
-      if (!actual[i].includes(expectedBins[i / 2]) || !actual[i + 1].includes(expectedBins[i / 2])) {
-        return { pass: false, message };
-      }
-    }
-    return { pass: true, message };
+    // `.bin` holds `<name>.exe` per bin; on volumes without NTFS alternate
+    // data streams a `<name>.bunx` sidecar sits next to it. Accept either
+    // layout by ignoring `.bunx` entries and matching on the exe stems.
+    const stems = actual.filter(n => !n.endsWith(".bunx")).map(n => n.replace(/\.exe$/i, ""));
+    return { pass: stems.length === expectedBins.length && stems.every((s, i) => s === expectedBins[i]), message };
   }
 
   return { pass: actual.every((bin, i) => bin === expectedBins[i]), message };
+}
+
+/**
+ * Read the Windows bin-shim metadata for `<binPathWithoutExt>` from whichever
+ * store the installer used: the `:bunx` alternate data stream on the exe, or
+ * the `<name>.bunx` sidecar file.
+ */
+export function readWindowsBinShim(binPathWithoutExt: string): string {
+  try {
+    return fs.readFileSync(binPathWithoutExt + ".exe:bunx", "utf16le");
+  } catch {
+    return fs.readFileSync(binPathWithoutExt + ".bunx", "utf16le");
+  }
+}
+
+/**
+ * True if a Windows bin shim exists at `<binPathWithoutExt>` in either layout
+ * (`:bunx` ADS on the exe, or the `<name>.bunx` sidecar).
+ */
+export function windowsBinShimExists(binPathWithoutExt: string): boolean {
+  if (!fs.existsSync(binPathWithoutExt + ".exe")) return false;
+  return fs.existsSync(binPathWithoutExt + ".exe:bunx") || fs.existsSync(binPathWithoutExt + ".bunx");
 }
 
 export function toBeValidBin(actual: string, expectedLinkPath: string) {
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
   if (isWindows) {
-    const contents = fs.readFileSync(actual + ".bunx", "utf16le");
+    const contents = readWindowsBinShim(actual);
     const expected = expectedLinkPath.slice(3);
     return { pass: contents.includes(expected), message };
   }

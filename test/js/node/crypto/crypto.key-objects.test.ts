@@ -1852,6 +1852,7 @@ describe.skipIf(!isASAN)("async crypto jobs: process.exit() in the callback leak
       }`,
     "hkdf": `crypto.hkdf("sha256", "key", "salt", "info", 32, done);`,
     "checkPrime": `crypto.checkPrime(7n, done);`,
+    "generatePrime": `crypto.generatePrime(64, done);`,
     "generateKey (secret)": `crypto.generateKey("hmac", { length: 256 }, done);`,
     // The second path to the same leak: the completion task is enqueued but
     // never dispatched (the spin keeps the JS thread busy until exit), so the

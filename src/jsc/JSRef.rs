@@ -1,5 +1,3 @@
-use core::marker::PhantomData;
-
 // The methods used below (`get() -> Option`, `has()`, `try_swap()`) live on
 // the Optional wrapper, so import it under the local name `Strong`.
 use crate::strong::Optional as Strong;
@@ -105,10 +103,18 @@ pub enum JsRef {
     Finalized,
 }
 
-// Belt-and-suspenders: Weak and Strong are already !Send/!Sync, but make it
-// explicit so a future refactor of those types cannot accidentally make JsRef
-// sendable.
-const _: PhantomData<*const ()> = PhantomData;
+// Compile-time proof that `JsRef` stays `!Send`/`!Sync`: only the blanket
+// impl applies today, and a refactor of `Weak`/`Strong` that made `JsRef`
+// `Send` or `Sync` would make the selection ambiguous and fail the build.
+const _: () = {
+    trait AmbiguousIfImpl<A> {
+        fn some_item() {}
+    }
+    impl<T: ?Sized> AmbiguousIfImpl<()> for T {}
+    impl<T: ?Sized + Send> AmbiguousIfImpl<u8> for T {}
+    impl<T: ?Sized + Sync> AmbiguousIfImpl<u16> for T {}
+    let _ = <JsRef as AmbiguousIfImpl<_>>::some_item;
+};
 
 impl JsRef {
     pub fn init_weak(value: JSValue) -> Self {

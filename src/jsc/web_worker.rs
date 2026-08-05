@@ -1341,10 +1341,12 @@ impl WebWorker {
             // other thread can dereference it now — `&mut` is exclusive.
             let vm = unsafe { &mut *vm_ptr };
             // terminate() set the JSC termination flag to interrupt running JS;
-            // clear it AND the materialized exception (tryClearException refuses
-            // TerminationExceptions) so on_exit() / socket on_close JS below run
-            // with a clean scope. teardownJSCVM re-arms it for JSC VM teardown.
-            vm.global().clear_termination_exception();
+            // clear it so process.on('exit') handlers can run. teardownJSCVM
+            // re-sets it for the JSC VM teardown. A TerminationException still
+            // pending on the VM is left for on_exit's dispatch gate (it skips
+            // 'exit' on a terminate that interrupted running JS, as node does)
+            // and cleared there right after.
+            vm.jsc_vm().clear_has_termination_request();
             vm.is_shutting_down = true;
             vm.on_exit();
             if let Some(hooks) = runtime_hooks() {
@@ -1566,7 +1568,11 @@ impl WebWorker {
         let (err, str) = match result {
             Ok(pair) => pair,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-            Err(JsError::Thrown | JsError::Terminated) => panic!("unhandled exception"),
+            // terminate() raced this flush: the trap/pending TerminationException
+            // fails to_js. The worker is being torn down and node emits no
+            // 'error' for a terminate(), so drop the diagnostics.
+            Err(JsError::Terminated) => return,
+            Err(JsError::Thrown) => panic!("unhandled exception"),
         };
         let mut str = bun_core::OwnedString::new(str);
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {

@@ -24,6 +24,38 @@ it("Should support printing 'hello world'", () => {
   });
 });
 
+it("poll_oneoff with a relative clock subscription sleeps instead of throwing", () => {
+  // This is the code path wasi-libc's sleep()/usleep()/nanosleep() takes.
+  let sleptMs;
+  const wasi = new WASI({ version: "preview1", sleep: ms => void (sleptMs = ms) });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const view = new DataView(wasi.memory.buffer);
+
+  const WASI_ESUCCESS = 0;
+  const WASI_EVENTTYPE_CLOCK = 0;
+  const WASI_CLOCK_MONOTONIC = 1;
+  const sin = 512;
+  const sout = 1024;
+  const neventsPtr = 128;
+
+  // one subscription: userdata=42, type=clock, clockid=monotonic, timeout=20ms relative
+  view.setBigUint64(sin + 0, 42n, true);
+  view.setUint8(sin + 8, WASI_EVENTTYPE_CLOCK);
+  view.setUint32(sin + 16, WASI_CLOCK_MONOTONIC, true);
+  view.setBigUint64(sin + 24, 20_000_000n, true);
+  view.setBigUint64(sin + 32, 0n, true);
+  view.setUint16(sin + 40, 0, true);
+
+  const errno = wasi.wasiImport.poll_oneoff(sin, sout, 1, neventsPtr);
+
+  expect(errno).toBe(WASI_ESUCCESS);
+  expect(sleptMs).toBe(20);
+  expect(view.getUint32(neventsPtr, true)).toBe(1);
+  expect(view.getBigUint64(sout + 0, true)).toBe(42n);
+  expect(view.getUint16(sout + 8, true)).toBe(WASI_ESUCCESS);
+  expect(view.getUint8(sout + 10)).toBe(WASI_EVENTTYPE_CLOCK);
+});
+
 it("fd_fdstat_set_rights only narrows the rights of a descriptor", () => {
   using dir = tempDir("wasi-set-rights", {
     "inside.txt": "inside",

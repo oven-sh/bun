@@ -82,6 +82,9 @@
 #include <JavaScriptCore/Completion.h>
 #include <zstd.h>
 #include <dlfcn.h>
+#ifndef BUN_HEAPIMAGE_TOOLING
+#define BUN_HEAPIMAGE_TOOLING 1 // attribution/diagnostic commands (dirtymap, censuses, traps); the image product path must build with this off
+#endif
 #pragma clang diagnostic ignored "-Wformat" // uint64_t is unsigned long on Linux, unsigned long long on Darwin; this file prints a lot of addresses
 #include <signal.h>
 #include <sys/mman.h>
@@ -312,6 +315,7 @@ extern "C" void Bun__memdebugInstall()
     signal(SIGXCPU, memdebugSignal);
 }
 
+#if BUN_HEAPIMAGE_TOOLING
 static void dumpJSCHeap(JSC::VM& vm, FILE* f)
 {
     JSC::JSLockHolder lock(vm);
@@ -529,9 +533,11 @@ static void dumpJSCHeap(JSC::VM& vm, FILE* f)
     for (auto& [name, e] : map)
         fprintf(f, "%s\t%zu\t%zu\t%zu\n", name, e.count, e.cellBytes, e.estimated);
 }
+#endif // BUN_HEAPIMAGE_TOOLING
 
 
 // Experiment: turn resident anonymous heap pages into a private file mapping of themselves (clean, evictable, COW on write).
+#if BUN_HEAPIMAGE_TOOLING
 static void fileSnapshotHeap(JSC::VM& vm)
 {
     JSC::JSLockHolder lock(vm);
@@ -677,8 +683,10 @@ static void fileSnapshotHeap(JSC::VM& vm)
     // keep fd open for the life of the process (mapping holds a reference anyway)
     fprintf(stderr, "[filesnap] candidates=%zu remapped=%.1fMB in %zu runs, skipped=%zu, file=%.1fMB\n", candidates.size(), remapped / 1048576.0, runs, skipped, fileOff / 1048576.0);
 }
+#endif // BUN_HEAPIMAGE_TOOLING
 
 // After filesnap: which frozen pages were COW'd back to private (dirty), attributed to MarkedBlock subspaces vs other malloc.
+#if BUN_HEAPIMAGE_TOOLING
 static void dumpDirtyMap(JSC::VM& vm)
 {
 #if OS(DARWIN)
@@ -923,8 +931,10 @@ static void dumpDirtyMap(JSC::VM& vm)
     }
 #endif
 }
+#endif // BUN_HEAPIMAGE_TOOLING
 
 // UnlinkedCodeBlock component census (bytes by part) over live cells; "new" = allocated after the image.
+#if BUN_HEAPIMAGE_TOOLING
 static void dumpUCBCensus(JSC::VM& vm)
 {
     JSC::JSLockHolder lock(vm);
@@ -960,8 +970,10 @@ static void dumpUCBCensus(JSC::VM& vm)
       for (int t = 0; t < 8; t++) if (jitN[t]) fprintf(stderr, " [%d]=%zux/%.2fMB", t, jitN[t], jitB[t] / M);
       fprintf(stderr, "\n"); }
 }
+#endif // BUN_HEAPIMAGE_TOOLING
 
 // Live sampled malloc blocks allocated after restore (outside every image range), with their allocation stacks -> TSV for owners3.ts-style bucketing.
+#if BUN_HEAPIMAGE_TOOLING
 static void dumpNewPayload(JSC::VM& vm)
 {
     JSC::JSLockHolder lock(vm);
@@ -984,8 +996,10 @@ static void dumpNewPayload(JSC::VM& vm)
     fclose(ctx.f);
     fprintf(stderr, "[newpayload] %zu live sampled post-restore blocks (each ~%s bytes of allocation volume) -> %s\n", ctx.n, getenv("MIMALLOC_PROF_SAMPLE_RATE") ? getenv("MIMALLOC_PROF_SAMPLE_RATE") : "?", path);
 }
+#endif // BUN_HEAPIMAGE_TOOLING
 
 // Census of cells allocated after the image was made (mortal blocks + non-immortal precise allocations), by class.
+#if BUN_HEAPIMAGE_TOOLING
 static void dumpNewCells(JSC::VM& vm)
 {
     JSC::JSLockHolder lock(vm);
@@ -1018,9 +1032,11 @@ static void dumpNewCells(JSC::VM& vm)
     std::sort(rows.begin(), rows.end(), std::greater<>());
     for (size_t i = 0; i < std::min<size_t>(rows.size(), 30); i++) fprintf(stderr, "%s\n", rows[i].second.c_str());
 }
+#endif // BUN_HEAPIMAGE_TOOLING
 
 
 // "mutated": which imaged JS objects did the app write to since restore? Aggregated by class + shape (first own property names), so the app authors get a concrete list.
+#if BUN_HEAPIMAGE_TOOLING
 static void dumpMutatedImageObjects(JSC::VM& vm)
 {
     JSC::JSLockHolder lock(vm);
@@ -1075,6 +1091,7 @@ static void dumpMutatedImageObjects(JSC::VM& vm)
     fprintf(stderr, "[mutated] %zu imaged JS objects changed since restore (of %zu compared). By class {first properties}: count, what changed (cell header / butterfly pointer i.e. regrown / inline slots / butterfly contents)\n", changed, scanned);
     for (size_t i = 0; i < std::min<size_t>(rows.size(), 60); i++) fprintf(stderr, "%s\n", rows[i].second.c_str());
 }
+#endif // BUN_HEAPIMAGE_TOOLING
 
 static void recleanFrozenPages(JSC::VM& vm);
 extern "C" void Bun__imageRecleanPages(JSC::VM* vm) { if (s_snapFd >= 0) recleanFrozenPages(*vm); }
@@ -1252,6 +1269,7 @@ struct ImageRegion { uint64_t addr; uint64_t len; uint64_t fileOff; uint64_t kin
 struct TrapRec { uintptr_t page; uintptr_t pcs[10]; };
 static TrapRec* s_trapRecs = nullptr; static std::atomic<size_t> s_trapCount { 0 }; static size_t s_trapCap = 0;
 static struct sigaction s_prevBus, s_prevSegv;
+#if BUN_HEAPIMAGE_TOOLING
 static void imageTrapHandler(int sig, siginfo_t* info, void* uctx)
 {
     uintptr_t a = (uintptr_t)info->si_addr; size_t pg = 16384; uintptr_t page = a & ~(pg - 1);
@@ -1280,6 +1298,8 @@ static void imageTrapHandler(int sig, siginfo_t* info, void* uctx)
 #endif
     }
 }
+#endif // BUN_HEAPIMAGE_TOOLING
+#if BUN_HEAPIMAGE_TOOLING
 static void imageTrapArm()
 {
     s_trapCap = 1 << 18; s_trapRecs = (TrapRec*)mmap(nullptr, s_trapCap * sizeof(TrapRec), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
@@ -1293,6 +1313,8 @@ static void imageTrapArm()
         for (auto& r : s_frozenRanges) { if (!mprotect((void*)r.first, r.second - r.first, PROT_READ)) n += r.second - r.first; }
     fprintf(stderr, "[imagetrap] armed: %.1fMB read-only (%s)\n", n / 1048576.0, mode);
 }
+#endif // BUN_HEAPIMAGE_TOOLING
+#if BUN_HEAPIMAGE_TOOLING
 static void imageTrapReport()
 {
     size_t n = std::min(s_trapCount.load(), s_trapCap);
@@ -1302,6 +1324,7 @@ static void imageTrapReport()
     fclose(f);
     fprintf(stderr, "[imagetrap] %zu first-write faults recorded (%.1fMB of pages) -> %s\n", n, n * 16384 / 1048576.0, path);
 }
+#endif // BUN_HEAPIMAGE_TOOLING
 
 static struct termios s_imageTermios; static int s_imageTermiosFd = -1; // lives in __DATA, so it travels inside the image
 static uint64_t s_imageOpenFds[16]; // fds 0..1023 open in the build process: the restored process parks /dev/null on them so stale closes are harmless and new fds never alias them
@@ -1590,8 +1613,10 @@ static void imageRestoreAndRun(const char* path)
         mi_theap_set_default(mi_heap_theap(fresh ? fresh : mi_heap_new()));
         { void* probe = mi_malloc(64); if (WTF::isInImageImmortalRange(probe)) { fprintf(stderr, "[image] fresh heap overlaps the immortal-refcount range; disabling it\n"); WTF::g_imageImmortalRangeSpan = 0; } mi_free(probe); }
     }
+#if BUN_HEAPIMAGE_TOOLING
     if (getenv("BUN_IMAGE_TRAP")) imageTrapArm();
     else if (getenv("BUN_IMAGE_CRASHBT")) { struct sigaction sa {}; sa.sa_sigaction = imageTrapHandler; sa.sa_flags = SA_SIGINFO | SA_NODEFER; sigemptyset(&sa.sa_mask); sigaction(SIGBUS, &sa, &s_prevBus); sigaction(SIGSEGV, &sa, &s_prevSegv); } // backtrace-only: s_frozenRanges stays as-is but nothing is protected
+#endif
     // pthread TLS keys created by the build process (WTF::ThreadSpecific etc.) must exist here too, or setspecific silently fails; burn keys up to the image's high-water mark.
     if (hdr.reserved[1]) { for (int i = 0; i < 1024; i++) { pthread_key_t k = 0; if (pthread_key_create(&k, nullptr)) break; if ((uint64_t)k + 1 >= hdr.reserved[1]) break; } }
     fprintf(stderr, "[image] restored %zu regions: %.1fMB mapped clean, %.1fMB __DATA copied\n", regions.size(), mapped / 1048576.0, copied / 1048576.0);
@@ -1684,29 +1709,45 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
     s_seq++;
     // Reports also go to <dir>/report.<pid>.txt: a TUI app owns the terminal and stderr text gets lost in its rendering.
     struct StderrTee { int saved = -1; StderrTee(bool on) { if (!on || !s_dir) return; char p[1200]; snprintf(p, sizeof p, "%s/report.%d.txt", s_dir, getpid()); int fd = open(p, O_WRONLY | O_CREAT | O_APPEND, 0644); if (fd < 0) return; fflush(stderr); saved = dup(2); dup2(fd, 2); close(fd); } ~StderrTee() { if (saved < 0) return; fflush(stderr); dup2(saved, 2); close(saved); } } tee(fromCmdFile);
+#if BUN_HEAPIMAGE_TOOLING
     if (req == 4) {
         fileSnapshotHeap(*vm);
         return;
     }
+#endif
+#if BUN_HEAPIMAGE_TOOLING
     if (req == 5) {
         dumpDirtyMap(*vm);
         return;
     }
+#endif
     if (req == 6) {
         recleanFrozenPages(*vm);
         return;
     }
+#if BUN_HEAPIMAGE_TOOLING
     if (req == 7) {
         s_recordProfile = true;
         dumpDirtyMap(*vm);
         s_recordProfile = false;
         return;
     }
+#endif
+#if BUN_HEAPIMAGE_TOOLING
     if (req == 9) { imageTrapReport(); return; }
+#endif
+#if BUN_HEAPIMAGE_TOOLING
     if (req == 10) { dumpNewCells(*vm); return; }
+#endif
+#if BUN_HEAPIMAGE_TOOLING
     if (req == 13) { dumpMutatedImageObjects(*vm); return; }
+#endif
+#if BUN_HEAPIMAGE_TOOLING
     if (req == 11) { dumpNewPayload(*vm); return; }
+#endif
+#if BUN_HEAPIMAGE_TOOLING
     if (req == 12) { dumpUCBCensus(*vm); return; }
+#endif
     if (req == 8) {
         Bun__requestSnapshot(vm, getenv("BUN_IMAGE_OUT") ? getenv("BUN_IMAGE_OUT") : "/tmp/bun.img"); // unwinds JS via termination; the run loop takes it at top level and exits
         return;
@@ -1740,7 +1781,9 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
     {
         FILE* f = fopen((base + ".jsc.tsv").c_str(), "w");
         if (f) {
+#if BUN_HEAPIMAGE_TOOLING
             dumpJSCHeap(*vm, f);
+#endif
             fclose(f);
         }
     }

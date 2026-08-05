@@ -1081,13 +1081,18 @@ impl<'a> PackageInstall<'a> {
         };
         walker_.resolve_unknown_entry_types = true;
 
-        fn copy(destination_dir_: &Dir, walker: &mut Walker) -> crate::Result<u32> {
+        fn copy(
+            destbase: &Dir,
+            destpath: &ZStr,
+            subdir: &mut Dir,
+            walker: &mut Walker,
+        ) -> crate::Result<u32> {
             let mut real_file_count: u32 = 0;
             let mut stackpath = [0u8; path::MAX_PATH_BYTES];
             while let Some(entry) = walker.next()? {
                 match entry.kind {
                     EntryKind::Directory => {
-                        let _ = sys::mkdirat(destination_dir_, entry.path, 0o755);
+                        let _ = sys::mkdirat(&*subdir, entry.path, 0o755);
                     }
                     EntryKind::File => {
                         let path_len = entry.path.len();
@@ -1101,25 +1106,62 @@ impl<'a> PackageInstall<'a> {
                         // buffer (which were UB-adjacent as aliased `&mut`s).
                         let path_ = ZStr::from_buf(&stackpath, path_len);
                         let basename = ZStr::from_buf(&stackpath[path_len - base_len..], base_len);
-                        match sys::clonefileat(entry.dir, basename, destination_dir_.fd(), path_) {
-                            Ok(()) => {}
+                        // Same retry dance as the hardlink loop below: a peer
+                        // installing the same package renames the destination
+                        // dir aside (uninstall-before-install), which
+                        // surfaces as ENOENT (or EINVAL for an unlinked
+                        // dirfd); re-open by path and retry.
+                        const MAX_RETRIES: u32 = 6;
+                        let mut retries: u32 = 0;
+                        loop {
+                            let err =
+                                match sys::clonefileat(entry.dir, basename, subdir.fd(), path_) {
+                                    Ok(()) => break,
+                                    Err(e) => e,
+                                };
                             // `get_errno` bounds-checks (SUCCESS for out-of-range errno) — avoids
                             // `from_raw`'s release-mode transmute on an unexpected value.
-                            Err(e) => match e.get_errno() {
+                            match err.get_errno() {
                                 sys::Errno::EXDEV => return Err(crate::Error::NotSupported), // not same file system
                                 sys::Errno::EOPNOTSUPP => {
                                     return Err(crate::Error::NotSupported);
                                 }
-                                sys::Errno::ENOENT => {
-                                    return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
+                                // A peer's clone of the same source; the
+                                // package's own node_modules can also collide.
+                                sys::Errno::EEXIST => break,
+                                sys::Errno::ENOENT | sys::Errno::EINVAL => {
+                                    if retries == MAX_RETRIES {
+                                        return Err(crate::Error::Sys(
+                                            bun_errno::SystemErrno::ENOENT,
+                                        ));
+                                    }
+                                    if let Ok(reopened) = destbase.make_open_path(
+                                        destpath.as_bytes(),
+                                        OpenDirOptions::default(),
+                                    ) {
+                                        *subdir = reopened;
+                                    }
+                                    let entry_dirname = bun_paths::resolve_path::dirname::<
+                                        bun_paths::platform::Auto,
+                                    >(entry.path.as_bytes());
+                                    if !entry_dirname.is_empty() {
+                                        let _ = bun_sys::MakePath::make_path::<OSPathChar>(
+                                            &*subdir,
+                                            entry_dirname,
+                                        );
+                                    }
+                                    retries += 1;
+                                    if retries >= 3 {
+                                        std::thread::sleep(std::time::Duration::from_millis(
+                                            10u64 << (retries - 3),
+                                        ));
+                                    }
                                 }
-                                // sometimes the downloaded npm package has already node_modules with it, so just ignore exist error here
-                                sys::Errno::EEXIST => {}
                                 sys::Errno::EACCES => {
                                     return Err(crate::Error::Sys(bun_errno::SystemErrno::EACCES));
                                 }
                                 _ => return Err(crate::Error::Unexpected),
-                            },
+                            }
                         }
 
                         real_file_count += 1;
@@ -1131,14 +1173,19 @@ impl<'a> PackageInstall<'a> {
             Ok(real_file_count)
         }
 
-        let subdir = match destination_dir.make_open_path(
+        let mut subdir = match destination_dir.make_open_path(
             self.destination_dir_subpath.as_bytes(),
             OpenDirOptions::default(),
         ) {
             Ok(d) => d,
             Err(err) => return Ok(InstallResult::fail(err.into(), Step::OpeningDestDir, None)),
         };
-        self.file_count = match copy(&subdir, &mut walker_) {
+        self.file_count = match copy(
+            destination_dir,
+            self.destination_dir_subpath,
+            &mut subdir,
+            &mut walker_,
+        ) {
             Ok(n) => n,
             Err(err) => return Ok(InstallResult::fail(err, Step::CopyingFiles, None)),
         };

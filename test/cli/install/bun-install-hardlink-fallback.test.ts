@@ -3,7 +3,7 @@
 // hardlink install backend must fall back to copying files, like it already
 // does for EXDEV. https://github.com/oven-sh/bun/issues/36852
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isMusl, isWindows, tempDir } from "harness";
 import { cpSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -109,8 +109,10 @@ describe("concurrent installs into the same destination", () => {
   const FILE_COUNT = 60;
   const PROCESS_COUNT = 10;
   const ROUNDS = 3;
+  // clonefile is the macOS default backend and has its own copy loop.
+  const BACKENDS = ["hardlink", ...(isMacOS ? ["clonefile"] : [])];
 
-  test("tolerate each other instead of failing with EBUSY", async () => {
+  test.each(BACKENDS)("%s backend: tolerate each other instead of failing with EBUSY", async backend => {
     const deps: Record<string, string> = {};
     for (let p = 0; p < PKG_COUNT; p++) {
       deps[`many-files-${p}`] = `file:./many-files-${p}.tgz`;
@@ -131,7 +133,7 @@ describe("concurrent installs into the same destination", () => {
     }
 
     const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), "cache") };
-    const cmd = [bunExe(), "install", "--backend", "hardlink"];
+    const cmd = [bunExe(), "install", "--backend", backend];
 
     // Warm the cache and the lockfile so the racing rounds below start at
     // the cache-to-node_modules copy phase together.

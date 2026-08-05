@@ -15,6 +15,7 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
             ("memoryFootprint", __jsc_host_memory_footprint, 1),
             ("snapshot", __jsc_host_snapshot, 1),
             ("snapshotState", __jsc_host_snapshot_state, 0),
+            ("recleanImagePages", __jsc_host_reclean_image_pages, 0),
         ],
     )
 }
@@ -46,6 +47,20 @@ fn snapshot(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
 unsafe extern "C" {
     safe fn JSC__VM__throwTerminationExceptionNow(global: &JSGlobalObject) -> JSValue;
+}
+
+/// `Bun.unsafe.recleanImagePages()`: in a process restored from an image, hand pages whose contents drifted back to the
+/// image's bytes (transient writes: locks, refcounts) back to the clean file mapping. Cheap (~10ms); call when idle.
+#[bun_jsc::host_fn]
+fn reclean_image_pages(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    if bun_core::image::restored() {
+        Bun__imageRecleanPages(global.vm());
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
+unsafe extern "C" {
+    safe fn Bun__imageRecleanPages(vm: &bun_jsc::VM);
 }
 
 /// `Bun.unsafe.snapshotState()` -> `{ building: boolean, epoch: number }` (epoch 0 = normal boot, N = resumed from an image N times).

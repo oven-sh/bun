@@ -311,16 +311,14 @@ run_test() {
   } > "$PDIR/result_${idx}.tmp"
   mv "$PDIR/result_${idx}.tmp" "$PDIR/result_${idx}"
   # running_${idx} 由主循环管理（基于 result_* 文件存在性），不在 worker 中删除
-  # 原子更新进度计数（mv 替代 mkdir 锁，避免死锁）
+  # 进度用追加日志（每行一条结果），避免并发 read-modify-write 竞态丢计数：
+  # 旧方案 source progress + 写回在 5 个 worker 并发时互相覆盖（DONE 少计数）。
+  # 格式: <PASS|FAIL> <case_pass> <case_fail>
   _np=$CASE_PASS; _nf=$CASE_FAIL
   [ "$TIMEOUT" = "1" ] && _np=0 && _nf=0
-  if [ -f "$PDIR/progress" ]; then . "$PDIR/progress"; else DONE=0 PASS=0 FAIL=0 CP=0 CF=0; fi
-  if [ "$FILE_RESULT" = PASS ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); fi
-  CP=$((CP + _np)); CF=$((CF + _nf)); DONE=$((DONE + 1))
-  # 原子更新进度：唯一临时文件名避免并发 worker 互相截断 progress.tmp，
-  # 否则 mv 可能读到被他人截断/移走的文件 → "No such file" → 计数丢失
-  echo "DONE=$DONE PASS=$PASS FAIL=$FAIL CP=$CP CF=$CF" > "$PDIR/progress.$$"
-  mv "$PDIR/progress.$$" "$PDIR/progress" 2>>"$REPORT"
+  {
+    if [ "$FILE_RESULT" = PASS ]; then printf 'PASS %d %d\n' "$_np" "$_nf"; else printf 'FAIL %d %d\n' "$_np" "$_nf"; fi
+  } >> "$PDIR/progress.log" 2>>"$REPORT"
   # 释放串行锁
   if [ "$_serial" -eq 1 ]; then
     rmdir "$PDIR/serial.lock" 2>/dev/null || true
@@ -334,12 +332,14 @@ show_progress() {
 
   no_progress_start=0; last_completed=0
   while true; do
-    # 读取增量进度计数（单文件，不遍历 1893 个 result_*）
-    if [ -f "$PDIR/progress" ]; then
-      . "$PDIR/progress"
-      completed=$DONE; passed=$PASS; failed=$FAIL; case_pass=$CP; case_fail=$CF
-    else
-      completed=0; passed=0; failed=0; case_pass=0; case_fail=0
+    # 从追加日志统计（无 read-modify-write 竞态）。日志行数即 DONE。
+    completed=0; passed=0; failed=0; case_pass=0; case_fail=0
+    if [ -f "$PDIR/progress.log" ]; then
+      while IFS=' ' read -r _st _cp _cf; do
+        completed=$((completed + 1))
+        if [ "$_st" = "PASS" ]; then passed=$((passed + 1)); else failed=$((failed + 1)); fi
+        case_pass=$((case_pass + _cp)); case_fail=$((case_fail + _cf))
+      done < "$PDIR/progress.log"
     fi
 
     first=1; running_list=""
@@ -388,7 +388,13 @@ show_progress() {
           :  # worker 又出现了，继续
         elif [ "$completed" -lt "$TOTAL_FILES" ]; then
           # 没有 worker 但还有未完成的测试 → 调度循环已结束/worker 被杀了
-          # 等运行中的测试通过 watchdog 完成，不要提前退出
+          # 用 result 文件数兜底：若全部 result 已到位但 DONE 计数因
+          # ZOMBIE/竞态少了几个，这里应退出而不是死等（否则卡 3600s）。
+          _result_count=$(ls "$PDIR"/result_* 2>/dev/null | wc -l)
+          if [ "${_result_count:-0}" -ge "$TOTAL_FILES" ]; then
+            break  # 所有 result 到位，计数丢失不影响退出
+          fi
+          # result 未齐 → 等运行中的测试通过 watchdog 完成
           : # 什么都不做，回到 while 循环继续等
         else
           break  # 全部完成了
@@ -457,11 +463,8 @@ _ohos_force_result() {
     echo "TIMEOUT=1"
   } > "$PDIR/result_${_idx}.tmp"
   mv "$PDIR/result_${_idx}.tmp" "$PDIR/result_${_idx}"
-  # 更新进度计数（原子写，唯一临时名避免并发截断）
-  if [ -f "$PDIR/progress" ]; then . "$PDIR/progress"; else DONE=0 PASS=0 FAIL=0 CP=0 CF=0; fi
-  FAIL=$((FAIL + 1)); DONE=$((DONE + 1))
-  echo "DONE=$DONE PASS=$PASS FAIL=$FAIL CP=$CP CF=$CF" > "$PDIR/progress.$$"
-  mv "$PDIR/progress.$$" "$PDIR/progress" 2>>"$REPORT"
+  # 更新进度计数（追加日志，与 run_test 一致，避免并发覆盖）
+  printf 'FAIL 0 0\n' >> "$PDIR/progress.log" 2>>"$REPORT"
 }
 
 show_progress &

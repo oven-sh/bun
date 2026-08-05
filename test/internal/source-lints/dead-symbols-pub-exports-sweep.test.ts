@@ -125,7 +125,9 @@ test("dead JS/codegen helpers do not reappear", () => {
     ["scripts/build/error.ts", /\bfunction assertDefined\b/],
     ["scripts/build/source.ts", /\bfunction depSourceStamp\b/],
   ];
-  const resurrected = checks.filter(([file, re]) => re.test(headFile(file))).map(([file, re]) => `${file}: ${re.source}`);
+  const resurrected = checks
+    .filter(([file, re]) => re.test(headFile(file)))
+    .map(([file, re]) => `${file}: ${re.source}`);
   expect(resurrected).toEqual([]);
 });
 
@@ -141,6 +143,8 @@ test("stale commented-out C++ blocks stay deleted", () => {
     // whole commented mainThreadNormalWorld() (2022)
     ["src/jsc/bindings/DOMWrapperWorld.cpp", /mainThreadNormalWorld/],
   ];
-  const resurrected = checks.filter(([file, re]) => re.test(headFile(file))).map(([file, re]) => `${file}: ${re.source}`);
+  const resurrected = checks
+    .filter(([file, re]) => re.test(headFile(file)))
+    .map(([file, re]) => `${file}: ${re.source}`);
   expect(resurrected).toEqual([]);
 });

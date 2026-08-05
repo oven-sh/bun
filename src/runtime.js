@@ -331,23 +331,11 @@ export var __promiseAll = args => Promise.all(args);
 export var __MEMO_CACHE_SENTINEL = /* @__PURE__ */ Symbol.for("react.memo_cache_sentinel");
 export var __EARLY_RETURN_SENTINEL = /* @__PURE__ */ Symbol.for("react.early_return_sentinel");
 
-// Runtime for the zod transform (src/js_parser/zod.rs).
-//
-// `__zod(thunk, irJson, refs)` returns a lightweight stand-in for a zod v4
-// schema: an object with own `parse`/`safeParse`/`parseAsync`/`safeParseAsync`
-// methods backed by a validator compiled from the IR, plus a lazy prototype
-// proxy. Touching anything else (`.shape`, `._zod`, `.extend`, instanceof via
-// zod's Symbol.hasInstance which reads `._zod.traits`, ...) materializes the
-// real schema by calling the thunk and upgrades the stand-in in place, after
-// which it behaves exactly like the real schema object.
-//
-// The compiled validator only proves *success*. Whenever it cannot (a failed
-// check, an unsupported construct, a Promise from a refinement, explicit parse
-// params), it falls back to materializing and re-running through zod, so all
-// error objects, custom messages, error maps, catch values, and async
-// validation come from zod itself. The one invariant the compiler must uphold:
-// if the fast path reports success, zod would have reported the same success
-// with a deep-equal (and equally-aliased) value.
+// Runtime for the zod transform (src/js_parser/zod.rs): __zod(thunk, irJson, refs) returns a schema stand-in whose own parse/safeParse/parseAsync/safeParseAsync run a validator compiled from the IR.
+
+// Touching anything else (.shape, ._zod, .extend, instanceof via zod's Symbol.hasInstance, ...) calls the thunk and upgrades the stand-in in place into the real schema.
+
+// The validator only proves success: any failed check, unsupported construct, refinement Promise, or explicit parse params re-runs through zod, so error objects, custom messages, catch values, and async validation are always zod's own. Invariant: a fast-path success must match zod's success, value aliasing included.
 
 var __zodStateSymbol;
 var __zodFail = {};
@@ -355,21 +343,15 @@ var __zodCompileCache;
 var __zodProtoHandler;
 
 function __zodState(x) {
-  // The state slot is an own symbol property; reading it never hits the lazy
-  // prototype proxy.
+  // Own symbol property; reading it never hits the lazy prototype proxy.
   return x[__zodStateSymbol];
 }
 
-// Each wrapper's prototype is a Proxy whose target carries the wrapper and
-// its state, so every trap can materialize precisely. After materialization
-// the wrapper's prototype is swapped to the real schema's, so traps cannot
-// re-enter.
+// Each wrapper's prototype is a Proxy whose target carries the wrapper and its state; after materialization the prototype is swapped to the real schema's, so traps cannot re-enter.
 function __zodGetProtoHandler() {
   return (__zodProtoHandler ??= {
     get(t, key) {
-      // `await schema` / Promise.resolve(schema) probes "then"; answering
-      // undefined without materializing keeps schemas cheap to pass through
-      // promise chains.
+      // `await schema` / Promise.resolve(schema) probes "then"; answer without materializing.
       if (key === "then") return undefined;
       __zodMaterialize(t.s, t.w);
       return t.w[key];
@@ -379,8 +361,7 @@ function __zodGetProtoHandler() {
       __zodMaterialize(t.s, t.w);
       return key in t.w;
     },
-    // Fires when a prototype-walk passes through (ordinary `instanceof`,
-    // Object.getPrototypeOf(Object.getPrototypeOf(wrapper))).
+    // Fires when a prototype walk passes through (ordinary instanceof, nested getPrototypeOf).
     getPrototypeOf(t) {
       __zodMaterialize(t.s, t.w);
       return Object.getPrototypeOf(t.w);
@@ -396,10 +377,7 @@ function __zodMaterialize(state, wrapper) {
     throw new TypeError("zod transform: thunk did not produce a schema");
   }
   state.real = real;
-  // Upgrade the wrapper in place: copy the real schema's own properties
-  // (including its parse closures and non-enumerable `_zod`) and adopt its
-  // prototype, so identity-sensitive consumers holding the wrapper see a
-  // first-class schema from now on.
+  // Upgrade in place: copy the real schema's own property descriptors (parse closures, non-enumerable _zod) and adopt its prototype.
   var keys = Reflect.ownKeys(real);
   for (var i = 0; i < keys.length; i++) {
     var k = keys[i];
@@ -474,22 +452,7 @@ export var __zod = (thunk, ir, refs) => {
   return wrapper;
 };
 
-// Materialize-or-passthrough: wraps schema-position identifiers inside
-// thunks, so a rebuilt real schema never embeds an un-upgraded wrapper.
-export var __zodM = x => {
-  if (x !== null && (typeof x === "object" || typeof x === "function")) {
-    var state = __zodStateSymbol !== undefined ? x[__zodStateSymbol] : undefined;
-    if (state) {
-      // Returns the real schema; the wrapper itself is upgraded too.
-      return __zodMaterialize(state, x);
-    }
-  }
-  return x;
-};
-
-// ─── IR interpreter/compiler ────────────────────────────────────────────────
-// Each node compiles to `fn(value, refs) -> value | __zodFail`. Fail always
-// means "let the real schema decide", never "invalid".
+// IR compiler: each node becomes fn(value, refs) -> value | __zodFail; fail means "let the real schema decide", never "invalid".
 
 function __zodIsObject(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -525,8 +488,7 @@ function __zodShallowClone(o) {
   return o;
 }
 
-// Static optionality derived from the IR, mirroring each core type's
-// `_zod.optin` / `_zod.optout`. `null` = depends on a runtime ref.
+// Static optionality from the IR, mirroring _zod.optin/_zod.optout; null = depends on a runtime ref.
 function __zodOptIn(n) {
   switch (n.k) {
     case "opt":
@@ -584,8 +546,7 @@ function __zodOptOut(n) {
   }
 }
 
-// Runtime optionality for ref children: wrappers answer from their IR,
-// real schemas from `_zod`. Materializes opaque wrappers.
+// Runtime optionality for ref children: wrappers answer from their IR, real schemas from _zod; materializes opaque wrappers.
 function __zodRefOpt(child, out) {
   if (child !== null && (typeof child === "object" || typeof child === "function")) {
     var state = __zodState(child);
@@ -641,10 +602,7 @@ function __zodStr(spec, refs) {
   return typeof spec === "string" ? spec : refs[spec.r];
 }
 
-// Compile the ordered checks list for a primitive/array node. Returns
-// `fn(value, refs) -> value | __zodFail` applying overwrites in sequence, or
-// null when a check does not apply to this node kind (broken schemas defer
-// their construction error to materialization).
+// Ordered checks for a primitive/array node, applying overwrites in sequence; null when a check does not fit the node kind (broken schemas defer their construction error to materialization).
 function __zodCompileChecks(kind, checks) {
   if (!checks || checks.length === 0) return null;
   var fns = [];
@@ -884,8 +842,7 @@ function __zodCompile(n) {
           innerOptIn = optInnerNode.k === "ref" ? __zodRefOpt(refs[optInnerNode.r], false) : false;
         }
         if (innerOptIn) {
-          // Mirrors $ZodOptional + handleOptionalResult: run the inner type
-          // first; a failure on undefined input collapses to undefined.
+          // Mirrors $ZodOptional handleOptionalResult: run the inner type first; a failure on undefined input collapses to undefined.
           var r = optInner(v, refs);
           if (r === __zodFail) return v === undefined ? undefined : __zodFail;
           return r;
@@ -915,8 +872,7 @@ function __zodCompile(n) {
       var defRef = n.r;
       var defParsed = defRef === undefined ? n.v : undefined;
       var getDefault = refs => {
-        // Mirrors zod's defaultValue getter: functions are invoked, values
-        // are shallow-cloned, on every access.
+        // Mirrors zod's defaultValue getter: functions are invoked, values shallow-cloned, on every access.
         var dv = defRef === undefined ? defParsed : refs[defRef];
         return typeof dv === "function" ? dv() : __zodShallowClone(dv);
       };
@@ -937,8 +893,7 @@ function __zodCompile(n) {
     case "catch": {
       var catchInner = __zodCompile(n.i);
       if (catchInner === null) return null;
-      // Inner success passes through; inner failure needs zod's finalized
-      // error for the catch callback, so it delegates.
+      // Inner success passes through; inner failure needs zod's finalized error for the catch callback, so it delegates.
       return (v, refs) => catchInner(v, refs);
     }
     case "rfn": {
@@ -1055,8 +1010,7 @@ function __zodCompile(n) {
       var tupFns = [];
       for (var ti = 0; ti < n.it.length; ti++) {
         var tNode = n.it[ti];
-        // Optional tuple tails have truncation semantics the fast path does
-        // not model; defer those tuples entirely.
+        // Optional tuple tails have truncation semantics the fast path does not model; defer those tuples.
         if (__zodOptIn(tNode) !== false || __zodOptOut(tNode) !== false) return null;
         var tFn = __zodCompile(tNode);
         if (tFn === null) return null;

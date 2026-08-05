@@ -68,7 +68,7 @@ test.concurrent("transform applies in the runtime transpiler", async () => {
       cwd: fixtureDir,
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(exitCode).toBe(0);
     return stdout;
   };

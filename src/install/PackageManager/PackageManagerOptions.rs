@@ -90,6 +90,9 @@ pub struct Options {
     pub(crate) os: Npm::OperatingSystem,
 
     pub(crate) config_version: Option<ConfigVersion>,
+
+    /// `[install.lockfile] lockfileVersion` — caps the written `lockfileVersion`.
+    pub(crate) lockfile_format_version: Option<crate::lockfile::bun_lock::Version>,
 }
 
 impl Default for Options {
@@ -153,6 +156,7 @@ impl Default for Options {
             cpu: Npm::Architecture::CURRENT,
             os: Npm::OperatingSystem::CURRENT,
             config_version: None,
+            lockfile_format_version: None,
         }
     }
 }
@@ -530,6 +534,12 @@ impl Options {
 
             if let Some(save_text_lockfile) = config.save_text_lockfile {
                 self.save_text_lockfile = Some(save_text_lockfile);
+            }
+
+            if let Some(n) = config.lockfile_format_version {
+                use crate::lockfile::bun_lock::Version;
+                // Floor to V1 (the writer never emits v0 content).
+                self.lockfile_format_version = Version::from_int(n.max(Version::V1 as u32));
             }
 
             if let Some(jobs) = config.concurrent_scripts {

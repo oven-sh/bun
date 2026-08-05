@@ -208,15 +208,20 @@ impl Stringifier {
     /// are actually serialized are considered, not every entry in the in-memory
     /// `pkg_resolutions` buffer (migration can leave pruned/unreferenced entries
     /// there that never reach the written `packages` object).
-    fn version_to_write(lockfile: &BinaryLockfile) -> Version {
+    fn version_to_write(lockfile: &BinaryLockfile, cap: Option<Version>) -> Version {
         // An older on-disk lockfile keeps its version; only a no-prior-version
         // lockfile (the `Version::CURRENT` default) is a candidate for v2. v0 is
         // the exception: the writer can't emit v0-format workspace entries, so a
         // v0 lockfile is upgraded to v1 rather than preserved verbatim.
         let loaded = lockfile.text_lockfile_version;
-        if !loaded.at_least(Version::CURRENT) {
-            return if loaded.at_least(Version::V1) {
-                loaded
+        let target = match cap {
+            Some(c) if !loaded.at_least(c) => loaded,
+            Some(c) => c,
+            None => loaded,
+        };
+        if !target.at_least(Version::CURRENT) {
+            return if target.at_least(Version::V1) {
+                target
             } else {
                 Version::V1
             };
@@ -361,7 +366,8 @@ impl Stringifier {
         writer.write_all(b"{\n")?;
         Self::inc_indent(writer, indent)?;
         {
-            let lockfile_version = Self::version_to_write(lockfile);
+            let lockfile_version =
+                Self::version_to_write(lockfile, options.lockfile_format_version);
             writeln!(writer, "\"lockfileVersion\": {},", lockfile_version as u32)?;
             Self::write_indent(writer, *indent)?;
 

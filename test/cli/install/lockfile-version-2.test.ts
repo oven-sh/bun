@@ -30,6 +30,176 @@ it("a freshly written text lockfile defaults to version 2", async () => {
   expect(exitCode).toBe(0);
 });
 
+// `[install.lockfile] lockfileVersion = 1` caps the written lockfileVersion, so
+// a fresh install on a newer Bun still produces a lockfile an older Bun can read.
+it("bunfig [install.lockfile] lockfileVersion = 1 writes a v1 lockfile for a fresh install", async () => {
+  using dir = tempDir("lockfile-bunfig-cap-v1", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { dep: "file:./dep" } }),
+    "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+    "bunfig.toml": `[install.lockfile]\nlockfileVersion = 1\n`,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--save-text-lockfile"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const lockfile = await file(join(String(dir), "bun.lock")).text();
+  expect(err).not.toContain("error:");
+  expect(lockfile).toContain(`"lockfileVersion": 1,`);
+  expect(lockfile).not.toContain(`"lockfileVersion": 2,`);
+  expect(exitCode).toBe(0);
+});
+
+// The cap alone is enough to trigger a re-save: a v2 lockfile + bunfig cap 1,
+// with no package.json change, is rewritten as v1 on the next install.
+it("bunfig [install.lockfile] lockfileVersion = 1 downgrades an existing v2 lockfile on install", async () => {
+  using dir = tempDir("lockfile-bunfig-downgrade", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { a: "file:./a" } }),
+    "a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+  });
+
+  await using first = spawn({
+    cmd: [bunExe(), "install", "--save-text-lockfile"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, firstErr, firstExit] = await Promise.all([first.stdout.text(), first.stderr.text(), first.exited]);
+  expect(firstErr).not.toContain("error:");
+  expect(firstExit).toBe(0);
+  const before = await file(join(String(dir), "bun.lock")).text();
+  expect(before).toContain(`"lockfileVersion": 2,`);
+
+  await Bun.write(join(String(dir), "bunfig.toml"), `[install.lockfile]\nlockfileVersion = 1\n`);
+
+  await using second = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, err, exitCode] = await Promise.all([second.stdout.text(), second.stderr.text(), second.exited]);
+
+  const after = await file(join(String(dir), "bun.lock")).text();
+  expect(err).not.toContain("error:");
+  expect(after).toContain(`"lockfileVersion": 1,`);
+  expect(after).not.toContain(`"lockfileVersion": 2,`);
+  expect(exitCode).toBe(0);
+});
+
+// The cap is a ceiling, not a floor: `lockfileVersion = 2` on a loaded v1
+// lockfile keeps it at v1 (preserve-loaded-version still wins).
+it("bunfig [install.lockfile] lockfileVersion = 2 does not bump a loaded v1 lockfile", async () => {
+  const v1Lockfile =
+    JSON.stringify(
+      {
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "root", dependencies: { a: "file:./a" } } },
+        packages: { a: ["a@file:a", {}] },
+      },
+      null,
+      2,
+    ) + "\n";
+
+  using dir = tempDir("lockfile-bunfig-cap-no-bump", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { a: "file:./a", b: "file:./b" } }),
+    "a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+    "b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+    "bun.lock": v1Lockfile,
+    "bunfig.toml": `[install.lockfile]\nlockfileVersion = 2\n`,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const after = await file(join(String(dir), "bun.lock")).text();
+  expect(err).not.toContain("error:");
+  expect(after).toContain(`"b": ["b@file:b"`);
+  expect(after).toContain(`"lockfileVersion": 1,`);
+  expect(after).not.toContain(`"lockfileVersion": 2,`);
+  expect(exitCode).toBe(0);
+});
+
+// cap = 0 is floored to 1 at config-load time, so a v1 lockfile with no other
+// change is not spuriously re-saved on every install.
+it("bunfig [install.lockfile] lockfileVersion = 0 does not re-save an unchanged v1 lockfile", async () => {
+  using dir = tempDir("lockfile-bunfig-cap0-noop", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { a: "file:./a" } }),
+    "a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+    "bunfig.toml": `[install.lockfile]\nlockfileVersion = 0\n`,
+  });
+
+  await using first = spawn({
+    cmd: [bunExe(), "install", "--save-text-lockfile"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  await Promise.all([first.stdout.text(), first.stderr.text(), first.exited]);
+  const before = await file(join(String(dir), "bun.lock")).text();
+  expect(before).toContain(`"lockfileVersion": 1,`);
+
+  await using second = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, err, exitCode] = await Promise.all([second.stdout.text(), second.stderr.text(), second.exited]);
+
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("Saved lockfile");
+  expect(await file(join(String(dir), "bun.lock")).text()).toBe(before);
+  expect(exitCode).toBe(0);
+});
+
+// 0 is floored to 1 (the writer cannot emit v0 content). Equal to or above the
+// current version is a no-op cap.
+it.each([
+  [0, 1],
+  [2, 2],
+  [99, 2],
+])(
+  "bunfig [install.lockfile] lockfileVersion = %d writes lockfileVersion %d for a fresh install",
+  async (n, expected) => {
+    using dir = tempDir("lockfile-bunfig-cap-edge", {
+      "package.json": JSON.stringify({ name: "root", dependencies: { dep: "file:./dep" } }),
+      "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      "bunfig.toml": `[install.lockfile]\nlockfileVersion = ${n}\n`,
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const lockfile = await file(join(String(dir), "bun.lock")).text();
+    expect(err).not.toContain("error:");
+    expect(lockfile).toContain(`"lockfileVersion": ${expected},`);
+    expect(exitCode).toBe(0);
+  },
+);
+
 // Re-saving an existing lockfile must never bump its version. A v1 `bun.lock`
 // that is rewritten — here because a new dependency is added — keeps
 // `lockfileVersion: 1`, even though every entry would satisfy the v2 invariants.

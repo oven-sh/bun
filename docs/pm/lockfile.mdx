@@ -52,6 +52,19 @@ Bun v1.2 changed the default lockfile format to the text-based `bun.lock`. To mi
 
 For more on the format, see [the blog post](https://bun.com/blog/bun-lock-text-lockfile).
 
+#### Lockfile format versions
+
+`bun.lock` carries a `"lockfileVersion"` field. Bun 1.4 writes version 2 by default for a fresh install or migration. Re-saving an existing version 1 lockfile preserves its version (version 0 is upgraded to version 1), so a project that already has a `bun.lock` is unaffected.
+
+Bun releases before 1.4 cannot read version 2 lockfiles. If your project is installed by a mix of Bun versions, set `lockfileVersion` in `bunfig.toml` to cap the written version:
+
+```toml bunfig.toml icon="settings"
+[install.lockfile]
+lockfileVersion = 1
+```
+
+With this set, `bun install` writes a version 1 lockfile and downgrades an existing version 2 lockfile on the next install.
+
 #### Automatic lockfile migration
 
 When running `bun install` in a project without a `bun.lock`, Bun automatically migrates existing lockfiles:

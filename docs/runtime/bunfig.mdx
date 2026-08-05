@@ -643,6 +643,13 @@ Whether to generate a non-Bun lockfile alongside `bun.lock`. (A `bun.lock` is al
 print = "yarn"
 ```
 
+Cap the `"lockfileVersion"` written to `bun.lock`. Set this to `1` in a project that is also installed by Bun `< 1.4`, which cannot read lockfile version 2.
+
+```toml title="bunfig.toml" icon="settings"
+[install.lockfile]
+lockfileVersion = 1
+```
+
 ### `install.linker`
 
 Configure the linker strategy: how `bun install` lays out dependencies in `node_modules`. Defaults to `"isolated"` for new workspaces, `"hoisted"` for new single-package projects and existing projects (made pre-v1.3.2).

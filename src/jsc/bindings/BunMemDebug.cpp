@@ -1500,6 +1500,7 @@ static void imageRestoreAndRun(const char* path)
         if (isatty(src) && dup2(src, fd) == fd) { if (fl & O_NONBLOCK) fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK); if (verbose) fprintf(stderr, "[image] dup2(%d, %d)\n", src, fd); }
     }
     { const char* d = getenv("BUN_MEMDEBUG"); s_dir = (d && *d) ? strdup(d) : nullptr; } // globals now hold the build process's env pointers
+    setvbuf(stderr, nullptr, _IONBF, 0); setvbuf(stdout, nullptr, _IOLBF, 0); // stdio buffering mode was decided in the builder (whose fds may have been files)
     if (!getenv("BUN_IMAGE_NOFRESHHEAP")) {
         // Image payload pages are immortal: never free into them (that would dirty a clean file-backed page for allocator metadata) and allocate from fresh pages.
         s_frozenRanges.clear(); s_runs.clear();

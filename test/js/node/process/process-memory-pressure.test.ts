@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { closeSync, constants, openSync, readFileSync, writeSync } from "node:fs";
 import { bunEnv, bunExe } from "harness";
 
 // process.on("memoryPressure") is a Bun extension. These tests drive the
@@ -91,6 +92,52 @@ describe.concurrent("process.on('memoryPressure')", () => {
       process.stdout.write("done");
     `);
     expect(stdout).toBe("done");
+    expect(exitCode).toBe(0);
+  });
+
+  // PSI trigger writes must include the trailing NUL: the kernel's psi_write()
+  // NUL-terminates in place over the last byte of the write before parsing.
+  function canCreatePsiTriggerAt(path: string) {
+    try {
+      const fd = openSync(path, constants.O_RDWR | constants.O_NONBLOCK);
+      try {
+        writeSync(fd, Buffer.from("some 150000 2000000\0"));
+        return true;
+      } finally {
+        closeSync(fd);
+      }
+    } catch {
+      return false;
+    }
+  }
+
+  // Probe the same fallback order as open_psi_fd(): the system-wide file,
+  // then the current cgroup's memory.pressure.
+  const canCreatePsiTrigger = (() => {
+    if (process.platform !== "linux") return false;
+    if (canCreatePsiTriggerAt("/proc/pressure/memory")) return true;
+    let cgroup: string | undefined;
+    try {
+      cgroup = readFileSync("/proc/self/cgroup", "utf8")
+        .split("\n")
+        .find(line => line.startsWith("0::"));
+    } catch {
+      return false;
+    }
+    if (!cgroup) return false;
+    const rest = cgroup.slice("0::".length).replace(/^\/+/, "");
+    return canCreatePsiTriggerAt(`/sys/fs/cgroup/${rest}${rest ? "/" : ""}memory.pressure`);
+  })();
+
+  // Skipped where PSI trigger creation is unavailable: non-Linux, CONFIG_PSI=n,
+  // or unprivileged on kernels before 6.6 (CAP_SYS_RESOURCE required).
+  test.skipIf(!canCreatePsiTrigger)("arms a PSI trigger on Linux", async () => {
+    const { stdout, stderr, exitCode } = await run(/* js */ `
+      const { memoryPressureWatcherHasOsBackend } = require("bun:internal-for-testing");
+      process.on("memoryPressure", () => {});
+      process.stdout.write(JSON.stringify(memoryPressureWatcherHasOsBackend()));
+    `);
+    expect({ stdout, stderr: stderr.trim() }).toEqual({ stdout: "true", stderr: "" });
     expect(exitCode).toBe(0);
   });
 

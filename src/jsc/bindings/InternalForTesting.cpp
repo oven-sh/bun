@@ -103,6 +103,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_BunString_toThreadSafeRefCountDelta, (JSC::J
 
 extern "C" void Bun__MemoryPressure__emit(JSC::JSGlobalObject* global, int level);
 extern "C" bool Bun__MemoryPressure__isInstalled(JSC::JSGlobalObject* global);
+extern "C" bool Bun__MemoryPressure__hasOsBackend(JSC::JSGlobalObject* global);
 
 // Synthetically fire process.on("memoryPressure") so tests can exercise the
 // emit path without depending on real OS memory pressure.
@@ -122,6 +123,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_emitMemoryPressure, (JSC::JSGlobalObject * g
 JSC_DEFINE_HOST_FUNCTION(jsFunction_isMemoryPressureWatcherInstalled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return JSValue::encode(jsBoolean(Bun__MemoryPressure__isInstalled(defaultGlobalObject(globalObject))));
+}
+
+// Whether the installed watcher registered a real OS signal source (PSI
+// trigger, kqueue filter, notification thread) rather than the silent
+// no-backend fallback.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_memoryPressureWatcherHasOsBackend, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return JSValue::encode(jsBoolean(Bun__MemoryPressure__hasOsBackend(defaultGlobalObject(globalObject))));
 }
 
 }

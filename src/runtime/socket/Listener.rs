@@ -1012,9 +1012,11 @@ impl Listener {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
-        if this.handlers.active_connections.get() == 0 {
-            this.this_value.with_mut(|r| r.downgrade());
-        }
+        // No `this_value` downgrade here: the socket is still listening, and a
+        // dispatched accept reads the handlers cell that only the wrapper's
+        // `handlers` slot roots — collecting the wrapper frees the callbacks
+        // out from under the open socket (and libuv/Node keep unref'd servers
+        // accepting). `do_stop` / `mark_inactive` downgrade once it's closed.
         Ok(JSValue::UNDEFINED)
     }
 

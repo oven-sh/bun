@@ -772,6 +772,9 @@ static void recleanFrozenPages(JSC::VM& vm)
     std::vector<uint8_t> orig(pg);
     std::vector<int> disp;
     size_t dirty = 0, identical = 0, remapped = 0, cellIdentical = 0, payloadIdentical = 0, nearly = 0;
+    struct NB { size_t n = 0; std::vector<std::string> ex; }; std::map<std::string, NB> nearlyBy;
+    struct BI { std::string name; size_t cellSize; }; std::map<uintptr_t, BI> blocks;
+    vm.heap.objectSpace().forEachBlock([&](JSC::MarkedBlock::Handle* h) { blocks[(uintptr_t)&h->block()] = { std::string(h->subspace()->name()), h->cellSize() }; });
     auto t0 = std::chrono::steady_clock::now();
     for (auto& run : s_runs) {
         size_t n = run.len / pg;
@@ -788,7 +791,21 @@ static void recleanFrozenPages(JSC::VM& vm)
             if (memcmp((void*)a, orig.data(), pg)) {
                 // count nearly-identical (<=64 bytes differ) for information
                 size_t diff = 0; for (size_t off = 0; off < pg && diff <= 64; off += 8) if (memcmp((uint8_t*)a + off, orig.data() + off, 8)) diff += 8;
-                if (diff <= 64) nearly++;
+                if (diff <= 64) {
+                    nearly++;
+                    // attribute: page class + (for cells) offset within cell of each changed word, with before>after
+                    std::string cls; size_t cellSz = 0; uintptr_t blockBase = 0;
+                    auto bit = blocks.upper_bound(a);
+                    if (bit != blocks.begin()) { --bit; if (a < bit->first + JSC::MarkedBlock::blockSize) { cls = bit->second.name; cellSz = bit->second.cellSize; blockBase = bit->first; } }
+                    if (cls.empty()) { auto sc = s_pageSizeClass.find(a); cls = sc == s_pageSizeClass.end() ? "<payload ?>" : "<payload sz" + std::to_string(sc->second) + ">"; }
+                    for (size_t off = 0; off < pg; off += 8) {
+                        if (!memcmp((uint8_t*)a + off, orig.data() + off, 8)) continue;
+                        uint64_t before, after; memcpy(&before, orig.data() + off, 8); memcpy(&after, (uint8_t*)a + off, 8);
+                        size_t inCell = cellSz ? ((a + off - blockBase) % cellSz) : (off % 64);
+                        char key[160]; snprintf(key, sizeof key, "%s +%zu", cls.c_str(), inCell);
+                        auto& e = nearlyBy[key]; e.n++; if (e.ex.size() < 3) { char ex[48]; snprintf(ex, sizeof ex, "%llx>%llx", (unsigned long long)before, (unsigned long long)after); e.ex.push_back(ex); }
+                    }
+                }
                 i++; continue;
             }
             identical++;
@@ -809,6 +826,7 @@ static void recleanFrozenPages(JSC::VM& vm)
         }
     }
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    { std::vector<std::pair<size_t, std::string>> rows; for (auto& [k, e] : nearlyBy) { std::string line = k + " x" + std::to_string(e.n) + " ["; for (auto& x : e.ex) line += x + " "; line += "]"; rows.push_back({ e.n, line }); } std::sort(rows.begin(), rows.end(), std::greater<>()); fprintf(stderr, "[reclean] nearly-identical page writes by (class +offsetInCell) xWords [before>after]:\n"); for (size_t i = 0; i < std::min<size_t>(rows.size(), 30); i++) fprintf(stderr, "    %s\n", rows[i].second.c_str()); }
     fprintf(stderr, "[reclean] dirtyFrozenPages=%zu (%.1fMB) identical=%zu (%.1fMB: cells %.1fMB, payload %.1fMB) remapped=%zu nearlyIdentical(<=64B diff)=%zu (%.1fMB) took=%lldms\n",
         dirty, dirty * pg / 1048576.0, identical, identical * pg / 1048576.0, cellIdentical * pg / 1048576.0, payloadIdentical * pg / 1048576.0, remapped, nearly, nearly * pg / 1048576.0, (long long)ms);
 #endif
@@ -1130,11 +1148,7 @@ static void imageRestoreAndRun(const char* path)
     { JSC::JSLockHolder lock(*vm); vm->didRestoreFromImage();
       fprintf(stderr, "[image] termination state: request=%d pendingTermException=%d exception=%p trapsNeedTermination=%d\n", (int)vm->hasTerminationRequest(), (int)vm->hasPendingTerminationException(), vm->exceptionForInspection(), (int)vm->traps().needHandling(JSC::VMTraps::NeedTermination));
       if (vm->hasPendingTerminationException() || vm->hasTerminationRequest()) { vm->clearHasTerminationRequest(); { auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*vm); scope.clearException(); } vm->traps().clearTrap(JSC::VMTraps::NeedTermination); fprintf(stderr, "[image] cleared stale termination state\n"); } }
-    if (!getenv("BUN_IMAGE_NOEVACUATE")) {
-        // Tables that take inserts on every run get fresh storage now, so the inserts don't COW image pages one by one.
-        JSC::JSLockHolder lock(*vm);
-        { auto& t = vm->atomStringTable()->table(); auto copy = t; t.swap(copy); }
-    }
+
     if (!getenv("BUN_IMAGE_EVAL") || getenv("BUN_IMAGE_EVAL_CONTINUE")) {
         {
             JSC::JSLockHolder lock(*vm);

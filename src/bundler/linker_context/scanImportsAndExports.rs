@@ -1084,9 +1084,19 @@ pub(crate) fn scan_imports_and_exports(
                             Index::source(source_index),
                         )?;
                         col!(ast_flags_list)[id].insert(AstFlags::USES_EXPORTS_REF);
-                        col!(import_records_list)[id].as_mut_slice()[*import_record_index as usize]
-                            .flags
-                            .insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
+                        {
+                            let record = &mut col!(import_records_list)[id].as_mut_slice()
+                                [*import_record_index as usize];
+                            record
+                                .flags
+                                .insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
+                            if rec_source_index.is_invalid()
+                                && output_format.keep_es6_import_export_syntax()
+                            {
+                                // convertStmtsForChunk prints this as "import * as ns" for __reExport.
+                                record.flags.insert(ImportRecordFlags::CONTAINS_IMPORT_STAR);
+                            }
+                        }
                         re_export_uses += 1;
                     }
                 }

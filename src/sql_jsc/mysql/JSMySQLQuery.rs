@@ -164,16 +164,22 @@ impl JSMySQLQuery {
             return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
         }
         this.set_target(target);
-        if let Err(err) = this.run(connection) {
-            if !global_object.has_exception() {
-                return Err(global_object.throw_value(mysql_error_to_js(
-                    global_object,
-                    "failed to execute query",
-                    err,
-                )));
-            }
-            return Err(jsc::JsError::Thrown);
+        // Keep the JS wrapper alive while the request sits in the queue: the
+        // cached target/binding/columns properties live on it. advance() also
+        // upgrades when it first touches the request, but that can be after a
+        // GC-observable gap (e.g. while an earlier statement is preparing).
+        if this.is_pending() {
+            this.this_value.with_mut(|v| v.upgrade(global_object));
         }
+        // Do not write the query here. Responses are matched to requests in
+        // FIFO queue order, so every write must go through advance(), which
+        // walks the queue in that order and enforces the ordering barriers.
+        // Writing from the enqueue path could put this query's packets on the
+        // wire ahead of an earlier queued-but-unwritten request, making that
+        // request consume this query's response packets and desyncing the
+        // connection. enqueue_request() registers the auto-flusher, which
+        // pumps the queue through advance() on an idle connection; otherwise
+        // the response handlers advance it.
         connection.enqueue_request(this.as_ctx_ptr());
         Ok(JSValue::UNDEFINED)
     }
@@ -407,13 +413,6 @@ impl JSMySQLQuery {
         }
         let global_object: &JSGlobalObject = self.global_object();
         self.this_value.with_mut(|v| v.upgrade(global_object));
-        // R-2: errdefer rollback — `&Self` is `Copy`; the guard captures it by
-        // value, mutation is `JsCell`-backed, and `into_inner` disarms on the
-        // success path below.
-        let errguard = scopeguard::guard(self, |s| {
-            s.this_value.with_mut(|v| v.downgrade());
-            let _ = s.query.with_mut(|q| q.fail());
-        });
 
         let columns_value = self.get_columns().unwrap_or(JSValue::UNDEFINED);
         let binding_value = self.get_binding().unwrap_or(JSValue::UNDEFINED);
@@ -439,10 +438,13 @@ impl JSMySQLQuery {
                     err,
                 ));
             }
+            // Do not mark the query failed here: the caller (advance) routes
+            // the error to on_error → reject, whose fail() gate must still be
+            // open or the rejection is silently dropped and the promise never
+            // settles. reject/mark_as_failed own the Fail transition and the
+            // this_value downgrade.
             return Err(AnyMySQLError::Error::JSError);
         }
-        // disarm errdefer on success
-        scopeguard::ScopeGuard::into_inner(errguard);
         Ok(())
     }
 

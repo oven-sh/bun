@@ -127,10 +127,14 @@ const flakeCounts = await collectFlakes(builds);
 console.error(`${flakeCounts.size} distinct files flaked or failed in that window`);
 
 const dockerPrefixes = Object.keys(dockerPrestartMap);
+// Tests that mutate shared machine state (e.g. the build dir's hot-reload JS)
+// and so can never share a machine with concurrently-running test files.
+const mutatesSharedState = new Set(["js/bun/internal-module-dev-reload.test.ts"]);
 const files = listBunTestFiles();
 const isGood = file => {
   if (dockerPrefixes.some(prefix => file.startsWith(prefix))) return false;
   if (/stress/i.test(file)) return false;
+  if (mutatesSharedState.has(file)) return false;
   if (flakeCounts.has(file)) return false;
   const ms = durations[file]?.default;
   return ms === undefined || ms <= FAST_MS;

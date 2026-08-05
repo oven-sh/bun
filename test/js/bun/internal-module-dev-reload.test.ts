@@ -41,7 +41,10 @@ describe.skipIf(!hasDynamicJS)("builtin JS hot-reload generation guard", () => {
       // binding's $lazy ID by one (dispatches to a different native function)
       // and stamp the file as belonging to another generation.
       tampered = tampered.replace(/bound\(@lazy\((\d+)\)\)/, (_, id) => `bound(@lazy(${Number(id) + 1}))`);
-      tampered = tampered.replace(/(@bun-internal-module-generation=)[0-9a-f]+/, "$1" + "0".repeat(16));
+      tampered = tampered.replace(
+        /(@bun-internal-module-generation=)[0-9a-f]+/,
+        "$1" + Buffer.alloc(16, "0").toString(),
+      );
       expect(tampered).not.toBe(original.toString("latin1"));
       fs.writeFileSync(osJsPath, tampered, "latin1");
 
@@ -76,7 +79,7 @@ describe.skipIf(!hasDynamicJS)("builtin JS hot-reload generation guard", () => {
     try {
       // The valid stamp becomes a decoy: a foreign stamp follows it as the
       // real last line, as if a different codegen run appended to the file.
-      const foreignStamp = "// @bun-internal-module-generation=" + "0".repeat(16) + "\n";
+      const foreignStamp = "// @bun-internal-module-generation=" + Buffer.alloc(16, "0").toString() + "\n";
       fs.writeFileSync(osJsPath, Buffer.concat([original, Buffer.from(foreignStamp, "latin1")]));
 
       const { stdout, stderr, exitCode } = await requireOsInChild();

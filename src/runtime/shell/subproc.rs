@@ -706,8 +706,6 @@ impl ShellSubprocess {
         let stdio1 = core::mem::replace(&mut stdio_guard[1], Stdio::Ignore);
         let stdio2 = core::mem::replace(&mut stdio_guard[2], Stdio::Ignore);
 
-        let stdin_is_stream = matches!(stdio0, Stdio::ReadableStream(_));
-
         // `to_process` consumes the result for pid/pidfd; pull the fd handles out first.
         let spawn_stdin = spawn_result.stdin.take();
         let spawn_stdout = spawn_result.stdout.take();
@@ -804,37 +802,6 @@ impl ShellSubprocess {
         }
         let _ = scopeguard::ScopeGuard::into_inner(stdio_guard);
 
-        // Wire the FileSink's close-signal back to the enclosing `Writable` so
-        // `Writable::on_close` (drops the `Arc<FileSink>`) runs when the sink
-        // finishes. `stdin` lives inside the Box-allocated `Subprocess` at a
-        // stable address, so the self-referential raw pointer is sound for the
-        // life of the subprocess. Skipped for ReadableStream stdin, whose
-        // `source` was wired by `Writable::init`.
-        if !stdin_is_stream {
-            // Derive `stdin_ptr` from the raw heap pointer (`subprocess`), not
-            // the local `subproc: &mut` reborrow — the pointer is stored
-            // long-term in `FileSink::source` and dereferenced from
-            // `Writable::on_close` after this frame returns. Under Stacked
-            // Borrows a child of `subproc`'s tag would be invalidated when
-            // that borrow ends; rooting in the allocation's provenance keeps
-            // it valid for the box's lifetime.
-            // SAFETY: `subprocess` is the live, fully-initialised heap alloc.
-            let stdin_ptr: *mut Writable = unsafe { &raw mut (*subprocess).stdin };
-            // SAFETY: reborrow as a child of `stdin_ptr` so it does not
-            // invalidate the sibling we store in `source`.
-            if let Writable::Pipe(pipe) = unsafe { &mut *stdin_ptr } {
-                // SAFETY: shell is single-threaded; the FileSink allocation is
-                // disjoint from `*stdin_ptr`. `stdin_ptr` outlives the sink —
-                // the Subprocess owns both and `Writable::on_close` is the only
-                // path that drops the FileSinkPtr.
-                pipe.source
-                    .set(webcore::streams::SourceHandle::ShellWritable(
-                        // SAFETY: `stdin_ptr` is the live `&raw mut` writable (write provenance).
-                        unsafe { bun_ptr::BackRef::from_raw_mut(stdin_ptr) },
-                    ));
-            }
-        }
-
         // SAFETY: scoped access; `watch` does not re-enter the subprocess.
         match unsafe { (*subprocess).proc().watch() } {
             bun_sys::Result::Ok(()) => {}
@@ -903,10 +870,6 @@ impl ShellSubprocess {
         // ReadableStream stdin (the only shell `Writable::Pipe`): close the
         // FileSink and mark stdin closed.
         let stdin_is_stream_pipe = if let Writable::Pipe(pipe) = &self.stdin {
-            debug_assert!(!matches!(
-                *pipe.source.get(),
-                webcore::streams::SourceHandle::ShellWritable(_)
-            ));
             pipe.on_attached_process_exit(status);
             true
         } else {
@@ -971,20 +934,6 @@ pub enum Writable {
     Memfd(Fd),
     Inherit,
     Ignore,
-}
-
-impl Writable {
-    // When the stream has closed we need to be notified to prevent a use-after-free
-    // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
-    pub fn on_close(&mut self, _: Option<bun_sys::Error>) {
-        match self {
-            Writable::Buffer(_) | Writable::Pipe(_) => {
-                // Dropping the Arc on reassignment below derefs.
-            }
-            _ => {}
-        }
-        *self = Writable::Ignore;
-    }
 }
 
 impl Writable {

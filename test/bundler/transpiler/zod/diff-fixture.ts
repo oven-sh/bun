@@ -70,6 +70,8 @@ const SCHEMAS: Record<string, any> = {
   nullableOptional: z.string().nullable().optional(),
   optionalDefault: z.string().default("d").optional(),
   withDefault: z.string().default("dflt"),
+  defaultNegZero: z.number().default(-0),
+  literalNegZero: z.literal(-0),
   defaultObj: z.object({ a: z.number() }).default({ a: 1 }),
   defaultArr: z.array(z.string()).default([]),
   defaultFn: z.number().default(() => 42),
@@ -272,6 +274,9 @@ const INPUTS: [string, unknown][] = [
   ["obj-v", { v: 1 }],
   ["obj-constructor-num", { constructor: 7 }],
   ["obj-proto-key", protoKeyInput],
+  // zod's object catchall iterates with for-in (inherited enumerable keys
+  // included); both modes must agree on this input.
+  ["obj-inherited-enum-key", Object.assign(Object.create({ inh: 1 }), { a: "s" })],
   ["obj-null-proto", nullProtoRecord],
   ["obj-class-instance", new Klass()],
   ["obj-inherited", inherited],

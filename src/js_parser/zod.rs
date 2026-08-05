@@ -2159,6 +2159,10 @@ fn write_json_string(out: &mut String, s: &str) {
 /// f64 to shortest-roundtrip decimal, JSON-safe (finite values only).
 fn format_f64(n: f64) -> String {
     debug_assert!(n.is_finite());
+    // JSON.parse("-0") preserves the sign; the i64 shortening below would not.
+    if n == 0.0 && n.is_sign_negative() {
+        return "-0".to_string();
+    }
     if n == n.trunc() && n.abs() < 1e15 {
         format!("{}", n as i64)
     } else {

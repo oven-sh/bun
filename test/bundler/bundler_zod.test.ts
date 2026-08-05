@@ -93,7 +93,7 @@ itBundled("zod/ImpureArgumentBailsOut", {
   },
 });
 
-itBundled("zod/OpaqueChildKeepsOwnWrapper", {
+itBundled("zod/OpaqueChildAbsorbedIntoParent", {
   install: ["zod@4.4.3"],
   backend: "cli",
   env: zodEnv,
@@ -101,8 +101,8 @@ itBundled("zod/OpaqueChildKeepsOwnWrapper", {
   files: {
     "/entry.ts": /* ts */ `
       import { z } from "zod";
-      // .email() has no compiled fast path; it keeps its own lazy wrapper
-      // while the enclosing object still compiles.
+      // .email() has no compiled fast path; it dissolves into the parent
+      // wrapper as an opaque IR node while the rest of the object compiles.
       const S = z.object({ id: z.string(), e: z.email().optional() });
       console.log(S.safeParse({ id: "1" }).success);
       console.log(S.safeParse({ id: "1", e: "a@b.com" }).success);
@@ -153,6 +153,24 @@ itBundled("zod/NamespaceImport", {
     `,
   },
   run: { stdout: "a 3 false" },
+  onAfterBundle(api) {
+    expect(api.readFile("/out.js")).toContain("__zod(() =>");
+  },
+});
+
+itBundled("zod/DefaultImport", {
+  install: ["zod@4.4.3"],
+  backend: "cli",
+  env: zodEnv,
+  target: "bun",
+  files: {
+    "/entry.ts": /* ts */ `
+      import z from "zod";
+      const S = z.object({ a: z.string().min(1) });
+      console.log(S.safeParse({ a: "x" }).success, S.safeParse({ a: "" }).success);
+    `,
+  },
+  run: { stdout: "true false" },
   onAfterBundle(api) {
     expect(api.readFile("/out.js")).toContain("__zod(() =>");
   },

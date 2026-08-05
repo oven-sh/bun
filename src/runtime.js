@@ -991,8 +991,6 @@ function __zodCompile(n) {
       var caFn = null;
       var caNever = false;
       var caNode = n.ca;
-      var caOptIn = false;
-      var caOptOut = false;
       if (caNode !== undefined) {
         keySet = new Set(propKeys);
         if (caNode.k === "never") {
@@ -1000,8 +998,6 @@ function __zodCompile(n) {
         } else {
           caFn = __zodCompile(caNode);
           if (caFn === null) return null;
-          caOptIn = __zodOptIn(caNode) === true;
-          caOptOut = __zodOptOut(caNode) === true;
         }
       }
       return (v, refs) => {
@@ -1029,20 +1025,14 @@ function __zodCompile(n) {
           }
         }
         if (keySet !== null) {
+          // Mirrors zod's handleCatchall: for-in, inherited enumerable keys included.
           for (var uk in v) {
             if (uk === "__proto__") continue;
             if (keySet.has(uk)) continue;
             if (caNever) return __zodFail;
             var cr = caFn(v[uk], refs);
-            if (cr === __zodFail) {
-              if (caOptIn && caOptOut && !(uk in v)) continue;
-              return __zodFail;
-            }
-            if (cr === undefined) {
-              if (uk in v) out[uk] = undefined;
-            } else {
-              out[uk] = cr;
-            }
+            if (cr === __zodFail) return __zodFail;
+            out[uk] = cr;
           }
         }
         return out;

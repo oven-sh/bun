@@ -270,6 +270,25 @@ it("process.env.TZ", () => {
   expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(realOrigTimezone);
 });
 
+it("process.env.TZ accepts zone ids >= 32 chars", () => {
+  const origTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  try {
+    process.env.TZ = "Asia/Tokyo";
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe("Asia/Tokyo");
+
+    // "America/Argentina/ComodRivadavia" is exactly 32 chars and a valid IANA
+    // link zone. The runtime setter used to gate on length < 32, silently
+    // dropping it while the launch-time TZ path had no such cap.
+    const long = "America/Argentina/ComodRivadavia";
+    expect(long.length).toBe(32);
+    process.env.TZ = long;
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).not.toBe("Asia/Tokyo");
+    expect(new Date("2026-07-27T15:00Z").getTimezoneOffset()).toBe(180);
+  } finally {
+    process.env.TZ = origTimezone;
+  }
+});
+
 it("process.version starts with v", () => {
   expect(process.version.startsWith("v")).toBeTruthy();
 });

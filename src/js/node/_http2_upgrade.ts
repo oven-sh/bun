@@ -1,5 +1,7 @@
 const { Duplex } = require("node:stream");
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
+// Shared with net.ts; see the declaration there. #32242
+const kDuplexTLSFeeder = Symbol.for("::bunDuplexTLSFeeder::");
 
 interface NativeHandle {
   resume(): void;
@@ -256,6 +258,7 @@ function onTlsClose(this: TLSProxySocket) {
   const raw = ctx.rawSocket;
   const ev = ctx.events;
   if (!ev) return;
+  raw[kDuplexTLSFeeder] = undefined;
   raw.removeListener("data", ev[0]);
   raw.removeListener("end", ev[1]);
   raw.removeListener("drain", ev[2]);
@@ -383,7 +386,15 @@ function upgradeRawSocketToH2(
   // Wire up the raw TCP socket to feed encrypted data into the TLS layer.
   // events[0..3] are native event handlers returned by upgradeDuplexToTLS that
   // the native TLS engine expects to receive data/end/drain/close through.
-  rawSocket.on("data", events[0]);
+  // A net.Socket with a native handle routes data via kDuplexTLSFeeder so
+  // net.ts's raw handlers bypass push(); any other Duplex is fed via `data`.
+  if (rawSocket._handle) {
+    rawSocket[kDuplexTLSFeeder] = events[0];
+    let buffered;
+    while ((buffered = rawSocket.read()) !== null) events[0](buffered);
+  } else {
+    rawSocket.on("data", events[0]);
+  }
   rawSocket.on("end", events[1]);
   rawSocket.on("drain", events[2]);
   rawSocket.on("close", events[3]);

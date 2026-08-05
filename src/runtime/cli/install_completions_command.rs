@@ -664,9 +664,10 @@ impl InstallCompletionsCommand {
 
                     let contents = &buf[..read];
 
-                    // Do they possibly have it in the file already?
+                    // Do they possibly have it in the file already? (#10897)
                     if strings::contains(contents, completions_path)
-                        || strings::contains(contents, b"# bun completions\n")
+                        || strings::contains(contents, b"# bun completions")
+                        || strings::contains(contents, b"/.bun/_bun")
                     {
                         break 'brk false;
                     }

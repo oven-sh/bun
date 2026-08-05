@@ -1,7 +1,7 @@
 import { gc } from "bun";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { channel, Channel, hasSubscribers, subscribe, unsubscribe } from "node:diagnostics_channel";
+import dc, { channel, Channel, hasSubscribers, subscribe, tracingChannel, unsubscribe } from "node:diagnostics_channel";
 
 describe("Channel", () => {
   // test-diagnostics-channel-has-subscribers.js
@@ -339,10 +339,230 @@ describe("Channel", () => {
   });
 });
 
+describe("Channel.prototype.withStoreScope", () => {
+  test("is a function on both inactive and active channels", () => {
+    const ch = channel("withStoreScope-shape");
+    expect(typeof ch.withStoreScope).toBe("function");
+
+    const disposable = ch.withStoreScope({});
+    expect(typeof disposable[Symbol.dispose]).toBe("function");
+    disposable[Symbol.dispose]();
+
+    ch.subscribe(() => {});
+    expect(typeof ch.withStoreScope).toBe("function");
+  });
+
+  test("enters bound stores for the duration of the scope", () => {
+    const ch = channel("withStoreScope-stores");
+    const store = new AsyncLocalStorage();
+    const data = { hello: "world" };
+    let published: unknown;
+
+    ch.bindStore(store, d => ({ wrapped: d }));
+    ch.subscribe(msg => {
+      published = msg;
+    });
+
+    expect(store.getStore()).toBeUndefined();
+    {
+      using scope = ch.withStoreScope(data);
+      void scope;
+      expect(store.getStore()).toEqual({ wrapped: data });
+      expect(published).toBe(data);
+    }
+    expect(store.getStore()).toBeUndefined();
+  });
+});
+
+describe("BoundedChannel", () => {
+  test("boundedChannel and BoundedChannel are exported", () => {
+    expect(typeof dc.boundedChannel).toBe("function");
+    expect(typeof dc.BoundedChannel).toBe("function");
+    expect(dc.boundedChannel("bc-export")).toBeInstanceOf(dc.BoundedChannel);
+  });
+
+  test("creates start/end channels from a name", () => {
+    const bc = dc.boundedChannel("bc-basic");
+
+    expect(bc.start.name).toBe("tracing:bc-basic:start");
+    expect(bc.end.name).toBe("tracing:bc-basic:end");
+    expect(bc.hasSubscribers).toBeFalse();
+    expect(typeof bc.subscribe).toBe("function");
+    expect(typeof bc.unsubscribe).toBe("function");
+    expect(typeof bc.run).toBe("function");
+    expect(typeof bc.withScope).toBe("function");
+  });
+
+  test("start/end are non-enumerable own properties", () => {
+    const bc = dc.boundedChannel("bc-shape");
+    expect(Object.keys(bc)).toEqual([]);
+    expect(Object.getOwnPropertyDescriptor(bc, "start")).toMatchObject({
+      enumerable: false,
+      configurable: false,
+      writable: false,
+    });
+  });
+
+  test("accepts explicit channel objects", () => {
+    const start = channel("bc-custom:start");
+    const end = channel("bc-custom:end");
+    const bc = dc.boundedChannel({ start, end });
+
+    expect(bc.start).toBe(start);
+    expect(bc.end).toBe(end);
+  });
+
+  test("subscribe/unsubscribe wires start and end handlers", () => {
+    const bc = dc.boundedChannel("bc-subscribe");
+    const events: Array<{ type: string; message: unknown }> = [];
+
+    const handlers = {
+      start(message: unknown) {
+        events.push({ type: "start", message });
+      },
+      end(message: unknown) {
+        events.push({ type: "end", message });
+      },
+    };
+
+    expect(bc.hasSubscribers).toBeFalse();
+    bc.subscribe(handlers);
+    expect(bc.hasSubscribers).toBeTrue();
+
+    bc.start.publish({ v: 1 });
+    bc.end.publish({ v: 2 });
+
+    expect(events).toEqual([
+      { type: "start", message: { v: 1 } },
+      { type: "end", message: { v: 2 } },
+    ]);
+
+    expect(bc.unsubscribe(handlers)).toBeTrue();
+    expect(bc.hasSubscribers).toBeFalse();
+    expect(bc.unsubscribe(handlers)).toBeFalse();
+  });
+
+  test("run publishes start, invokes fn, then publishes end", () => {
+    const bc = dc.boundedChannel("bc-run");
+    const events: string[] = [];
+    bc.subscribe({
+      start: () => events.push("start"),
+      end: () => events.push("end"),
+    });
+
+    const thisArg = { tag: "this" } as const;
+    const result = bc.run(
+      { ctx: true },
+      function (this: unknown, a: number, b: number) {
+        events.push("fn");
+        expect(this).toBe(thisArg);
+        return a + b;
+      },
+      thisArg,
+      2,
+      3,
+    );
+
+    expect(result).toBe(5);
+    expect(events).toEqual(["start", "fn", "end"]);
+  });
+
+  test("run still publishes end and restores stores when fn throws", () => {
+    const bc = dc.boundedChannel("bc-run-throw");
+    const store = new AsyncLocalStorage();
+    const events: string[] = [];
+
+    bc.start.bindStore(store);
+    bc.subscribe({
+      start: () => events.push("start"),
+      end: () => events.push("end"),
+    });
+
+    const boom = new Error("boom");
+    expect(store.getStore()).toBeUndefined();
+    expect(() =>
+      bc.run({ ctx: true }, () => {
+        events.push("fn");
+        expect(store.getStore()).toEqual({ ctx: true });
+        throw boom;
+      }),
+    ).toThrow(boom);
+
+    expect(events).toEqual(["start", "fn", "end"]);
+    expect(store.getStore()).toBeUndefined();
+  });
+
+  test("withScope is a no-op disposable when there are no subscribers", () => {
+    const bc = dc.boundedChannel("bc-noop");
+    const scope = bc.withScope({});
+    expect(typeof scope[Symbol.dispose]).toBe("function");
+    scope[Symbol.dispose]();
+  });
+});
+
 describe("TracingChannel", () => {
   // Port tests from:
   // https://github.com/search?q=repo%3Anodejs%2Fnode+test-diagnostics-channel+AND+%2Ftracing%2F&type=code
   test.todo("TODO");
+
+  test("has no own enumerable properties", () => {
+    const tc = tracingChannel("tc-shape");
+    expect(Object.keys(tc)).toEqual([]);
+    expect({ ...tc }).toEqual({});
+  });
+
+  test("exposes start/end/asyncStart/asyncEnd as prototype accessors", () => {
+    const tc = tracingChannel("tc-accessors");
+    const proto = Object.getPrototypeOf(tc);
+
+    for (const name of ["start", "end", "asyncStart", "asyncEnd"] as const) {
+      expect(Object.getOwnPropertyDescriptor(tc, name)).toBeUndefined();
+      const desc = Object.getOwnPropertyDescriptor(proto, name);
+      expect(desc?.get).toBeFunction();
+    }
+
+    expect(Object.getOwnPropertyDescriptor(tc, "error")).toMatchObject({
+      enumerable: false,
+    });
+
+    expect(tc.start.name).toBe("tracing:tc-accessors:start");
+    expect(tc.end.name).toBe("tracing:tc-accessors:end");
+    expect(tc.asyncStart.name).toBe("tracing:tc-accessors:asyncStart");
+    expect(tc.asyncEnd.name).toBe("tracing:tc-accessors:asyncEnd");
+    expect(tc.error.name).toBe("tracing:tc-accessors:error");
+  });
+
+  test.each(["start", "end", "asyncStart", "asyncEnd", "error"] as const)(
+    "hasSubscribers reflects a subscriber on %s",
+    name => {
+      const tc = tracingChannel(`tc-hassubs-${name}`);
+      expect(tc.hasSubscribers).toBeFalse();
+
+      const sub = () => {};
+      tc[name].subscribe(sub);
+      expect(tc.hasSubscribers).toBeTrue();
+      expect(tc[name].unsubscribe(sub)).toBeTrue();
+      expect(tc.hasSubscribers).toBeFalse();
+    },
+  );
+
+  test("constructed from explicit channel objects", () => {
+    const chans = {
+      start: channel("tc-obj:start"),
+      end: channel("tc-obj:end"),
+      asyncStart: channel("tc-obj:asyncStart"),
+      asyncEnd: channel("tc-obj:asyncEnd"),
+      error: channel("tc-obj:error"),
+    };
+    const tc = tracingChannel(chans);
+
+    expect(tc.start).toBe(chans.start);
+    expect(tc.end).toBe(chans.end);
+    expect(tc.asyncStart).toBe(chans.asyncStart);
+    expect(tc.asyncEnd).toBe(chans.asyncEnd);
+    expect(tc.error).toBe(chans.error);
+    expect(Object.keys(tc)).toEqual([]);
+  });
 });
 
 const mocks = new Map();

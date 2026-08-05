@@ -502,6 +502,17 @@ impl FetchTasklet {
         // SAFETY: caller contract — `this` is live with ref_count == 0.
         unsafe { (*this).ref_count.assert_no_refs() };
 
+        // Runs on the JS thread (the only caller thread); drop the
+        // terminate-cancel registration taken in `queue()`. No-op when the
+        // shutdown fan-out already consumed the list.
+        // SAFETY: caller contract — `this` is live; `javascript_vm` outlives it.
+        unsafe {
+            (*this)
+                .javascript_vm
+                .as_mut()
+                .unregister_terminate_cancel_hook(this.cast());
+        }
+
         // SAFETY: this was allocated via heap::alloc in `get()`; ref_count == 0 so exclusive
         let mut boxed = unsafe { bun_core::heap::take(this) };
         boxed.clear_data();
@@ -518,11 +529,16 @@ impl FetchTasklet {
     ///     (`on_response_finalize`) registered against `this`, so freeing the
     ///     box before `destructOnExit` sweeps the Response is a UAF.
     ///
-    /// Park the intact box on the JS thread via
+    /// Main-thread VM: park the intact box on the JS thread via
     /// `bun_http::defer_shutdown_reclaim`; the drain runs from
     /// `global_exit()` after the HTTP thread has parked but before
     /// `destructOnExit`, so `deinit()` there can release every handle on the
     /// right thread and the Weak is cleared before its referent is finalized.
+    ///
+    /// Worker VM: that drain runs on the main thread at process exit, long
+    /// after the worker's JSC heap is gone, so a parked `deinit()` would walk
+    /// freed Strong/Weak storage. Leak the box instead (the caller already
+    /// released the large buffers).
     ///
     /// SAFETY: `this` must be the last reference (ref_count == 0) and have
     /// been allocated via heap::alloc.
@@ -530,7 +546,12 @@ impl FetchTasklet {
         bun_output::scoped_log!(FetchTasklet, "deallocForShutdown");
         // SAFETY: caller contract — `this` is live with ref_count == 0.
         unsafe { (*this).ref_count.assert_no_refs() };
-        http::defer_shutdown_reclaim(this.cast(), FetchTasklet::deinit_erased);
+        // SAFETY: caller contract; the VM is readable here because the
+        // tasklet's `outstanding_offthread` count is released only after the
+        // HTTP-thread callback that dropped this last ref returns.
+        if unsafe { (*this).javascript_vm.is_main_thread } {
+            http::defer_shutdown_reclaim(this.cast(), FetchTasklet::deinit_erased);
+        }
     }
 
     unsafe fn deinit_erased(this: *mut c_void) {
@@ -2394,9 +2415,25 @@ impl FetchTasklet {
 
         // increment ref so we can keep it alive until the http client is done
         node_ref.ref_();
+        // Worker-shutdown fence: held until the HTTP thread's final callback
+        // (`is_done`) has dropped its ref — see the `offthread_job_end` calls
+        // in `callback`. Registering the abort lets `WebWorker::shutdown`
+        // bound that wait by a socket shutdown instead of the transfer.
+        let vm = node_ref.javascript_vm;
+        vm.event_loop_shared().offthread_job_begin();
+        vm.as_mut()
+            .register_terminate_cancel_hook(node.cast(), 0, Self::terminate_cancel_hook);
         http::HTTPThread::schedule(batch);
 
         Ok(node)
+    }
+
+    /// `TerminateCancelHook::run` for an in-flight fetch: identical to an
+    /// AbortSignal firing during shutdown. Idempotent (`abort_task` swaps the
+    /// `aborted` atomic). Runs on the worker's JS thread with the tasklet
+    /// still registered, hence alive.
+    fn terminate_cancel_hook(ptr: *mut (), _data: u64) {
+        Self::from_raw_mut(ptr.cast::<FetchTasklet>()).abort_task();
     }
 
     /// Called from HTTP thread. Handles HTTP events received from socket.
@@ -2416,6 +2453,11 @@ impl FetchTasklet {
         // at this point only this thread is accessing result to is no race condition
         let is_done = !result.has_more;
         let task_ref = Self::from_raw_mut(task);
+        // Snapshot for the `offthread_job_end` calls below: on every `is_done`
+        // exit the trailing `deref_from_thread` may free `*task`, and the end
+        // call releases `WebWorker::shutdown`'s fence, after which the VM
+        // itself may be freed — so it must go through this local, last.
+        let vm = task_ref.javascript_vm;
 
         task_ref.mutex.lock();
         // we need to unlock before task.deref();
@@ -2489,6 +2531,9 @@ impl FetchTasklet {
                 if is_done {
                     // SAFETY: `task` is the live heap tasklet; HTTP-thread ref held.
                     FetchTasklet::deref_from_thread(task);
+                    // HTTP engagement over: release the worker-shutdown fence
+                    // taken in `queue()` (last VM access, via the local).
+                    vm.event_loop_shared().offthread_job_end();
                 }
                 return;
             }
@@ -2541,6 +2586,9 @@ impl FetchTasklet {
                 if is_done {
                     // SAFETY: `task` is the live heap tasklet; HTTP-thread ref held.
                     FetchTasklet::deref_from_thread(task);
+                    // HTTP engagement over: release the worker-shutdown fence
+                    // taken in `queue()` (last VM access, via the local).
+                    vm.event_loop_shared().offthread_job_end();
                 }
                 return;
             }
@@ -2575,6 +2623,9 @@ impl FetchTasklet {
                 FetchTasklet::deref_from_thread(task);
                 // SAFETY: second ref still held until this 1→0 transition.
                 FetchTasklet::deref_from_thread(task);
+                // HTTP engagement over: release the worker-shutdown fence
+                // taken in `queue()` (last VM access, via the local).
+                vm.event_loop_shared().offthread_job_end();
             }
             return;
         }
@@ -2593,6 +2644,9 @@ impl FetchTasklet {
         if is_done {
             // SAFETY: `task` is the live heap tasklet; HTTP-thread ref held.
             FetchTasklet::deref_from_thread(task);
+            // HTTP engagement over: release the worker-shutdown fence taken
+            // in `queue()` (last VM access, via the local).
+            vm.event_loop_shared().offthread_job_end();
         }
     }
 }

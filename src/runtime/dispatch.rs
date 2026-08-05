@@ -1341,6 +1341,122 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             unsafe { Bun__deleteDeferredWorkTask(task.ptr.cast::<JSCDeferredWorkTask>()) };
             true
         }
+        task_tag::NapiAsyncWork => {
+            // SAFETY: tag identifies pointee; the pool-thread callback already
+            // posted this entry (`outstanding_offthread` barrier).
+            unsafe { napi_async_work::release_for_shutdown(task.ptr.cast::<napi_async_work>()) };
+            true
+        }
+        // Async `node:zlib` completion that reached the queue after the
+        // worker's last tick (the `outstanding_offthread` barrier guarantees
+        // the post lands before this drain). Release `write()`'s acquisitions
+        // (Strong handle, pinned buffers, poll_ref, +1 ref) without calling
+        // the JS write/error callbacks; JSC is still live here.
+        task_tag::NativeZlib | task_tag::NativeBrotli | task_tag::NativeZstd => {
+            macro_rules! release_compression {
+                ($T:ty) => {
+                    // SAFETY: tag identifies pointee; live m_ctx payload kept
+                    // alive by `write()`'s `ref_()`.
+                    unsafe {
+                        node_zlib_binding::CompressionStream::<$T>::release_unrun(
+                            task.ptr.cast::<$T>(),
+                        )
+                    }
+                };
+            }
+            match task.tag {
+                task_tag::NativeZlib => release_compression!(NativeZlib),
+                task_tag::NativeBrotli => release_compression!(NativeBrotli),
+                task_tag::NativeZstd => release_compression!(NativeZstd),
+                // SAFETY: outer arm guard proves one of the three tags matched.
+                _ => unsafe { core::hint::unreachable_unchecked() },
+            }
+            true
+        }
+        // `run_from_js` early-outs on `is_shutting_down` (set before this
+        // drain on both the worker and `global_exit` paths) and reclaims the
+        // box via `heap::take`, so the erased dispatch here is a pure
+        // release: poll unref + `Drop for C`, no user code.
+        task_tag::AnyTaskJob => {
+            // SAFETY: §Dispatch — `task.ptr` is a live heap `AnyTaskJob<C>`
+            // enqueued by `AnyTaskJob::run_task`; the erased entry frees it.
+            let _ = unsafe { bun_jsc::any_task_job::dispatch_erased(task.ptr) };
+            true
+        }
+        task_tag::PasswordHashResult => {
+            // SAFETY: tag identifies pointee; boxed by `PasswordJob::run_owned`.
+            unsafe {
+                crate::crypto::password_object::PasswordResult::<
+                    crate::crypto::password_object::HashOp,
+                >::release_unrun(task.ptr.cast())
+            };
+            true
+        }
+        task_tag::PasswordVerifyResult => {
+            // SAFETY: tag identifies pointee; boxed by `PasswordJob::run_owned`.
+            unsafe {
+                crate::crypto::password_object::PasswordResult::<
+                    crate::crypto::password_object::VerifyOp,
+                >::release_unrun(task.ptr.cast())
+            };
+            true
+        }
+        // `ConcurrentPromiseTask` completions: `destroy` drops the ctx box
+        // and the promise `Strong` (JSC still live) and runs no JS; pair it
+        // with the `run_from_js` unref it replaces.
+        task_tag::AsyncGlobWalkTask
+        | task_tag::AsyncImageTask
+        | task_tag::AsyncTransformTask
+        | task_tag::CopyFilePromiseTask => {
+            macro_rules! release_promise_task {
+                ($ty:ty) => {{
+                    let t = task.ptr.cast::<$ty>();
+                    // SAFETY: tag identifies pointee; the pool callback posted
+                    // this entry, so the pool no longer touches it.
+                    unsafe {
+                        (*t).ref_.unref(bun_io::js_vm_ctx());
+                        bun_jsc::concurrent_promise_task::ConcurrentPromiseTask::destroy(t);
+                    }
+                }};
+            }
+            match task.tag {
+                task_tag::AsyncGlobWalkTask => release_promise_task!(AsyncGlobWalkTask<'_>),
+                task_tag::AsyncImageTask => release_promise_task!(AsyncImageTask<'_>),
+                task_tag::AsyncTransformTask => release_promise_task!(AsyncTransformTask<'_>),
+                task_tag::CopyFilePromiseTask => release_promise_task!(CopyFilePromiseTask<'_>),
+                // SAFETY: outer arm guard proves one of the four tags matched.
+                _ => unsafe { core::hint::unreachable_unchecked() },
+            }
+            true
+        }
+        // The HTTP thread's final callback posted these and made its last
+        // access before the fence released; we own the box. `Drop` is
+        // JS-free (poll unref + `clear_data`).
+        task_tag::S3HttpSimpleTask => {
+            // SAFETY: tag identifies pointee; sole owner (see above).
+            drop(unsafe { bun_core::heap::take(task.ptr.cast::<S3HttpSimpleTask>()) });
+            true
+        }
+        task_tag::S3HttpDownloadStreamingTask => {
+            // SAFETY: tag identifies pointee; sole owner (see above).
+            drop(unsafe { bun_core::heap::take(task.ptr.cast::<S3HttpDownloadStreamingTask>()) });
+            true
+        }
+        // `cancelled` short-circuits `on_complete` right after the poll
+        // unref, so no JS runs; adopting the enqueue's +1 frees the box.
+        task_tag::JSBundleCompletionTask => {
+            let c = task
+                .ptr
+                .cast::<crate::api::js_bundle_completion_task::JSBundleCompletionTask>();
+            // SAFETY: tag identifies pointee; the bundle thread's last access
+            // ended when it posted this entry.
+            unsafe {
+                (*c).cancelled = true;
+                let _ =
+                    crate::api::js_bundle_completion_task::JSBundleCompletionTask::on_complete_anytask(c);
+            }
+            true
+        }
         // Same reclaim `drop_concurrent_cpp_tasks` performs, but for tasks
         // that were already batch-moved into `self.tasks`. Must run before
         // JSC teardown: a Worker `dispatchExit` lambda's `~Ref<Worker>` walks

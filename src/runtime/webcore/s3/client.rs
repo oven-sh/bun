@@ -1304,6 +1304,17 @@ fn download_stream(
     bun_http::http_thread::init(&Default::default());
     let mut batch = bun_threading::thread_pool::Batch::default();
     http.schedule(&mut batch);
+    // Worker-shutdown fence: held until the HTTP thread's final
+    // (`has_more == false`) callback — see `offthread_job_end` in
+    // `S3HttpDownloadStreamingTask::http_callback`. The cancel hook lets
+    // `WebWorker::shutdown` bound that wait by a socket shutdown; it carries
+    // the id (not the task) because `http` is overwritten on the HTTP thread.
+    vm.event_loop_shared().offthread_job_begin();
+    vm.as_mut().register_terminate_cancel_hook(
+        task_ptr.cast(),
+        u64::from(task.async_http_id),
+        crate::webcore::s3::download_stream::terminate_cancel_hook,
+    );
     bun_http::HTTPThread::schedule(batch);
     task_ptr
 }

@@ -450,6 +450,21 @@ impl EventLoopHandle {
         }
     }
 
+    /// `jsc::EventLoop::offthread_job_begin` for the `Js` arm; no-op for
+    /// `Mini` (a mini loop is never torn down by `worker.terminate()`).
+    pub fn offthread_job_begin(self) {
+        if let EventLoopHandle::Js { owner } = self {
+            owner.offthread_job_begin();
+        }
+    }
+
+    /// Pair of [`Self::offthread_job_begin`]; see that method.
+    pub fn offthread_job_end(self) {
+        if let EventLoopHandle::Js { owner } = self {
+            owner.offthread_job_end();
+        }
+    }
+
     pub fn r#loop(self) -> *mut UwsLoop {
         match self {
             EventLoopHandle::Js { owner } => owner.uws_loop(),

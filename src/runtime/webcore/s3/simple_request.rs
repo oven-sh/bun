@@ -471,12 +471,24 @@ impl S3HttpSimpleTask {
                 ((*this).vm.expect("vm set at task creation"), queued)
             };
             vm.event_loop_shared().enqueue_task_concurrent(queued);
+            // HTTP engagement over: release the worker-shutdown fence taken in
+            // `execute_simple_s3_request` (last VM access, via the local — the
+            // JS thread may consume and free `*this` once the enqueue lands).
+            vm.event_loop_shared().offthread_job_end();
         }
     }
 }
 
 impl Drop for S3HttpSimpleTask {
     fn drop(&mut self) {
+        // Runs on the JS thread (the task is consumed by `on_response`); drop
+        // the terminate-cancel registration taken in
+        // `execute_simple_s3_request`. No-op when the shutdown fan-out
+        // consumed the list.
+        if let Some(vm) = self.vm {
+            vm.as_mut()
+                .unregister_terminate_cancel_hook(core::ptr::from_mut(self).cast());
+        }
         // Side effects beyond freeing owned fields (which Rust drops automatically):
         // - poll_ref.unref(vm)
         // - http.clearData()
@@ -681,7 +693,19 @@ pub(crate) fn execute_simple_s3_request(
     bun_http::http_thread::init(&Default::default());
     let mut batch = thread_pool::Batch::default();
     // SAFETY: `http` was initialised immediately above; scoped exclusive access.
+    let async_http_id = unsafe { (*task_ptr).http.assume_init_mut() }.async_http_id;
+    // SAFETY: as above.
     unsafe { (*task_ptr).http.assume_init_mut() }.schedule(&mut batch);
+    // Worker-shutdown fence: held until the HTTP thread's final
+    // (`has_more == false`) callback — see `offthread_job_end` in
+    // `http_callback`. The cancel hook carries the id (not the task) because
+    // the HTTP thread overwrites the on-task `http` storage concurrently.
+    vm.event_loop_shared().offthread_job_begin();
+    vm.as_mut().register_terminate_cancel_hook(
+        task_ptr.cast(),
+        u64::from(async_http_id),
+        crate::webcore::s3::download_stream::terminate_cancel_hook,
+    );
     bun_http::HTTPThread::schedule(batch);
     Ok(())
 }

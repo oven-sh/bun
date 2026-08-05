@@ -68,6 +68,16 @@ pub type ExceptionList = Vec<crate::schema_api::JsException>;
 // VirtualMachine struct (file-level @This())
 // ──────────────────────────────────────────────────────────────────────────
 
+/// One entry in [`VirtualMachine::terminate_cancel_hooks`]: an erased pointer
+/// to the in-flight operation plus a cancel fn. `data` carries per-entry
+/// payload the fn must not read from `ptr` (e.g. an `async_http_id` whose
+/// on-task storage the HTTP thread mutates concurrently).
+pub struct TerminateCancelHook {
+    pub ptr: *mut (),
+    pub data: u64,
+    pub run: fn(*mut (), u64),
+}
+
 #[derive(Default)]
 pub struct EntryPointResult {
     pub value: crate::strong::Optional, // jsc.Strong.Optional
@@ -217,6 +227,13 @@ pub struct VirtualMachine {
     pub(crate) hide_bun_stackframes: bool,
 
     pub is_shutting_down: bool,
+    /// JS-thread-only registry of in-flight off-thread operations that
+    /// `WebWorker::shutdown` should cancel before waiting on
+    /// [`EventLoop::outstanding_offthread`] (in-flight `fetch`/S3 HTTP work
+    /// registers an abort here so the wait is bounded by socket shutdown, not
+    /// by the transfer). Entries are keyed by `ptr`; owners unregister when
+    /// the operation's JS-side handle is released.
+    pub(crate) terminate_cancel_hooks: Vec<TerminateCancelHook>,
     /// Set once `on_exit()` has finished draining `RareData::cleanup_hooks`.
     /// After this point the cleanup-hook list is never iterated again, so
     /// pushing to it (e.g. from a deferred N-API finalizer scheduled during
@@ -987,6 +1004,43 @@ impl VirtualMachine {
 
     pub fn is_shutting_down(&self) -> bool {
         self.is_shutting_down
+    }
+
+    /// Register an off-thread operation for the terminate-time cancel fan-out
+    /// (see the [`Self::terminate_cancel_hooks`] field doc). JS thread only.
+    pub fn register_terminate_cancel_hook(
+        &mut self,
+        ptr: *mut (),
+        data: u64,
+        run: fn(*mut (), u64),
+    ) {
+        self.terminate_cancel_hooks
+            .push(TerminateCancelHook { ptr, data, run });
+    }
+
+    /// Remove the hook registered with `ptr`. No-op when absent (the fan-out
+    /// leaves entries in place; owners released afterwards must still call
+    /// this). JS thread only.
+    pub fn unregister_terminate_cancel_hook(&mut self, ptr: *mut ()) {
+        if let Some(i) = self
+            .terminate_cancel_hooks
+            .iter()
+            .position(|h| h.ptr == ptr)
+        {
+            self.terminate_cancel_hooks.swap_remove(i);
+        }
+    }
+
+    /// Worker-shutdown cancel fan-out: run every registered hook. Hooks stay
+    /// registered (each `run` must be idempotent); the list is never walked
+    /// again — the VM is torn down right after.
+    pub fn run_terminate_cancel_hooks(&mut self) {
+        // Hooks may re-enter `self` (an abort can schedule follow-up work),
+        // so iterate a moved-out list rather than borrowing the field.
+        let hooks = core::mem::take(&mut self.terminate_cancel_hooks);
+        for hook in &hooks {
+            (hook.run)(hook.ptr, hook.data);
+        }
     }
 
     pub fn has_run_cleanup_hooks(&self) -> bool {
@@ -2112,6 +2166,7 @@ impl VirtualMachine {
             // their validity invariants even when len/cap are 0. Write the
             // canonical empty value via `ptr::write` (no Drop of zeroed bytes).
             addr_of_mut!((*vm).preload).write(Vec::new());
+            addr_of_mut!((*vm).terminate_cancel_hooks).write(Vec::new());
             addr_of_mut!((*vm).argv).write(Vec::new());
             addr_of_mut!((*vm).resolved_path_dups).write(Vec::new());
             addr_of_mut!((*vm).macros).write(Default::default());
@@ -4362,6 +4417,8 @@ impl VirtualMachine {
         // Drops all `Arc`-held
         // proxy strings; `ProxyEnvStorage: Default` so take()+drop suffices.
         drop(core::mem::take(&mut self.proxy_env_storage));
+
+        drop(core::mem::take(&mut self.terminate_cancel_hooks));
 
         // The VM box is `dealloc`'d raw by the worker (see `web_worker.rs`
         // section 5) so field `Drop`s never run; reclaim the boxed

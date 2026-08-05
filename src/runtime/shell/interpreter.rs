@@ -2628,6 +2628,12 @@ impl ShellTask {
         // `&mut ShellTask` across that call.
         unsafe {
             let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
+            // Holds the worker-shutdown fence open until `on_finish` has
+            // posted the completion (see `EventLoop::outstanding_offthread`).
+            // Recursive (pool-thread) schedules happen while the parent task's
+            // own count is still held, so the count never dips to zero
+            // mid-chain. No-op for a mini (non-JS) loop.
+            (*this).event_loop.offthread_job_begin();
             (*this).task.callback = shell_task_trampoline::<C>;
             WorkPool::schedule(&raw mut (*this).task);
         }
@@ -2672,6 +2678,10 @@ impl ShellTask {
             (event_loop, task_ptr)
         };
         event_loop.enqueue_task_concurrent(task_ptr);
+        // Last VM access (via the local copy — the main thread may free the
+        // task as soon as the enqueue lands); releases the worker-shutdown
+        // fence taken in `schedule`/`schedule_no_ref`.
+        event_loop.offthread_job_end();
     }
 
     /// Unrefs the

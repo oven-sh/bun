@@ -837,18 +837,21 @@ it.serial("instances should be finalized when GC'd", async () => {
       sock.close();
     }
 
-    function openAndCloseWS() {
-      const { promise, resolve } = Promise.withResolvers();
-      const sock = new WebSocket(server.url.href.replace("http", "ws"));
-      sock.addEventListener("open", onOpen.bind(undefined, sock, resolve), {
-        once: true,
-      });
+    // IP literal so the loop never waits on getaddrinfo: on one darwin CI host
+    // the libinfo async reply for `localhost` has been seen to never arrive,
+    // wedging the DNS cache entry and every iteration with it.
+    const wsURL = `ws://127.0.0.1:${server.port}/`;
 
+    function openAndCloseWS(i) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const sock = new WebSocket(wsURL);
+      sock.addEventListener("open", onOpen.bind(undefined, sock, resolve), { once: true });
+      sock.addEventListener("error", e => reject(new Error(`iteration ${i}: ${e?.message ?? e}`)), { once: true });
       return promise;
     }
 
     for (let i = 0; i < 1000; i++) {
-      await openAndCloseWS();
+      await openAndCloseWS(i);
       if (i % 100 === 0) {
         if (initial_websocket_count === 0) {
           initial_websocket_count = getWebSocketCount();

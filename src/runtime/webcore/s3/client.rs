@@ -358,6 +358,7 @@ pub(crate) fn list_objects(
             http_proxy,
             verbose: Some(vm.get_verbose_fetch()),
             reject_unauthorized: Some(vm.get_tls_reject_unauthorized()),
+            disable_decompression: Some(true),
             ..Default::default()
         },
     ));
@@ -1292,6 +1293,7 @@ fn download_stream(
             verbose: Some(verbose),
             signals: Some(task.signals),
             reject_unauthorized: Some(reject_unauthorized),
+            disable_decompression: Some(true),
             ..Default::default()
         },
     ));

@@ -482,8 +482,8 @@ export default myPlugin;
 Bun lazily resolves and loads each plugin and uses them to bundle your routes.
 
 <Note>
-  Plugins live in `bunfig.toml` so that the `bun build` CLI, once it supports them, can know statically which plugins
-  are in use. These plugins work in `Bun.build()`'s JS API, but not yet in the CLI.
+  Plugins live in `bunfig.toml` so they can be discovered statically. The same `[serve.static].plugins` list is also
+  applied when you run `bun build` from the CLI, and plugins can always be passed directly to `Bun.build()`'s JS API.
 </Note>
 
 ## Inline Environment Variables

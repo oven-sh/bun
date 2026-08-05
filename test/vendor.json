@@ -7,6 +7,9 @@
       "ws*connection.test.ts": "TEMPORARY: elysia 1.4.28 asserts wasClean=false for a server-initiated ws.close(), but that's a clean Close handshake — Bun now reports wasClean=true to match Node/WHATWG (oven-sh/bun#31518). Fixed upstream in elysiajs/elysia#1908; remove this skip on the next elysia bump. (glob * = path separator, so it also matches Windows backslash paths)",
       "adapter*web-standard*map-response.test.ts": "TEMPORARY: Bun's Response.redirect now puts the WHATWG serialization of the url into Location (oven-sh/bun#33126), matching Node and https://fetch.spec.whatwg.org/#dom-response-redirect, so Response.redirect('https://cunny.school') yields 'https://cunny.school/'. elysia 1.4.28's 'map redirect' test asserts the unserialized string; remove this skip once the upstream assertion expects the trailing slash.",
       "adapter*web-standard*map-early-response.test.ts": "TEMPORARY: same as adapter*web-standard*map-response.test.ts; its 'map redirect' test asserts the unserialized Response.redirect Location value."
+    },
+    "skipTestNames": {
+      "stop stream on canceled request": "elysia 1.4.28's test/response/stream.test.ts schedules setTimeout(() => controller.abort(), 15) BEFORE awaiting app.handle(), then asserts the stream delivers 'a' and 'b' (separated by Bun.sleep(10)) before the abort lands. That only holds when app.handle() reaches the generator in under ~5ms, which the ASAN lane does not guarantee: on a slow agent (build 74979, 869ms/file vs the usual 620ms) the abort fires while the generator is still in its first sleep, so only 'a' is delivered and toHaveLength(0) fails. Bun's AbortSignal and ReadableStream behaviour are correct here; the test is timing-dependent upstream (unchanged on elysia main). The other 25 tests in the file remain enabled."
     }
   }
 ]

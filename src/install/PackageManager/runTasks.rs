@@ -1854,7 +1854,7 @@ pub fn generate_network_task_for_tarball<'a>(
         } else {
             "run an online install first"
         };
-        if is_network_task_required(this, task_id) {
+        if is_required {
             bun_ast::add_error_pretty!(
                 this.log_mut(),
                 None,

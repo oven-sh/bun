@@ -394,6 +394,15 @@ test.concurrent("--offline resolves from the cached manifest without a lockfile"
   expect(exitCode).toBe(0);
   // highest version of no-deps matching ^1.0.0 in the cached manifest
   expect(await installedVersion(manifestResolve, "no-deps")).toBe("1.1.0");
+
+  // --force clears manifest cache-control, but offline the cached manifest is
+  // still the only (and an acceptable) source
+  await rm(join(packageDir, "bun.lock"), { force: true });
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  const forced = await runInstall(packageDir, ["--offline", "--force"]);
+  expect(forced.err).not.toContain("error:");
+  expect(forced.exitCode).toBe(0);
+  expect(await installedVersion(manifestResolve, "no-deps")).toBe("1.1.0");
 });
 
 test.concurrent("--offline names the cached manifest's missing publish dates under minimumReleaseAge", async () => {

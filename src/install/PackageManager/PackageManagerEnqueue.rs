@@ -1104,8 +1104,14 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             }
                                         }
 
-                                        // Was it recent enough to just load it without the network call?
-                                        if this.options.enable.manifest_cache_control() && !expired
+                                        // Was it recent enough to just load it
+                                        // without the network call? Offline, a
+                                        // loaded manifest is always usable
+                                        // (`--force` clears cache-control, but
+                                        // there is no registry to re-ask).
+                                        if (this.options.enable.offline()
+                                            || this.options.enable.manifest_cache_control())
+                                            && !expired
                                         {
                                             let _ = this.network_dedupe_map.remove(&task_id);
                                             continue 'retry_from_manifests_ptr;
@@ -1120,12 +1126,14 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     // unusable because `minimumReleaseAge`
                                     // needs publish dates it lacks: report,
                                     // don't fetch.
-                                    let problem: &str = if loaded_manifest.is_some() {
+                                    let problem: &str = if needs_extended_manifest
+                                        && loaded_manifest.is_some()
+                                    {
                                         "has a cached manifest without the publish dates minimumReleaseAge requires"
                                     } else {
                                         "has no cached manifest"
                                     };
-                                    if run_tasks::is_network_task_required(this, task_id) {
+                                    if dependency.behavior.is_required() {
                                         bun_ast::add_error_pretty!(
                                             this.log_mut(),
                                             None,

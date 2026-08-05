@@ -942,6 +942,7 @@ impl PublishCommand {
             },
             ctx.uses_workspaces,
             ctx.manager.options.publish_config.auth_type,
+            true,
         )?;
 
         let mut response_buf = MutableString::init(1024)?;
@@ -1048,6 +1049,7 @@ impl PublishCommand {
                     Some(&otp),
                     ctx.uses_workspaces,
                     ctx.manager.options.publish_config.auth_type,
+                    true,
                 )?;
 
                 response_buf.reset();
@@ -1181,16 +1183,15 @@ impl PublishCommand {
                     break 'try_web;
                 };
                 let done_url = URL::parse(crate::cli::cli_dupe(done_url_str));
-                {
-                    let registry_url = registry.url.url();
-                    if !(done_url.is_http() || done_url.is_https())
-                        || done_url.protocol != registry_url.protocol
-                        || done_url.hostname != registry_url.hostname
-                        || done_url.get_port_auto() != registry_url.get_port_auto()
-                    {
-                        break 'try_web;
-                    }
+                if !(done_url.is_http() || done_url.is_https()) {
+                    break 'try_web;
                 }
+                let done_url_same_origin = {
+                    let registry_url = registry.url.url();
+                    done_url.is_https() == registry_url.is_https()
+                        && done_url.hostname == registry_url.hostname
+                        && done_url.get_port_auto() == registry_url.get_port_auto()
+                };
 
                 if auth_url_is_web {
                     bun_core::prettyln!(
@@ -1282,6 +1283,7 @@ impl PublishCommand {
                     None,
                     ctx.uses_workspaces,
                     ctx.manager.options.publish_config.auth_type,
+                    done_url_same_origin,
                 )?;
 
                 loop {
@@ -1911,6 +1913,7 @@ impl PublishCommand {
         maybe_otp: Option<&[u8]>,
         uses_workspaces: bool,
         auth_type: Option<AuthType>,
+        include_auth: bool,
     ) -> Result<http::HeaderBuilder, AllocError> {
         let mut headers = http::HeaderBuilder::default();
         let npm_auth_type: &[u8] = if maybe_otp.is_none() {
@@ -1928,14 +1931,16 @@ impl PublishCommand {
             headers.count(b"accept", b"*/*");
             headers.count(b"accept-encoding", b"gzip,deflate");
 
-            if !registry.token.is_empty() {
-                write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token)).ok();
-                headers.count(b"authorization", &**print_buf);
-                print_buf.clear();
-            } else if !registry.auth.is_empty() {
-                write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth)).ok();
-                headers.count(b"authorization", &**print_buf);
-                print_buf.clear();
+            if include_auth {
+                if !registry.token.is_empty() {
+                    write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token)).ok();
+                    headers.count(b"authorization", &**print_buf);
+                    print_buf.clear();
+                } else if !registry.auth.is_empty() {
+                    write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth)).ok();
+                    headers.count(b"authorization", &**print_buf);
+                    print_buf.clear();
+                }
             }
 
             if maybe_json_len.is_some() {
@@ -1965,7 +1970,9 @@ impl PublishCommand {
             print_buf.clear();
 
             headers.count(b"Connection", b"keep-alive");
-            headers.count(b"Host", registry.url.url().host);
+            if include_auth {
+                headers.count(b"Host", registry.url.url().host);
+            }
 
             if let Some(json_len) = maybe_json_len {
                 write!(print_buf, "{}", json_len).ok();
@@ -1980,14 +1987,16 @@ impl PublishCommand {
             headers.append(b"accept", b"*/*");
             headers.append(b"accept-encoding", b"gzip,deflate");
 
-            if !registry.token.is_empty() {
-                write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token)).ok();
-                headers.append(b"authorization", &**print_buf);
-                print_buf.clear();
-            } else if !registry.auth.is_empty() {
-                write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth)).ok();
-                headers.append(b"authorization", &**print_buf);
-                print_buf.clear();
+            if include_auth {
+                if !registry.token.is_empty() {
+                    write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token)).ok();
+                    headers.append(b"authorization", &**print_buf);
+                    print_buf.clear();
+                } else if !registry.auth.is_empty() {
+                    write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth)).ok();
+                    headers.append(b"authorization", &**print_buf);
+                    print_buf.clear();
+                }
             }
 
             if maybe_json_len.is_some() {
@@ -2017,7 +2026,9 @@ impl PublishCommand {
             print_buf.clear();
 
             headers.append(b"Connection", b"keep-alive");
-            headers.append(b"Host", registry.url.url().host);
+            if include_auth {
+                headers.append(b"Host", registry.url.url().host);
+            }
 
             if let Some(json_len) = maybe_json_len {
                 write!(print_buf, "{}", json_len).ok();

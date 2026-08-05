@@ -490,7 +490,7 @@ Url.prototype.format = function format() {
   var auth: string = this.auth || "";
   if (auth) {
     auth = encodeURIComponent(auth);
-    auth = auth.replace(/%3A/i, ":");
+    auth = auth.replace(/%3A/gi, ":");
     auth += "@";
   }
 
@@ -505,7 +505,9 @@ Url.prototype.format = function format() {
   if (thisHost) {
     host = auth + thisHost;
   } else if ((thisHostname = this.hostname)) {
-    host = auth + (thisHostname.indexOf(":") === -1 ? thisHostname : "[" + thisHostname + "]");
+    host =
+      auth +
+      (thisHostname.indexOf(":") !== -1 && !isIpv6Hostname(thisHostname) ? "[" + thisHostname + "]" : thisHostname);
     const thisPort = this.port;
     if (thisPort) {
       host += ":" + thisPort;
@@ -527,13 +529,17 @@ Url.prototype.format = function format() {
    * only the slashedProtocols get the //.  Not mailto:, xmpp:, etc.
    * unless they had them to begin with.
    */
-  if (this.slashes || ((!protocol || slashedProtocol[protocol]) && host.length > 0)) {
-    host = "//" + (host || "");
-    if (pathname && pathname.charAt(0) !== "/") {
-      pathname = "/" + pathname;
+  const thisSlashes = this.slashes;
+  if (thisSlashes || slashedProtocol[protocol]) {
+    if (thisSlashes || host) {
+      if (pathname && pathname.charAt(0) !== "/") {
+        pathname = "/" + pathname;
+      }
+      host = "//" + host;
+    } else if (protocol === "file:") {
+      // file: keeps the empty authority: "file:///x", never "file:/x".
+      host = "//";
     }
-  } else if (!host) {
-    host = "";
   }
 
   if (hash && hash.charAt(0) !== "#") {

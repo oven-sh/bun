@@ -74,10 +74,27 @@ FOREACH_EXPOSED_BUILTIN_IMR(DECL_GETTER)
 
 } // namespace ExposeNodeModuleGlobalGetters
 
+// Writing to one of these globals replaces the lazy accessor with a plain data
+// property, the same reification a null-setter CustomValue property gets from
+// JSObject::putInlineSlow.
+JSC_DEFINE_CUSTOM_SETTER(exposedNodeModuleGlobalSetter, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
+{
+    Zig::GlobalObject* thisObject = defaultGlobalObject(lexicalGlobalObject);
+    JSC::VM& vm = thisObject->vm();
+    thisObject->putDirect(vm, propertyName, JSC::JSValue::decode(encodedValue), 0);
+    return true;
+}
+
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::GlobalObject* globalObject)
 {
 
     auto& vm = JSC::getVM(globalObject);
+    // CustomAccessor, not CustomValue: [[GetOwnProperty]] on a CustomValue
+    // property computes its value, so GlobalDeclarationInstantiation's
+    // hasRestrictedGlobalProperty check for a top-level `const zlib = ...` in
+    // `bun -e` would load node:zlib before the first statement runs (visibly
+    // wrong for load-order-sensitive code like buffer.kMaxLength patching).
+    // An accessor's descriptor is built without invoking the getter.
 #define PUT_CUSTOM_GETTER_SETTER(id, field) \
     globalObject->putDirectCustomAccessor( \
         vm, \
@@ -85,8 +102,8 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::Global
         JSC::CustomGetterSetter::create( \
             vm, \
             ExposeNodeModuleGlobalGetters::id, \
-            nullptr), \
-        0 | JSC::PropertyAttribute::CustomValue \
+            exposedNodeModuleGlobalSetter), \
+        0 | JSC::PropertyAttribute::CustomAccessor \
     );
 
     FOREACH_EXPOSED_BUILTIN_IMR(PUT_CUSTOM_GETTER_SETTER)

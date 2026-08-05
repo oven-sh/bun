@@ -1669,7 +1669,8 @@ impl VirtualMachine {
             // JSC `Strong`/`Weak` handles against a live heap.
             // `offthread_drained: true` — the HTTP daemon just parked, so
             // every posting thread has made its last access.
-            self.event_loop_mut().release_queued_tasks_for_shutdown(true);
+            self.event_loop_mut()
+                .release_queued_tasks_for_shutdown(true);
 
             if let Some(rare) = self.rare_data.as_deref_mut() {
                 rare.release_js_handles();

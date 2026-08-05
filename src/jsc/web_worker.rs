@@ -1340,7 +1340,8 @@ impl WebWorker {
             // ~JSEventListener Weak<> handles, and after teardownJSCVM the
             // worker VM is dealloc'd-without-Drop so anything still in
             // self.tasks leaks. Mirrors the global_exit() ordering.
-            vm.event_loop_mut().release_queued_tasks_for_shutdown(drained);
+            vm.event_loop_mut()
+                .release_queued_tasks_for_shutdown(drained);
             if let Some(rare) = vm.rare_data.as_deref_mut() {
                 rare.release_js_handles();
             }

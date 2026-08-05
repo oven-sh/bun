@@ -1244,12 +1244,11 @@ impl WebWorker {
             // SAFETY: vm_ptr valid; unpublished above under vm_lock, so no
             // other thread can dereference it now — `&mut` is exclusive.
             let vm = unsafe { &mut *vm_ptr };
-            // terminate() set the JSC termination flag to interrupt running JS;
-            // clear it so process.on('exit') handlers can run. teardownJSCVM
-            // re-sets it for the JSC VM teardown.
-            vm.jsc_vm().clear_has_termination_request();
             vm.is_shutting_down = true;
+            // on_exit first: dispatchExitInternal skips 'exit' on terminate (node semantics).
             vm.on_exit();
+            // Cleared here so close_all_socket_groups can re-enter JS; teardownJSCVM re-sets it.
+            vm.global().clear_termination_exception();
             if let Some(hooks) = runtime_hooks() {
                 (hooks.cron_clear_all_teardown)(vm);
                 // Drain `TimeoutObject`s from this worker's timer heap before

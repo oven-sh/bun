@@ -11,6 +11,198 @@ const rounds = slow ? 4 : 8;
 const perRound = slow ? 12 : 32;
 const timeout = slow ? 60_000 : 20_000;
 
+// Regression: Bun.serve() inside a worker streaming a type:"direct" body,
+// then worker.terminate() mid-stream. drain_microtasks() drives the async
+// pull loop; when the termination trap fires inside it, the outermost
+// VMEntryScope's executeEntryScopeServicesOnExit clears hasTerminationRequest
+// while the TerminationException stays pending. do_render_stream then kept
+// going and (a) lazy-initialized NativePromiseContextStructure inside a
+// DeferTerminationForAWhile scope, asserting hasTerminationRequest() in
+// VMTraps::deferTerminationSlow, and (b) re-entered JS via then_with_value,
+// asserting !exception() in executeCallImpl. Separately, WebWorker::shutdown
+// cleared only the request flag before close_all_socket_groups, leaving the
+// sticky exception in place for the same class of assert. Both asserts are
+// compiled out outside debug/ASAN builds.
+test.skipIf(!(isDebug || isASAN))(
+  'terminate() while Bun.serve is streaming a type:"direct" body does not trip DeferTermination / assertNoException',
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src = 'const server = Bun.serve({ port: 0, fetch() {' +
+          '  return new Response(new ReadableStream({ type: "direct", async pull(ctrl) {' +
+          '    for (let i = 0; i < 20000; i++) {' +
+          '      ctrl.write(new Uint8Array(8192).fill(i));' +
+          '      await ctrl.flush();' +
+          '    }' +
+          '    ctrl.close();' +
+          '  }, cancel() {} }));' +
+          '} });' +
+          'require("node:worker_threads").parentPort.postMessage(server.port);';
+        for (let i = 0; i < ${rounds}; i++) {
+          const w = new Worker(src, { eval: true });
+          const port = await new Promise(r => w.once("message", r));
+          const res = await fetch("http://127.0.0.1:" + port + "/");
+          const rd = res.body.getReader();
+          await rd.read();
+          const done = new Promise(r => w.once("exit", r));
+          w.terminate();
+          await done;
+          await rd.cancel().catch(() => {});
+        }
+        console.log("survived");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("survived\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// Sibling of the above: on_response's drain_microtasks() driving an async
+// fetch handler that never yields past `await 1`. Same DeferTermination /
+// assertNoException pair, same fix shape. Also asserts Node's
+// "process.on('exit') is skipped on terminate()" when terminate lands while
+// JS is on the stack (sab[1] stays 0): in that state the NeedTermination trap
+// has already been consumed, so only the sticky TerminationException guards
+// dispatchExitInternal; clearing it before on_exit would let the handler run.
+test.skipIf(!(isDebug || isASAN))(
+  "terminate() while Bun.serve's async fetch is looping in drain_microtasks does not trip DeferTermination",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const sab = new SharedArrayBuffer(8);
+        const flag = new Int32Array(sab);
+        const src = 'const { workerData } = require("node:worker_threads");' +
+          'const flag = new Int32Array(workerData.sab);' +
+          'process.on("exit", () => Atomics.add(flag, 1, 1));' +
+          'const server = Bun.serve({ port: 0, async fetch() {' +
+          '  for (;;) { Atomics.add(flag, 0, 1); await 1; }' +
+          '} });' +
+          'require("node:worker_threads").parentPort.postMessage(server.port);';
+        for (let i = 0; i < ${rounds}; i++) {
+          Atomics.store(flag, 0, 0);
+          Atomics.store(flag, 1, 0);
+          const w = new Worker(src, { eval: true, workerData: { sab } });
+          const port = await new Promise(r => w.once("message", r));
+          const ac = new AbortController();
+          fetch("http://127.0.0.1:" + port + "/", { signal: ac.signal }).catch(() => {});
+          while (Atomics.load(flag, 0) < 100) await Bun.sleep(0);
+          const done = new Promise(r => w.once("exit", r));
+          w.terminate();
+          await done;
+          ac.abort();
+          if (Atomics.load(flag, 1) !== 0) throw new Error("process.on('exit') fired on terminate");
+        }
+        console.log("survived");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("survived\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// Same again for the node:http-compat path (on_node_http_request_with_upgrade_ctx).
+test.skipIf(!(isDebug || isASAN))(
+  "terminate() while a node:http server's async handler is looping in drain_microtasks does not trip DeferTermination",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const sab = new SharedArrayBuffer(4);
+        const flag = new Int32Array(sab);
+        const src = 'const { workerData } = require("node:worker_threads");' +
+          'const flag = new Int32Array(workerData.sab);' +
+          'const http = require("node:http");' +
+          'const server = http.createServer(async (req, res) => {' +
+          '  for (;;) { Atomics.add(flag, 0, 1); await 1; }' +
+          '}).listen(0, () => require("node:worker_threads").parentPort.postMessage(server.address().port));';
+        for (let i = 0; i < ${rounds}; i++) {
+          Atomics.store(flag, 0, 0);
+          const w = new Worker(src, { eval: true, workerData: { sab } });
+          const port = await new Promise(r => w.once("message", r));
+          const ac = new AbortController();
+          fetch("http://127.0.0.1:" + port + "/", { signal: ac.signal }).catch(() => {});
+          while (Atomics.load(flag, 0) < 100) await Bun.sleep(0);
+          const done = new Promise(r => w.once("exit", r));
+          w.terminate();
+          await done;
+          ac.abort();
+        }
+        console.log("survived");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("survived\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// Node skips the worker's process.on('exit') listeners on worker.terminate()
+// when the worker is idle (the NeedTermination trap bit is still armed here,
+// so this is the simpler half of the invariant; the mid-JS half is checked in
+// the async-fetch test above).
+test("process.on('exit') does not fire on worker.terminate() when idle", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { Worker } = require("node:worker_threads");
+      const sab = new SharedArrayBuffer(4);
+      const counter = new Int32Array(sab);
+      const src = 'const { workerData, parentPort } = require("node:worker_threads");' +
+        'const counter = new Int32Array(workerData.sab);' +
+        'process.on("exit", () => Atomics.add(counter, 0, 1));' +
+        'parentPort.postMessage("ready");' +
+        'setInterval(() => {}, 100000);';
+      const w = new Worker(src, { eval: true, workerData: { sab } });
+      await new Promise(r => w.once("message", r));
+      const done = new Promise(r => w.once("exit", r));
+      w.terminate();
+      await done;
+      console.log("exitCalls=" + Atomics.load(counter, 0));
+    `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("exitCalls=0\n");
+  expect(exitCode).toBe(0);
+});
+
 // Regression: `new Worker(url, { ref: false })` was silently ignored — the
 // Zig-side `user_keep_alive` field was set from it but never read, and the
 // parent keep-alive was taken unconditionally in `create()`. `.unref()` after

@@ -2138,6 +2138,14 @@ where
                 stream_log!("returned a promise");
                 this.drain_microtasks();
 
+                // terminate() inside the drain leaves a pending TerminationException; every branch below re-enters JS.
+                if global_this.has_exception() {
+                    response_stream.sink.on_first_write = None;
+                    response_stream.sink.ctx = None;
+                    this.flags.set_has_marked_pending(true);
+                    return;
+                }
+
                 // `MarkHandled` matters for the Rejected arm: the promise
                 // settled before any reaction was attached, so without the
                 // flag the VM would report it as an unhandled rejection even
@@ -2674,6 +2682,11 @@ where
         request_value.ensure_still_alive();
         response_value.ensure_still_alive();
         ctx.drain_microtasks();
+
+        // Same as do_render_stream: terminate() inside the drain leaves a pending TerminationException.
+        if this.global_this().has_exception() {
+            return;
+        }
 
         if ctx.is_aborted_or_ended() {
             return;

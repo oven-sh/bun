@@ -1305,6 +1305,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     needs_to_drain = false;
                     // SAFETY: `vm` is the process-static VirtualMachine.
                     unsafe { (*vm).drain_microtasks() };
+                    // Same as RequestContext::on_response: terminate() inside the drain leaves a pending TerminationException.
+                    if global.has_exception() {
+                        strong_promise.deinit();
+                        break 'brk HttpResult::Success;
+                    }
                     status = promise.status();
                 }
 

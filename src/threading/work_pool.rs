@@ -146,6 +146,13 @@ impl WorkPool {
         POOL.get_or_init(create)
     }
 
+    /// Snapshot: stop and join the workers (if the pool was ever started).
+    pub fn stop_all_threads_for_snapshot() {
+        if let Some(pool) = POOL.get() {
+            pool.stop_all_threads_for_snapshot();
+        }
+    }
+
     /// Called once right after an image restore, before any task is scheduled.
     pub fn did_restore_from_image() {
         if let Some(pool) = POOL.get() {

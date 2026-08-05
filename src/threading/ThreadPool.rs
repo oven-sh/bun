@@ -255,13 +255,17 @@ impl ThreadPool {
         )
     }
 
+    /// Heap-image snapshot: no other thread may exist (or hold a lock) when memory is frozen. Stop and join every worker;
+    /// `forget_threads_after_image_restore` resets the state so the pool starts again on the other side.
+    pub fn stop_all_threads_for_snapshot(&self) {
+        self.shutdown();
+        self.join();
+    }
+
     /// Heap-image restore: the worker threads counted in `sync` belonged to the process that built the image. Forget them (queue and
     /// config stay) so the next `schedule`/`notify` spawns fresh workers here.
     pub fn forget_threads_after_image_restore(&self) {
-        let mut sync = self.sync.load(Ordering::Relaxed);
-        sync.set_spawned(0);
-        sync.set_idle(0);
-        sync.set_notified(false);
+        let sync = Sync::zero(); // pending, nothing spawned/idle/notified — regardless of what the build process left (it may have shut the pool down for the snapshot)
         self.sync.0.store(sync.0, Ordering::Release);
         self.threads.store(ptr::null_mut(), Ordering::Release);
         self.idle_event.reset_after_image_restore();

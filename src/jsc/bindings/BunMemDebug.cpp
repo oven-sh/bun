@@ -23,6 +23,7 @@
 #include <JavaScriptCore/JSFunctionInlines.h>
 #include <JavaScriptCore/SourceProvider.h>
 #include <vector>
+#include <unordered_map>
 #include <span>
 #include <algorithm>
 #include <string>
@@ -131,10 +132,38 @@ extern "C" void Bun__imageMaybeRestore()
     }
 }
 extern "C" void Bun__imageSetBuilding(bool);
+extern "C" void mi_prof_reinit_lock(void);
+extern "C" bool mi_prof_lock_is_free(void);
 extern "C" void Bun__requestSnapshot(JSC::VM*, const char* path);
 static void imageDump(JSC::VM& vm, const char* path);
 extern "C" void Bun__imageDumpNow(JSC::VM* vm, const char* path)
 {
+    mi_scavenger_stop(); // joins mimalloc's background thread: nothing may hold allocator locks while we freeze
+    // Pool workers were told to exit; give them (bounded) time to actually be gone, and any straggler inside the allocator time to leave it.
+    for (int attempt = 0; attempt < 200; attempt++) {
+        thread_act_array_t threads; mach_msg_type_number_t count = 0; unsigned pool = 0;
+        if (task_threads(mach_task_self(), &threads, &count) == KERN_SUCCESS) {
+            for (mach_msg_type_number_t i = 0; i < count; i++) { pthread_t pt = pthread_from_mach_thread_np(threads[i]); char name[64] = ""; if (pt) pthread_getname_np(pt, name, sizeof name); if (!strncmp(name, "Bun Pool", 8)) pool++; mach_port_deallocate(mach_task_self(), threads[i]); }
+            vm_deallocate(mach_task_self(), (vm_address_t)threads, count * sizeof(thread_act_t));
+        }
+        if (!pool && mi_prof_lock_is_free()) break;
+        usleep(10000);
+    }
+    { // who else is alive right now? every one of them is a potential holder of some lock we are about to freeze
+        thread_act_array_t threads; mach_msg_type_number_t count = 0;
+        if (task_threads(mach_task_self(), &threads, &count) == KERN_SUCCESS) {
+            fprintf(stderr, "[image] %u threads at snapshot time:", count);
+            for (mach_msg_type_number_t i = 0; i < count; i++) {
+                pthread_t pt = pthread_from_mach_thread_np(threads[i]); char name[64] = "?";
+                if (pt) pthread_getname_np(pt, name, sizeof name);
+                fprintf(stderr, " [%s]", name[0] ? name : "unnamed");
+                mach_port_deallocate(mach_task_self(), threads[i]);
+            }
+            fprintf(stderr, "\n");
+            vm_deallocate(mach_task_self(), (vm_address_t)threads, count * sizeof(thread_act_t));
+        }
+    }
+    if (!mi_prof_lock_is_free()) fprintf(stderr, "[image] WARNING: mimalloc profiler lock is held at snapshot time (some thread is mid-free)\n");
     { // the termination that unwound JS to get us here is done with; none of it may persist into the image (it would read as "terminating" forever on restore)
         JSC::JSLockHolder lock(*vm);
         vm->clearHasTerminationRequest();
@@ -692,8 +721,33 @@ static void dumpDirtyMap(JSC::VM& vm)
             std::sort(crow.begin(), crow.end(), std::greater<>());
             for (size_t i = 0; i < std::min<size_t>(crow.size(), 18); i++) fprintf(stderr, "%s\n", crow[i].second.c_str());
         }
-        // Owners of mutated payload: join live profiler samples with the byte diff.
+        // Fast path: stacks for just the changed blocks (one pass over samples to index by address; no file reads).
         if (getenv("MIMALLOC_PROF_SAMPLE_RATE")) {
+            struct Ix { std::unordered_map<uintptr_t, std::vector<uintptr_t>> byAddr; };
+            Ix ix;
+            mi_prof_visit_live([](uintptr_t addr, size_t, const uintptr_t* frames, uint8_t nframes, void* arg) -> bool {
+                static_cast<Ix*>(arg)->byAddr.emplace(addr, std::vector<uintptr_t>(frames, frames + std::min<uint8_t>(nframes, 14)));
+                return true;
+            }, &ix);
+            char path2[512]; snprintf(path2, sizeof path2, "%s/changed-owners.%d.tsv", s_dir, getpid());
+            if (FILE* f2 = fopen(path2, "w")) {
+                size_t hit = 0;
+                for (uintptr_t b : changedBlocks) {
+                    auto it = std::lower_bound(s_liveBlocks.begin(), s_liveBlocks.end(), std::make_pair(b, 0u));
+                    uint32_t sz = (it != s_liveBlocks.end() && it->first == b) ? it->second : 0;
+                    auto s = ix.byAddr.find(b);
+                    if (s == ix.byAddr.end()) continue;
+                    hit++;
+                    fprintf(f2, "%u\t1\t0\t", sz);
+                    for (size_t k = 0; k < s->second.size(); k++) fprintf(f2, "%s0x%lx", k ? ";" : "", (unsigned long)s->second[k]);
+                    fprintf(f2, "\n");
+                }
+                fclose(f2);
+                fprintf(stderr, "[owners-fast] %zu of %zu changed blocks had samples -> %s\n", hit, changedBlocks.size(), path2);
+            }
+        }
+        // Owners of mutated payload: join live profiler samples with the byte diff.
+        if (getenv("MIMALLOC_PROF_SAMPLE_RATE") && getenv("BUN_MEMDEBUG_SLOW_OWNERS")) {
             struct Ctx { std::function<bool(uintptr_t, uint64_t&)>* fileWordAt; FILE* f; size_t n; size_t changed; };
             std::function<bool(uintptr_t, uint64_t&)> fw = [&](uintptr_t a, uint64_t& out) -> bool {
                 uintptr_t page = a & ~(pg - 1);
@@ -733,6 +787,43 @@ static void dumpDirtyMap(JSC::VM& vm)
         fprintf(stderr, "\n");
     }
 #endif
+}
+
+// UnlinkedCodeBlock component census (bytes by part) over live cells; "new" = allocated after the image.
+static void dumpUCBCensus(JSC::VM& vm)
+{
+    JSC::JSLockHolder lock(vm);
+    struct Acc { size_t n = 0, cell = 0, ins = 0, expr = 0, meta = 0, ident = 0, cst = 0, jt = 0, prof = 0, rare = 0; } all, fresh;
+    JSC::HeapIterationScope scope(vm.heap);
+    vm.heap.objectSpace().forEachLiveCell(scope, [&](JSC::HeapCell* cell, JSC::HeapCell::Kind kind) {
+        if (!isJSCellKind(kind)) return IterationStatus::Continue;
+        auto* ucb = dynamicDowncast<JSC::UnlinkedCodeBlock>(static_cast<JSC::JSCell*>(cell));
+        if (!ucb) return IterationStatus::Continue;
+        auto c = ucb->componentSizesForCensus();
+        bool isNew = cell->isPreciseAllocation() ? !cell->preciseAllocation().isImmortal() : !cell->markedBlock().isImmortal();
+        for (Acc* a : { &all, isNew ? &fresh : (Acc*)nullptr }) { if (!a) continue; a->n++; a->cell += cell->cellSize(); a->ins += c.instructions; a->expr += c.expressionInfo; a->meta += c.metadata; a->ident += c.identifiers; a->cst += c.constants; a->jt += c.jumpTargets; a->prof += c.profiles; a->rare += c.rareData; }
+        return IterationStatus::Continue;
+    });
+    for (auto [name, a] : { std::pair { "all", all }, std::pair { "new", fresh } }) {
+        double M = 1048576.0; size_t tot = a.cell + a.ins + a.expr + a.meta + a.ident + a.cst + a.jt + a.prof + a.rare;
+        fprintf(stderr, "[ucbcensus] %s: %zu UnlinkedCodeBlocks total=%.2fMB | cell=%.2f instructions=%.2f expressionInfo=%.2f unlinkedMetadata=%.2f identifiers=%.2f constants=%.2f jumpTargets=%.2f profiles=%.2f rareData=%.2f (MB)\n", name, a.n, tot / M, a.cell / M, a.ins / M, a.expr / M, a.meta / M, a.ident / M, a.cst / M, a.jt / M, a.prof / M, a.rare / M);
+    }
+    // Linked CodeBlocks: cell + MetadataTable + JIT code by tier
+    { size_t n = 0, cellB = 0, metaB = 0, jitB[8] = { 0 }, jitN[8] = { 0 };
+      JSC::HeapIterationScope scope2(vm.heap);
+      vm.heap.objectSpace().forEachLiveCell(scope2, [&](JSC::HeapCell* cell, JSC::HeapCell::Kind kind) {
+          if (!isJSCellKind(kind)) return IterationStatus::Continue;
+          auto* cb = dynamicDowncast<JSC::CodeBlock>(static_cast<JSC::JSCell*>(cell));
+          if (!cb) return IterationStatus::Continue;
+          n++; cellB += cell->cellSize();
+          if (auto* mt = cb->metadataTable()) metaB += mt->sizeInBytesForGC();
+          if (auto jit = cb->jitCode()) { unsigned t = std::min<unsigned>(7, static_cast<unsigned>(jit->jitType())); jitN[t]++; jitB[t] += jit->size(); }
+          return IterationStatus::Continue;
+      });
+      double M = 1048576.0;
+      fprintf(stderr, "[cbcensus] %zu CodeBlocks: cell=%.2fMB metadataTables=%.2fMB | jit code by JITType index:", n, cellB / M, metaB / M);
+      for (int t = 0; t < 8; t++) if (jitN[t]) fprintf(stderr, " [%d]=%zux/%.2fMB", t, jitN[t], jitB[t] / M);
+      fprintf(stderr, "\n"); }
 }
 
 // Live sampled malloc blocks allocated after restore (outside every image range), with their allocation stacks -> TSV for owners3.ts-style bucketing.
@@ -1127,6 +1218,7 @@ static void imageRestoreAndRun(const char* path)
     // Re-seat allocator TLS: this thread's default theap must be the image's main theap, not whatever this process created before the overlay.
     if (hdr.reserved[0]) mi_theap_set_default((mi_theap_t*)hdr.reserved[0]);
     _mi_scavenger_forked_child(); // same situation as a fork child: the image says a scavenger runs, but no such thread exists here
+    mi_prof_reinit_lock(); // and any allocator-internal lock a build-process thread was holding is nobody's now
     { // park /dev/null on every fd number the image thinks it owns (the image file fd itself gets moved out of the way first)
         int hi = 1023; while (hi > 2 && !(s_imageOpenFds[hi / 64] & (1ull << (hi % 64)))) hi--;
         if (fd <= hi) { int moved = fcntl(fd, F_DUPFD_CLOEXEC, hi + 1); if (moved >= 0) { close(fd); fd = moved; } }
@@ -1237,6 +1329,7 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
         else if (!strncmp(buf, "trapreport", 10)) req = 9;
         else if (!strncmp(buf, "newcells", 8)) req = 10;
         else if (!strncmp(buf, "newpayload", 10)) req = 11;
+        else if (!strncmp(buf, "ucbcensus", 9)) req = 12;
         else if (!strncmp(buf, "shrink", 6)) req = 3;
         else if (!strncmp(buf, "gc", 2)) req = 2;
         else req = 1;
@@ -1263,6 +1356,7 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
     if (req == 9) { imageTrapReport(); return; }
     if (req == 10) { dumpNewCells(*vm); return; }
     if (req == 11) { dumpNewPayload(*vm); return; }
+    if (req == 12) { dumpUCBCensus(*vm); return; }
     if (req == 8) {
         Bun__requestSnapshot(vm, getenv("BUN_IMAGE_OUT") ? getenv("BUN_IMAGE_OUT") : "/tmp/bun.img"); // unwinds JS via termination; the run loop takes it at top level and exits
         return;

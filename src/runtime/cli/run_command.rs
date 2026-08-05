@@ -1719,6 +1719,8 @@ pub fn take_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::VirtualMachine)
         vm.tick();
         vm.auto_tick();
     }
+    // Quiet is not enough: no other thread of ours may be mid-anything (e.g. inside free() holding an allocator lock) when memory is frozen.
+    bun_threading::work_pool::WorkPool::stop_all_threads_for_snapshot();
     let cpath = std::ffi::CString::new(path).unwrap();
     // SAFETY: main thread, VM live, no JS on the stack.
     unsafe { Bun__imageDumpNow(vm.jsc_vm() as *const _ as *mut _, cpath.as_ptr()) };

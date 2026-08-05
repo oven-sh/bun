@@ -307,6 +307,25 @@ void _mi_prof_init(void) {
   mi_prof_set_all_theaps(true);
 }
 
+// Heap-image restore (or fork child): whatever thread held the profiler lock does not exist here.
+#ifdef __cplusplus
+extern "C"
+#endif
+mi_decl_export void mi_prof_reinit_lock(void) mi_attr_noexcept {
+  if (mi_prof.ht_cap == 0) return;
+  mi_lock_init(&mi_prof.lock);
+}
+// Diagnostic: is the profiler lock free right now? (snapshot code asserts this before freezing)
+#ifdef __cplusplus
+extern "C"
+#endif
+mi_decl_export bool mi_prof_lock_is_free(void) mi_attr_noexcept {
+  if (mi_prof.ht_cap == 0) return true;
+  if (!mi_lock_try_acquire(&mi_prof.lock)) return false;
+  mi_lock_release(&mi_prof.lock);
+  return true;
+}
+
 // Visit live sampled allocations (addr != 0). Callback returns false to stop.
 #ifdef __cplusplus
 extern "C"

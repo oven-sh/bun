@@ -2,16 +2,10 @@
 import { beforeAll,describe,expect,it } from "bun:test";
 import url from "node:url";
 
-// url.parse is deprecated.
-process.emitWarning = () => {};
-
 describe("Invalid IPv6 addresses", () => {
-  it.each(["https://[::1", "https://[:::1]", "https://[\n::1]", "http://[::banana]"])(
-    "Invalid hostnames - parsing '%s' fails",
-    input => {
-      expect(() => url.parse(input)).toThrowError(TypeError);
-    },
-  );
+  it.each(["https://[::1", "https://[\n::1]"])("Invalid hostnames - parsing '%s' fails", input => {
+    expect(() => url.parse(input)).toThrowError(TypeError);
+  });
 
   it.each(["https://[::1]::", "https://[::1]:foo"])("Invalid ports - parsing '%s' fails", input => {
     expect(() => url.parse(input)).toThrowError(TypeError);
@@ -22,22 +16,28 @@ describe("Valid spot checks", () => {
   it.each([
     // ports
     ["http://[::1]:", { host: "[::1]", hostname: "::1", port: null, path: "/", href: "http://[::1]/" }], // trailing colons are ignored
-    ["http://[::1]:1", { host: "[::1]", hostname: "::1", port: "1", path: "/", href: "http://[::1]/" }],
+    ["http://[::1]:1", { host: "[::1]:1", hostname: "::1", port: "1", path: "/", href: "http://[::1]:1/" }],
 
     // unicast
-    ["http://[::0]", { host: "[::0]", path: "/" }],
-    ["http://[::f]", { host: "[::f]", path: "/" }],
-    ["http://[::F]", { host: "[::F]", path: "/" }],
-    // these are technically invalid unicast addresses but url.parse allows them
-    ["http://[::7]", { host: "[::7]", path: "/" }],
-    // ["http://[::z]",       { host: "[::7]",       path: "/" }],
-    // ["http://[::😩]",      { host: "[::😩]",      path: "/" }],
+    ["http://[::0]", { host: "[::0]", hostname: "::0", path: "/", href: "http://[::0]/" }],
+    ["http://[::f]", { host: "[::f]", hostname: "::f", path: "/", href: "http://[::f]/" }],
+    ["http://[::F]", { host: "[::f]", hostname: "::f", path: "/", href: "http://[::f]/" }], // hostnames are lower cased
+
+    // url.parse never validates the contents of an IPv6 host, so these parse
+    // even though they are not addresses.
+    ["http://[::7]", { host: "[::7]", hostname: "::7", path: "/", href: "http://[::7]/" }],
+    ["https://[:::1]", { host: "[:::1]", hostname: ":::1", path: "/", href: "https://[:::1]/" }],
+    ["http://[::banana]", { host: "[::banana]", hostname: "::banana", path: "/", href: "http://[::banana]/" }],
 
     // full form-ish
-    ["https://[::1:2:3:4:5]", { host: "[::1:2:3:4:5]", path: "/" }],
-    ["[0:0:0:1:2:3:4:5]", { host: "[0:0:0:1:2:3:4:5]", path: "/" }],
+    [
+      "https://[::1:2:3:4:5]",
+      { host: "[::1:2:3:4:5]", hostname: "::1:2:3:4:5", path: "/", href: "https://[::1:2:3:4:5]/" },
+    ],
+    // w/o a protocol, it's treated as a path
+    ["[0:0:0:1:2:3:4:5]", { host: null, hostname: null, path: "[0:0:0:1:2:3:4:5]", href: "[0:0:0:1:2:3:4:5]" }],
   ])("Parsing '%s' succeeds", (input, expected) => {
-    expect(url.parse(input)).toMatchObject(expect.objectContaining(expected));
+    expect(url.parse(input)).toMatchObject(expected);
   });
 }); // </Valid spot checks>
 
@@ -175,7 +175,7 @@ describe.each([
 
     it("parses to the expected object", () => {
       const { query, ...rest } = expected;
-      expect(parsed).toMatchObject(expect.objectContaining(rest));
+      expect(parsed).toMatchObject(rest);
     });
 
     it("parses the query", () => {

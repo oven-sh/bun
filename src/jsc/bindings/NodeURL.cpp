@@ -4,6 +4,48 @@
 
 namespace Bun {
 
+// The errors UTS #46 reports that the WHATWG URL Standard ignores, by turning
+// off CheckHyphens and VerifyDnsLength. ICU has no option for either.
+static constexpr int allowedIDNAErrors = UIDNA_ERROR_EMPTY_LABEL | UIDNA_ERROR_LABEL_TOO_LONG | UIDNA_ERROR_DOMAIN_NAME_TOO_LONG | UIDNA_ERROR_LEADING_HYPHEN | UIDNA_ERROR_TRAILING_HYPHEN | UIDNA_ERROR_HYPHEN_3_4;
+static constexpr size_t hostnameBufferLength = 2048;
+
+// UTS #46 ToASCII. Returns a null string when the domain is not valid.
+static WTF::String nameToASCII(const WTF::String& input)
+{
+    if (input.isEmpty())
+        return {};
+
+    WTF::String domain = input;
+    domain.convertTo16Bit();
+
+    auto* encoder = &WTF::URLParser::internationalDomainNameTranscoder();
+    char16_t hostnameBuffer[hostnameBufferLength];
+    UErrorCode error = U_ZERO_ERROR;
+    UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
+    const auto span = domain.span16();
+    int32_t numCharactersConverted = uidna_nameToASCII(encoder, span.data(), span.size(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
+
+    if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedIDNAErrors) && numCharactersConverted)
+        return WTF::String(std::span { hostnameBuffer, static_cast<unsigned int>(numCharactersConverted) });
+    return {};
+}
+
+// The IDNA mapping `url.parse()` applies to a hostname. Unlike `domainToASCII`
+// this performs no host parsing, so IPv4 and IPv6 hosts are left untouched.
+JSC_DEFINE_HOST_FUNCTION(jsToASCII, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto domain = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto ascii = nameToASCII(domain);
+    if (ascii.isNull())
+        return JSC::JSValue::encode(jsEmptyString(vm));
+    return JSC::JSValue::encode(JSC::jsString(vm, WTF::move(ascii)));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -52,23 +94,11 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, J
 
     if (domain.containsOnlyASCII())
         return JSC::JSValue::encode(arg0);
-    if (domain.is8Bit())
-        domain.convertTo16Bit();
 
-    constexpr static int allowedNameToASCIIErrors = UIDNA_ERROR_EMPTY_LABEL | UIDNA_ERROR_LABEL_TOO_LONG | UIDNA_ERROR_DOMAIN_NAME_TOO_LONG | UIDNA_ERROR_LEADING_HYPHEN | UIDNA_ERROR_TRAILING_HYPHEN | UIDNA_ERROR_HYPHEN_3_4;
-    constexpr static size_t hostnameBufferLength = 2048;
-
-    auto encoder = &WTF::URLParser::internationalDomainNameTranscoder();
-    char16_t hostnameBuffer[hostnameBufferLength];
-    UErrorCode error = U_ZERO_ERROR;
-    UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
-    const auto span = domain.span16();
-    int32_t numCharactersConverted = uidna_nameToASCII(encoder, span.data(), span.size(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
-
-    if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedNameToASCIIErrors) && numCharactersConverted) {
-        return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(std::span { hostnameBuffer, static_cast<unsigned int>(numCharactersConverted) })));
-    }
-    return JSC::JSValue::encode(jsEmptyString(vm));
+    auto ascii = nameToASCII(domain);
+    if (ascii.isNull())
+        return JSC::JSValue::encode(jsEmptyString(vm));
+    return JSC::JSValue::encode(JSC::jsString(vm, WTF::move(ascii)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -123,9 +153,6 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject,
 
     domain.convertTo16Bit();
 
-    constexpr static int allowedNameToUnicodeErrors = UIDNA_ERROR_EMPTY_LABEL | UIDNA_ERROR_LABEL_TOO_LONG | UIDNA_ERROR_DOMAIN_NAME_TOO_LONG | UIDNA_ERROR_LEADING_HYPHEN | UIDNA_ERROR_TRAILING_HYPHEN | UIDNA_ERROR_HYPHEN_3_4;
-    constexpr static int hostnameBufferLength = 2048;
-
     auto encoder = &WTF::URLParser::internationalDomainNameTranscoder();
     char16_t hostnameBuffer[hostnameBufferLength];
     UErrorCode error = U_ZERO_ERROR;
@@ -135,7 +162,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject,
 
     int32_t numCharactersConverted = uidna_nameToUnicode(encoder, span.data(), span.size(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
 
-    if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedNameToUnicodeErrors) && numCharactersConverted) {
+    if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedIDNAErrors) && numCharactersConverted) {
         return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(std::span { hostnameBuffer, static_cast<unsigned int>(numCharactersConverted) })));
     }
     return JSC::JSValue::encode(jsEmptyString(vm));
@@ -145,13 +172,15 @@ JSC::JSValue createNodeURLBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto binding = constructEmptyArray(globalObject, nullptr, 2);
+    auto binding = constructEmptyArray(globalObject, nullptr, 3);
     RETURN_IF_EXCEPTION(scope, {});
     ASSERT(binding);
     auto domainToAsciiFunction = JSC::JSFunction::create(vm, globalObject, 1, "domainToAscii"_s, jsDomainToASCII, ImplementationVisibility::Public);
     ASSERT(domainToAsciiFunction);
     auto domainToUnicodeFunction = JSC::JSFunction::create(vm, globalObject, 1, "domainToUnicode"_s, jsDomainToUnicode, ImplementationVisibility::Public);
     ASSERT(domainToUnicodeFunction);
+    auto toAsciiFunction = JSC::JSFunction::create(vm, globalObject, 1, "toASCII"_s, jsToASCII, ImplementationVisibility::Public);
+    ASSERT(toAsciiFunction);
     binding->putByIndexInline(
         globalObject,
         (unsigned)0,
@@ -161,6 +190,11 @@ JSC::JSValue createNodeURLBinding(Zig::GlobalObject* globalObject)
         globalObject,
         (unsigned)1,
         domainToUnicodeFunction,
+        false);
+    binding->putByIndexInline(
+        globalObject,
+        (unsigned)2,
+        toAsciiFunction,
         false);
     return binding;
 }

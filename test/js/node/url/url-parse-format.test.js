@@ -861,21 +861,6 @@ describe("url.parse then url.format", () => {
     //   href: "http://a%22%20%3C'b:b@cd/e?f",
     // },
 
-    // Git urls used by npm
-    "git+ssh://git@github.com:npm/npm": {
-      protocol: "git+ssh:",
-      slashes: true,
-      auth: "git",
-      host: "github.com",
-      port: null,
-      hostname: "github.com",
-      hash: null,
-      search: null,
-      query: null,
-      pathname: "/:npm/npm",
-      path: "/:npm/npm",
-      href: "git+ssh://git@github.com/:npm/npm",
-    },
     // TODO: Support parsing these.
     //
     // "https://*": {

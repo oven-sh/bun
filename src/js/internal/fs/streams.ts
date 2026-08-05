@@ -558,20 +558,28 @@ function writevAll(chunks, size, pos, cb, retries = 0) {
   });
 }
 
+// FileSink.write(string) always emits UTF-8, so count that (not the caller's encoding).
+function bytesForWrite(data: any): number {
+  return typeof data === "string" ? Buffer.byteLength(data) : (data?.byteLength ?? 0);
+}
+
 function _write(data, encoding, cb) {
   const fileSink = this[kWriteStreamFastPath];
 
   if (fileSink && fileSink !== true) {
+    const bytes = bytesForWrite(data);
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
       maybePromise
         .then(() => {
+          this.bytesWritten += bytes;
           this.emit("drain"); // Emit drain event
           cb(null);
         })
         .catch(cb);
       return false; // Indicate backpressure
     } else {
+      this.bytesWritten += bytes;
       cb(null);
       return true; // No backpressure
     }
@@ -607,10 +615,12 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
       this.fd = fileSink._getFd();
     }
 
+    const bytes = bytesForWrite(data);
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
       maybePromise.then(
         () => {
+          this.bytesWritten += bytes;
           if (cb) cb(null);
           this.emit("drain");
         },
@@ -621,6 +631,7 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
       );
       return false;
     } else {
+      this.bytesWritten += bytes;
       if (cb) process.nextTick(cb, null);
       return true;
     }
@@ -654,12 +665,14 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
 
   const fileSink = this[kWriteStreamFastPath];
   if (fileSink && fileSink !== true) {
+    const bytes = bytesForWrite(data);
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
       // Two-arg then(): a throw from the fulfillment handler must not be
       // mistaken for a write failure.
       maybePromise.then(
         () => {
+          this.bytesWritten += bytes;
           this.emit("drain"); // Emit drain event
           cb(null);
         },
@@ -672,6 +685,7 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
       );
       return false; // Indicate backpressure
     } else {
+      this.bytesWritten += bytes;
       cb(null);
       return true; // No backpressure
     }
@@ -699,16 +713,19 @@ writeStreamPrototype._writev = function (data, cb) {
 
   const fileSink = this[kWriteStreamFastPath];
   if (fileSink && fileSink !== true) {
-    const maybePromise = fileSink.write(Buffer.concat(chunks));
+    const buffer = Buffer.concat(chunks);
+    const maybePromise = fileSink.write(buffer);
     if ($isPromise(maybePromise)) {
       maybePromise
         .then(() => {
+          this.bytesWritten += buffer.length;
           this.emit("drain");
           cb(null);
         })
         .catch(cb);
       return false;
     } else {
+      this.bytesWritten += buffer.length;
       cb(null);
       return true;
     }

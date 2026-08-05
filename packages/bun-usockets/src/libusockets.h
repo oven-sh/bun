@@ -563,6 +563,13 @@ int us_ssl_pop_pending_keylog(struct ssl_st *ssl, unsigned char *out, int out_ca
 /* The resumable session most recently delivered via the new-session callback,
  * or NULL if none. Borrowed; valid until the next NewSessionTicket or SSL_free. */
 struct ssl_session_st *us_ssl_get_new_session(struct ssl_st *ssl);
+/* Per-SSL session sink: each resumable session reaching the new-session
+ * callback is SSL_SESSION_up_ref'd and handed to on_new_session (which takes
+ * ownership of that reference). on_free(owner) runs once on SSL_free. */
+void us_ssl_set_session_sink(struct ssl_st *ssl, void *owner,
+                             void (*on_new_session)(void *, struct ssl_session_st *),
+                             void (*on_free)(void *));
+void *us_ssl_get_session_sink_owner(struct ssl_st *ssl);
 
 /* Public interfaces for loops */
 

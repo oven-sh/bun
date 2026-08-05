@@ -18,7 +18,7 @@ use bun_uws as uws;
 bun_core::declare_scope!(HTTPContext, hidden);
 
 const POOL_SIZE: usize = 64;
-const MAX_KEEPALIVE_HOSTNAME: usize = 128;
+pub(crate) const MAX_KEEPALIVE_HOSTNAME: usize = 128;
 
 /// The const-generic `SSL` is load-bearing for monomorphization (gates hot
 /// inner-loop branches); do not demote to a runtime bool.
@@ -55,6 +55,8 @@ pub struct HTTPContext<const SSL: bool> {
     // into the box interior; unboxing would dangle it on `Vec` realloc.
     #[expect(clippy::vec_box)]
     pub(crate) pending_h2_connects: Vec<Box<h2::PendingConnect>>,
+    /// Client-side TLS session cache; populated only when `SSL`.
+    pub(crate) session_cache: crate::session_cache::SessionCache,
 }
 
 // Intrusive refcount:
@@ -1180,6 +1182,12 @@ impl<const SSL: bool> Handler<SSL> {
                         // `client` again.
                         return;
                     }
+                    // Peer chain + hostname verified: let the session sink
+                    // flush its pending TLS 1.2 ticket (parked before this
+                    // dispatch) and cache later TLS 1.3 tickets directly.
+                    // SAFETY: `ssl` is the live handle for this socket on the
+                    // HTTP thread.
+                    unsafe { crate::session_cache::arm(ssl) };
                 }
 
                 return client.first_call::<SSL>(socket);

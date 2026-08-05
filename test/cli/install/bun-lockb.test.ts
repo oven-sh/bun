@@ -176,6 +176,89 @@ it("recovers from a corrupted binary lockfile instead of panicking", async () =>
   expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBe(true);
 });
 
+it.each([
+  // tree[1].parent = 1: a self-cycle. Walking the parent chain never reaches
+  // the root and hits the MAX_DEPTH guard.
+  { name: "form a cycle", parent: 1, reason: "cycle" },
+  // tree[1].parent = 99: points past trees.len(). The parent walk exits via
+  // the bounds guard without reaching the root, so the built path would be
+  // missing every segment above the break.
+  { name: "point out of bounds", parent: 99, reason: "out of bounds" },
+])("fails loudly when a binary lockfile's tree parents $name", async ({ parent, reason }) => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+
+  // Folder deps are never hoisted (Tree.rs places them in their own tree
+  // unconditionally), so pkg-a → pkg-b gives a second Tree node without
+  // touching any registry.
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "tree-parent-lockb",
+        version: "1.0.0",
+        dependencies: { "pkg-a": "file:./pkg-a" },
+      }),
+    ),
+    write(
+      join(packageDir, "pkg-a", "package.json"),
+      JSON.stringify({
+        name: "pkg-a",
+        version: "1.0.0",
+        dependencies: { "pkg-b": "file:../pkg-b" },
+      }),
+    ),
+    write(join(packageDir, "pkg-b", "package.json"), JSON.stringify({ name: "pkg-b", version: "1.0.0" })),
+  ]);
+
+  await runBunInstall(env, packageDir);
+  const lockbPath = join(packageDir, "bun.lockb");
+  expect(await exists(lockbPath)).toBe(true);
+
+  // Each `writeArray` record in bun.lockb is
+  //   [start:u64][end:u64]\n<type> <size> sizeof, <align> alignof\n[pad][payload]
+  // with start/end as absolute file offsets. Trees are 20-byte records
+  // laid out id|dep_id|parent|off|len (all u32 LE).
+  const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
+  const marker = lockb.indexOf("\n<install.lockfile.Tree> 20 sizeof, 4 alignof\n");
+  expect(marker).toBeGreaterThan(0);
+  const treesStart = Number(lockb.readBigUInt64LE(marker - 16));
+  const treesEnd = Number(lockb.readBigUInt64LE(marker - 8));
+  const treeCount = (treesEnd - treesStart) / 20;
+  expect(treeCount).toBeGreaterThanOrEqual(2);
+
+  // Sanity: well-formed tree[i].id == i; tree[1].parent == 0.
+  const tree1 = treesStart + 1 * 20;
+  expect(lockb.readUInt32LE(treesStart + 0)).toBe(0);
+  expect(lockb.readUInt32LE(tree1 + 0)).toBe(1);
+  expect(lockb.readUInt32LE(tree1 + 8)).toBe(0);
+
+  lockb.writeUInt32LE(parent, tree1 + 8);
+  await write(lockbPath, lockb);
+
+  // `bun pm ls` iterates the on-disk trees directly (no re-hoist) so it
+  // reaches `relative_path_and_depth` with the corrupted parent.
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "ls"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  const err = stderrForInstall(rawErr);
+
+  // Previously the tree iterator silently returned a truncated path for
+  // the corrupted node and `bun pm ls` exited 0 having dropped the nested
+  // dependencies. The corrupted lockfile must be reported instead of
+  // producing a wrong path.
+  expect({ out, err }).toEqual({
+    out: expect.any(String),
+    err: expect.stringContaining("Lockfile is malformed"),
+  });
+  expect(err).toContain(reason);
+  expect(code).not.toBe(0);
+});
+
 it("rejects a binary lockfile whose patched-dependency flag byte is out of range", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
 

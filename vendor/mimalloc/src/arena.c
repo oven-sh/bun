@@ -1460,6 +1460,17 @@ void _mi_arenas_holes_committed(mi_heap_t* heap, mi_holes_report_t* rep) {
 }
 
 
+// Heap-image restore: every arena that exists right now holds image memory. Make them exclusive (to nobody) so no
+// theap on any thread places new blocks in their free space; new memory comes from arenas created after this call.
+void mi_arenas_seal_existing(void) mi_attr_noexcept {
+  mi_subproc_t* subproc = _mi_subproc_main();
+  const size_t n = mi_arenas_get_count(subproc);
+  for (size_t i = 0; i < n; i++) {
+    mi_arena_t* arena = mi_arena_from_index(subproc, i);
+    if (arena != NULL) { arena->is_exclusive = true; }
+  }
+}
+
 // Visit every maximal run of free slices (belonging to no page) across all arenas of `heap`'s subproc.
 void mi_arenas_visit_free_ranges(mi_heap_t* heap, void (*visit)(void* start, size_t size, void* arg), void* arg) mi_attr_noexcept {
   if (heap == NULL || visit == NULL) return;

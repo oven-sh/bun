@@ -4,6 +4,7 @@
 #include <JavaScriptCore/ExecutableAllocator.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <wtf/text/AtomStringTable.h>
+#include <wtf/RefCounted.h>
 #include <JavaScriptCore/VMInlines.h>
 #include <JavaScriptCore/StackAlignment.h>
 #include <JavaScriptCore/Heap.h>
@@ -723,12 +724,20 @@ static void dumpDirtyMap(JSC::VM& vm)
         }
         // Fast path: stacks for just the changed blocks (one pass over samples to index by address; no file reads).
         if (getenv("MIMALLOC_PROF_SAMPLE_RATE")) {
-            struct Ix { std::unordered_map<uintptr_t, std::vector<uintptr_t>> byAddr; };
-            Ix ix;
+            // No allocation while the profiler lock is held (a sampled malloc under it self-deadlocks): count, preallocate, then copy PODs.
+            struct Rec { uintptr_t addr; uint8_t n; uintptr_t frames[14]; };
+            struct Raw { Rec* recs; size_t cap, n; };
+            size_t liveCount = 0;
+            mi_prof_visit_live([](uintptr_t, size_t, const uintptr_t*, uint8_t, void* arg) -> bool { ++*static_cast<size_t*>(arg); return true; }, &liveCount);
+            Raw raw { (Rec*)mmap(nullptr, (liveCount + 1024) * sizeof(Rec), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0), liveCount + 1024, 0 };
             mi_prof_visit_live([](uintptr_t addr, size_t, const uintptr_t* frames, uint8_t nframes, void* arg) -> bool {
-                static_cast<Ix*>(arg)->byAddr.emplace(addr, std::vector<uintptr_t>(frames, frames + std::min<uint8_t>(nframes, 14)));
+                Raw* r = static_cast<Raw*>(arg); if (r->n >= r->cap) return false;
+                Rec& rec = r->recs[r->n++]; rec.addr = addr; rec.n = std::min<uint8_t>(nframes, 14); memcpy(rec.frames, frames, rec.n * sizeof(uintptr_t));
                 return true;
-            }, &ix);
+            }, &raw);
+            struct Ix { std::unordered_map<uintptr_t, const Rec*> byAddr; } ix;
+            ix.byAddr.reserve(raw.n);
+            for (size_t i = 0; i < raw.n; i++) ix.byAddr.emplace(raw.recs[i].addr, &raw.recs[i]);
             char path2[512]; snprintf(path2, sizeof path2, "%s/changed-owners.%d.tsv", s_dir, getpid());
             if (FILE* f2 = fopen(path2, "w")) {
                 size_t hit = 0;
@@ -739,10 +748,11 @@ static void dumpDirtyMap(JSC::VM& vm)
                     if (s == ix.byAddr.end()) continue;
                     hit++;
                     fprintf(f2, "%u\t1\t0\t", sz);
-                    for (size_t k = 0; k < s->second.size(); k++) fprintf(f2, "%s0x%lx", k ? ";" : "", (unsigned long)s->second[k]);
+                    for (size_t k = 0; k < s->second->n; k++) fprintf(f2, "%s0x%lx", k ? ";" : "", (unsigned long)s->second->frames[k]);
                     fprintf(f2, "\n");
                 }
                 fclose(f2);
+                munmap(raw.recs, raw.cap * sizeof(Rec));
                 fprintf(stderr, "[owners-fast] %zu of %zu changed blocks had samples -> %s\n", hit, changedBlocks.size(), path2);
             }
         }
@@ -1242,10 +1252,18 @@ static void imageRestoreAndRun(const char* path)
         std::sort(s_runs.begin(), s_runs.end(), [](const FrozenRun& x, const FrozenRun& y) { return x.start < y.start; });
         s_snapFd = fd; // keep the image open so dirtymap/celldiff can diff against it
         mi_free_set_filter(frozenFreeFilter);
+        { // rule 3: refcounted objects inside the imaged mimalloc arenas are immortal (no ++/-- COWing clean pages)
+            uintptr_t lo = UINTPTR_MAX, hi = 0;
+            for (auto& r : regions) if ((r.kind & 0xff) == 0 && (r.kind >> 8) == 240) { lo = std::min<uintptr_t>(lo, r.addr); hi = std::max<uintptr_t>(hi, r.addr + r.len); }
+            if (const char* m = getenv("BUN_IMAGE_IMMORTAL_MODE")) WTF::g_imageImmortalMode = atoi(m);
+            if (hi > lo && !getenv("BUN_IMAGE_NO_IMMORTAL_REFCOUNTS")) { WTF::g_imageImmortalRangeLo = lo; WTF::g_imageImmortalRangeSpan = hi - lo; if (verbose) fprintf(stderr, "[image] immortal refcount range %lx..%lx\n", (unsigned long)lo, (unsigned long)hi); }
+        }
         if (hdr.reserved[0]) mi_theap_freeze((mi_theap_t*)hdr.reserved[0]);
+        mi_arenas_seal_existing(); // every arena that exists now is image memory: nobody (any thread) allocates into its free space again
         mi_arena_id_t freshArena = 0; mi_heap_t* fresh = nullptr;
         if (!getenv("BUN_IMAGE_NOFRESHARENA") && mi_reserve_os_memory_ex(1ull << 30, false, false, true, &freshArena) == 0) fresh = mi_heap_new_in_arena(freshArena); // post-restore memory never interleaves with (or dirties the bitmaps of) image arenas
         mi_theap_set_default(mi_heap_theap(fresh ? fresh : mi_heap_new()));
+        { void* probe = mi_malloc(64); if (WTF::isInImageImmortalRange(probe)) { fprintf(stderr, "[image] fresh heap overlaps the immortal-refcount range; disabling it\n"); WTF::g_imageImmortalRangeSpan = 0; } mi_free(probe); }
     }
     if (getenv("BUN_IMAGE_TRAP")) imageTrapArm();
     else if (getenv("BUN_IMAGE_CRASHBT")) { struct sigaction sa {}; sa.sa_sigaction = imageTrapHandler; sa.sa_flags = SA_SIGINFO | SA_NODEFER; sigemptyset(&sa.sa_mask); sigaction(SIGBUS, &sa, &s_prevBus); sigaction(SIGSEGV, &sa, &s_prevSegv); } // backtrace-only: s_frozenRanges stays as-is but nothing is protected
@@ -1410,3 +1428,18 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
     }
 #endif
 }
+
+// Debug shim: who sends SIGKILL to ourselves? Our own callers of kill()/killpg() bind here (static binary); log and forward.
+#include <execinfo.h>
+#include <dlfcn.h>
+extern "C" int kill(pid_t pid, int sig)
+{
+    if (sig == SIGKILL && (pid == getpid() || pid == 0 || pid == -getpgrp() || -pid == getpid())) {
+        char line[128]; int n = snprintf(line, sizeof line, "[killshim] kill(%d, SIGKILL) from self (pid %d pgrp %d); backtrace:\n", pid, getpid(), getpgrp()); write(2, line, n);
+        void* frames[32]; int c = backtrace(frames, 32); backtrace_symbols_fd(frames, c, 2);
+        int fd = open("/tmp/killshim.log", O_WRONLY | O_CREAT | O_APPEND, 0644); if (fd >= 0) { write(fd, line, n); backtrace_symbols_fd(frames, c, fd); close(fd); }
+    }
+    static int (*real)(pid_t, int, int) = (int (*)(pid_t, int, int))dlsym(RTLD_NEXT, "__kill"); // libsystem_kernel's raw stub
+    return real ? real(pid, sig, 1) : -1;
+}
+static int Bun_debug_kill_shim = 1;

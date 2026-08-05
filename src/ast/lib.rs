@@ -2376,7 +2376,7 @@ impl Default for Source {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct ErrorPosition {
+struct ErrorPosition {
     pub(crate) line_start: usize,
     pub(crate) line_end: usize,
     pub(crate) column_count: usize,

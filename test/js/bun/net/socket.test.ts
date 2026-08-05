@@ -3333,3 +3333,74 @@ describe("TLS handshake callback throw", () => {
     }
   });
 });
+
+it("an unref'd Bun.listen() with no other references keeps accepting across GC", async () => {
+  // Listener.unref() used to downgrade the wrapper's GC ref to weak while the
+  // socket was still listening. GC then collected the wrapper (and the
+  // handlers cell it roots), so the next accepted connection either dispatched
+  // on_open into a swept cell (SIGABRT / type confusion) or, once the
+  // finalizer had closed the socket, got ECONNREFUSED. unref() must only
+  // release the event-loop hold; the wrapper stays reachable until stop().
+  // Raw TCP instead of fetch: the server replies and ends without reading the
+  // request, and on Windows closing with the request unread RSTs the exchange.
+  const src = `
+    const churnSink = [];
+    function churn() {
+      let a = [];
+      for (let j = 0; j < 30000; j++) a.push(j & 1 ? { j } : "s" + j);
+      churnSink[0] = a;
+      for (let j = 0; j < 30000; j++) churnSink[1] = function () { return j; };
+    }
+    function makeUnreffedListener() {
+      const l = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: {
+        open(s) {
+          s.write("ok");
+          s.end();
+        },
+        data() {},
+        error() {},
+      }});
+      const port = l.port;
+      l.unref();
+      return port;
+    }
+    async function roundTrip(port) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      let received = "";
+      await Bun.connect({ hostname: "127.0.0.1", port, socket: {
+        data(s, d) { received += d; },
+        close() { resolve(received); },
+        error(s, e) { reject(e); },
+      }});
+      return promise;
+    }
+    const ports = [];
+    for (let round = 0; round < 4; round++) {
+      ports.push(makeUnreffedListener());
+      churn();
+      Bun.gc(true);
+      churn();
+      await Bun.sleep(1);
+      Bun.gc(true);
+      for (const port of ports) {
+        const got = await roundTrip(port);
+        if (got !== "ok") throw new Error("listener " + port + " replied " + JSON.stringify(got));
+      }
+    }
+    console.log("served " + ports.length + " listeners");
+  `;
+  // The subprocess must also exit on its own: unref() still has to release
+  // the listeners' event-loop refs even though their wrappers stay reachable.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "served 4 listeners",
+    stderr: "",
+    exitCode: 0,
+  });
+});

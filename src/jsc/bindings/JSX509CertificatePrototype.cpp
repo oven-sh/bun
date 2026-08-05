@@ -114,34 +114,6 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncToString, (JSGlobalObject * g
     return JSValue::encode(jsString(vm, pemString));
 }
 
-// function getFlags(options = kEmptyObject) {
-//   validateObject(options, 'options');
-//   const {
-//     subject = 'default',  // Can be 'default', 'always', or 'never'
-//     wildcards = true,
-//     partialWildcards = true,
-//     multiLabelWildcards = false,
-//     singleLabelSubdomains = false,
-//   } = { ...options };
-//   let flags = 0;
-//   validateString(subject, 'options.subject');
-//   validateBoolean(wildcards, 'options.wildcards');
-//   validateBoolean(partialWildcards, 'options.partialWildcards');
-//   validateBoolean(multiLabelWildcards, 'options.multiLabelWildcards');
-//   validateBoolean(singleLabelSubdomains, 'options.singleLabelSubdomains');
-//   switch (subject) {
-//     case 'default': /* Matches OpenSSL's default, no flags. */ break;
-//     case 'always': flags |= X509_CHECK_FLAG_ALWAYS_CHECK_SUBJECT; break;
-//     case 'never': flags |= X509_CHECK_FLAG_NEVER_CHECK_SUBJECT; break;
-//     default:
-//       throw new ERR_INVALID_ARG_VALUE('options.subject', subject);
-//   }
-//   if (!wildcards) flags |= X509_CHECK_FLAG_NO_WILDCARDS;
-//   if (!partialWildcards) flags |= X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS;
-//   if (multiLabelWildcards) flags |= X509_CHECK_FLAG_MULTI_LABEL_WILDCARDS;
-//   if (singleLabelSubdomains) flags |= X509_CHECK_FLAG_SINGLE_LABEL_SUBDOMAINS;
-//   return flags;
-// }
 static uint32_t getFlags(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue options)
 {
     if (options.isUndefined())

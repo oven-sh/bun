@@ -26,7 +26,7 @@ pub struct DecoderOptions {
 
 /// One `bool` per `BrotliDecoderParameter` variant, default `false`.
 #[derive(Default)]
-pub struct DecoderParams {
+struct DecoderParams {
     pub(crate) large_window: bool,
     pub(crate) disable_ring_buffer_reallocation: bool,
 }
@@ -42,7 +42,7 @@ impl Default for DecoderOptions {
     }
 }
 
-pub use bun_core::compress::State as ReaderState;
+use bun_core::compress::State as ReaderState;
 
 // ──────────────────────────────────────────────────────────────────────────
 // StreamingDecoder

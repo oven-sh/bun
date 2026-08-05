@@ -190,10 +190,6 @@ function normalizeSymbolPathPrefix(input: string) {
   return input.replaceAll(".rs", "_rs_").replace(/[^A-Za-z]/g, "_");
 }
 
-function cppPointer(call: NativeCall) {
-  return `&${symbol(call)}`;
-}
-
 export function getJS2NativeCPP() {
   const files = [
     ...new Set(nativeCalls.filter(x => x.filename.endsWith(".cpp")).map(x => x.filename.replace(/.cpp$/, ".h"))),

@@ -307,7 +307,13 @@ impl ClientSession {
                 Ok(r) => r,
                 Err(e) => return self.fail(stream, e),
             };
-            if result == HeaderResult::Finished || (done && st.body_buffer.is_empty()) {
+            // `is_done()`: Content-Length: 0 can arrive as `HasBody` (e.g. an
+            // SSE content-type), which would make the headerProgress update
+            // below terminal and free `client` while the stream still holds it.
+            if result == HeaderResult::Finished
+                || (done && st.body_buffer.is_empty())
+                || client.state.is_done()
+            {
                 if client.state.flags.is_redirect_pending {
                     self.detach(stream);
                     // SAFETY: re-derive — detach() invalidated the prior Unique tag.

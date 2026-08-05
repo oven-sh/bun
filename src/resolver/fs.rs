@@ -278,38 +278,6 @@ impl Entry {
     }
 }
 
-// `BSSList::append` requires `ValueType: Clone` (its overflow path
-// retries with a copy). `Mutex`/`StringOrTinyString` aren't `Clone`, but for a
-// freshly-constructed `Entry` (the only thing ever appended) a field-wise copy
-// with a fresh `Mutex` is semantically equivalent to a by-value move.
-impl Clone for Entry {
-    fn clone(&self) -> Self {
-        Self {
-            cache: core::cell::Cell::new(self.cache.get()),
-            dir: self.dir,
-            base_: strings::StringOrTinyString::init(self.base_.slice()),
-            base_lowercase_: strings::StringOrTinyString::init(self.base_lowercase_.slice()),
-            mutex: Mutex::default(),
-            need_stat: core::cell::Cell::new(self.need_stat.get()),
-            abs_path: self.abs_path,
-        }
-    }
-}
-
-impl Default for Entry {
-    fn default() -> Self {
-        Self {
-            cache: core::cell::Cell::new(EntryCache::default()),
-            dir: b"",
-            base_: strings::StringOrTinyString::init(b""),
-            base_lowercase_: strings::StringOrTinyString::init(b""),
-            mutex: Mutex::default(),
-            need_stat: core::cell::Cell::new(true),
-            abs_path: Interned::EMPTY,
-        }
-    }
-}
-
 // `entry` is a RAW `*mut Entry`. A safe
 // `&self → &mut Entry` accessor would let two `get()` calls produce coexisting
 // aliased `&mut Entry` (PORTING.md §Forbidden). Callers `unsafe { &mut *entry }`

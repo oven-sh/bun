@@ -455,7 +455,7 @@ where
 /// In Rust the "separate namespace" becomes a trait `NsSocketEvents` whose
 /// methods take `&mut Owner` as the first parameter; each driver's
 /// `SocketHandler<SSL>` zero-sized type implements it.
-pub trait NsSocketEvents<Owner, const SSL: bool> {
+trait NsSocketEvents<Owner, const SSL: bool> {
     fn on_open(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
         Ok(())
     }

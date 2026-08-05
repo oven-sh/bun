@@ -134,7 +134,6 @@ pub mod bun {
     pub use super::bun_ssl_context_cache as ssl_context_cache;
     pub use super::bun_subprocess as subprocess;
     pub use super::bun_x509 as x509;
-    pub use process::StdioKind as SubprocessStdioKind;
     pub use process::{
         Dup2, Exited, ExtraPipe, PidFdType, PidT, Poller, PosixSpawnOptions, PosixSpawnResult,
         PosixStdio, Process, ProcessExit, ProcessExitHandler, ProcessExitKind, Rusage,
@@ -162,7 +161,6 @@ pub mod bun {
     }
     pub use h2_frame_parser::H2FrameParser;
 }
-pub use bun::process::Process as SpawnProcess;
 
 pub use crate::image as Image;
 pub use crate::shell as Shell;
@@ -186,7 +184,6 @@ pub use crate::api::js_bundler::JSBundler;
 pub use crate::api::js_bundler::OutputKind;
 pub use crate::api::js_transpiler as JSTranspiler;
 pub use crate::api::json5_object as JSON5Object;
-pub use crate::api::jsonc_object as JSONCObject;
 pub use crate::api::markdown_object as MarkdownObject;
 pub use crate::api::native_promise_context as NativePromiseContext;
 pub use crate::api::toml_object as TOMLObject;
@@ -204,7 +201,6 @@ pub use bun_sql_jsc::mysql as MySQL;
 pub use bun_sql_jsc::postgres as Postgres;
 
 pub use crate::webview::chrome_process as ChromeProcess;
-pub use crate::webview::host_process as WebViewHostProcess;
 
 // ─── shared scaffold for Bun.{TOML,JSONC,JSON5,YAML}.parse ───────────────────
 //

@@ -937,6 +937,13 @@ impl StatWatcher {
         // work-pool thread may still hold `&*watcher`). `ParentRef` Deref
         // gives that shared `&`.
         let this_ref = ParentRef::from(NonNull::new(this).expect("swap_and_call: watcher"));
+        // Bail once closed: `close()` downgrades `this_value` to a Weak that
+        // `try_get()` cannot liveness-check, so for a task queued before
+        // `unwatchFile()` the wrapper and its cached listener/prevStat may
+        // already be collected by the time it runs.
+        if this_ref.closed.load(Ordering::Relaxed) {
+            return Ok(());
+        }
         let Some(js_this) = this_ref.this_value.get().try_get() else {
             return Ok(());
         };

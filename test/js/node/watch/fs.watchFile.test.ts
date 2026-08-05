@@ -415,4 +415,91 @@ describe("fs.watchFile", () => {
       signalCode: null,
     });
   }, 20_000);
+
+  // A change-callback task queued from the stat thread must not run once
+  // unwatchFile() closed the watcher. close() downgrades the native wrapper
+  // ref to a weak one, so a queued task that still runs touches a JS wrapper
+  // (and its cached listener/prevStat) that GC may already have collected:
+  // observed as Heap::addToRememberedSet "isMarked(cell)" assertion failures,
+  // segfaults in Integrity::auditCellFully, and "this.emit is not a function"
+  // type confusion in the listener.
+  //
+  // Detection without GC roulette: unwatchFile() removes all "change"
+  // listeners before stopping, so re-attaching one right after it returns
+  // must never see an event. On the unfixed build the already-queued native
+  // task still calls the cached bound #onChange, which emits into the
+  // re-attached listener.
+  //
+  // Per round: anchor on a delivered change callback (the ~5ms stat timer
+  // re-arms right after that turn), dirty the file, then block the loop so
+  // the stat timer and the closing turn become overdue together. The poll
+  // then queues the change-callback task around the closing turn, which
+  // calls unwatchFile() before the queue drains.
+  test("change callback queued before unwatchFile does not fire after it returns", async () => {
+    await using dir = tempDir("watchfile-close-race", { "f.txt": "x" });
+    const target = path.join(String(dir), "f.txt");
+
+    const fixture = /* js */ `
+      const fs = require("fs");
+      const target = ${JSON.stringify(target)};
+      const spin = ms => { const end = performance.now() + ms; while (performance.now() < end); };
+      const ROUNDS = 12;
+      let late = 0;
+      let done = 0;
+
+      function round() {
+        if (done >= ROUNDS) {
+          console.log("late=" + late);
+          process.exit(late === 0 ? 0 : 1);
+        }
+        done++;
+        let raced = false;
+        const w = fs.watchFile(target, { interval: 1 }, () => {
+          if (raced) return;
+          raced = true;
+          clearInterval(kick);
+          fs.appendFileSync(target, "z");
+          setTimeout(() => { spin(10); }, 1);
+          setTimeout(() => {
+            spin(8); // stat thread sees the change and queues the callback task...
+            fs.unwatchFile(target); // ...then close before that task runs
+            let fired = false;
+            w.on("change", () => { fired = true; });
+            setTimeout(() => {
+              if (fired) late++;
+              setTimeout(round, 1);
+            }, 8);
+          }, 6);
+        });
+        const kick = setInterval(() => {
+          try { fs.appendFileSync(target, "y"); } catch {}
+        }, 10);
+        // a round that never sees a change callback proves nothing; skip it
+        setTimeout(() => {
+          if (!raced) {
+            raced = true;
+            clearInterval(kick);
+            fs.unwatchFile(target);
+            setTimeout(round, 1);
+          }
+        }, 1_000);
+      }
+      round();
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "late=0",
+      stderr: expect.not.stringContaining("ASSERTION"),
+      exitCode: 0,
+      signalCode: null,
+    });
+  }, 30_000);
 });

@@ -1,7 +1,7 @@
 import { gc } from "bun";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { channel, Channel, hasSubscribers, subscribe, unsubscribe } from "node:diagnostics_channel";
+import { channel, Channel, hasSubscribers, subscribe, tracingChannel, unsubscribe } from "node:diagnostics_channel";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { connect as netConnect } from "node:net";
@@ -346,6 +346,18 @@ describe("TracingChannel", () => {
   // Port tests from:
   // https://github.com/search?q=repo%3Anodejs%2Fnode+test-diagnostics-channel+AND+%2Ftracing%2F&type=code
   test.todo("TODO");
+
+  test("tracingChannel(null) throws ERR_INVALID_ARG_TYPE like Node", () => {
+    // typeof null === "object": without a null guard the constructor would
+    // read null.start and throw a bare TypeError instead of the typed error.
+    for (const bad of [null, 0, Symbol("x")]) {
+      expect(() => tracingChannel(bad as any)).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+        }),
+      );
+    }
+  });
 });
 
 describe("node:http server channels", () => {

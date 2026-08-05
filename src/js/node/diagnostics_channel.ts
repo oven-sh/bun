@@ -442,7 +442,7 @@ class TracingChannel {
         start: channel(`tracing:${nameOrChannels}:asyncStart`),
         end: channel(`tracing:${nameOrChannels}:asyncEnd`),
       });
-    } else if (typeof nameOrChannels === "object") {
+    } else if (typeof nameOrChannels === "object" && nameOrChannels !== null) {
       this.#callWindow = new BoundedChannel({
         start: nameOrChannels.start,
         end: nameOrChannels.end,

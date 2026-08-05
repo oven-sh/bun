@@ -597,4 +597,64 @@ describe("bundler", () => {
       stdout: "loaded ok",
     },
   });
+
+  // Top-level await in a valid ES module bundled to cjs/iife must be rejected
+  // for the output-format reason, not the generic "await can only be used
+  // inside an async function" script-context error.
+  itBundled("cjs/TopLevelAwaitInESModuleFormatError", {
+    files: {
+      "/entry.mjs": /* js */ `
+        const v = await Promise.resolve("TLA-OK");
+        console.log(v);
+        export const out = v;
+      `,
+    },
+    entryPointsRaw: ["./entry.mjs"],
+    format: "cjs",
+    target: "node",
+    bundleErrors: {
+      "/entry.mjs": ['Top-level await is currently not supported with the "cjs" output format'],
+    },
+  });
+  itBundled("iife/TopLevelAwaitInESModuleFormatError", {
+    files: {
+      "/entry.mjs": /* js */ `
+        const v = await Promise.resolve("TLA-OK");
+        export const out = v;
+      `,
+    },
+    entryPointsRaw: ["./entry.mjs"],
+    format: "iife",
+    target: "browser",
+    bundleErrors: {
+      "/entry.mjs": ['Top-level await is currently not supported with the "iife" output format'],
+    },
+  });
+  itBundled("cjs/TopLevelAwaitImportFormatError", {
+    files: {
+      "/entry.js": /* js */ `
+        const mod = await import("./other.js");
+        console.log(mod);
+      `,
+      "/other.js": `export const x = 1;`,
+    },
+    format: "cjs",
+    target: "node",
+    bundleErrors: {
+      "/entry.js": ['Top-level await is currently not supported with the "cjs" output format'],
+    },
+  });
+  itBundled("cjs/TopLevelAwaitUsingFormatError", {
+    files: {
+      "/entry.js": /* js */ `
+        await using r = { async [Symbol.asyncDispose]() {} };
+        console.log(r);
+      `,
+    },
+    format: "cjs",
+    target: "node",
+    bundleErrors: {
+      "/entry.js": ['Top-level await is currently not supported with the "cjs" output format'],
+    },
+  });
 });

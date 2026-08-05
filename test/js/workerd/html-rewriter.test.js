@@ -687,7 +687,11 @@ describe("HTMLRewriter", () => {
         cmd: [
           bunExe(),
           "-e",
-          `const r = new HTMLRewriter()
+          `process.on("unhandledRejection", err => {
+             console.error("UNHANDLED:" + err.message);
+             process.exit(1);
+           });
+           const r = new HTMLRewriter()
              .on("p", { async element(e) {
                (async () => { throw new Error("detached"); })();
                await Bun.sleep(5);
@@ -701,10 +705,12 @@ describe("HTMLRewriter", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // The rewrite itself succeeds; the detached rejection is reported and
-      // takes the process down, rather than being captured by transform().
-      expect({ stdout: stdout.trim(), reported: stderr.includes("detached"), exitCode }).toEqual({
-        stdout: "BODY:<p>ok</p>",
+      // The rejection reaches the process-global unhandledRejection path (the
+      // UNHANDLED: marker), not transform()'s synchronous throw. As in node
+      // (v24 dies at the unhandled rejection, before the suspended entry
+      // module resumes), the rewrite output is never printed.
+      expect({ stdout: stdout.trim(), reported: stderr.includes("UNHANDLED:detached"), exitCode }).toEqual({
+        stdout: "",
         reported: true,
         exitCode: 1,
       });

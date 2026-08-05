@@ -274,12 +274,34 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
     /* Kqueue delivers each filter (READ, WRITE, TIMER, etc.) as a separate kevent,
      * so the same fd/poll can appear twice in ready_polls. We coalesce them into a
      * single set of flags per poll before dispatching, matching epoll's behavior
-     * where each fd appears once with a combined bitmask. */
+     * where each fd appears once with a combined bitmask.
+     *
+     * EV_EOF is intentionally NOT mapped to dispatch's `eof`. Kqueue sets EV_EOF on
+     * EVFILT_READ for a half-close (peer FIN — analogous to EPOLLRDHUP, which the
+     * epoll path also does not map) and on EVFILT_WRITE when the peer's read side is
+     * gone. Treating either as `eof` made loop.c close the socket before the recv
+     * loop had drained the kernel buffer — e.g. an EVFILT_WRITE-only event carrying
+     * EV_EOF skips recv entirely, and a busy-loop bail-out can leave bytes unread in
+     * the same tick the flag arrived. EVFILT_READ is level-triggered and keeps
+     * firing after a FIN, so recv()==0 (loop.c) is the single source of `eof`,
+     * same as Linux. RST/hard errors surface via the recv()/send() error paths;
+     * connect failures via getsockopt(SO_ERROR) in us_internal_socket_after_open.
+     *
+     * The exception is a poll watching nothing (us_socket_pause followed by
+     * us_socket_shutdown — node:http does exactly this for an unconsumed
+     * request body). It will never recv(), so EV_EOF is the only close signal;
+     * kqueue_change arms an edge-triggered EVFILT_READ for that state and we
+     * forward EV_EOF as `eof` only when us_poll_events == 0. The recv loop is
+     * still skipped, so buffered data the caller paused for is left untouched.
+     *
+     * (EV_ERROR only flags changelist-processing failures — the wait kevent64
+     * calls below pass a NULL changelist, so `error` is effectively always 0
+     * here; it is kept for symmetry with the epoll path.) */
     struct kevent_flags {
         uint8_t readable : 1;
         uint8_t writable : 1;
         uint8_t error    : 1;
-        uint8_t eof      : 1;
+        uint8_t ev_eof   : 1;
         uint8_t skip     : 1;
         uint8_t _pad     : 3;
     };
@@ -305,7 +327,7 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
 #endif
             .writable = (filter == EVFILT_WRITE),
             .error = !!(flags & EV_ERROR),
-            .eof = !!(flags & EV_EOF),
+            .ev_eof = !!(flags & EV_EOF),
         };
 
         /* Look backward for a prior entry with the same poll to coalesce into.
@@ -316,7 +338,7 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
                 coalesced[j].readable |= bits.readable;
                 coalesced[j].writable |= bits.writable;
                 coalesced[j].error |= bits.error;
-                coalesced[j].eof |= bits.eof;
+                coalesced[j].ev_eof |= bits.ev_eof;
                 coalesced[i] = (struct kevent_flags){ .skip = 1 };
                 merged = 1;
                 break;
@@ -344,9 +366,16 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
         int events = (bits.readable ? LIBUS_SOCKET_READABLE : 0)
                    | (bits.writable ? LIBUS_SOCKET_WRITABLE : 0);
 
-        events &= us_poll_events(poll);
-        if (events || bits.error || bits.eof) {
-            us_internal_dispatch_ready_poll(poll, bits.error, bits.eof, events);
+        const int watched = us_poll_events(poll);
+        events &= watched;
+        /* EV_EOF only stands in for eof on a shut-down poll watching nothing —
+         * see the comment above. Any READABLE poll discovers eof via recv()==0;
+         * a non-SHUT_DOWN poll at watched==0 (allow_half_open after FIN, or a
+         * plain pause) must not re-enter on_end. */
+        const int eof = bits.ev_eof && watched == 0
+                     && us_internal_poll_type(poll) == POLL_TYPE_SOCKET_SHUT_DOWN;
+        if (events || bits.error || eof) {
+            us_internal_dispatch_ready_poll(poll, bits.error, eof, events);
         }
     }
 #endif
@@ -535,21 +564,33 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
     struct kevent64_s change_list[2];
     int change_length = 0;
 
-    /* Do they differ in readable? */
-    int is_readable =  (new_events & LIBUS_SOCKET_READABLE);
-    int is_writable =  (new_events & LIBUS_SOCKET_WRITABLE);
-    if ((new_events & LIBUS_SOCKET_READABLE) != (old_events & LIBUS_SOCKET_READABLE)) {
-        EV_SET64(&change_list[change_length++], fd, EVFILT_READ, is_readable ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
-    }
-
-    if(!is_readable && !is_writable) {
-        if(!(old_events & LIBUS_SOCKET_WRITABLE)) {
-            // if we are not reading or writing, we need to add writable to receive FIN
-            EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, EV_ADD | EV_ONESHOT, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+    if (new_events == 0 && user_data != NULL) {
+        /* A poll watching nothing still needs to learn about peer close — the
+         * epoll path gets EPOLLHUP for free here. Arm an edge-triggered
+         * EVFILT_READ: it fires once per state transition (data arrival or FIN)
+         * so buffered bytes the caller paused for don't cause a level-triggered
+         * spin, and the dispatch loop above forwards its EV_EOF as `eof` only
+         * for watched==0, never entering the recv loop. EV_ADD on an existing
+         * level-triggered registration just changes it to EV_CLEAR. */
+        EV_SET64(&change_list[change_length++], fd, EVFILT_READ, EV_ADD | EV_CLEAR, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+        if (old_events & LIBUS_SOCKET_WRITABLE) {
+            EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
         }
-    } else if ((new_events & LIBUS_SOCKET_WRITABLE) != (old_events & LIBUS_SOCKET_WRITABLE)) {
-        /* Do they differ in writable? */
-        EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, (new_events & LIBUS_SOCKET_WRITABLE) ? EV_ADD | EV_ONESHOT : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+    } else {
+        /* Do they differ in readable? Transitioning from new_events==0 lands
+         * here too: EV_ADD without EV_CLEAR returns the filter to level-
+         * triggered. (old_events==0 with READABLE in new_events always differs,
+         * so the EV_CLEAR sentinel is overwritten.) */
+        if ((new_events & LIBUS_SOCKET_READABLE) != (old_events & LIBUS_SOCKET_READABLE)) {
+            EV_SET64(&change_list[change_length++], fd, EVFILT_READ, (new_events & LIBUS_SOCKET_READABLE) ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+        }
+
+        /* Do they differ in writable? EVFILT_WRITE is always one-shot;
+         * EV_DELETE on an already-fired one-shot returns ENOENT, which
+         * KEVENT_FLAG_ERROR_EVENTS routes into the result list and we ignore. */
+        if ((new_events & LIBUS_SOCKET_WRITABLE) != (old_events & LIBUS_SOCKET_WRITABLE)) {
+            EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, (new_events & LIBUS_SOCKET_WRITABLE) ? EV_ADD | EV_ONESHOT : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+        }
     }
     int ret;
     do {

@@ -1285,13 +1285,15 @@ pub mod fs {
                     entries.fd = handle;
                 }
 
-                // See `DirEntry::stale`: carry an existing handle forward and
-                // release the fresh one the guard above would keep open.
+                // See `DirEntry::stale`: carry an existing handle forward.
+                // Whatever `entries.fd` holds (the fresh open or a
+                // caller-transferred `maybe_handle`) is released here unless
+                // `_close_guard` owns it.
                 if let Some(original) = in_place {
                     // SAFETY: BSSMap-owned; entries_mutex held.
                     let prev_fd = unsafe { (*original).fd };
                     if prev_fd.is_valid() {
-                        if !should_close_handle && !had_handle && entries.fd != prev_fd {
+                        if !should_close_handle && entries.fd.is_valid() && entries.fd != prev_fd {
                             let _ = bun_sys::close(entries.fd);
                         }
                         entries.fd = prev_fd;

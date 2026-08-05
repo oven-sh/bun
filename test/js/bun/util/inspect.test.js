@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync } from "harness";
+import vm from "node:vm";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -802,4 +803,88 @@ it("CustomEvent", () => {
       BUBBLING_PHASE: 3,
     }"
   `);
+});
+
+describe("node:vm cross-realm objects", () => {
+  it("does not print the foreign realm's Object.prototype methods as own props", () => {
+    const out = Bun.inspect(vm.runInNewContext("({a:1})"));
+    expect(out).not.toContain("hasOwnProperty");
+    expect(out).not.toContain("toString");
+    expect(out).toBe("{\n  a: 1,\n}");
+  });
+
+  it("handles empty objects and arrays from another realm", () => {
+    expect(Bun.inspect(vm.runInNewContext("({})"))).toBe("{}");
+    expect(Bun.inspect(vm.runInNewContext("[1, 2, 3]"))).toBe("[ 1, 2, 3 ]");
+    expect(Bun.inspect(vm.runInNewContext("(function foo(){})"))).toBe("[Function: foo]");
+  });
+
+  it("still walks a user-defined class's prototype from another realm", () => {
+    const obj = vm.runInNewContext("class C { m() {} } new C()");
+    const out = Bun.inspect(obj);
+    expect(out).toContain("m: [Function: m]");
+    expect(out).not.toContain("hasOwnProperty");
+  });
+});
+
+describe("array with own indexed accessor", () => {
+  it("prints [Getter] instead of invoking a throwing getter", () => {
+    const arr = [1, 2, 3];
+    let called = false;
+    Object.defineProperty(arr, 1, {
+      get() {
+        called = true;
+        throw new Error("index getter invoked");
+      },
+      enumerable: true,
+      configurable: true,
+    });
+    expect(Bun.inspect(arr)).toBe("[ 1, [Getter], 3 ]");
+    expect(called).toBe(false);
+  });
+
+  it("prints [Getter/Setter] for an accessor with both", () => {
+    const arr = [1, 2, 3];
+    Object.defineProperty(arr, 1, { get() {}, set(v) {}, enumerable: true, configurable: true });
+    expect(Bun.inspect(arr)).toBe("[ 1, [Getter/Setter], 3 ]");
+  });
+
+  it("prints [Getter] for an accessor at index 0", () => {
+    const arr = [1, 2, 3];
+    let called = false;
+    Object.defineProperty(arr, 0, {
+      get() {
+        called = true;
+        throw new Error("boom");
+      },
+      enumerable: true,
+      configurable: true,
+    });
+    expect(Bun.inspect(arr)).toBe("[\n  [Getter], 2, 3\n]");
+    expect(called).toBe(false);
+  });
+
+  it("prints [Setter] for a setter-only indexed accessor", () => {
+    const arr = [1, 2, 3];
+    Object.defineProperty(arr, 1, { set(v) {}, enumerable: true, configurable: true });
+    expect(Bun.inspect(arr)).toBe("[ 1, [Setter], 3 ]");
+  });
+
+  it("console.log does not throw when an indexed getter throws", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const a=[1,2,3];Object.defineProperty(a,1,{get(){throw new Error("boom")},enumerable:true});console.log(a);console.log("after");`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "[ 1, [Getter], 3 ]\nafter\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

@@ -29,20 +29,41 @@ impl Export {
             if s.is_empty() {
                 continue;
             }
-            let (name, value) = match s.iter().position(|&b| b == b'=') {
-                Some(eq) => (&s[..eq], &s[eq + 1..]),
-                None => (s, &b""[..]),
-            };
-            // The argv backing is freed when the Cmd retires,
-            // so the key/value MUST be duplicated into ref-counted storage —
-            // `init_slice` here would leave dangling EnvStr in `export_env`.
-            let label = EnvStr::dupe_ref_counted(name);
-            let val = EnvStr::dupe_ref_counted(value);
             let shell = interp.as_cmd(cmd).base.shell;
-            // SAFETY: shell env outlives the Cmd node.
-            unsafe { (*shell).export_env.insert(label, val) };
-            label.deref();
-            val.deref();
+            match s.iter().position(|&b| b == b'=') {
+                Some(eq) => {
+                    let (name, value) = (&s[..eq], &s[eq + 1..]);
+                    // The argv backing is freed when the Cmd retires,
+                    // so the key/value MUST be duplicated into ref-counted storage —
+                    // `init_slice` here would leave dangling EnvStr in `export_env`.
+                    let label = EnvStr::dupe_ref_counted(name);
+                    let val = EnvStr::dupe_ref_counted(value);
+                    // SAFETY: shell env outlives the Cmd node.
+                    unsafe { (*shell).export_env.insert(label, val) };
+                    label.deref();
+                    val.deref();
+                }
+                // `export NAME` without `=` only sets the export attribute: it
+                // exports the current value (shell var first, then an
+                // already-exported/inherited one) and is a no-op if unset. It
+                // must never assign an empty value or clobber a live binding.
+                None => {
+                    let label = EnvStr::dupe_ref_counted(s);
+                    // SAFETY: shell env outlives the Cmd node.
+                    let existing = unsafe {
+                        (*shell)
+                            .shell_env
+                            .get(label)
+                            .or_else(|| (*shell).export_env.get(label))
+                    };
+                    if let Some(val) = existing {
+                        // SAFETY: shell env outlives the Cmd node.
+                        unsafe { (*shell).export_env.insert(label, val) };
+                        val.deref();
+                    }
+                    label.deref();
+                }
+            }
         }
         Builtin::done(interp, cmd, 0)
     }

@@ -2,10 +2,13 @@
 // These tests fail by timing out.
 
 import { expect, test } from "bun:test";
-import { getMaxFD, isCI, isMacOS } from "harness";
+import { getMaxFD, isASAN, isCI, isDebug, isMacOS } from "harness";
 
 // Since we bumped MAX_CONNECTIONS to 4, we should halve the threshold on macOS.
-const PORT_EXHAUSTION_THRESHOLD = isMacOS ? 8 * 1024 : 16 * 1024;
+// Debug/ASAN iterate ~30x slower so TIME_WAIT ports clear long before the
+// ephemeral range is exhausted; a smaller count still exercises the fd-leak
+// check and every socket-close path.
+const PORT_EXHAUSTION_THRESHOLD = isASAN || isDebug ? 2 * 1024 : isMacOS ? 8 * 1024 : 16 * 1024;
 
 async function runStressTest({
   onServerWritten,
@@ -15,12 +18,17 @@ async function runStressTest({
   onFetchWritten: (socket) => void;
 }) {
   const total = PORT_EXHAUSTION_THRESHOLD * 2;
-  let sockets = [];
   const batch = 48;
+  let sockets = [];
   let toClose = 0;
   let pendingClose = Promise.withResolvers();
+  let serverReceived = 0;
+  let bodyMismatches = 0;
+
+  // Each outer-loop iteration issues the same `batch` requests (indices 0..batch-1),
+  // so only `batch` option objects are needed.
   const objects = [];
-  for (let i = 0; i < total; i++) {
+  for (let i = 0; i < batch; i++) {
     objects.push({
       method: "POST",
       body: "--BYTEMARKER: " + (10 + i) + " ",
@@ -36,6 +44,7 @@ async function runStressTest({
         const text = new TextDecoder().decode(data);
         const i = parseInt(text.slice(text.indexOf("--BYTEMARKER: ") + "--BYTEMARKER: ".length).slice(0, 3)) - 10;
         if (text.includes(objects[i].body)) {
+          serverReceived++;
           socket.data ??= {};
           socket.data.read = true;
           sockets[i] = socket;
@@ -46,7 +55,7 @@ async function runStressTest({
           return;
         }
 
-        console.log("Data is missing!");
+        bodyMismatches++;
       },
       drain(socket) {
         if (!socket.data?.read || socket.data?.written) {
@@ -72,6 +81,7 @@ async function runStressTest({
     hostname: "127.0.0.1",
   });
   let initialMaxFD = -1;
+  let issued = 0;
   for (let remaining = total; remaining > 0; remaining -= batch) {
     pendingClose = Promise.withResolvers();
     {
@@ -84,6 +94,7 @@ async function runStressTest({
           }),
         );
       }
+      issued += batch;
       await Promise.allSettled(promises);
 
       promises.length = 0;
@@ -98,61 +109,26 @@ async function runStressTest({
   }
   server.stop(true);
   await Bun.sleep(10);
+  expect({ bodyMismatches, serverReceived }).toEqual({
+    bodyMismatches: 0,
+    serverReceived: issued,
+  });
+  expect(initialMaxFD).toBeGreaterThanOrEqual(0);
   expect(getMaxFD()).toBeLessThan(initialMaxFD + 10);
 }
 
-test.todoIf(isCI && isMacOS)(
-  "shutdown after timeout",
-  async () => {
-    await runStressTest({
-      onServerWritten(socket) {
-        socket.end();
-      },
-      onFetchWritten(socket) {},
-    });
-  },
-  30 * 1000,
-);
+const variants: Array<[name: string, onServerWritten: (s: any) => void, onFetchWritten: (s: any) => void]> = [
+  ["gently close", s => s.end(), () => {}],
+  ["close after TCP fin", s => s.shutdown(), s => s.end()],
+  ["shutdown then terminate", s => s.shutdown(), s => s.terminate()],
+];
 
-test.todoIf(isCI && isMacOS)(
-  "close after TCP fin",
-  async () => {
-    await runStressTest({
-      onServerWritten(socket) {
-        socket.shutdown();
-      },
-      onFetchWritten(socket) {
-        socket.end();
-      },
-    });
-  },
-  30 * 1000,
-);
-
-test.todoIf(isCI && isMacOS)(
-  "shutdown then terminate",
-  async () => {
-    await runStressTest({
-      onServerWritten(socket) {
-        socket.shutdown();
-      },
-      onFetchWritten(socket) {
-        socket.terminate();
-      },
-    });
-  },
-  30 * 1000,
-);
-
-test.todoIf(isCI && isMacOS)(
-  "gently close",
-  async () => {
-    await runStressTest({
-      onServerWritten(socket) {
-        socket.end();
-      },
-      onFetchWritten(socket) {},
-    });
-  },
-  30 * 1000,
-);
+for (const [name, onServerWritten, onFetchWritten] of variants) {
+  test.todoIf(isCI && isMacOS)(
+    name,
+    async () => {
+      await runStressTest({ onServerWritten, onFetchWritten });
+    },
+    30 * 1000,
+  );
+}

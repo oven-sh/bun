@@ -152,12 +152,8 @@ impl WorkspacePackageJSONCache {
             &buf[..abs_package_json_path.len()]
         };
 
-        // reshaped for borrowck — we cannot hold an entry borrow across
-        // `self.map.remove`, so check
-        // membership up front and only insert into the map after a successful
-        // read+parse. Net map state is identical on every path.
-        if self.map.contains_key(path) {
-            return GetResult::Entry(self.map.get_mut(path).unwrap());
+        if let Some(entry) = self.map.get_mut(path) {
+            return GetResult::Entry(entry);
         }
 
         // Owned NUL-terminated copy reused

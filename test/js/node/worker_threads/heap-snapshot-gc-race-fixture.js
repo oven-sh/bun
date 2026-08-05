@@ -1,4 +1,4 @@
-// Stress getHeapSnapshot() against a parent-thread full GC.
+// Exercise getHeapSnapshot() round-trips against parent-thread full GCs.
 //
 // Each getHeapSnapshot() round-trip used to capture a parent-VM
 // Strong<JSPromise> by value in a lambda that ran on the worker thread.
@@ -27,6 +27,9 @@ async function makeWorker() {
 let worker = await makeWorker();
 
 const iters = Number(process.env.ITERS);
+if (!Number.isInteger(iters) || iters <= 0) throw new Error(`invalid ITERS: ${JSON.stringify(process.env.ITERS)}`);
+
+let completed = 0;
 for (let i = 0; i < iters; i++) {
   let stream;
   try {
@@ -34,10 +37,9 @@ for (let i = 0; i < iters; i++) {
   } catch (e) {
     // On some CI platforms the worker has been observed to exit on its own
     // after a few hundred heap snapshots — that surfaces here as a clean
-    // ERR_WORKER_NOT_RUNNING rejection, not the process-level segfault this
+    // ERR_WORKER_NOT_RUNNING rejection, not the process-level corruption this
     // fixture is looking for. Recreate the worker and keep going so the
-    // overall round-trip count (and thus the number of race opportunities
-    // against the parent VM's HandleSet) is preserved.
+    // overall round-trip count is preserved.
     if (e?.code === "ERR_WORKER_NOT_RUNNING") {
       await worker.terminate().catch(() => {});
       worker = await makeWorker();
@@ -53,7 +55,11 @@ for (let i = 0; i < iters; i++) {
   Bun.gc(true);
   stream.on("data", () => {});
   await new Promise(resolve => stream.once("end", resolve));
+  completed++;
 }
 
 await worker.terminate();
-console.log("ok");
+// The completed count lets the test reject a fixture that silently exited
+// early (e.g. ITERS lost in env plumbing would otherwise skip the loop and
+// still print a bare "ok").
+console.log(`ok ${completed}`);

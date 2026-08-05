@@ -448,12 +448,11 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         self.ensure_unused_capacity(size)?;
 
         // try to avoid realigning buffer
-        // reshaped for borrowck — check len, drop borrow, maybe
-        // realign, then take the final borrow.
-        if self.writable_slice(0).len() < size {
+        let mut slice = self.writable_slice(0);
+        if slice.len() < size {
             self.realign();
+            slice = self.writable_slice(0);
         }
-        let slice = self.writable_slice(0);
         debug_assert!(slice.len() >= size);
         Ok(&mut slice[..size])
     }

@@ -1242,16 +1242,10 @@ fn overwrite_package_in_node_modules_folder(
 
 type NodeModulesIterator<'a> = tree::Iterator<'a, { tree::IteratorPathStyle::NodeModules }>;
 
-// reshaped for borrowck — `tree::Iterator::next` returns an
-// `IteratorNext<'_>` borrowing the iterator's internal `path_buf`, so we
-// cannot return it from inside a `while let` (borrowck rejects the next
-// iteration's reborrow even though it's unreachable). Callers only need
-// `relative_path`, so copy it out into an owned `Vec<u8>`.
-
-fn node_modules_folder_for_dependency_ids(
-    iterator: &mut NodeModulesIterator<'_>,
+fn node_modules_folder_for_dependency_ids<'a>(
+    iterator: &'a mut NodeModulesIterator<'_>,
     ids: &[IdPair],
-) -> Option<Vec<u8>> {
+) -> Option<&'a ZStr> {
     loop {
         let node_modules = iterator.next(None)?;
         let mut found = false;
@@ -1262,21 +1256,21 @@ fn node_modules_folder_for_dependency_ids(
             }
         }
         if found {
-            return Some(node_modules.relative_path.as_bytes().to_vec());
+            return Some(node_modules.relative_path);
         }
     }
 }
 
-fn node_modules_folder_for_dependency_id(
-    iterator: &mut NodeModulesIterator<'_>,
+fn node_modules_folder_for_dependency_id<'a>(
+    iterator: &'a mut NodeModulesIterator<'_>,
     dependency_id: DependencyID,
-) -> Option<Vec<u8>> {
+) -> Option<&'a ZStr> {
     loop {
         let node_modules = iterator.next(None)?;
         if !node_modules.dependencies.contains(&dependency_id) {
             continue;
         }
-        return Some(node_modules.relative_path.as_bytes().to_vec());
+        return Some(node_modules.relative_path);
     }
 }
 
@@ -1350,7 +1344,7 @@ fn pkg_info_for_name_and_version(
                     Global::crash();
                 }
             };
-            return (pkg_id, folder);
+            return (pkg_id, folder.as_bytes().to_vec());
         }
 
         // we found multiple dependents of the supplied pkg + version
@@ -1368,7 +1362,7 @@ fn pkg_info_for_name_and_version(
             }
         };
 
-        return (pkg_id, folder);
+        return (pkg_id, folder.as_bytes().to_vec());
     }
 
     // Otherwise the user did not supply a version, just the pkg name
@@ -1386,7 +1380,7 @@ fn pkg_info_for_name_and_version(
                 Global::crash();
             }
         };
-        return (pkg_id, folder);
+        return (pkg_id, folder.as_bytes().to_vec());
     }
 
     // Otherwise we have multiple matches
@@ -1419,7 +1413,7 @@ fn pkg_info_for_name_and_version(
                 Global::crash();
             }
         };
-        return (pkg_id, folder);
+        return (pkg_id, folder.as_bytes().to_vec());
     }
 
     bun_core::pretty_errorln!(

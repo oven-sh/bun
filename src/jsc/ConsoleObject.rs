@@ -776,14 +776,15 @@ impl<'a> TablePrinter<'a> {
                     let value = cols_iter.value;
 
                     // find or create the column for the property
-                    let col_idx: usize = 'brk: {
+                    let (col_idx, column) = 'brk: {
                         let col_str = BunString::init(col_key);
 
-                        // reshaped for borrowck — split find/append.
-                        if let Some(idx) =
-                            columns[1..].iter().position(|col| col.name.eql(&col_str))
+                        if let Some((idx, col)) = columns[1..]
+                            .iter_mut()
+                            .enumerate()
+                            .find(|(_, col)| col.name.eql(&col_str))
                         {
-                            break 'brk 1 + idx;
+                            break 'brk (1 + idx, col);
                         }
 
                         // Need to ref this string because JSPropertyIterator
@@ -795,11 +796,12 @@ impl<'a> TablePrinter<'a> {
                             name: col_str,
                             width: 1,
                         });
-                        break 'brk columns.len() - 1;
+                        let idx = columns.len() - 1;
+                        break 'brk (idx, &mut columns[idx]);
                     };
 
                     let cell = self.format_cell::<ENABLE_ANSI_COLORS>(cell_text, value)?;
-                    columns[col_idx].width = columns[col_idx].width.max(cell.width);
+                    column.width = column.width.max(cell.width);
                     let slot = col_idx - 1;
                     if row.cells.len() <= slot {
                         row.cells.resize(slot + 1, None);

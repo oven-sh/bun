@@ -167,17 +167,14 @@ impl ElfFile {
         if strtab_end > self.data.len() as u64 {
             return;
         }
-        // reshaped for borrowck — copy strtab bounds out so we can
-        // re-borrow self.data mutably below.
-        let strtab_off = usize::try_from(strtab_shdr.sh_offset).expect("int cast");
-        let strtab_len = usize::try_from(strtab_shdr.sh_size).expect("int cast");
+        let strtab = &self.data[usize::try_from(strtab_shdr.sh_offset).expect("int cast")..]
+            [..usize::try_from(strtab_shdr.sh_size).expect("int cast")];
 
         for i in 0..shnum as usize {
             let shdr = self.read_shdr(ehdr.e_shoff, u16::try_from(i).expect("int cast"));
-            if shdr.sh_name as usize >= strtab_len {
+            if shdr.sh_name as usize >= strtab.len() {
                 continue;
             }
-            let strtab = &self.data[strtab_off..][..strtab_len];
             let name = slice_to_nul(&strtab[shdr.sh_name as usize..]);
             if name != b".interp" {
                 continue;

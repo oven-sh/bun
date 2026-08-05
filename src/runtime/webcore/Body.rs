@@ -1547,11 +1547,6 @@ impl Value {
             _ => {}
         }
 
-        // reshaped for borrowck — re-borrow locked after the early *self = Null path above.
-        let Value::Locked(locked) = self else {
-            unreachable!()
-        };
-
         reader.producer.set(locked.producer);
 
         let context_ptr: *mut ByteStream = &raw mut reader.context;

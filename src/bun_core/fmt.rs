@@ -2314,29 +2314,24 @@ pub fn format_ip<'a>(
     write!(cursor, "{}", address).map_err(|_| crate::CrateError::NoSpaceLeft)?;
     let written = cursor.position() as usize;
 
-    // Reshaped for borrowck — compute (start, end) offsets against `into`
-    // instead of iteratively reborrowing a `result` slice, so the final
-    // returned `&mut into[start..end]` carries the caller's `'a` lifetime
-    // cleanly.
-    let mut start = 0usize;
-    let mut end = written;
+    let mut result = &mut into[..written];
 
     // Strip `:<port>`
-    if let Some(colon) = into[start..end].iter().rposition(|&b| b == b':') {
-        end = start + colon;
+    if let Some(colon) = result.iter().rposition(|&b| b == b':') {
+        result = &mut result[..colon];
     }
     // Strip brackets
-    if start < end && into[start] == b'[' && into[end - 1] == b']' {
-        start += 1;
-        end -= 1;
+    if result.first() == Some(&b'[') && result.last() == Some(&b']') {
+        let len = result.len();
+        result = &mut result[1..len - 1];
     }
     // Strip `%<zone>` — Node formats addresses via uv_inet_ntop on the bare
     // in6_addr and never includes the zone identifier; the scope is exposed
     // separately (e.g. `scopeid` in os.networkInterfaces()).
-    if let Some(percent) = into[start..end].iter().position(|&b| b == b'%') {
-        end = start + percent;
+    if let Some(percent) = result.iter().position(|&b| b == b'%') {
+        result = &mut result[..percent];
     }
-    Ok(&mut into[start..end])
+    Ok(result)
 }
 
 // ───────────────────────────────────────────────────────────────────────────

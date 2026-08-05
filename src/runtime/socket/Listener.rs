@@ -1127,15 +1127,12 @@ impl Listener {
             use bun_sys::FdExt as _;
 
             let mut buf = PathBuffer::uninit();
-            // Note: reshaped for borrowck — `normalize_pipe_name` borrows
-            // `buf` for the returned slice; store length and re-borrow after the
-            // `connection` match drops.
-            let mut pipe_name_len: Option<usize> = None;
+            let mut pipe_name: Option<&[u8]> = None;
             let is_named_pipe = match &mut connection {
                 // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
                 UnixOrHost::Unix(slice) => match normalize_pipe_name(slice, buf.as_mut_slice()) {
                     Some(name) => {
-                        pipe_name_len = Some(name.len());
+                        pipe_name = Some(name);
                         true
                     }
                     None => false,
@@ -1242,7 +1239,7 @@ impl Listener {
                     let named_pipe_result = match tls_ref.connection.get().as_ref().unwrap() {
                         UnixOrHost::Unix(_) => WindowsNamedPipeContext::connect(
                             global,
-                            &buf[..pipe_name_len.unwrap()],
+                            pipe_name.unwrap(),
                             ssl_taken.take(),
                             ctx_for_pipe,
                             PipeSocketType::Tls(tls_ref),
@@ -1315,7 +1312,7 @@ impl Listener {
                     let named_pipe_result = match tcp_ref.connection.get().as_ref().unwrap() {
                         UnixOrHost::Unix(_) => WindowsNamedPipeContext::connect(
                             global,
-                            &buf[..pipe_name_len.unwrap()],
+                            pipe_name.unwrap(),
                             None,
                             None,
                             PipeSocketType::Tcp(tcp_ref),

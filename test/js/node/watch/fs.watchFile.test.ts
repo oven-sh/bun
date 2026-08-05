@@ -424,70 +424,60 @@ describe("fs.watchFile", () => {
   // segfaults in Integrity::auditCellFully, and "this.emit is not a function"
   // type confusion in the listener.
   //
-  // Detection without GC roulette: unwatchFile() removes all "change"
-  // listeners before stopping, so re-attaching one right after it returns
-  // must never see an event. On the unfixed build the already-queued native
-  // task still calls the cached bound #onChange, which emits into the
-  // re-attached listener.
-  //
-  // Per round: anchor on a delivered change callback (the ~5ms stat timer
-  // re-arms right after that turn), dirty the file, then block the loop so
-  // the stat timer and the closing turn become overdue together. The poll
-  // then queues the change-callback task around the closing turn, which
-  // calls unwatchFile() before the queue drains.
+  // Detection without GC or timing games: the scheduler stats every watcher
+  // in one batch, queueing one change-callback task per changed file, and the
+  // first task's listener runs while its siblings' tasks are still queued in
+  // the same drain. Closing the siblings from that listener therefore always
+  // closes watchers with an in-flight task, at any interval. unwatchFile()
+  // removes all "change" listeners before stopping, so a listener re-attached
+  // right after it returns must never fire; on the unfixed build the queued
+  // native task still calls the cached bound #onChange, which emits into it.
   test("change callback queued before unwatchFile does not fire after it returns", async () => {
-    await using dir = tempDir("watchfile-close-race", { "f.txt": "x" });
-    const target = path.join(String(dir), "f.txt");
+    const COUNT = 20;
+    await using dir = tempDir(
+      "watchfile-close-race",
+      Object.fromEntries(Array.from({ length: COUNT }, (_, i) => [`f${i}.txt`, "a"])),
+    );
 
     const fixture = /* js */ `
       const fs = require("fs");
-      const target = ${JSON.stringify(target)};
-      const spin = ms => { const end = performance.now() + ms; while (performance.now() < end); };
-      const ROUNDS = 12;
+      const path = require("path");
+      const dir = ${JSON.stringify(String(dir))};
+      const COUNT = ${COUNT};
+      const files = Array.from({ length: COUNT }, (_, i) => path.join(dir, "f" + i + ".txt"));
+      let fired = 0;
       let late = 0;
-      let done = 0;
-      let exercised = 0;
-
-      function round() {
-        if (done >= ROUNDS) {
-          console.log("late=" + late + " exercised=" + exercised);
-          process.exit(late === 0 && exercised > 0 ? 0 : 1);
-        }
-        done++;
-        let raced = false;
-        const w = fs.watchFile(target, { interval: 1 }, () => {
-          if (raced) return;
-          raced = true;
-          exercised++;
-          clearInterval(kick);
-          fs.appendFileSync(target, "z");
-          setTimeout(() => { spin(10); }, 1);
-          setTimeout(() => {
-            spin(8); // stat thread sees the change and queues the callback task...
-            fs.unwatchFile(target); // ...then close before that task runs
-            let fired = false;
-            w.on("change", () => { fired = true; });
-            setTimeout(() => {
-              if (fired) late++;
-              setTimeout(round, 1);
-            }, 8);
-          }, 6);
-        });
-        const kick = setInterval(() => {
-          fs.appendFileSync(target, "y");
-        }, 10);
-        // a round that never sees a change callback proves nothing; skip it
-        // (the child exits nonzero at the end if no round anchored at all)
-        setTimeout(() => {
-          if (!raced) {
-            raced = true;
-            clearInterval(kick);
-            fs.unwatchFile(target);
-            setTimeout(round, 1);
+      const watchers = files.map((f, i) =>
+        fs.watchFile(f, { interval: 100 }, () => {
+          if (fired++) return;
+          // First delivered callback of the poll batch: the sibling watchers'
+          // change tasks are already queued behind this one. Close them, then
+          // re-attach listeners that must never be called.
+          for (let j = 0; j < COUNT; j++) {
+            if (j === i) continue;
+            fs.unwatchFile(files[j]);
+            watchers[j].on("change", () => { late++; });
           }
-        }, 1_000);
-      }
-      round();
+          clearInterval(churn);
+          fs.unwatchFile(f);
+          // The sibling tasks run (or bail) in the same drain that dispatched
+          // this callback, so one later timer turn is ample margin.
+          setTimeout(() => {
+            console.log("late=" + late + " siblings=" + (COUNT - 1));
+            process.exit(late === 0 ? 0 : 1);
+          }, 100);
+        }),
+      );
+      const churn = setInterval(() => {
+        for (const f of files) fs.appendFileSync(f, "b");
+      }, 3);
+      // If no change callback is ever delivered, fail loudly instead of hanging.
+      setTimeout(() => {
+        if (fired === 0) {
+          console.error("no change callback delivered");
+          process.exit(2);
+        }
+      }, 10_000);
     `;
 
     await using proc = Bun.spawn({
@@ -499,7 +489,7 @@ describe("fs.watchFile", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-      stdout: expect.stringMatching(/^late=0 exercised=[1-9]\d*$/),
+      stdout: `late=0 siblings=${COUNT - 1}`,
       stderr: expect.not.stringContaining("ASSERTION"),
       exitCode: 0,
       signalCode: null,

@@ -920,6 +920,81 @@ fn should_drain_event_loop() -> bool {
     env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
 }
 
+const POST_FILE_DRAIN_GRACE_MS: i64 = 1000;
+
+/// Drain ref'd JS timers, queued tasks and setImmediate callbacks due within
+/// `POST_FILE_DRAIN_GRACE_MS`, so a late rejection or `setTimeout` throw from
+/// a file's final test still surfaces while `active_file` is set. Ignores
+/// `platform_loop.is_active()` / `vm.active_tasks` (leaked `Bun.serve()` /
+/// sockets never make progress) and is wall-clock bounded so a far-future
+/// timer cannot stall the run.
+fn drain_for_late_errors(vm: &mut VirtualMachine) {
+    use bun_core::{Timespec, TimespecMockMode};
+    use bun_event_loop::EventLoopTimer::{EventLoopTimer, InHeap, Tag, TimerCallback};
+
+    let deadline = Timespec::now(TimespecMockMode::ForceRealTime).add_ms(POST_FILE_DRAIN_GRACE_MS);
+    let el_ptr = vm.event_loop();
+    let timers = crate::jsc_hooks::timer_all();
+    if timers.is_null() {
+        return;
+    }
+
+    fn sentinel_fired(c: *mut TimerCallback) {
+        // SAFETY: `c` is the live stack sentinel just popped by `drain_timers`.
+        unsafe { (*c).event_loop_timer.in_heap = InHeap::None };
+    }
+    // A no-op timer at `deadline` caps `get_timeout` inside `auto_tick_active`
+    // so JS that runs between the park-guard and the park (a setImmediate
+    // clearing the near-term timer that admitted us) cannot leave only a
+    // far-future heap min for `tick_with_timeout` to park on.
+    let mut sentinel = TimerCallback {
+        callback: sentinel_fired,
+        ctx: None,
+        event_loop_timer: EventLoopTimer::init_paused(Tag::TimerCallback),
+    };
+    sentinel.event_loop_timer.next = deadline;
+    // SAFETY: live per-thread `All`; `sentinel` lives for this frame.
+    unsafe { (*timers).insert(&raw mut sentinel.event_loop_timer) };
+    scopeguard::defer! {
+        if sentinel.event_loop_timer.in_heap != InHeap::None {
+            // SAFETY: live per-thread `All`; sentinel still in the heap.
+            unsafe { (*timers).remove(&raw mut sentinel.event_loop_timer) };
+        }
+    }
+
+    loop {
+        vm.tick();
+        // SAFETY: `el_ptr` is the VM-owned event loop; `vm` passed as *mut.
+        unsafe { (*el_ptr).tick_immediate_tasks(vm) };
+        vm.tick();
+
+        let el = vm.event_loop_shared();
+        let has_queued = el.tasks.readable_length() > 0
+            || !el.immediate_tasks.is_empty()
+            || !el.next_immediate_tasks.is_empty();
+
+        // SAFETY: `timer_all()` is the live per-thread `All`; null-checked.
+        let (timer_refs, immediate_refs) =
+            unsafe { ((*timers).active_timer_count, (*timers).immediate_ref_count) };
+
+        if !has_queued && timer_refs <= 0 && immediate_refs <= 0 {
+            break;
+        }
+        if Timespec::now(TimespecMockMode::ForceRealTime).greater(&deadline) {
+            break;
+        }
+        // Only park while a ref'd user `TimeoutObject` is due within the
+        // deadline; a self-rescheduling setImmediate or an unref'd interval
+        // alone breaks here instead of busy-spinning to the wall-clock cap.
+        //
+        // SAFETY: live per-thread `All`; walk reads only heap-node fields.
+        if !unsafe { (*timers).timers.any_refd_js_timer_due_by(&deadline) } {
+            break;
+        }
+        vm.auto_tick_active();
+    }
+}
+
 pub struct CommandLineReporter {
     // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
     // reporter is held in a `Box` local to `TestCommand::exec` which never
@@ -3375,6 +3450,8 @@ impl TestCommand {
                 // Process event loop while bun_test tests are running
                 vm.event_loop_ref().tick();
 
+                let fail_before = reporter.jest.summary.fail;
+                let unhandled_before = reporter.jest.unhandled_errors_between_tests;
                 let mut prev_unhandled_count = vm.unhandled_error_counter;
                 while buntest.phase != bun_test::Phase::Done {
                     if buntest.wants_wakeup {
@@ -3396,6 +3473,18 @@ impl TestCommand {
                 let el = vm.event_loop();
                 // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
                 unsafe { (*el).tick_immediate_tasks(vm) };
+
+                // Only for the final repeat of the final file (earlier files'
+                // and earlier repeats' late errors surface in the next phase
+                // loop) and only when this repeat did not fail, so a timed-out
+                // test body is not waited on.
+                if first_last.last
+                    && repeat_index + 1 == repeat_count
+                    && reporter.jest.summary.fail == fail_before
+                    && reporter.jest.unhandled_errors_between_tests == unhandled_before
+                {
+                    drain_for_late_errors(vm);
+                }
 
                 // Node parity: a node test file exits only when its loop drains.
                 // on_before_exit() drains and dispatches 'beforeExit' like `bun run`;

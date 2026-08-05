@@ -341,6 +341,36 @@ impl TimerHeap {
         // live for the heap's lifetime (intrusive invariant maintained by `All`).
         unsafe { self.0.count() }
     }
+
+    /// `true` iff any ref'd `TimeoutObject` (user `setTimeout`/`setInterval`)
+    /// is due at or before `deadline`. O(n) worklist walk.
+    pub(crate) fn any_refd_js_timer_due_by(&self, deadline: &Timespec) -> bool {
+        let mut stack: Vec<*mut EventLoopTimer> = Vec::new();
+        if !self.0.root.is_null() {
+            stack.push(self.0.root);
+        }
+        while let Some(node) = stack.pop() {
+            // SAFETY: every pushed pointer is a non-null reachable heap node;
+            // nodes stay live for the heap's lifetime (intrusive invariant).
+            let t = unsafe { &*node };
+            if t.tag == EventLoopTimerTag::TimeoutObject && !t.next.greater(deadline) {
+                // SAFETY: `node` is a live `TimeoutObject`'s timer slot per tag.
+                if let Some(flags) = unsafe { js_timer_flags_ptr(node) } {
+                    // SAFETY: `flags` points into the live container.
+                    if unsafe { (*flags.as_ptr()).has_js_ref() } {
+                        return true;
+                    }
+                }
+            }
+            if !t.heap.next.is_null() {
+                stack.push(t.heap.next);
+            }
+            if !t.heap.child.is_null() {
+                stack.push(t.heap.child);
+            }
+        }
+        false
+    }
 }
 
 /// i32 is exposed to JavaScript and can be used with clearTimeout, clearInterval, etc.

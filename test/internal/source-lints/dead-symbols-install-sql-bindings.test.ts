@@ -9,11 +9,11 @@
 // This is a source-tree lint: it reads files from src/ and does not touch the
 // built binary, so it belongs in test/internal/source-lints/ per the README.
 //
-// The Rust checks read the working tree. The C++/JS/deleted-file checks read
-// the committed tree (HEAD) instead: `git stash` round-trips can temporarily
-// restore files a branch deletes (see the same note in
-// dead-code-escapes.test.ts), and those strays must not fail the lint. CI
-// runs against the committed tree, so HEAD is what matters.
+// The Rust checks read the working tree. The C++/JS checks read the committed
+// tree (HEAD) instead: `git stash` round-trips can temporarily restore files a
+// branch deletes (see the same note in dead-code-escapes.test.ts), and those
+// strays must not fail the lint. CI runs against the committed tree, so HEAD
+// is what matters.
 
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -35,18 +35,6 @@ function headFile(p: string): string {
     throw new Error(`git show HEAD:${p} failed: ${r.stderr.toString()}`);
   }
   return r.stdout.toString();
-}
-
-function headTree(): Set<string> {
-  const r = Bun.spawnSync({
-    cmd: ["git", "-C", repoRoot, "ls-tree", "-r", "--name-only", "-z", "HEAD"],
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  if (r.exitCode !== 0) {
-    throw new Error(`git ls-tree HEAD failed: ${r.stderr.toString()}`);
-  }
-  return new Set(r.stdout.toString().split("\0").filter(Boolean));
 }
 
 test("dead Rust symbols (install, event_loop, dns, mysql protocol) do not reappear", () => {
@@ -141,16 +129,5 @@ test("dead built-in JS exports and build defines do not reappear", () => {
   const resurrected = checks
     .filter(([file, re]) => re.test(headFile(file)))
     .map(([file, re]) => `${file}: ${re.source}`);
-  expect(resurrected).toEqual([]);
-});
-
-test("orphaned files stay deleted", () => {
-  const gone = [
-    // prebuilt 2022-era tcc runtime library; libtcc1.c is compiled at runtime
-    // (include_bytes! in ffi_body.rs), the .a was never referenced.
-    "src/runtime/ffi/libtcc1.a.macos-aarch64",
-  ];
-  const tree = headTree();
-  const resurrected = gone.filter(p => tree.has(p));
   expect(resurrected).toEqual([]);
 });

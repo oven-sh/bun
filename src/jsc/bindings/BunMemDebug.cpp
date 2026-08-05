@@ -1517,6 +1517,7 @@ static void imageRestoreAndRun(const char* path)
     JSC::JSGlobalObject* globalObject = (JSC::JSGlobalObject*)hdr.globalObject;
     uws_adopt_loop_for_current_thread((struct us_loop_t*)hdr.reserved[8 - 1]); // main thread's uWS::Loop TLS -> the image's loop object (else uws_get_loop() would make a second loop)
     us_loop_reinit_for_image(uws_get_loop());
+    { const char* d = getenv("BUN_MEMDEBUG"); s_dir = (d && *d) ? strdup(d) : nullptr; } // tooling dir belongs to this process, not the builder
     Bun__imageAdoptMainThreadVM();
     { JSC::JSLockHolder lock(*vm); vm->didRestoreFromImage();
       fprintf(stderr, "[image] termination state: request=%d pendingTermException=%d exception=%p trapsNeedTermination=%d\n", (int)vm->hasTerminationRequest(), (int)vm->hasPendingTerminationException(), vm->exceptionForInspection(), (int)vm->traps().needHandling(JSC::VMTraps::NeedTermination));

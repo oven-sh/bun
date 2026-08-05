@@ -337,46 +337,58 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
     await withAdversarialServer(
       {
         onStream: (socket, id) => {
-          // END_HEADERS only (0x4) — no END_STREAM.
-          socket.write(
-            frame(
-              1,
-              0x4,
-              id,
-              Buffer.concat([
-                hpackStatus200,
-                hpackLit("content-length", "0"),
-                hpackLit("content-type", "text/event-stream"),
-              ]),
-            ),
-          );
+          if (id === 1) {
+            // END_HEADERS only (0x4) — no END_STREAM.
+            socket.write(
+              frame(
+                1,
+                0x4,
+                id,
+                Buffer.concat([
+                  hpackStatus200,
+                  hpackLit("content-length", "0"),
+                  hpackLit("content-type", "text/event-stream"),
+                ]),
+              ),
+            );
+          } else {
+            // Barrier request — clean END_STREAM close; see subprocess comment.
+            socket.write(frame(1, 0x5, id, hpackStatus200));
+          }
         },
       },
       async (url, state) => {
         await using proc = spawnFetch(`
-          const r = await fetch(${JSON.stringify(url)}, {
+          const opts = {
             protocol: "http2",
             signal: AbortSignal.timeout(8000),
             tls: { rejectUnauthorized: false },
-          });
+          };
+          const r = await fetch(${JSON.stringify(url)}, opts);
           const body = await r.text();
-          console.log(JSON.stringify({ status: r.status, body }));
+          // Second request on the same pooled session acts as a delivery
+          // barrier: RST_STREAM(1) was queued ahead of HEADERS(3) on the one
+          // socket, so this response arriving back proves the RST reached the
+          // server. Without it the subprocess can exit while the RST is still
+          // in the TLS/TCP send buffer, which Windows drops on process death
+          // (abortive close) — leaving state.rst empty.
+          const barrier = (await fetch(${JSON.stringify(url)}, opts)).status;
+          console.log(JSON.stringify({ status: r.status, body, barrier }));
         `);
         const { stdout, stderr, exitCode } = await collect(proc);
         // stderr first: on a crash it carries the panic/ASAN report.
         expect(stderr).toBe("");
-        expect(stdout.trim()).toBe('{"status":200,"body":""}');
+        expect(JSON.parse(stdout.trim())).toEqual({ status: 200, body: "", barrier: 200 });
         expect(exitCode).toBe(0);
-        // The stream was still open from the server's side, so completing the
-        // response must abandon it with RST_STREAM(CANCEL) or the server is
-        // left holding it half-open against MAX_CONCURRENT_STREAMS. The RST is
-        // flushed at delivery time, before the child exits; poll for the
-        // server to have parsed it.
-        const deadline = Date.now() + 5_000;
-        while (state.rst.length === 0 && Date.now() < deadline) {
-          await Bun.sleep(10);
-        }
-        expect(state.rst).toEqual([{ id: 1, code: 8 }]);
+        // The first stream was still open from the server's side, so
+        // completing the response must abandon it with RST_STREAM(CANCEL)
+        // (0x8) or the server is left holding it half-open against
+        // MAX_CONCURRENT_STREAMS. connections=1 proves the barrier rode the
+        // same socket, so ordering actually applies.
+        expect({ rst: state.rst, connections: state.connections }).toEqual({
+          rst: [{ id: 1, code: 8 }],
+          connections: 1,
+        });
       },
     );
   });

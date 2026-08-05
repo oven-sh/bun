@@ -4,7 +4,9 @@ test("Request cache option is set correctly", () => {
   const cacheValues = ["default", "no-store", "reload", "no-cache", "force-cache", "only-if-cached"] as const;
 
   for (const cache of cacheValues) {
-    const request = new Request("http://localhost:8080/", { cache });
+    // "only-if-cached" is only valid with mode: "same-origin" (Fetch spec step 31)
+    const mode = cache === "only-if-cached" ? "same-origin" : undefined;
+    const request = new Request("http://localhost:8080/", { cache, mode });
     expect(request.cache).toBe(cache);
   }
 });

@@ -115,7 +115,7 @@ jobs:
                     pullRequest(number: $pr) {
                       reviewThreads(first: 100, after: $after) {
                         pageInfo { hasNextPage endCursor }
-                        nodes { id isResolved comments(first: 1) { nodes { body } } }
+                        nodes { id isResolved comments(first: 1) { nodes { body author { login } } } }
                       }
                     }
                   }
@@ -133,8 +133,11 @@ jobs:
             const seenKeys = new Set();
             const toResolve = [];
             for (const t of threads) {
-              const body = t.comments.nodes[0]?.body || '';
-              const m = /<!-- comment-cop:([^>\s]+) -->/.exec(body);
+              const root = t.comments.nodes[0];
+              // The marker alone is forgeable (anyone can paste it into their own
+              // review comment), so only trust threads this workflow opened.
+              if (root?.author?.login !== 'github-actions') continue;
+              const m = /<!-- comment-cop:([^>\s]+) -->/.exec(root.body || '');
               if (!m) continue;
               const key = m[1];
               seenKeys.add(key);
@@ -206,3 +209,8 @@ jobs:
               }
             }
             core.info(`Resolved ${resolved} of ${ids.length} stale comment-cop thread(s).`);
+            if (ids.length > 0 && resolved === 0) {
+              // Fail the step (continue-on-error keeps the job green) so a dead
+              // token shows up as an error annotation instead of silent warnings.
+              core.setFailed(`All ${ids.length} resolveReviewThread mutations failed; check ROBOBUN_TOKEN.`);
+            }

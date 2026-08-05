@@ -2896,6 +2896,47 @@ fn specifier_cache_resolver_buf() -> *mut bun_paths::PathBuffer {
     p
 }
 
+/// Heap-backed so only a pointer lives in TLS; see test/js/bun/binary/tls-segment-size.
+#[thread_local]
+static ESM_SPECIFIER_DECODE_BUF: core::cell::Cell<*mut bun_paths::PathBuffer> =
+    core::cell::Cell::new(core::ptr::null_mut());
+
+#[inline]
+fn esm_specifier_decode_buf() -> *mut bun_paths::PathBuffer {
+    let mut p = ESM_SPECIFIER_DECODE_BUF.get();
+    if p.is_null() {
+        p = bun_core::heap::into_raw(Box::new(bun_paths::PathBuffer::ZEROED));
+        ESM_SPECIFIER_DECODE_BUF.set(p);
+    }
+    p
+}
+
+/// Node's ESM loader percent-decodes relative specifiers via
+/// `fileURLToPath()` and rejects encoded separators before decoding.
+/// Absolute paths are left to the callers' existing `file://` handling.
+#[cold]
+pub fn decode_esm_specifier(path: &[u8]) -> Option<&'static [u8]> {
+    // %2F,%5C: Node's ERR_INVALID_MODULE_SPECIFIER. %3F: Bun's module key
+    // re-splits on '?' at fetch time, so a decoded '?' cannot round-trip.
+    for sep in [b"%2f".as_slice(), b"%2F", b"%3f", b"%3F", b"%5c", b"%5C"] {
+        if bun_core::strings::contains(path, sep) {
+            return None;
+        }
+    }
+    // SAFETY: threadlocal heap allocation; `_resolve` does not recurse, so
+    // this is the unique live `&mut` on the JS thread for this call.
+    let buf = unsafe { &mut *esm_specifier_decode_buf() }.as_mut_slice();
+    if path.len() > buf.len() {
+        return None;
+    }
+    match bun_url::PercentEncoding::decode_into(buf, path) {
+        // SAFETY: `buf` is a threadlocal heap allocation that outlives the
+        // synchronous `resolve_and_auto_install` call below.
+        Ok(n) => Some(unsafe { bun_ptr::detach_lifetime(&buf[..n as usize]) }),
+        Err(_) => None,
+    }
+}
+
 fn ensure_source_code_printer() {
     if SOURCE_CODE_PRINTER.get().is_none() {
         let writer = bun_js_printer::BufferWriter::init();
@@ -3998,7 +4039,15 @@ impl VirtualMachine {
 
         let is_special_source = source == MAIN_FILE_NAME || Macro::is_macro_path(source);
         let mut query_string: &[u8] = b"";
-        let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
+        let mut normalized_specifier =
+            normalize_specifier_for_resolution(specifier, &mut query_string);
+        if is_esm
+            && bun_core::strings::contains_char(normalized_specifier, b'%')
+            && (normalized_specifier.starts_with(b"./") || normalized_specifier.starts_with(b"../"))
+        {
+            normalized_specifier = decode_esm_specifier(normalized_specifier)
+                .ok_or(crate::CrateError::ModuleNotFound)?;
+        }
         let top_level_dir = self.top_level_dir();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {

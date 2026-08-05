@@ -498,8 +498,8 @@ impl FontFormat {
     }
 
     fn deep_clone(&self, _arena: &bun_alloc::Arena) -> Self {
-        // `css.implementDeepClone` variant-walk. All payloads are
-        // `Copy` / arena-slice idents → identity copy.
+        // `css.implementDeepClone` variant-walk. Keyword and arena-backed
+        // identifier variants are copied directly; owned String bytes are cloned.
         match self {
             FontFormat::Keyword(keyword) => FontFormat::Keyword(*keyword),
             FontFormat::QuotedKeyword(keyword) => FontFormat::QuotedKeyword(*keyword),

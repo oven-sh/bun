@@ -1,7 +1,8 @@
+// https://github.com/oven-sh/bun/issues/17264
 import { cssInternals } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 
-const { minifyTest, testWithOptions } = cssInternals;
+const { testWithOptions } = cssInternals;
 
 test("single-quotes in format are transformed", () => {
   const source = `@font-face {

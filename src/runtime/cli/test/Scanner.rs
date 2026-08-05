@@ -300,7 +300,11 @@ impl<'a> Scanner<'a> {
         }
 
         for filter_name in self.filter_names {
-            if strings::index_of(name, filter_name).is_some() {
+            if is_glob_filter(filter_name) {
+                if bun_glob::r#match(filter_name, name).matches() {
+                    return true;
+                }
+            } else if strings::index_of(name, filter_name).is_some() {
                 return true;
             }
         }
@@ -445,3 +449,8 @@ impl<'a> Scanner<'a> {
 }
 
 pub(crate) const TEST_NAME_SUFFIXES: [&[u8]; 4] = [b".test", b"_test", b".spec", b"_spec"];
+
+/// Only `*` (never valid in a path) flips a filter to glob matching; `?[{!` stay substring.
+pub(crate) fn is_glob_filter(filter: &[u8]) -> bool {
+    strings::index_of_char(filter, b'*').is_some()
+}

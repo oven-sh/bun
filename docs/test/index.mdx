@@ -42,7 +42,7 @@ The runner recursively searches the working directory for files that match the f
 - `*.spec.{js|jsx|ts|tsx|mjs|cjs|mts|cts}`
 - `*_spec.{js|jsx|ts|tsx|mjs|cjs|mts|cts}`
 
-To filter the set of _test files_ to run, pass additional positional arguments to `bun test`. Any test file with a path that matches one of the filters runs. Filters are commonly file or directory names; glob patterns are not yet supported.
+To filter the set of _test files_ to run, pass additional positional arguments to `bun test`. Any test file with a path that matches one of the filters runs. A filter that contains `*` is matched as a glob pattern (for example `bun test 'test/**/*.test.ts'`); other filters are substring matches against the path.
 
 ```bash terminal icon="terminal"
 bun test <filter> <filter> ...

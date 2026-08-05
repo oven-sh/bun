@@ -492,7 +492,9 @@ export function windowsEnv(
     set(_, p, value) {
       const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
-      value = String(value); // If toString() throws, we want to avoid it existing in the envMapList
+      // Spec ToString, not String(): Symbol values must throw TypeError (Node.js
+      // behavior), and a throwing toString() must fire before envMapList is touched.
+      value = `${value}`;
       // Track the key for enumeration if it isn't already there. Don't gate on
       // `k in internalEnv`: the proxy-related env-var accessors (HTTP_PROXY,
       // HTTPS_PROXY, NO_PROXY and lowercase variants) always exist on
@@ -530,11 +532,20 @@ export function windowsEnv(
     defineProperty(_, p, attributes) {
       const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
-      if (!(k in internalEnv) && !envMapList.includes(p)) {
+      // Node coerces env values to strings on defineProperty too, same as assignment.
+      let coerced: string | undefined;
+      if ("value" in attributes) {
+        coerced = `${attributes.value}`;
+        attributes = { ...attributes, value: coerced };
+      }
+      $Object.$defineProperty(internalEnv, k, attributes);
+      // Sync the new value and record the key for enumeration only after a
+      // successful define, so a failed define leaves no phantom state.
+      if (!envMapList.includes(p) && !envMapList.some(x => x.toUpperCase() === k)) {
         envMapList.push(p);
       }
-      editWindowsEnvVar(k, internalEnv[k]);
-      return $Object.$defineProperty(internalEnv, k, attributes);
+      if (coerced !== undefined) editWindowsEnvVar(k, coerced);
+      return true;
     },
     getOwnPropertyDescriptor(target, p) {
       if (typeof p === "string") {

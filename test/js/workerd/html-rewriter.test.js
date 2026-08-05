@@ -1129,6 +1129,18 @@ describe("HTMLRewriter", () => {
     expect(await output.text()).toBe("<div><blink>it worked!</blink></div>");
   });
 
+  it("(from file) rejects with ENOENT when the file does not exist", async () => {
+    const rewriter = new HTMLRewriter().on("div", { element() {} });
+    const missing = join(tmpdirSync(), "html-rewriter-does-not-exist.html");
+    const output = rewriter.transform(new Response(Bun.file(missing)));
+    const err = await output.text().then(
+      () => null,
+      e => e,
+    );
+    expect(err).not.toBeNull();
+    expect(err.code).toBe("ENOENT");
+  });
+
   it("supports attribute iterator", async () => {
     var rewriter = new HTMLRewriter();
     var expected = [

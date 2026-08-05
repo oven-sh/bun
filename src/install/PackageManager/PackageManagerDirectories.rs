@@ -149,9 +149,21 @@ const _: fn() = || {
 static GET_TEMPORARY_DIRECTORY_ONCE: std::sync::OnceLock<TemporaryDirectory> =
     std::sync::OnceLock::new();
 
+#[cold]
+fn crash_cache_directory_unwritable(cache_directory_path: &[u8], err: &sys::Error) -> ! {
+    bun_core::pretty_errorln!(
+        "<r><red>error<r>: bun is unable to write to the install cache directory {}: {}",
+        bun_fmt::quote(cache_directory_path),
+        bun_fmt::s(err.name())
+    );
+    bun_core::note!("set <b>$BUN_INSTALL_CACHE_DIR<r> to a writable path");
+    Global::crash();
+}
+
 fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirectory {
     let cache_directory_fd = get_cache_directory(manager);
     let cache_directory = Dir::borrow(&cache_directory_fd);
+    let cache_directory_path = manager.cache_directory_path.as_bytes();
     // The chosen tempdir must be on the same filesystem as the cache directory
     // This makes renameat() work
     let temp_dir_name = FileSystem::get_default_temp_dir();
@@ -168,13 +180,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                     Default::default(),
                 ) {
                     Ok(d) => d,
-                    Err(err) => {
-                        bun_core::pretty_errorln!(
-                            "<r><red>error<r>: bun is unable to access tempdir: {}",
-                            bun_fmt::s(err.name())
-                        );
-                        Global::crash();
-                    }
+                    Err(err) => crash_cache_directory_unwritable(cache_directory_path, &err),
                 }
             }
         };
@@ -208,13 +214,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                         Default::default(),
                     ) {
                         Ok(d) => d,
-                        Err(err) => {
-                            bun_core::pretty_errorln!(
-                                "<r><red>error<r>: bun is unable to access tempdir: {}",
-                                bun_fmt::s(err.name())
-                            );
-                            Global::crash();
-                        }
+                        Err(err) => crash_cache_directory_unwritable(cache_directory_path, &err),
                     };
 
                     if verbose_install() {
@@ -226,11 +226,9 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
 
                     continue 'brk;
                 }
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r>: {} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL<r>",
-                    bun_fmt::s(err2.name())
-                );
-                Global::crash();
+                // `tried_dot_tmp`, so `tempdir` is `<cache>/.tmp`: the cache
+                // directory is what isn't writable, not the system tempdir.
+                crash_cache_directory_unwritable(cache_directory_path, &err2)
             }
         };
         let _ = file.close(); // close error is non-actionable
@@ -242,13 +240,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                     tried_dot_tmp = true;
                     tempdir = match cache_directory.make_open_path(b".tmp", Default::default()) {
                         Ok(d) => d,
-                        Err(err2) => {
-                            bun_core::pretty_errorln!(
-                                "<r><red>error<r>: bun is unable to write files to tempdir: {}",
-                                bun_fmt::s(err2.name())
-                            );
-                            Global::crash();
-                        }
+                        Err(err2) => crash_cache_directory_unwritable(cache_directory_path, &err2),
                     };
 
                     if verbose_install() {
@@ -261,11 +253,9 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                     continue 'brk;
                 }
 
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r>: {} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL<r>",
-                    bun_fmt::s(err.name())
-                );
-                Global::crash();
+                // `tried_dot_tmp`, so the rename source is `<cache>/.tmp` and
+                // the destination is always the cache directory itself.
+                crash_cache_directory_unwritable(cache_directory_path, &err)
             }
         }
         let _ = cache_directory.delete_file_z(tmpname);

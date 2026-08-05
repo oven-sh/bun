@@ -1922,9 +1922,21 @@ pub(crate) fn install_isolated_packages(
 
     // A previous install with hoisting enabled left the fallback directory
     // behind; remove it so undeclared imports stop resolving through it.
+    // A failure other than the tree already being gone (`delete_tree` treats
+    // that as success) means the requested layout cannot be produced, so fail
+    // like the mkdir calls above.
     if !manager.options.hoist && !is_new_bun_modules {
         use bun_sys::FdExt as _;
-        let _ = Fd::cwd().delete_tree(paths::path_literal!("node_modules/.bun/node_modules"));
+        if let Err(err) =
+            Fd::cwd().delete_tree(paths::path_literal!("node_modules/.bun/node_modules"))
+        {
+            Output::err(
+                err,
+                "failed to remove './node_modules/.bun/node_modules'",
+                format_args!(""),
+            );
+            Global::exit(1);
+        }
     }
 
     {

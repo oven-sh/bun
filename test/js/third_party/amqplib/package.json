@@ -1,0 +1,6 @@
+{
+  "name": "amqplib-test",
+  "dependencies": {
+    "amqplib": "0.10.5"
+  }
+}

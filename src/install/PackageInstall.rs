@@ -1135,9 +1135,10 @@ impl<'a> PackageInstall<'a> {
                                             bun_errno::SystemErrno::ENOENT,
                                         ));
                                     }
-                                    match destbase
-                                        .make_open_path(destpath.as_bytes(), OpenDirOptions::default())
-                                    {
+                                    match destbase.make_open_path(
+                                        destpath.as_bytes(),
+                                        OpenDirOptions::default(),
+                                    ) {
                                         Ok(reopened) => *subdir = reopened,
                                         // A peer can race the re-create
                                         // itself; anything else will not

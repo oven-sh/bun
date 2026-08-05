@@ -937,8 +937,6 @@ impl StatWatcher {
         // work-pool thread may still hold `&*watcher`). `ParentRef` Deref
         // gives that shared `&`.
         let this_ref = ParentRef::from(NonNull::new(this).expect("swap_and_call: watcher"));
-        // A task queued by the stat thread can run after `close()`, which
-        // downgrades `this_value` to a Weak whose cell may already be collected.
         if this_ref.closed.load(Ordering::Relaxed) {
             return Ok(());
         }

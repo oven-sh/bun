@@ -137,13 +137,25 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
           case "SELECT":
           case "PRAGMA":
           case "WITH":
-          case "EXPLAIN":
+          case "EXPLAIN": {
+            lastToken = token;
+
+            // Only top-level SELECT-like statements should return rows
+            if (command === SQLCommand.none) {
+              canReturnRows = true;
+            }
+
+            token = "";
+            continue;
+          }
+
           case "RETURNING": {
             lastToken = token;
             canReturnRows = true;
             token = "";
             continue;
           }
+
           default: {
             lastToken = token;
             token = "";
@@ -196,7 +208,13 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
       case "SELECT":
       case "PRAGMA":
       case "WITH":
-      case "EXPLAIN":
+      case "EXPLAIN": {
+        if (command === SQLCommand.none) {
+          canReturnRows = true;
+        }
+        break;
+      }
+
       case "RETURNING": {
         canReturnRows = true;
         break;

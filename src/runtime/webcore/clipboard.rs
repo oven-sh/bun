@@ -196,7 +196,11 @@ impl AnyTaskJobCtx for ClipboardCtx {
                 // here, under the lock, keeps its AbortError honest (the write
                 // never reaches the OS). `then()` still runs; the settled
                 // promise ignores it.
-                if self.request.as_ref().is_some_and(RequestHandle::is_cancelled) {
+                if self
+                    .request
+                    .as_ref()
+                    .is_some_and(RequestHandle::is_cancelled)
+                {
                     Outcome::Representations(Vec::new())
                 } else {
                     let borrowed: Vec<(Mime, &[u8])> =
@@ -673,7 +677,11 @@ mod platform {
     impl OwnedGlobal {
         fn from_bytes(payload: &[u8]) -> Option<OwnedGlobal> {
             let h = win32::global_from_bytes(payload);
-            if h.is_null() { None } else { Some(OwnedGlobal(h)) }
+            if h.is_null() {
+                None
+            } else {
+                Some(OwnedGlobal(h))
+            }
         }
 
         /// The system took ownership; do not free.

@@ -707,7 +707,16 @@ describe("Request body HiveRef pool returns slot via Body.Value.deinit (does not
         console.log(JSON.stringify({ kind: "${kind}", baselineMB: (baseline / 1024 / 1024) | 0, finalMB: (final / 1024 / 1024) | 0, deltaMB: Math.round(deltaMB) }));
         // 32 cycles * 512 Requests * 128 KiB = 2 GiB through the pool. If deinit() is
         // skipped for any heap-backed variant, RSS climbs by ~2 GiB; with the
-        // Zig semantics it stays flat. 64 MiB is well above GC/allocator noise.
+        // Zig semantics it stays flat.
+        // Bun.gc() runs mimalloc's collect before the JSC sweep, so the bodies a
+        // measurement GC frees stay committed until a later purge (default delay
+        // 100ms) that this synchronous loop may never reach; whether each rss()
+        // read catches purged or unpurged state showed up on loaded CI runners as
+        // a flat 68-74 MB offset between the two reads. MIMALLOC_PURGE_DELAY=0 in
+        // the spawn env makes frees decommit eagerly so rss() measures live
+        // memory (delta settles at 0 instead of jumping by one cycle's working
+        // set). It cannot hide a real leak: purge only touches freed pages, and
+        // retained bodies measure at full size.
         // ASAN's quarantine retains freed allocations so widen the threshold there.
         if (deltaMB > ${isASAN ? 320 : 64}) {
           throw new Error("Request body (${kind}) leaked " + Math.round(deltaMB) + " MB over 32 cycles of 512 Requests");
@@ -716,7 +725,7 @@ describe("Request body HiveRef pool returns slot via Body.Value.deinit (does not
 
         await using proc = Bun.spawn({
           cmd: [bunExe(), "--smol", "-e", script],
-          env: bunEnv,
+          env: { ...bunEnv, MIMALLOC_PURGE_DELAY: "0" },
           stdout: "pipe",
           stderr: "pipe",
         });

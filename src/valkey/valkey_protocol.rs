@@ -109,6 +109,20 @@ pub enum RESPValue {
 
 // `deinit` deleted — all payloads are Box/Vec; Drop is automatic.
 
+impl RESPValue {
+    /// Replace an attribute frame with the reply it decorates.
+    ///
+    /// RESP3 attributes (`|N`) are out-of-band metadata that may prefix any
+    /// reply, pushes included, so callers that dispatch on the variant must
+    /// strip the decoration first.
+    pub fn unwrap_attributes(&mut self) {
+        while let RESPValue::Attribute(attribute) = self {
+            let decorated = core::mem::replace(attribute.value.as_mut(), RESPValue::Null);
+            *self = decorated;
+        }
+    }
+}
+
 impl fmt::Display for RESPValue {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

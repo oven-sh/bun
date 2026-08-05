@@ -33,6 +33,64 @@ pub struct RefString {
     pub(crate) on_before_deinit: Option<Callback>,
 }
 
+/// RAII owner of one reference to an interned [`RefString`] (one
+/// `WTF::StringImpl` refcount). Mirrors `bun_core::OwnedString`: `Drop`
+/// releases the reference, `Clone` takes another one, and
+/// [`OwnedRefString::into_raw`] transfers it to a consumer that will release
+/// it (e.g. C++ via `ResolvedSource.source_code_needs_deref`).
+///
+/// Intentionally no `Deref` to [`RefString`]: `RefString::ref_`/`deref` are
+/// the raw refcount ops this type exists to encapsulate, so reaching them
+/// must go through the explicit [`OwnedRefString::get`].
+pub struct OwnedRefString(NonNull<RefString>);
+
+impl OwnedRefString {
+    /// Adopt a reference the caller already owns (e.g. the +1
+    /// `String::create_external` leaves on a fresh entry).
+    ///
+    /// # Safety
+    /// `p` points at a live `RefString` and the caller transfers exactly one
+    /// owned reference.
+    pub(crate) unsafe fn adopt(p: NonNull<RefString>) -> Self {
+        Self(p)
+    }
+
+    /// Take a new reference on a live `RefString`.
+    ///
+    /// # Safety
+    /// `p` points at a `RefString` that stays live for the duration of this
+    /// call (e.g. it sits in `ref_strings` under `ref_strings_mutex`).
+    pub(crate) unsafe fn claim(p: NonNull<RefString>) -> Self {
+        // SAFETY: caller contract — `p` is live for this call.
+        unsafe { p.as_ref() }.ref_();
+        Self(p)
+    }
+
+    pub fn get(&self) -> &RefString {
+        // SAFETY: `self` owns a reference, so the pointee is live.
+        unsafe { self.0.as_ref() }
+    }
+
+    /// Disarm the drop guard and hand the owned reference to the caller, who
+    /// becomes responsible for the matching `deref`.
+    pub fn into_raw(self) -> *mut RefString {
+        core::mem::ManuallyDrop::new(self).0.as_ptr()
+    }
+}
+
+impl Clone for OwnedRefString {
+    fn clone(&self) -> Self {
+        // SAFETY: `self` owns a reference, so the pointee is live.
+        unsafe { Self::claim(self.0) }
+    }
+}
+
+impl Drop for OwnedRefString {
+    fn drop(&mut self) {
+        self.get().deref();
+    }
+}
+
 impl RefString {
     pub(crate) fn compute_hash(input: &[u8]) -> u32 {
         bun_hash::XxHash32::hash(0, input)

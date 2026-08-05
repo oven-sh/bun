@@ -1307,7 +1307,7 @@ impl AsyncModule {
         if unsafe { (*jsc_vm).is_watcher_enabled() } {
             // SAFETY: per-thread VM.
             let mut resolved_source = unsafe {
-                (*jsc_vm).ref_counted_resolved_source::<false>(
+                (*jsc_vm).ref_counted_resolved_source(
                     printer.ctx.get_written(),
                     BunString::init(specifier),
                     path.text,

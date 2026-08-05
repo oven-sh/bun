@@ -3376,8 +3376,10 @@ impl<'a> Resolver<'a> {
             core::ptr::null_mut();
         let mut needs_iter = true;
         let mut in_place: Option<*mut Fs::file_system::DirEntry> = None;
-        let open_dir = match bun_sys::open_dir_for_iteration(FD::cwd(), dir_path) {
-            Ok(d) => d,
+        // `File` closes the fresh handle on every exit unless `into_raw`
+        // below transfers it to `DirEntry.fd`.
+        let open_dir_owned = match bun_sys::open_dir_for_iteration(FD::cwd(), dir_path) {
+            Ok(d) => bun_sys::File::from_fd(d),
             Err(err) => {
                 // TODO: handle this error better
                 let _ = self.log_mut().add_error_fmt(
@@ -3388,12 +3390,7 @@ impl<'a> Resolver<'a> {
                 return Err(err.into());
             }
         };
-        let open_dir_adopted = core::cell::Cell::new(false);
-        let _close_open_dir = scopeguard::guard((), |()| {
-            if !open_dir_adopted.get() {
-                let _ = ::bun_sys::close(open_dir);
-            }
-        });
+        let open_dir = open_dir_owned.fd();
 
         if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
             if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
@@ -3457,8 +3454,8 @@ impl<'a> Resolver<'a> {
             if let Some(prev) = prev_fd {
                 new_entry.fd = prev;
             } else if self.store_fd {
-                new_entry.fd = open_dir;
-                open_dir_adopted.set(true);
+                // The entry takes over the handle's lifecycle.
+                new_entry.fd = open_dir_owned.into_raw();
             }
             // NOTE: see `dir_info_cached_maybe_log` — `DirEntry.data` holds a `NonNull`,
             // so a zeroed slot is UB; box `new_entry` directly for the fresh case.
@@ -4434,14 +4431,10 @@ impl<'a> Resolver<'a> {
             if open_dir_freshly_opened {
                 Fs::FileSystem::set_max_fd(open_dir.native());
             }
-            // A freshly opened handle is released at the end of this iteration
-            // unless it was stored as `DirEntry.fd` (the entry then owns it).
-            let open_dir_adopted = core::cell::Cell::new(false);
-            let _close_unadopted = scopeguard::guard((), |()| {
-                if open_dir_freshly_opened && !open_dir_adopted.get() {
-                    let _ = ::bun_sys::close(open_dir);
-                }
-            });
+            // A freshly opened handle closes (`File` drop) at the end of this
+            // iteration unless `take()` below transfers it to `DirEntry.fd`.
+            let mut open_dir_owned =
+                open_dir_freshly_opened.then(|| bun_sys::File::from_fd(open_dir));
 
             let dir_path: &'static [u8] = if !queue_top_safe_path.is_empty() {
                 // SAFETY: non-empty `safe_path` is always a dirname_store-backed
@@ -4570,8 +4563,13 @@ impl<'a> Resolver<'a> {
                 new_entry.fd = if let Some(prev) = prev_fd {
                     prev
                 } else if self.store_fd {
-                    open_dir_adopted.set(open_dir.is_valid());
-                    open_dir
+                    match open_dir_owned.take() {
+                        // The entry takes over the fresh handle's lifecycle.
+                        Some(owned) => owned.into_raw(),
+                        // Not freshly opened: the cached handle seeded from
+                        // `queue_top.fd` (the slot already owns it) or INVALID.
+                        None => open_dir,
+                    }
                 } else {
                     FD::INVALID
                 };

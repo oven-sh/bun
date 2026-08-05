@@ -3025,7 +3025,7 @@ unsafe extern "C" {
 
 extern "C" fn free_ref_string(str_: *mut crate::ref_string::RefString, _: *mut c_void, _: usize) {
     // SAFETY: `str_` is the `ctx` we passed to `String::create_external` in
-    // `ref_counted_string_with_was_new`; it points at a heap `RefString`.
+    // `ref_counted_string`; it points at a heap `RefString`.
     unsafe { crate::ref_string::RefString::destroy(str_) };
 }
 
@@ -3663,11 +3663,11 @@ impl VirtualMachine {
     }
 
     /// Stored as [`RefString::on_before_deinit`] (an unsafe-fn-ptr slot) in
-    /// [`ref_counted_string_with_was_new`]; only ever invoked from
+    /// [`ref_counted_string`]; only ever invoked from
     /// `RefString::destroy` with the live `*mut RefString` being torn down.
     fn clear_ref_string(_: *mut c_void, ref_string: *mut crate::ref_string::RefString) {
         // SAFETY: only reachable via `RefString::destroy`, which passes the
-        // live heap `RefString` allocated in `ref_counted_string_with_was_new`;
+        // live heap `RefString` allocated in `ref_counted_string`;
         // safe-fn coerces to the unsafe-fn-ptr `Callback` slot type.
         let hash = unsafe { &*ref_string }.hash;
         // SAFETY: `get()` is the live per-thread VM.
@@ -3675,7 +3675,7 @@ impl VirtualMachine {
     }
 
     /// Builds a `ResolvedSource` backed by a ref-counted copy of `code` interned in the VM's ref-string map.
-    pub fn ref_counted_resolved_source<const ADD_DOUBLE_REF: bool>(
+    pub fn ref_counted_resolved_source(
         &mut self,
         code: &[u8],
         specifier: bun_core::String,
@@ -3692,38 +3692,29 @@ impl VirtualMachine {
                 ..Default::default()
             };
         }
-        // Const-generic bool can't be `!ADD_DOUBLE_REF`, so branch.
-        let source = if ADD_DOUBLE_REF {
-            self.ref_counted_string::<false>(code, hash_)
-        } else {
-            self.ref_counted_string::<true>(code, hash_)
-        };
-        // SAFETY: `ref_counted_string` returns a live `*mut RefString` held in
-        // `self.ref_strings`; we own +1 (or +3 below) until JSC calls the
-        // external-string finalizer.
-        let source_ref = unsafe { &*source };
-        if ADD_DOUBLE_REF {
-            source_ref.ref_();
-            source_ref.ref_();
-        }
+        let source = self.ref_counted_string::<true>(code, hash_);
+        let source_code = bun_core::String::adopt_wtf_impl(source.get().impl_);
 
         ResolvedSource {
-            source_code: bun_core::String::adopt_wtf_impl(source_ref.impl_),
+            source_code,
             specifier,
             source_url: create_if_different(&specifier, source_url),
-            allocator: source.cast::<c_void>(),
+            // `source_code_needs_deref` makes the consumer release the
+            // reference transferred here.
+            allocator: source.into_raw().cast::<c_void>(),
             source_code_needs_deref: true,
             ..Default::default()
         }
     }
 
-    fn ref_counted_string_with_was_new<const DUPE: bool>(
+    /// Interns `input_` in the VM's ref-string map and returns an owned
+    /// reference to the entry.
+    pub fn ref_counted_string<const DUPE: bool>(
         &mut self,
-        new: &mut bool,
         input_: &[u8],
         hash_: Option<u32>,
-    ) -> *mut crate::ref_string::RefString {
-        use crate::ref_string::RefString;
+    ) -> crate::ref_string::OwnedRefString {
+        use crate::ref_string::{OwnedRefString, RefString};
         use bun_collections::zig_hash_map::MapEntry as Entry;
         jsc::mark_binding();
         debug_assert!(!input_.is_empty());
@@ -3737,13 +3728,11 @@ impl VirtualMachine {
 
         match self.ref_strings.entry(hash) {
             Entry::Occupied(o) => {
-                *new = false;
-                let r = *o.get();
-                // SAFETY: `r` is live while it sits in `ref_strings` under
-                // `ref_strings_mutex`. Take the caller's +1 here so it is
-                // secured before the lock drops.
-                unsafe { (*r).ref_() };
-                r
+                // SAFETY: the entry is live while it sits in `ref_strings`
+                // under `ref_strings_mutex` (map pointers are non-null by
+                // construction); `claim` secures the returned reference
+                // before the lock drops.
+                unsafe { OwnedRefString::claim(NonNull::new_unchecked(*o.get())) }
             }
             Entry::Vacant(v) => {
                 // Dupe the input bytes when `DUPE`, otherwise
@@ -3779,23 +3768,12 @@ impl VirtualMachine {
                 // SAFETY: see above.
                 unsafe { (*ref_).impl_ = s.leak_wtf_impl() };
                 v.insert(ref_);
-                *new = true;
-                ref_
+                // SAFETY: `ref_` is non-null (just boxed); `create_external`
+                // left one reference on the fresh impl, which the owner
+                // adopts.
+                unsafe { OwnedRefString::adopt(NonNull::new_unchecked(ref_)) }
             }
         }
-    }
-
-    /// Interns `input_` and returns the entry with exactly +1 owed to the caller.
-    pub fn ref_counted_string<const DUPE: bool>(
-        &mut self,
-        input_: &[u8],
-        hash_: Option<u32>,
-    ) -> *mut crate::ref_string::RefString {
-        debug_assert!(!input_.is_empty());
-        let mut was_new = false;
-        // Fresh entries have +1 from `create_external`; the Occupied arm
-        // takes +1 under `ref_strings_mutex`.
-        self.ref_counted_string_with_was_new::<DUPE>(&mut was_new, input_, hash_)
     }
 
     // Note: `flags` is a runtime arg —

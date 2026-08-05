@@ -75,6 +75,12 @@ pub struct Options {
     pub(crate) public_hoist_pattern: Option<Api::PnpmMatcher>,
     pub(crate) hoist_pattern: Option<Api::PnpmMatcher>,
 
+    /// Isolated linker only: when `false`, skip creating the
+    /// `node_modules/.bun/node_modules` fallback directory entirely, so store
+    /// packages can only resolve dependencies they declare. Equivalent to
+    /// pnpm's `hoist=false`; takes precedence over `hoist_pattern`.
+    pub(crate) hoist: bool,
+
     // Security scanner module path
     pub security_scanner: Option<&'static [u8]>,
 
@@ -147,6 +153,7 @@ impl Default for Options {
             node_linker: NodeLinker::Auto,
             public_hoist_pattern: None,
             hoist_pattern: None,
+            hoist: true,
             security_scanner: None,
             minimum_release_age_ms: None,
             minimum_release_age_excludes: None,
@@ -460,6 +467,10 @@ impl Options {
 
             if let Some(global_store) = config.global_store {
                 self.enable.set(Enable::GLOBAL_VIRTUAL_STORE, global_store);
+            }
+
+            if let Some(hoist) = config.hoist {
+                self.hoist = hoist;
             }
 
             if let Some(security_scanner) = config.security_scanner.as_deref() {

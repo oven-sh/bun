@@ -242,4 +242,8 @@ public-hoist-pattern[]=*prettier*
 
 # control general hoisting behavior
 hoist-pattern=*
+
+# disable the node_modules/.bun/node_modules fallback entirely,
+# so packages can only resolve dependencies they declare
+hoist=false
 ```

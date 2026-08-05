@@ -2017,10 +2017,20 @@ cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
     }
     if (opts.publicHoistPattern) {
       if (typeof opts.publicHoistPattern === "string") {
-        bunfig += `publicHoistPattern = "${opts.publicHoistPattern}"`;
+        bunfig += `publicHoistPattern = "${opts.publicHoistPattern}"\n`;
       } else {
-        bunfig += `publicHoistPattern = [${opts.publicHoistPattern.map(p => `"${p}"`).join(", ")}]`;
+        bunfig += `publicHoistPattern = [${opts.publicHoistPattern.map(p => `"${p}"`).join(", ")}]\n`;
       }
+    }
+    if (opts.hoistPattern) {
+      if (typeof opts.hoistPattern === "string") {
+        bunfig += `hoistPattern = "${opts.hoistPattern}"\n`;
+      } else {
+        bunfig += `hoistPattern = [${opts.hoistPattern.map(p => `"${p}"`).join(", ")}]\n`;
+      }
+    }
+    if (opts.hoist !== undefined) {
+      bunfig += `hoist = ${opts.hoist}\n`;
     }
     await write(join(dir, "bunfig.toml"), bunfig);
   }
@@ -2032,6 +2042,8 @@ type BunfigOpts = {
   linker?: "isolated" | "hoisted";
   globalStore?: boolean;
   publicHoistPattern?: string | string[];
+  hoistPattern?: string | string[];
+  hoist?: boolean;
 };
 
 export async function readdirSorted(path: string): Promise<string[]> {

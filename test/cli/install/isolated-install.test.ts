@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import { createRequire } from "module";
 import { dirname, join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -2442,4 +2443,150 @@ test("invalid --linker value is echoed back in the error", async () => {
   expect(stderr).toContain('--linker: "isoalted"');
   expect(stderr).toContain("'isolated' or 'hoisted'");
   expect(exitCode).toBe(1);
+});
+
+describe("hoist", () => {
+  // `node_modules/.bun/node_modules` holds a symlink to every installed
+  // package and sits on the upward resolution path of every store entry, so
+  // by default a store package can resolve dependencies it never declared.
+  // `install.hoist = false` (pnpm's `hoist=false`) skips that fallback
+  // directory without touching the rest of the layout.
+  test("hoist = false skips the hidden fallback directory", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", hoist: false },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-false",
+        dependencies: {
+          "two-range-deps": "1.0.0",
+          "a-dep": "1.0.1",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(existsSync(join(packageDir, "node_modules", ".bun", "node_modules"))).toBeFalse();
+
+    // declared dependency symlinks are unchanged
+    expect(readlinkSync(join(packageDir, "node_modules", "a-dep"))).toBe(
+      join(".bun", "a-dep@1.0.1", "node_modules", "a-dep"),
+    );
+    expect(readlinkSync(join(packageDir, "node_modules", "two-range-deps"))).toBe(
+      join(".bun", "two-range-deps@1.0.0", "node_modules", "two-range-deps"),
+    );
+
+    // a store package still resolves the dependencies it declares
+    const fromTwoRangeDeps = createRequire(
+      join(
+        packageDir,
+        "node_modules",
+        ".bun",
+        "two-range-deps@1.0.0",
+        "node_modules",
+        "two-range-deps",
+        "package.json",
+      ),
+    );
+    expect(fromTwoRangeDeps.resolve("no-deps/package.json")).toEndWith(
+      join(".bun", "no-deps@1.1.0", "node_modules", "no-deps", "package.json"),
+    );
+
+    // and cannot resolve a package it does not declare
+    const fromADep = createRequire(
+      join(packageDir, "node_modules", ".bun", "a-dep@1.0.1", "node_modules", "a-dep", "package.json"),
+    );
+    expect(() => fromADep.resolve("no-deps/package.json")).toThrow();
+  });
+
+  test("hoist = false removes a stale fallback directory from a previous install", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-stale",
+        dependencies: {
+          "two-range-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    // hoisting is on by default: transitive deps resolve through the fallback
+    expect(readlinkSync(join(packageDir, "node_modules", ".bun", "node_modules", "no-deps"))).toBe(
+      join("..", "no-deps@1.1.0", "node_modules", "no-deps"),
+    );
+
+    await registry.writeBunfig(packageDir, { linker: "isolated", hoist: false });
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    expect(existsSync(join(packageDir, "node_modules", ".bun", "node_modules"))).toBeFalse();
+
+    // the rest of the install is untouched: removing the fallback symlinks
+    // must not touch the store entries they pointed at
+    expect(readlinkSync(join(packageDir, "node_modules", "two-range-deps"))).toBe(
+      join(".bun", "two-range-deps@1.0.0", "node_modules", "two-range-deps"),
+    );
+    expect(
+      await file(join(packageDir, "node_modules", "two-range-deps", "package.json")).json(),
+    ).toMatchObject({ name: "two-range-deps" });
+    expect(
+      await file(
+        join(packageDir, "node_modules", ".bun", "no-deps@1.1.0", "node_modules", "no-deps", "package.json"),
+      ).json(),
+    ).toMatchObject({ name: "no-deps", version: "1.1.0" });
+  });
+
+  test("hoist = false takes precedence over hoistPattern", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", hoist: false, hoistPattern: "*" },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-precedence",
+        dependencies: {
+          "two-range-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(existsSync(join(packageDir, "node_modules", ".bun", "node_modules"))).toBeFalse();
+  });
+
+  test("npmrc hoist=false", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        ".npmrc": "hoist=false",
+      },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-npmrc",
+        dependencies: {
+          "two-range-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(existsSync(join(packageDir, "node_modules", ".bun", "node_modules"))).toBeFalse();
+    expect(readlinkSync(join(packageDir, "node_modules", "two-range-deps"))).toBe(
+      join(".bun", "two-range-deps@1.0.0", "node_modules", "two-range-deps"),
+    );
+  });
 });

@@ -683,11 +683,20 @@ publicHoistPattern = ["*eslint*", "*prettier*"]
 
 ### `install.hoistPattern`
 
-When using the `"isolated"` linker, packages matching these glob patterns are hoisted to the virtual store root (`node_modules/.bun`) so they can be resolved by other packages in the virtual store. Default `[]`. Similar to pnpm's `hoist-pattern`.
+When using the `"isolated"` linker, packages matching these glob patterns are hoisted to a fallback directory inside the virtual store (`node_modules/.bun/node_modules`) so they can be resolved by other packages in the virtual store. By default every package is hoisted there, equivalent to `["*"]`. Similar to pnpm's `hoist-pattern`.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
 hoistPattern = ["*"]
+```
+
+### `install.hoist`
+
+When using the `"isolated"` linker, Bun creates `node_modules/.bun/node_modules`, a fallback directory containing a symlink to every installed package. It sits on the upward resolution path of every package in the store, so a package can still resolve dependencies it never declared ("phantom dependencies"). Set `hoist = false` to skip creating this directory entirely: packages in the store can then only resolve the dependencies they declare, while the project's own `node_modules` symlinks are unchanged. Default `true`. Equivalent to pnpm's `hoist` setting; takes precedence over `install.hoistPattern`.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+hoist = false
 ```
 
 ### `install.logLevel`

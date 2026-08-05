@@ -276,6 +276,61 @@ describe("echo | bun run -", () => {
   group(run);
 });
 
+// https://github.com/oven-sh/bun/issues/36994
+describe.concurrent("builtin module globals in eval mode", () => {
+  test("top-level const with a builtin's name does not load the module before the body runs", async () => {
+    // node:zlib captures buffer.kMaxLength at module load. Patching kMaxLength
+    // before require("node:zlib") only takes effect if declaring `const zlib`
+    // did not already evaluate the module.
+    const code = `
+      const b = require("node:buffer");
+      b.kMaxLength = 64;
+      const zlib = require("node:zlib");
+      try {
+        zlib.inflateSync(Buffer.from("789c4b4c1c58000039743081", "hex"));
+        console.log("no throw");
+      } catch (e) {
+        console.log("threw", e.constructor.name);
+      }
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("threw RangeError\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("top-level const shadows the builtin global", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "const fs = 1; console.log(fs)"],
+      env: bunEnv,
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("1\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("builtin globals still lazily require the module on read", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "console.log(typeof zlib.inflateSync)"],
+      env: bunEnv,
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("function\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("assignment replaces the builtin global", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "zlib = 5; console.log(zlib)"],
+      env: bunEnv,
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("5\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 test("process._eval (undefined for normal run)", async () => {
   const cwd = tmpdirSync();
   const file = join(cwd, "test.js");

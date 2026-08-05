@@ -72,12 +72,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStartOfFixedExecutableMemoryPool,
 #endif
 
 #if ASSERT_ENABLED
-// Deliberately mutates a strong handle owned by this VM from a spawned thread
-// that does not hold the API lock. The debug-only thread-affinity assertions
-// (JSC::HandleSet::assertMayMutate for JSC::Strong, the Bun__StrongRef__*
-// asserts for StrongRootBlock slots) must abort the process before the
-// mutation lands; the test asserting on that crash is what keeps the
-// detectors from rotting silently. Only compiled when the assertions are.
+// Test hook: mutates a strong handle owned by this VM from a spawned thread
+// without the API lock. The debug assertions in JSC::HandleSet and
+// Bun__StrongRef__* must abort before the mutation lands;
+// strong-handle-thread-guard.test.ts asserts on that crash.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCrossThreadStrongHandleMutation,
     (JSGlobalObject * globalObject, CallFrame* callframe))
 {

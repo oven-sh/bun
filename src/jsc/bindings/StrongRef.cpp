@@ -48,12 +48,9 @@ static ALWAYS_INLINE StrongRootBlock* decodeStrongRefBlock(StrongRefImpl* ref)
     return reinterpret_cast<StrongRootBlock*>(slot - static_cast<uintptr_t>(decodeStrongRefIndex(ref)) * sizeof(StrongRootBlock::Slot) - StrongRootBlock::slotsOffset());
 }
 
-// The StrongRootBlock list hangs off JSVMClientData with no synchronization:
-// the "Srb" marking constraint (BunClientData.cpp) scans it assuming only the
-// mutator, holding the VM's API lock, ever writes it. These asserts are the
-// StrongRootBlock mirror of JSC::HandleSet::assertMayMutate, and check the
-// OWNER VM (the block's), so a thread that has some other VM's lock still
-// trips them.
+// The "Srb" marking constraint (BunClientData.cpp) scans the StrongRootBlock
+// list without synchronization; holding the owner VM's API lock is what
+// orders these mutations with that scan. Mirrors JSC::HandleSet's assertion.
 #define ASSERT_STRONG_REF_MUTATION_ALLOWED(vm) \
     ASSERT_WITH_MESSAGE((vm).currentThreadIsHoldingAPILock(), "Bun::StrongRef handles may only be created, written, or destroyed while holding their VM's API lock")
 

@@ -571,7 +571,7 @@ enum RewritePhase {
 /// The JS wrapper a suspended handler is still using. Typed so the retarget/
 /// release dispatch is a match, not a `c_void` + fn-ptr pair.
 #[derive(Clone, Copy)]
-pub enum SuspendedWrapper {
+enum SuspendedWrapper {
     Element(NonNull<Element>),
     Comment(NonNull<Comment>),
     TextChunk(NonNull<TextChunk>),
@@ -886,8 +886,14 @@ impl RewriterPipe {
     #[inline]
     fn output_backpressured(&self) -> bool {
         if let Some(out) = self.output.get() {
-            return out.sink_paused.get()
-                || out.buffer.get().len() as BlobSizeType > self.high_water_mark.get();
+            if out.sink_paused.get() {
+                return true;
+            }
+            // A body-mixin collector grows `buffer` deliberately until Done.
+            if out.buffer_action.get().is_some() {
+                return false;
+            }
+            return out.buffer.get().len() as BlobSizeType > self.high_water_mark.get();
         }
         // No output ByteStream yet: the pre-stream buffer has no drain signal
         // (only `on_start_streaming`/`finish` consume it), so backpressuring
@@ -1850,7 +1856,7 @@ impl DocumentHandler {
 
 /// Trait abstracting the per-handler bits `HandlerCallback` needs:
 /// `global` field and (optionally) `thisObject`.
-pub trait HandlerLike {
+trait HandlerLike {
     fn global(&self) -> &JSGlobalObject;
     fn this_object(&self) -> JSValue {
         JSValue::ZERO
@@ -1881,7 +1887,7 @@ impl HandlerLike for EndTagHandler {
 
 /// Trait abstracting the wrapper-type bits [`handler_callback`] and the
 /// suspension plumbing need.
-pub trait WrapperLike {
+trait WrapperLike {
     type Raw;
     fn init(value: *mut Self::Raw) -> NonNull<Self>;
     fn ref_(&self);
@@ -2509,7 +2515,7 @@ pub struct EndTag {
     pub(crate) end_tag: DetachablePtr<RawEndTag>,
 }
 
-pub struct EndTagHandler {
+struct EndTagHandler {
     // GC-rooted via `ProtectedJSValue` (RAII protect/unprotect), matching
     // `DocumentHandler`/`ElementHandler` — self-unprotects on drop.
     pub callback: Option<ProtectedJSValue>,

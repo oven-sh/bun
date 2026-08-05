@@ -796,12 +796,6 @@ static std::unique_ptr<CryptoAlgorithmParameters> crossThreadCopyImportParams(co
 
 void SubtleCrypto::addAuthenticatedEncryptionWarningIfNecessary(CryptoAlgorithmIdentifier algorithmIdentifier)
 {
-    // if (algorithmIdentifier == CryptoAlgorithmIdentifier::AES_CBC || algorithmIdentifier == CryptoAlgorithmIdentifier::AES_CTR) {
-    //     if (!scriptExecutionContext()->hasLoggedAuthenticatedEncryptionWarning()) {
-    //         scriptExecutionContext()->addConsoleMessage(MessageSource::Security, MessageLevel::Warning, "AES-CBC and AES-CTR do not provide authentication by default, and implementing it manually can result in minor, but serious mistakes. We recommended using authenticated encryption like AES-GCM to protect against chosen-ciphertext attacks."_s);
-    //         scriptExecutionContext()->setHasLoggedAuthenticatedEncryptionWarning(true);
-    //     }
-    // }
 }
 
 // MARK: - Exposed functions.

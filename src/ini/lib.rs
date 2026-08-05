@@ -190,7 +190,7 @@ pub use draft::{
     load_npmrc_config,
 };
 pub mod config_iterator {
-    pub use super::{ConfigItem as Item, ConfigIterator as Iter, ConfigOpt as Opt};
+    pub use super::ConfigItem as Item;
 }
 
 mod draft {

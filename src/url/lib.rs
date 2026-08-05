@@ -35,7 +35,7 @@ pub mod route_param {
     // Vec is semantically identical.
     pub type List<'a> = Vec<Param<'a>>;
 }
-pub use route_param::List as ParamsList;
+use route_param::List as ParamsList;
 
 // ── whatwg (WTF::URL FFI shim, MOVE_DOWN from bun_jsc) ────────────────────
 // The JS-value entry points (`hrefFromJS`, `fromJS`)
@@ -1440,7 +1440,7 @@ impl PercentEncoding {
 // ══════════════════════════════════════════════════════════════════════════
 
 #[derive(Clone, Copy)]
-pub struct ScannerResult {
+struct ScannerResult {
     pub(crate) name_needs_decoding: bool,
     pub(crate) value_needs_decoding: bool,
     pub(crate) name: api::StringPointer,

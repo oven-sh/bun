@@ -576,8 +576,6 @@ unsafe extern "C" {
     pub safe fn OpenSSL_add_all_algorithms();
 
     // ── ASN1 ──────────────────────────────────────────────────────────────
-    pub fn ASN1_STRING_get0_data(str: *const ASN1_STRING) -> *const u8;
-    pub fn ASN1_STRING_length(str: *const ASN1_STRING) -> c_int;
     pub fn ASN1_STRING_to_UTF8(out: *mut *mut u8, in_: *const ASN1_STRING) -> c_int;
 
     // ── EVP digest getters (infallible, return static singletons) ────────
@@ -696,12 +694,12 @@ unsafe extern "C" {
     pub fn X509_get_subject_name(x509: *const X509) -> *mut X509_NAME;
     pub fn X509_get_ext_by_NID(x: *const X509, nid: c_int, lastpos: c_int) -> c_int;
     pub fn X509_get_ext(x: *const X509, loc: c_int) -> *mut X509_EXTENSION;
-    pub fn X509_NAME_get_index_by_NID(name: *const X509_NAME, nid: c_int, lastpos: c_int) -> c_int;
+    fn X509_NAME_get_index_by_NID(name: *const X509_NAME, nid: c_int, lastpos: c_int) -> c_int;
     pub fn X509_NAME_get_entry(name: *const X509_NAME, loc: c_int) -> *mut X509_NAME_ENTRY;
     pub fn X509_NAME_ENTRY_get_data(entry: *const X509_NAME_ENTRY) -> *mut ASN1_STRING;
     pub fn X509V3_EXT_d2i(ext: *mut X509_EXTENSION) -> *mut c_void;
-    pub fn X509V3_EXT_get(ext: *mut X509_EXTENSION) -> *const X509V3_EXT_METHOD;
-    pub safe fn X509V3_EXT_get_nid(nid: c_int) -> *const X509V3_EXT_METHOD;
+    fn X509V3_EXT_get(ext: *mut X509_EXTENSION) -> *const X509V3_EXT_METHOD;
+    safe fn X509V3_EXT_get_nid(nid: c_int) -> *const X509V3_EXT_METHOD;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -875,9 +873,6 @@ pub(crate) type pem_password_cb =
 // ═══════════════════════════════════════════════════════════════════════════
 
 unsafe extern "C" {
-    // ── SSL_METHOD ───────────────────────────────────────────────────────
-    pub safe fn TLS_with_buffers_method() -> *const SSL_METHOD;
-
     // ── ENGINE ───────────────────────────────────────────────────────────
     pub safe fn ENGINE_new() -> *mut ENGINE;
     pub fn ENGINE_free(engine: *mut ENGINE) -> c_int;
@@ -985,7 +980,6 @@ unsafe extern "C" {
     pub fn BIO_free(bio: *mut BIO) -> c_int;
     pub fn BIO_read(bio: *mut BIO, data: *mut c_void, len: c_int) -> c_int;
     pub fn BIO_write(bio: *mut BIO, data: *const c_void, len: c_int) -> c_int;
-    pub fn BIO_ctrl(bio: *mut BIO, cmd: c_int, larg: c_long, parg: *mut c_void) -> c_long;
     pub fn BIO_ctrl_pending(bio: *const BIO) -> usize;
     pub safe fn BIO_s_mem() -> *const BIO_METHOD;
     pub fn BIO_new_mem_buf(buf: *const c_void, len: ossl_ssize_t) -> *mut BIO;

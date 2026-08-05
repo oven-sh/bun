@@ -35,10 +35,6 @@
 #include <wtf/TypeCasts.h>
 #include <wtf/text/AtomString.h>
 
-namespace WTF {
-class TextStream;
-}
-
 namespace WebCore {
 
 class EventPath;
@@ -62,7 +58,6 @@ public:
     };
 
     WEBCORE_EXPORT static Ref<Event> create(const AtomString& type, CanBubble, IsCancelable, IsComposed = IsComposed::No);
-    static Ref<Event> createForBindings();
     static Ref<Event> create(const AtomString& type, const EventInit&, IsTrusted = IsTrusted::No);
 
     virtual ~Event();
@@ -88,7 +83,6 @@ public:
     bool composed() const { return m_composed; }
 
     DOMHighResTimeStamp timeStampForBindings(ScriptExecutionContext&) const;
-    MonotonicTime timeStamp() const { return m_createTime; }
 
     void setEventPath(const EventPath&);
     Vector<Ref<EventTarget>> composedPath() const;
@@ -124,17 +118,12 @@ public:
     bool cancelBubble() const { return propagationStopped(); }
     void setCancelBubble(bool);
 
-    Event* underlyingEvent() const { return m_underlyingEvent.get(); }
-    void setUnderlyingEvent(Event*);
-
     // Returns true if the dispatch flag is set.
     // https://dom.spec.whatwg.org/#dispatch-flag
     bool isBeingDispatched() const { return eventPhase(); }
 
     virtual EventTarget* relatedTarget() const { return nullptr; }
     virtual void setRelatedTarget(EventTarget*) {}
-
-    virtual String debugDescription() const;
 
 protected:
     explicit Event(EventInterface, IsTrusted = IsTrusted::No);
@@ -172,8 +161,6 @@ private:
     const EventPath* m_eventPath { nullptr };
     RefPtr<EventTarget> m_target;
     MonotonicTime m_createTime;
-
-    RefPtr<Event> m_underlyingEvent;
 };
 
 inline void Event::preventDefault()
@@ -201,8 +188,6 @@ inline void Event::setCancelBubble(bool cancel)
     if (cancel)
         m_propagationStopped = true;
 }
-
-WTF::TextStream& operator<<(WTF::TextStream&, const Event&);
 
 } // namespace WebCore
 

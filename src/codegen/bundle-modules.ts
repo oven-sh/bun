@@ -395,8 +395,15 @@ writeIfNotChanged(
   path.join(CODEGEN_DIR, "InternalModuleRegistry+numberOfModules.h"),
   `#define BUN_INTERNAL_MODULE_COUNT ${moduleList.length}
 #define BUN_NATIVE_MODULE_START_INDEX ${nativeStartIndex}
-#define BUN_INTERNAL_MODULE_GENERATION "${generation}"
 `,
+);
+
+// Included only by InternalModuleRegistry.cpp (not from any header): the hash
+// changes on every ID renumbering, and keeping it off the PCH include chain
+// keeps that a one-TU recompile.
+writeIfNotChanged(
+  path.join(CODEGEN_DIR, "InternalModuleRegistry+generation.h"),
+  `#define BUN_INTERNAL_MODULE_GENERATION "${generation}"\n`,
 );
 
 // This code slice is used in InternalModuleRegistry.h for inlining the enum. I dont think we

@@ -104,6 +104,8 @@ ALWAYS_INLINE JSC::JSValue generateNativeModule(
 }
 
 #ifdef BUN_DYNAMIC_JS_LOAD_PATH
+#include "InternalModuleRegistry+generation.h"
+
 // bundle-modules.ts stamps every file it writes to BUN_DYNAMIC_JS_LOAD_PATH
 // with the generation hash of the codegen-assigned numeric IDs the file bakes
 // in; BUN_INTERNAL_MODULE_GENERATION is the hash this binary was generated

@@ -109,6 +109,8 @@ const http1ServerPipeline: {
   queuePipelinedResponse?: (socket: unknown, res: unknown, isAncient: boolean) => void;
   advanceResponsePipeline?: (server: unknown, socket: unknown) => void;
   abortQueuedPipelinedResponses?: (socket: unknown) => void;
+  maybePauseFallbackReads?: (socket: unknown) => void;
+  resumeFallbackReadsOnDrain?: (socket: unknown) => void;
 } = {};
 
 export const enum ClientRequestEmitState {

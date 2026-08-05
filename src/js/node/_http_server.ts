@@ -2508,6 +2508,28 @@ function pausePipelineReads(socket) {
   response.pauseReads();
 }
 
+// Node's parserOnIncoming read gate, for fallback connections (the native
+// sibling is the kOutgoingData check before pausePipelineReads at the
+// dispatcher): stop reading when the transport or the bytes buffered on
+// queued pipelined responses are backed up, so a pipelining client cannot
+// flood the connection's memory.
+function maybePauseFallbackReads(socket) {
+  if (socket._paused) return;
+  if (socket._writableState?.needDrain || (socket[kOutgoingData] ?? 0) >= socket.writableHighWaterMark) {
+    socket._paused = true;
+    socket.pause();
+  }
+}
+
+// Node's socketOnDrain: the transport drained, so resume reads unless queued
+// response bytes still hold the gate.
+function resumeFallbackReadsOnDrain(socket) {
+  if (socket._paused && (socket[kOutgoingData] ?? 0) <= socket.writableHighWaterMark) {
+    socket._paused = false;
+    socket.resume();
+  }
+}
+
 function addPipelineOutgoingData(queued, bytes) {
   const socket = queued.socket;
   socket[kOutgoingData] = (socket[kOutgoingData] ?? 0) + bytes;
@@ -2521,7 +2543,14 @@ function releasePipelineOutgoingData(socket, bytes) {
   socket[kOutgoingData] = outgoing > 0 ? outgoing : 0;
   if (socket._paused && outgoing <= socket.writableHighWaterMark) {
     socket._paused = false;
-    socket[kHandle]?.response?.resume();
+    const response = socket[kHandle]?.response;
+    if (response) {
+      response.resume();
+    } else if (!(socket instanceof NodeHTTPServerSocket)) {
+      // Fallback duplex paused by maybePauseFallbackReads: plain stream flow
+      // control is the only way to restart it.
+      socket.resume();
+    }
   }
 }
 
@@ -2605,6 +2634,9 @@ function advanceResponsePipeline(server, socket) {
   if (res.destroyed || !handle) {
     // The queued response was destroyed before it could be sent; the
     // connection cannot produce a response for this slot, so it is unusable.
+    // Deliberate divergence from Node v26, which assigns the destroyed
+    // message and wedges the connection until requestTimeout: an HTTP/1.1
+    // connection cannot skip a response slot, so reset it instead.
     if (!socket.destroyed) {
       socket.destroy();
     }
@@ -4047,6 +4079,8 @@ function ensureReadableStreamController(run) {
 http1ServerPipeline.queuePipelinedResponse = queuePipelinedResponse;
 http1ServerPipeline.advanceResponsePipeline = advanceResponsePipeline;
 http1ServerPipeline.abortQueuedPipelinedResponses = abortQueuedPipelinedResponses;
+http1ServerPipeline.maybePauseFallbackReads = maybePauseFallbackReads;
+http1ServerPipeline.resumeFallbackReadsOnDrain = resumeFallbackReadsOnDrain;
 
 export default {
   Server,

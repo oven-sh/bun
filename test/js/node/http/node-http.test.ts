@@ -4245,3 +4245,87 @@ it("connectionListener aborts queued pipelined responses when the connection die
   expect(closedEvents.sort()).toEqual(["reqB", "resB"]);
   clientSide.destroy();
 });
+
+it("connectionListener resets the connection when a queued pipelined response is destroyed", async () => {
+  // Deliberate divergence from Node v26, which assigns the destroyed message
+  // and wedges the connection until requestTimeout: an HTTP/1.1 connection
+  // cannot skip a response slot, so Bun resets it (same as the native path),
+  // aborting the requests queued behind the destroyed slot.
+  const closedEvents: string[] = [];
+  const { promise: cAborted, resolve: onCAborted } = Promise.withResolvers<void>();
+  let cClosesPending = 2;
+  let releaseFirst!: () => void;
+  const firstGate = new Promise<void>(resolve => (releaseFirst = resolve));
+  const server = createServer((req, res) => {
+    if (req.url === "/a") {
+      firstGate.then(() => res.end("first"));
+    } else if (req.url === "/b") {
+      // Queued behind /a: like Node, a queued response has no socket yet.
+      expect(res.socket).toBe(null);
+      res.destroy();
+      releaseFirst();
+    } else {
+      req.on("close", () => {
+        closedEvents.push("reqC");
+        if (--cClosesPending === 0) onCAborted();
+      });
+      res.on("close", () => {
+        closedEvents.push("resC");
+        if (--cClosesPending === 0) onCAborted();
+      });
+    }
+  });
+  const [clientSide, serverSide] = duplexPair();
+  server.emit("connection", serverSide);
+  let received = "";
+  clientSide.on("data", d => (received += d));
+  clientSide.write(
+    "GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\nGET /c HTTP/1.1\r\nHost: x\r\n\r\n",
+  );
+  await cAborted;
+  expect(closedEvents.sort()).toEqual(["reqC", "resC"]);
+  // The in-flight response still reached the client before the reset.
+  expect(received).toContain("first");
+  expect(serverSide.destroyed).toBe(true);
+  clientSide.destroy();
+});
+
+it("connectionListener pauses reads when queued pipelined responses back up", async () => {
+  // Node's parserOnIncoming read gate: once the bytes buffered on queued
+  // responses pass the socket's high water mark, stop reading so a pipelining
+  // client cannot flood the connection, and resume as the pipeline drains.
+  const [clientSide, serverSide] = duplexPair();
+  const big = Buffer.alloc(Math.ceil(serverSide.writableHighWaterMark / 2), "x").toString();
+  const N = 10;
+  let dispatched = 0;
+  let releaseFirst!: () => void;
+  const firstGate = new Promise<void>(resolve => (releaseFirst = resolve));
+  const server = createServer((req, res) => {
+    dispatched++;
+    if (req.url === "/0") {
+      firstGate.then(() => res.end("first"));
+    } else {
+      res.end(big);
+    }
+  });
+  server.emit("connection", serverSide);
+  let received = "";
+  clientSide.on("data", d => (received += d));
+  // One write per request so the gate (checked per headers-complete) takes
+  // effect between data events.
+  for (let i = 0; i < N; i++) {
+    clientSide.write(`GET /${i} HTTP/1.1\r\nHost: x\r\n\r\n`);
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  // Reads paused with requests still unparsed.
+  expect(serverSide.isPaused()).toBe(true);
+  expect(dispatched).toBeLessThan(N);
+  // Draining the pipeline releases the gate and everything is served.
+  releaseFirst();
+  while ((received.match(/HTTP\/1\.1 200 /g) || []).length < N) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  expect(dispatched).toBe(N);
+  clientSide.destroy();
+  serverSide.destroy();
+});

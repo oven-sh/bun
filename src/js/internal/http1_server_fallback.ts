@@ -237,7 +237,13 @@ function connectionListenerHTTP1(server, socket, options) {
   const { HTTPParser, prepareError, calculateLenientFlags, continueExpression } = require("node:_http_common");
   const { kHandle: kHttp1ResponseHandle, http1ServerPipeline } = require("internal/http");
   // Populated by node:_http_server, which the require("node:http") above loads.
-  const { queuePipelinedResponse, advanceResponsePipeline, abortQueuedPipelinedResponses } = http1ServerPipeline;
+  const {
+    queuePipelinedResponse,
+    advanceResponsePipeline,
+    abortQueuedPipelinedResponses,
+    maybePauseFallbackReads,
+    resumeFallbackReadsOnDrain,
+  } = http1ServerPipeline;
   const { allMethods } = process.binding("http_parser");
 
   const http1Options = options.http1Options || {};
@@ -309,9 +315,11 @@ function connectionListenerHTTP1(server, socket, options) {
         return 2;
       }
     }
-    // The body is fed by the parser callbacks below; reading just resumes the socket.
+    // The body is fed by the parser callbacks below; reading just resumes the
+    // socket - unless the pipelining read gate paused it (the gate's release
+    // resumes it instead).
     req._read = function (_size) {
-      if (socket.readable) socket.resume();
+      if (!socket._paused && socket.readable) socket.resume();
     };
 
     const res = new ServerResponseClass(req);
@@ -344,6 +352,10 @@ function connectionListenerHTTP1(server, socket, options) {
       this.detachSocket(socket);
       advanceResponsePipeline(server, socket);
     });
+
+    // Node's parserOnIncoming read gate: stop reading once the connection's
+    // outgoing side is backed up, so pipelined requests cannot flood it.
+    maybePauseFallbackReads(socket);
 
     // Node's parserOnIncoming Expect routing (the native dispatcher applies the
     // same at _http_server.ts's DISPATCH_HAS_EXPECT branch).
@@ -412,6 +424,7 @@ function connectionListenerHTTP1(server, socket, options) {
       socket.removeListener("data", onHttp1SocketData);
       socket.removeListener("error", onHttp1SocketErrorListener);
       socket.removeListener("end", onHttp1SocketEnd);
+      socket.removeListener("drain", onHttp1SocketDrain);
       connections.delete(socket);
       try {
         parser.close();
@@ -450,9 +463,15 @@ function connectionListenerHTTP1(server, socket, options) {
       socket.end();
     }
   }
+  // Node's socketOnDrain: a transport-backpressure pause lifts when the
+  // socket drains (a queued-bytes pause lifts from the pipeline advance).
+  function onHttp1SocketDrain() {
+    resumeFallbackReadsOnDrain(socket);
+  }
   socket.on("data", onHttp1SocketData);
   socket.on("error", onHttp1SocketErrorListener);
   socket.once("end", onHttp1SocketEnd);
+  socket.on("drain", onHttp1SocketDrain);
   socket.once("close", () => {
     connections.delete(socket);
     // Like the native socket's close path: abort responses (and requests)

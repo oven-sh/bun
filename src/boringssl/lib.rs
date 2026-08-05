@@ -195,7 +195,7 @@ fn eq_nocase(a: &[u8], b: &[u8]) -> bool {
 
 /// Wildcard interpretation for [`match_hostname`]'s left-most label.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Wildcards {
+enum Wildcards {
     /// No wildcard expansion: a `*` is matched literally.
     None,
     /// Full-label `*` only (OpenSSL `X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS`).

@@ -136,14 +136,13 @@ private:
 JSC::Structure* createJSDirentObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     auto* prototype = JSDirentPrototype::create(vm, globalObject, JSDirentPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
-    auto structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray, 4);
+    auto structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray, 3);
 
     // Add property transitions for all dirent fields
     PropertyOffset offset = 0;
     structure = structure->addPropertyTransition(vm, structure, vm.propertyNames->name, 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, Bun::builtinNames(vm).pathPublicName(), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, Bun::builtinNames(vm).dataPrivateName(), 0, offset);
     structure = structure->addPropertyTransition(vm, structure, Identifier::fromString(vm, "parentPath"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, Bun::builtinNames(vm).dataPrivateName(), 0, offset);
 
     return structure;
 }
@@ -183,14 +182,12 @@ JSC_DEFINE_HOST_FUNCTION(constructDirent, (JSC::JSGlobalObject * globalObject, J
     auto* object = JSC::JSFinalObject::create(vm, structure);
     if (structure->id() != originalStructure->id()) {
         object->putDirect(vm, vm.propertyNames->name, name, 0);
-        object->putDirect(vm, Bun::builtinNames(vm).pathPublicName(), path, 0);
-        object->putDirect(vm, Bun::builtinNames(vm).dataPrivateName(), type, 0);
         object->putDirect(vm, Identifier::fromString(vm, "parentPath"_s), path, 0);
+        object->putDirect(vm, Bun::builtinNames(vm).dataPrivateName(), type, 0);
     } else {
         object->putDirectOffset(vm, 0, name);
         object->putDirectOffset(vm, 1, path);
         object->putDirectOffset(vm, 2, type);
-        object->putDirectOffset(vm, 3, path);
     }
 
     return JSValue::encode(object);
@@ -366,7 +363,6 @@ extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject
     object->putDirectOffset(vm, 0, nameValue);
     object->putDirectOffset(vm, 1, pathValue);
     object->putDirectOffset(vm, 2, typeValue);
-    object->putDirectOffset(vm, 3, pathValue);
 
     return JSValue::encode(object);
 }

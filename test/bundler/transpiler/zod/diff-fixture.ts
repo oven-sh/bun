@@ -129,6 +129,12 @@ const SCHEMAS: Record<string, any> = {
   objPartialMask: z.object({ a: z.string(), b: z.number() }).partial({ a: true }),
   objRequired: z.object({ a: z.string().optional(), b: z.number().optional() }).required(),
   objRequiredMask: z.object({ a: z.string().optional(), b: z.number().optional() }).required({ a: true }),
+  // Unknown mask keys: zod throws Unrecognized key from the lazy shape getter
+  // on first parse, so these must defer instead of compiling a filtered shape.
+  objPickUnknownKey: z.object({ a: z.string() }).pick({ b: true } as any),
+  objOmitUnknownKey: z.object({ a: z.string() }).omit({ b: true } as any),
+  objPartialUnknownKey: z.object({ a: z.string() }).partial({ b: true } as any),
+  objRequiredUnknownKey: z.object({ a: z.string() }).required({ b: true } as any),
   array: z.array(z.number()),
   arrayMin: z.array(z.number()).min(2),
   arrayMax: z.array(z.number()).max(2),

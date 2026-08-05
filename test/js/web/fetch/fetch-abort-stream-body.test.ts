@@ -118,7 +118,8 @@ test.concurrent("piping a truncated upstream body into fetch rejects with the up
     () => null,
     e => e,
   );
-  expect(err).toMatchObject({ name: "TypeError", code: "ECONNRESET" });
+  expect(err).toBeInstanceOf(TypeError);
+  expect(err).toMatchObject({ code: "ECONNRESET" });
 });
 
 test("aborting fetch with a ReadableStream request body does not double-cancel the sink", async () => {

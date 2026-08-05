@@ -1139,6 +1139,63 @@ impl Drop for DispatchGuard<'_> {
     }
 }
 
+/// Follows the byte stream `write()` emits over a JS-backed transport and reports when it
+/// sits at a point where another frame may legally begin: between frames, and not inside a
+/// header block (HEADERS / PUSH_PROMISE without END_HEADERS up to the CONTINUATION that carries
+/// it, RFC 9113 §4.3). See `write_to_js_transport`.
+#[derive(Clone, Copy, Default)]
+struct TxFrameTracker {
+    /// Payload bytes still owed on the current frame.
+    remaining: u32,
+    /// A frame header split across chunks is collected here until all 9 bytes are known.
+    header: [u8; FrameHeader::BYTE_SIZE],
+    header_len: u8,
+    /// A HEADERS/PUSH_PROMISE/CONTINUATION without END_HEADERS went out; the block is open.
+    header_block_open: bool,
+}
+
+impl TxFrameTracker {
+    fn at_boundary(&self) -> bool {
+        self.remaining == 0 && self.header_len == 0 && !self.header_block_open
+    }
+
+    fn advance(&mut self, mut chunk: &[u8]) {
+        const CONNECTION_PREFACE: &[u8] = crate::api::h2::wire::CONNECTION_PREFACE;
+        while !chunk.is_empty() {
+            if self.remaining > 0 {
+                let take = (self.remaining as usize).min(chunk.len());
+                self.remaining -= take as u32;
+                chunk = &chunk[take..];
+                continue;
+            }
+            if self.header_len == 0 && chunk.starts_with(CONNECTION_PREFACE) {
+                // The client magic precedes the first SETTINGS frame; it is not a frame.
+                chunk = &chunk[CONNECTION_PREFACE.len()..];
+                continue;
+            }
+            let have = self.header_len as usize;
+            let take = (FrameHeader::BYTE_SIZE - have).min(chunk.len());
+            self.header[have..have + take].copy_from_slice(&chunk[..take]);
+            self.header_len += take as u8;
+            chunk = &chunk[take..];
+            if self.header_len as usize == FrameHeader::BYTE_SIZE {
+                let header = FrameHeader::decode(&self.header);
+                self.header_len = 0;
+                self.remaining = header.length;
+                // PUSH_PROMISE is not a FrameType variant (the inbound path matches it raw too).
+                const PUSH_PROMISE: u8 = 0x05;
+                if header.type_ == FrameType::HTTP_FRAME_HEADERS as u8
+                    || header.type_ == PUSH_PROMISE
+                    || header.type_ == FrameType::HTTP_FRAME_CONTINUATION as u8
+                {
+                    self.header_block_open =
+                        header.flags & HeadersFrameFlags::END_HEADERS as u8 == 0;
+                }
+            }
+        }
+    }
+}
+
 /// The `+1` a native frame holds on the parser while it runs code that can free it (an inbound
 /// dispatch, a write that re-enters JS). Live guards are counted in
 /// `H2FrameParser::native_keepalives` so `finalize` can release the ones whose frame will never
@@ -1309,6 +1366,9 @@ pub struct H2FrameParser {
     /// never contends with the engine borrow.
     engine_frames_received: Cell<u64>,
     engine_frames_sent: Cell<u64>,
+    /// Where the bytes emitted through `write()` over a JS-backed transport stand relative to
+    /// frame and header-block boundaries.
+    tx_tracker: Cell<TxFrameTracker>,
     ref_count: bun_ptr::RefCount<Self>, // intrusive — bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
     /// Number of live `Keepalive` guards: the `+1`s held by native frames currently on the stack.
     /// Read only by `release_refs_stranded_by_exit()`.
@@ -2998,6 +3058,12 @@ impl H2FrameParser {
         if self.js_socket_flushing.get() {
             return 0;
         }
+        if !self.tx_tracker.get().at_boundary() {
+            // Mid-frame or mid-header-block (see write_to_js_transport): flushing now would
+            // put the cork or write_buffer inside that unit. It completes synchronously and
+            // the cork's auto-flush is already registered.
+            return 0;
+        }
         // Keep `self` alive across the re-entrant JS calls below.
         let _keepalive = self.keepalive();
 
@@ -3527,6 +3593,9 @@ impl H2FrameParser {
             return self._write(bytes);
         }
         self.cork();
+        if matches!(self.native_socket.get(), BunSocket::None) {
+            return self.write_to_js_transport(bytes);
+        }
         let mut ok = true;
         loop {
             let off = CORK_OFFSET.with(|c| c.get()) as usize;
@@ -3558,6 +3627,63 @@ impl H2FrameParser {
             self.cork();
             bytes = &bytes[avail..];
         }
+    }
+
+    /// `write()` for a session with no native socket, whose bytes reach the wire through the
+    /// `onWrite` handler (`socket.write()` on a JS stream). That call runs the transport's
+    /// `_write` synchronously, and user code there can serialize another frame (ping(),
+    /// settings(), goaway(), request()) or flush before it returns. Bytes are therefore only
+    /// handed over where another frame may legally follow: at a frame boundary outside a header
+    /// block. A unit that overflows the cork is assembled in the (empty at this point) batch
+    /// scratch and written whole once its last chunk arrives; the producers emit those chunks
+    /// back to back, so no JS can run while the scratch holds a partial unit, and a frame
+    /// serialized re-entrantly corks up behind the unit instead of landing inside it.
+    fn write_to_js_transport(&self, bytes: &[u8]) -> bool {
+        let mut tracker = self.tx_tracker.get();
+        tracker.advance(bytes);
+        self.tx_tracker.set(tracker);
+        let at_boundary = tracker.at_boundary();
+        // A non-empty batch scratch here is the partial unit from this write's earlier chunks
+        // (send_data's multi-frame batching never re-enters write()).
+        if BATCH_BUFFER.with_borrow(|batch| batch.is_empty()) {
+            let off = CORK_OFFSET.with(|c| c.get()) as usize;
+            if bytes.len() <= H2_CORK_BUFFER_SIZE - off {
+                CORK_OFFSET.with(|c| c.set((off + bytes.len()) as u16));
+                CORK_BUFFER.with_borrow_mut(|buf| {
+                    buf[off..off + bytes.len()].copy_from_slice(bytes);
+                });
+                return true;
+            }
+            if off == 0 && at_boundary {
+                // Nothing corked and the chunk is whole frames: send it directly.
+                return self._write(bytes);
+            }
+        }
+        BATCH_BUFFER.with_borrow_mut(|batch| {
+            if batch.is_empty() {
+                // The corked prefix precedes this unit on the wire.
+                self.drain_cork_into(batch);
+            }
+            batch.extend_from_slice(bytes);
+        });
+        if !at_boundary {
+            return true;
+        }
+        // The unit is complete: hand it over whole. Take the scratch out first, _write
+        // re-enters JS and a nested send_data must find the batch empty.
+        let mut data = BATCH_BUFFER.with_borrow_mut(core::mem::take);
+        let ok = self._write(&data);
+        data.clear();
+        const BATCH_CAPACITY_CAP: usize = 1 << 20;
+        if data.capacity() > BATCH_CAPACITY_CAP {
+            data.shrink_to(BATCH_CAPACITY_CAP);
+        }
+        BATCH_BUFFER.with_borrow_mut(|b| {
+            if b.capacity() == 0 {
+                *b = data;
+            }
+        });
+        ok
     }
 }
 
@@ -9290,6 +9416,17 @@ impl H2FrameParser {
 
             if padding != 0 {
                 flags |= HeadersFrameFlags::PADDED as u8;
+                // Grow before any frame byte is written: failing after the header went out
+                // would abandon the frame mid-serialization (the JS-transport tracker would
+                // hold the stream mid-frame and the wire would owe a payload).
+                if encoded_headers
+                    .try_reserve(encoded_size + padding_overhead - encoded_headers.len())
+                    .is_err()
+                {
+                    return Err(
+                        global_object.throw(format_args!("Failed to allocate padding buffer"))
+                    );
+                }
             }
 
             let frame = FrameHeader {
@@ -9313,16 +9450,9 @@ impl H2FrameParser {
 
             // Handle padding
             if padding != 0 {
-                if encoded_headers
-                    .try_reserve(encoded_size + padding_overhead - encoded_headers.len())
-                    .is_err()
-                {
-                    return Err(
-                        global_object.throw(format_args!("Failed to allocate padding buffer"))
-                    );
-                }
                 // Zero-fill the padding region (RFC 7540 §6.2: padding octets MUST be zero) and
-                // ensure the slice we hand to writer covers only initialized bytes.
+                // ensure the slice we hand to writer covers only initialized bytes. Cannot
+                // allocate: the capacity was reserved above, before the frame header went out.
                 encoded_headers.resize(encoded_size + padding_overhead, 0);
                 let buffer = encoded_headers.as_mut_slice();
                 // memmove: shift right by 1 to make room for the pad-length byte
@@ -9660,6 +9790,7 @@ impl H2FrameParser {
             frames_sent_legacy: Cell::new(0),
             engine_frames_received: Cell::new(0),
             engine_frames_sent: Cell::new(0),
+            tx_tracker: Cell::new(TxFrameTracker::default()),
             auto_flusher: JsCell::new(AutoFlusher::default()),
             padding_strategy: Cell::new(PaddingStrategy::None),
             engine: core::cell::RefCell::new(None),
@@ -9881,6 +10012,7 @@ impl H2FrameParser {
         // capacity must be released here. Drop-and-replace = free.
         self.read_buffer.set(MutableString::default());
         self.write_buffer.with_mut(|wb| wb.clear_and_free());
+        self.tx_tracker.set(TxFrameTracker::default());
         // Drop every per-stream JS context root; the parser is detaching.
         self.sctx.with_mut(|m| m.clear());
         self.write_buffer_offset.set(0);

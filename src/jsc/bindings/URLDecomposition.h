@@ -35,8 +35,9 @@ namespace WebCore {
 
 class URLDecomposition {
 public:
-    // Parse a port string with optional protocol for default port detection
-    // Returns nullopt on parse error, or optional<uint16_t> (nullopt means empty/default port)
+    // https://url.spec.whatwg.org/#port-state with a state override. The outer optional is
+    // nullopt when that state fails (an empty digit buffer, or an out-of-range port) and the
+    // URL's port must be left alone. The inner nullopt is the scheme's default port.
     static std::optional<std::optional<uint16_t>> parsePort(StringView port, StringView protocol);
 
     String origin() const;

@@ -127,8 +127,9 @@ describe("Bun.markdown.frontmatter", () => {
   });
 
   test("missing and nullish input throws", () => {
-    expect(() => (frontmatter as any)()).toThrow();
-    expect(() => (frontmatter as any)(null)).toThrow();
+    expect(() => (frontmatter as any)()).toThrow("Expected a string or buffer to parse");
+    expect(() => (frontmatter as any)(undefined)).toThrow("Expected a string or buffer to parse");
+    expect(() => (frontmatter as any)(null)).toThrow("Expected a string or buffer to parse");
   });
 });
 
@@ -171,11 +172,21 @@ describe("renderers skip front matter by default", () => {
   });
 
   test("ansi", () => {
-    const out = ansi(doc, { colors: false });
-    expect(out).not.toContain("title");
-    expect(out).toContain("Heading");
-    const off = ansi(doc, { colors: false, frontmatter: false });
-    expect(off).toContain("title");
+    expect(ansi(doc, { colors: false })).toMatchInlineSnapshot(`
+      "Heading
+      =======
+      "
+    `);
+    expect(ansi(doc, { colors: false, frontmatter: false })).toMatchInlineSnapshot(`
+      "------------------------------------------------------------
+
+      title: Hello
+      ------------
+
+      Heading
+      =======
+      "
+    `);
   });
 
   test("render", () => {
@@ -186,9 +197,8 @@ describe("renderers skip front matter by default", () => {
 
   test("react", () => {
     const el = react(doc) as any;
-    expect(el.props.children).toHaveLength(1);
-    expect(el.props.children[0].type).toBe("h1");
+    expect(el.props.children.map((c: any) => c.type)).toEqual(["h1"]);
     const off = react(doc, undefined, { frontmatter: false }) as any;
-    expect(off.props.children[0].type).toBe("hr");
+    expect(off.props.children.map((c: any) => c.type)).toEqual(["hr", "h2", "h1"]);
   });
 });

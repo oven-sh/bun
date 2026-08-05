@@ -558,6 +558,14 @@ impl RepositoryExt for Repository {
         }
 
         if url.starts_with(b"ssh://") {
+            // A URL that already parses (e.g. with a numeric port,
+            // ssh://git@host:2222/user/repo) must pass through untouched. npm's
+            // hosted-git-info only applies correctUrl after URL parsing fails, so
+            // only scp-style colons (ssh://git@host:user/repo) get rewritten.
+            if bun_url::origin_from_slice(url).is_some() {
+                return Some(url);
+            }
+
             // TODO(markovejnovic): This is a stop-gap. One of the problems with the implementation
             // here is that we should integrate hosted_git_info more thoroughly into the codebase
             // to avoid the allocation and copy here. For now, the thread-local buffer is a good

@@ -1,7 +1,7 @@
 import { file, listen, Socket, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, jest, setDefaultTimeout, test } from "bun:test";
 import { readlinkSync, realpathSync } from "fs";
-import { access, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
+import { access, chmod, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
 import {
   bunEnv,
   bunExe,
@@ -841,6 +841,43 @@ describe.concurrent("bun-install", () => {
     expect(stderr).toContain("long-git-dep");
     expect(stdout).toContain("bun install v1.");
     expect(exitCode).toBe(1);
+  });
+
+  it.skipIf(isWindows)("keeps a non-default ssh port in the ssh fallback clone URL", async () => {
+    // Shadow `git` with a shim that records its argv and fails, so the https
+    // clone attempt falls through to the ssh fallback and we can assert the
+    // exact URLs bun passes to git (#36931).
+    using dir = tempDir("git-ssh-port", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { pkg: "git+ssh://git@localhost:52626/user/repo.git#v1.0.0" },
+      }),
+      "bin/git": `#!/bin/sh\necho "$@" >> "$GIT_ARGS_LOG"\nexit 1\n`,
+    });
+    await chmod(join(String(dir), "bin", "git"), 0o755);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: {
+        ...env,
+        PATH: `${join(String(dir), "bin")}:${env.PATH}`,
+        GIT_ARGS_LOG: join(String(dir), "git-args.log"),
+        BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("cloning repository");
+    expect(exitCode).toBe(1);
+
+    const attempts = (await file(join(String(dir), "git-args.log")).text()).trim().split("\n");
+    const sshAttempt = attempts.find(a => a.includes(" ssh://"));
+    // The port must stay a port, not become a path segment
+    // (ssh://git@localhost/52626/user/repo.git).
+    expect(sshAttempt).toContain("ssh://git@localhost:52626/user/repo.git");
   });
 
   it("should handle empty string in dependencies", async () => {

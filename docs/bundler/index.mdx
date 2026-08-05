@@ -620,7 +620,6 @@ Inlines environment variables matching the given prefix (the part before the `*`
     await Bun.build({
       entrypoints: ['./index.tsx'],
       outdir: './out',
-      
       // Inline all env vars that start with "ACME_PUBLIC_"
       env: "ACME_PUBLIC_*",
     })
@@ -1145,7 +1144,7 @@ A map of file extensions to built-in loader names. Use this to customize how cer
   </Tab>
 </Tabs>
 
-### banner
+### `banner`
 
 A banner added to the final bundle. This can be a directive like `"use client"` for React, or a comment block such as a license.
 

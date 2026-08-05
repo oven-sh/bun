@@ -161,6 +161,9 @@ public:
 
     void enqueueToParent(MessageWithMessagePorts&&);
     void drainToWorker(ScriptExecutionContext&);
+    // Post a drainToWorker task if the inbox is non-empty. Called on the
+    // worker thread when parentPort gains a listener.
+    void scheduleDrainToWorker();
 
 private:
     Worker(ScriptExecutionContext&, WorkerOptions&&);
@@ -208,6 +211,10 @@ private:
 };
 
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject);
+
+// Called from WorkerGlobalScope's listener-change hook: schedules a
+// parent→worker inbox drain if this context belongs to a Node worker.
+void scheduleParentPortDrainIfNode(ScriptExecutionContext*);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionPostMessage);
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -1755,4 +1755,196 @@ test("the SHARE_ENV founding thread's process.env stays live after the swap", as
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout.trim()).toBe("yes,unset");
   expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/5460
+// Node's parentPort is a MessagePort that stays stopped until it has a 'message'
+// listener: messages the parent posts before the worker attaches one are queued
+// and delivered in order once it does. Bun previously dispatched them into the
+// listener-less globalEventScope and silently dropped them.
+describe("parentPort buffers parent→worker messages while there is no 'message' listener", () => {
+  const nextMessage = async (w: Worker) => {
+    const [msg] = await once(w, "message");
+    return msg;
+  };
+
+  // The shape that bites real code: the parent posts right after `new Worker()`
+  // and the worker only wires up parentPort after an async init step.
+  test.concurrent("listener attached after async init receives everything posted at construction", async () => {
+    // The outer setImmediate defers listener attachment past fireEarlyMessages();
+    // the worker reports once the known-count batch has fully arrived.
+    const src = `
+      const { parentPort } = require('node:worker_threads');
+      const got = [];
+      setImmediate(() => parentPort.on('message', m => {
+        got.push(m);
+        if (got.length === 5) parentPort.postMessage(got);
+      }));`;
+    const w = new Worker(src, { eval: true });
+    try {
+      for (let i = 1; i <= 5; i++) w.postMessage("m" + i);
+      expect(await nextMessage(w)).toEqual(["m1", "m2", "m3", "m4", "m5"]);
+    } finally {
+      await w.terminate();
+    }
+  });
+
+  test.concurrent("listener attached after 'online' receives everything posted then", async () => {
+    const src = `
+      const { parentPort } = require('node:worker_threads');
+      const got = [];
+      setImmediate(() => parentPort.on('message', m => {
+        got.push(m);
+        if (got.length === 5) parentPort.postMessage(got);
+      }));`;
+    const w = new Worker(src, { eval: true });
+    try {
+      await once(w, "online");
+      for (let i = 1; i <= 5; i++) w.postMessage("a" + i);
+      expect(await nextMessage(w)).toEqual(["a1", "a2", "a3", "a4", "a5"]);
+    } finally {
+      await w.terminate();
+    }
+  });
+
+  test.concurrent("once('message') consumes one; the rest re-queue for the next listener", async () => {
+    const src = `
+      const { parentPort } = require('node:worker_threads');
+      setImmediate(() => {
+        let first;
+        parentPort.once('message', m => { first = m; });
+        setImmediate(() => {
+          const rest = [];
+          parentPort.on('message', m => {
+            rest.push(m);
+            if (rest.length === 4) parentPort.postMessage({ first, rest });
+          });
+        });
+      });`;
+    const w = new Worker(src, { eval: true });
+    try {
+      for (let i = 1; i <= 5; i++) w.postMessage("m" + i);
+      expect(await nextMessage(w)).toEqual({ first: "m1", rest: ["m2", "m3", "m4", "m5"] });
+    } finally {
+      await w.terminate();
+    }
+  });
+
+  // Delivery is scheduled, not synchronous inside on(): matches Node's
+  // port.start() semantics.
+  test.concurrent("buffered delivery is async (fires after the code that added the listener)", async () => {
+    const src = `
+      const { parentPort } = require('node:worker_threads');
+      const log = [];
+      setImmediate(() => {
+        parentPort.on('message', m => {
+          log.push('got:' + m);
+          if (log.length === 4) parentPort.postMessage(log);
+        });
+        log.push('after-on');
+      });`;
+    const w = new Worker(src, { eval: true });
+    try {
+      for (let i = 1; i <= 3; i++) w.postMessage("m" + i);
+      expect(await nextMessage(w)).toEqual(["after-on", "got:m1", "got:m2", "got:m3"]);
+    } finally {
+      await w.terminate();
+    }
+  });
+
+  // https://github.com/oven-sh/bun/issues/15408
+  // https://github.com/oven-sh/bun/issues/21101
+  // A worker whose entry module never settles (top-level await on a pending
+  // promise, or an infinite await-setImmediate loop) never reaches
+  // fireEarlyMessages(). parentPort must still drain once a listener is
+  // attached, and keep draining for messages the parent posts afterwards.
+  test.concurrent("listener attached before an unsettled top-level await receives messages", async () => {
+    using dir = tempDir("parentport-tla", {
+      "worker.mjs": `
+        import { parentPort } from "node:worker_threads";
+        parentPort.on("message", m => parentPort.postMessage("echo:" + m));
+        await new Promise(() => {});
+      `,
+    });
+    const w = new Worker(join(String(dir), "worker.mjs"));
+    try {
+      w.postMessage("m1");
+      expect(await nextMessage(w)).toBe("echo:m1");
+      w.postMessage("m2");
+      expect(await nextMessage(w)).toBe("echo:m2");
+    } finally {
+      await w.terminate();
+    }
+  });
+
+  test.concurrent("Web Worker semantics are unchanged: no buffering without a listener", async () => {
+    // Asserting "nothing arrived" has no observable completion signal; a short
+    // bounded window is the assertion.
+    const src = `
+      const got = [];
+      setTimeout(() => {
+        self.addEventListener('message', e => got.push(e.data));
+        setTimeout(() => self.postMessage(got), 200);
+      }, 100);`;
+    const url = URL.createObjectURL(new Blob([src], { type: "application/javascript" }));
+    const w = new globalThis.Worker(url);
+    try {
+      for (let i = 1; i <= 3; i++) w.postMessage("m" + i);
+      const got = await new Promise((resolve, reject) => {
+        w.onmessage = e => resolve(e.data);
+        w.onerror = e => reject(e.error ?? e.message);
+      });
+      expect(got).toEqual([]);
+    } finally {
+      w.terminate();
+      URL.revokeObjectURL(url);
+    }
+  });
+});
+
+// Pins on_unhandled_rejection's exit_code=1 write: an unhandled promise
+// rejection while the entry module is blocked in top-level await must fire
+// process.on('exit') with code=1 and exit 1 by default, and the exit handler
+// must be able to override it. Subprocess so the isBunTest branch (which skips
+// the non-test exit_code=1 write in uncaught_exception) is the path exercised.
+describe("worker exit code after an unhandled rejection during unsettled top-level await", () => {
+  const runWorkerFrom = async (body: string) => {
+    using dir = tempDir("worker-reject-tla", { "w.mjs": body });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker(${JSON.stringify(join(String(dir), "w.mjs"))});
+         w.on("error", () => {});
+         w.on("exit", c => console.log("exit:" + c));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
+  };
+
+  test.concurrent("exits 1 and the 'exit' handler observes code=1", async () => {
+    const { stdout, stderr, exitCode } = await runWorkerFrom(`
+      process.on("exit", code => process.stderr.write("handler-code:" + code));
+      setImmediate(() => Promise.reject(new Error("boom")));
+      await new Promise(() => {});
+    `);
+    expect(stderr).toBe("handler-code:1");
+    expect(stdout).toBe("exit:1");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("an 'exit' handler that sets process.exitCode overrides the default", async () => {
+    const { stdout, stderr, exitCode } = await runWorkerFrom(`
+      process.on("exit", code => { process.stderr.write("handler-code:" + code); process.exitCode = 7; });
+      setImmediate(() => Promise.reject(new Error("boom")));
+      await new Promise(() => {});
+    `);
+    expect(stderr).toBe("handler-code:1");
+    expect(stdout).toBe("exit:7");
+    expect(exitCode).toBe(0);
+  });
 });

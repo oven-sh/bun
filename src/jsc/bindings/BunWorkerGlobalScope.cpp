@@ -1,6 +1,7 @@
 #include "config.h"
 
 #include "BunWorkerGlobalScope.h"
+#include "webcore/Worker.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -15,6 +16,9 @@ void WorkerGlobalScope::onDidChangeListenerImpl(EventTarget& self, const AtomStr
         case Add:
             if (global.m_messageEventCount == 0) {
                 global.scriptExecutionContext()->refEventLoop();
+                // Node parentPort: flush anything the parent posted while there
+                // was no listener. No-op on main thread / Web Workers.
+                scheduleParentPortDrainIfNode(global.scriptExecutionContext());
             }
             global.m_messageEventCount++;
             break;

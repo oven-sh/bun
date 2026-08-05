@@ -96,6 +96,9 @@ void WebWorker__releaseParentPollRef(void* worker);
 // Free the native WebWorker struct. Called from ~Worker.
 void WebWorker__destroy(void* worker);
 
+// The owning Worker* for this VM (null on the main thread / non-worker).
+WebCore::Worker* WebWorker__getParentWorker(void* bunVM);
+
 } // extern "C"
 // -------------------------------------------------------------------------------------------------
 
@@ -227,14 +230,19 @@ void Worker::enqueueToWorker(MessageWithMessagePorts&& message)
     {
         Locker locker { m_toWorker.lock };
         m_toWorker.queue.append(WTF::move(message));
-        // If the worker isn't Running yet, just buffer; fireEarlyMessages()
-        // drains the inbox on the worker thread once it is. If Closing/
-        // Closed, also buffer (dropped with the Worker) — postMessage()
+        // Closing/Closed: buffer (dropped with the Worker) — postMessage()
         // already rejects on Closed, so only the close-handler window lands
         // here. If a drain is already scheduled, don't double-schedule.
         // drainScheduled is only set/cleared under the lock so the
         // load/store pair is not a race.
-        if (m_state.load() != State::Running || m_toWorker.drainScheduled.load(std::memory_order_relaxed))
+        auto state = m_state.load();
+        if (state >= State::Closing || m_toWorker.drainScheduled.load(std::memory_order_relaxed))
+            return;
+        // Web Workers buffer until fireEarlyMessages() (HTML "run a worker"
+        // step 26). Node workers drain as soon as parentPort has a listener,
+        // so a worker blocked in top-level await can still receive messages;
+        // drainToWorker is the listener gate, postTaskTo the context gate.
+        if (state == State::Pending && m_options.kind != WorkerOptions::Kind::Node)
             return;
         m_toWorker.drainScheduled.store(true, std::memory_order_relaxed);
     }
@@ -278,8 +286,11 @@ void Worker::enqueueToParent(MessageWithMessagePorts&& message)
 // into a local deque under the lock and dispatch without contending with the
 // sender. A sustained producer (e.g. a tight postMessage loop) would otherwise
 // make every per-message pop a contended acquire.
-template<typename Dispatch>
-static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* globalObject, ScriptExecutionContext& context, Dispatch&& dispatch)
+//
+// shouldContinue() returning false prepends the undelivered tail back to the
+// inbox and clears drainScheduled so a later trigger can re-run the drain.
+template<typename Dispatch, typename ShouldContinue>
+static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* globalObject, ScriptExecutionContext& context, Dispatch&& dispatch, ShouldContinue&& shouldContinue)
 {
     size_t limit;
     Deque<MessageWithMessagePorts> batch;
@@ -295,6 +306,13 @@ static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* gl
 
     while (true) {
         while (!batch.isEmpty()) {
+            if (!shouldContinue()) {
+                Locker locker { inbox.lock };
+                while (!batch.isEmpty())
+                    inbox.queue.prepend(batch.takeLast());
+                inbox.drainScheduled.store(false, std::memory_order_relaxed);
+                return false;
+            }
             if (limit-- == 0) {
                 // Yield to the rest of the event loop. Return the undrained
                 // tail to the front of the inbox so it stays ahead of
@@ -338,14 +356,58 @@ void Worker::drainToWorker(ScriptExecutionContext& context)
         m_toWorker.drainScheduled.store(false, std::memory_order_relaxed);
         return;
     }
-    bool reschedule = drainInbox(m_toWorker, globalObject, context, [&](Event& event) {
-        globalObject->globalEventScope->dispatchEvent(event);
-    });
+    auto& scope = globalObject->globalEventScope;
+    // Node parentPort queues while it has no 'message' listener and re-queues
+    // if once() leaves zero mid-drain; Web Workers dispatch regardless.
+    const bool gateOnListeners = m_options.kind == WorkerOptions::Kind::Node;
+    if (gateOnListeners && !scope->hasActiveEventListeners(eventNames().messageEvent)) {
+        Locker locker { m_toWorker.lock };
+        m_toWorker.drainScheduled.store(false, std::memory_order_relaxed);
+        return;
+    }
+    bool reschedule = drainInbox(
+        m_toWorker, globalObject, context,
+        [&](Event& event) { scope->dispatchEvent(event); },
+        [&] { return !gateOnListeners || scope->hasActiveEventListeners(eventNames().messageEvent); });
     if (reschedule) {
         ScriptExecutionContext::postTaskTo(m_clientIdentifier, [protectedThis = Ref { *this }](ScriptExecutionContext& ctx) {
             protectedThis->drainToWorker(ctx);
         });
     }
+}
+
+void Worker::scheduleDrainToWorker()
+{
+    // Not gated on drainScheduled: enqueueToWorker (parent thread) can leave it
+    // transiently true with no task posted (postTaskTo failed, clear not yet
+    // run), and this path (worker thread, 0→1 listener) is rare enough that a
+    // redundant drain is cheaper than a lost wakeup.
+    {
+        Locker locker { m_toWorker.lock };
+        if (m_toWorker.queue.isEmpty())
+            return;
+        m_toWorker.drainScheduled.store(true, std::memory_order_relaxed);
+    }
+    bool posted = ScriptExecutionContext::postTaskTo(m_clientIdentifier, [protectedThis = Ref { *this }](ScriptExecutionContext& ctx) {
+        protectedThis->drainToWorker(ctx);
+    });
+    if (!posted) {
+        Locker locker { m_toWorker.lock };
+        m_toWorker.drainScheduled.store(false, std::memory_order_relaxed);
+    }
+}
+
+void scheduleParentPortDrainIfNode(ScriptExecutionContext* context)
+{
+    if (!context)
+        return;
+    auto* globalObject = defaultGlobalObject(context->jsGlobalObject());
+    if (!globalObject)
+        return;
+    auto* worker = WebWorker__getParentWorker(globalObject->bunVM());
+    if (!worker || worker->options().kind != WorkerOptions::Kind::Node)
+        return;
+    worker->scheduleDrainToWorker();
 }
 
 void Worker::drainToParent(ScriptExecutionContext& context)
@@ -356,9 +418,10 @@ void Worker::drainToParent(ScriptExecutionContext& context)
         m_toParent.drainScheduled.store(false, std::memory_order_relaxed);
         return;
     }
-    bool reschedule = drainInbox(m_toParent, globalObject, context, [&](Event& event) {
-        dispatchEvent(event);
-    });
+    bool reschedule = drainInbox(
+        m_toParent, globalObject, context,
+        [&](Event& event) { dispatchEvent(event); },
+        [] { return true; });
     if (reschedule) {
         postTaskToParent([protectedThis = Ref { *this }](ScriptExecutionContext& c) {
             protectedThis->drainToParent(c);
@@ -746,8 +809,6 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
         return;
     }
 }
-
-extern "C" WebCore::Worker* WebWorker__getParentWorker(void* bunVM);
 
 JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {

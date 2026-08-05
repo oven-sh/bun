@@ -1093,8 +1093,10 @@ impl WebWorker {
         let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
             Ok(p) => p,
             Err(_) => {
-                // process.exit() may have run during load; don't clobber its code.
-                if !self.exit_called.load(Ordering::Relaxed) {
+                // Don't clobber a code set during load: process.exit(), or an
+                // uncaught exception in a task (timer / parentPort handler)
+                // that already ran on_unhandled_rejection + process.on('exit').
+                if !self.exit_called.load(Ordering::Relaxed) && vm.unhandled_error_counter == 0 {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
                 self.flush_logs(vm);
@@ -1518,6 +1520,11 @@ fn on_unhandled_rejection(
     }
 
     let mut array: Vec<u8> = Vec::new();
+
+    // uncaught_exception's non-test path set exit_code=1 already; the Promise-
+    // rejection and isBunTest paths did not. Set it before worker_ref's shared
+    // borrow so process.on('exit') below sees code=1 and can override it.
+    vm.exit_handler.exit_code = 1;
 
     // `worker_ref()` is the safe BACKREF accessor — `vm.worker` points at the
     // heap `WebWorker` owned by C++ that outlives `vm`. `&WebWorker` (not

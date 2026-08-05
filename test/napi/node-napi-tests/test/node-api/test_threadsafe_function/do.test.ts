@@ -10,7 +10,10 @@ test("build", async () => {
 });
 
 for (const file of Array.from(new Bun.Glob("*.js").scanSync(import.meta.dir))) {
-  // crash inside uv_thread_create
+  // test.js: crash inside uv_thread_create.
+  // test_legacy_uncaught_exception.js: --no-force-node-api-uncaught-exceptions-policy is
+  // not implemented, so the error still reaches the test's mustNotCall uncaughtException
+  // listener.
   test.concurrent.todoIf(["test.js", "test_legacy_uncaught_exception.js"].includes(file))(file, async () => {
     await built;
     await runAsync(dirname(import.meta.dir), basename(import.meta.dir) + sep + file);

@@ -214,7 +214,9 @@ function envFor(test: string) {
 // Mirror of parseTestFlags() in test/common/index.js. When a vendored test names runtime
 // flags in a `// Flags:` comment and process.execArgv lacks them, the common module
 // re-spawns the whole test under a second bun process to apply them; passing them to
-// `bun run` up front puts them in execArgv so that extra process never starts.
+// `bun run` up front puts them in execArgv so that extra process never starts. Of the
+// flags these tests name, bun only implements --expose-gc and silently skips the rest,
+// exactly as it did for the re-spawned child; only their presence in execArgv matters.
 function testFlagsFor(dir: string, test: string): string[] {
   let source: string;
   try {

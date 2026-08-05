@@ -693,8 +693,14 @@ static JSObject* jsDOMURLMakeURLContext(JSGlobalObject* lexicalGlobalObject, DOM
     uint32_t portNumber = portStr.isEmpty() ? kOmittedComponent : WTF::parseInteger<uint32_t>(portStr).value_or(kOmittedComponent);
     unsigned pathnameStart = hostEnd + (portStr.isEmpty() ? 0 : 1 + portStr.length());
     unsigned pathnameEnd = pathnameStart + pathname.length();
-    uint32_t searchStart = search.isEmpty() ? kOmittedComponent : pathnameEnd;
-    uint32_t hashStart = hash.isEmpty() ? kOmittedComponent : pathnameEnd + search.length();
+    // .search/.hash return "" for both a null and an empty-string component,
+    // but the href serializer emits the bare "?"/"#" for empty-but-present;
+    // derive presence from the href (a raw '?'/'#' is always the delimiter
+    // there) so the offsets match ada's.
+    size_t hashAt = href.find('#');
+    uint32_t hashStart = hashAt == notFound ? kOmittedComponent : static_cast<uint32_t>(hashAt);
+    size_t queryEnd = hashAt == notFound ? href.length() : hashAt;
+    uint32_t searchStart = (queryEnd > pathnameEnd && href[pathnameEnd] == '?') ? pathnameEnd : kOmittedComponent;
 
     // inspect() prints `URLContext { ... }` via getConstructorName, which
     // requires `ctx instanceof ctor`, so ctor.prototype must be the object

@@ -1184,12 +1184,6 @@ static void loadSignalNumberMap()
     });
 }
 
-bool isSignalName(WTF::String input)
-{
-    loadSignalNumberMap();
-    return signalNameToNumberMap->contains(input);
-}
-
 static void loadSignalNumberToNameMap()
 {
     static std::once_flag signalNumberToNameMapOnceFlag;

@@ -1582,13 +1582,22 @@ static void imageRestoreAndRun(const char* path)
     if (memcmp(hdr.magic, "BUNIMG2", 8) || hdr.spare[0] != platformBuildId()) { fprintf(stderr, "[image] %s was not produced by this build of the executable; booting normally\n", path); close(fd); return; }
     if (hdr.textBase != platformTextBase()) { fprintf(stderr, "[image] ASLR slide differs (image text %llx vs ours %llx); booting normally\n", (unsigned long long)hdr.textBase, (unsigned long long)platformTextBase()); close(fd); return; }
     if (false) { fprintf(stderr, "[image] %s was produced by a different build of this executable; booting normally\n", path); close(fd); return; }
-    bool haveFixups = false; std::vector<int64_t> libDelta; std::vector<ImageFixup> fixups;
-    if (hdr.spare[1]) { // extern-library fixup table: resolve each recorded library in this process by name hash
+    // Extern-library fixup table. Storage is anonymous mmap, not heap: the allocator's memory is about to be overlaid by the image.
+    bool haveFixups = false; int64_t* libDelta = nullptr; size_t nLibDelta = 0; ImageFixup* fixups = nullptr; size_t nFixups = 0;
+    if (hdr.spare[1]) {
         ImageFixupHeader fh; if (pread(fd, &fh, sizeof fh, hdr.spare[1]) == (ssize_t)sizeof fh && !memcmp(fh.magic, "BUNFIX0", 8) && fh.nlibs < 4096 && fh.nfixups < (1u << 24)) {
-            std::vector<PlatformLib> recorded(fh.nlibs); pread(fd, recorded.data(), fh.nlibs * sizeof(PlatformLib), hdr.spare[1] + sizeof fh);
-            fixups.resize(fh.nfixups); pread(fd, fixups.data(), fh.nfixups * sizeof(ImageFixup), hdr.spare[1] + sizeof fh + fh.nlibs * sizeof(PlatformLib));
-            std::vector<PlatformLib> now = platformSystemLibs(); libDelta.assign(fh.nlibs, 0); haveFixups = true;
-            for (size_t i = 0; i < recorded.size(); i++) { bool found = false; for (auto& l : now) if (l.nameHash == recorded[i].nameHash && (l.end - l.base) == (recorded[i].end - recorded[i].base)) { libDelta[i] = (int64_t)l.base - (int64_t)recorded[i].base; found = true; break; } if (!found) { bool used = false; for (auto& f : fixups) if (f.lib == i) { used = true; break; } if (used) { haveFixups = false; fprintf(stderr, "[image] a system library the image points into changed (size/name); booting normally\n"); close(fd); return; } } }
+            size_t bytes = (fh.nlibs * (sizeof(PlatformLib) + sizeof(int64_t)) + fh.nfixups * sizeof(ImageFixup) + 16383) & ~16383ull;
+            uint8_t* buf = (uint8_t*)mmap(nullptr, bytes ? bytes : 16384, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+            PlatformLib* recorded = (PlatformLib*)buf; libDelta = (int64_t*)(recorded + fh.nlibs); fixups = (ImageFixup*)(libDelta + fh.nlibs); nLibDelta = fh.nlibs; nFixups = fh.nfixups;
+            pread(fd, recorded, fh.nlibs * sizeof(PlatformLib), hdr.spare[1] + sizeof fh);
+            pread(fd, fixups, fh.nfixups * sizeof(ImageFixup), hdr.spare[1] + sizeof fh + fh.nlibs * sizeof(PlatformLib));
+            std::vector<PlatformLib> now = platformSystemLibs(); // heap use is fine up to here (before the overlay)
+            haveFixups = true;
+            for (size_t i = 0; i < fh.nlibs; i++) {
+                libDelta[i] = 0; bool found = false;
+                for (auto& l : now) if (l.nameHash == recorded[i].nameHash && (l.end - l.base) == (recorded[i].end - recorded[i].base)) { libDelta[i] = (int64_t)l.base - (int64_t)recorded[i].base; found = true; break; }
+                if (!found) { bool used = false; for (size_t k = 0; k < nFixups; k++) if (fixups[k].lib == i) { used = true; break; } if (used) { fprintf(stderr, "[image] a system library the image points into changed (size/name); booting normally\n"); close(fd); return; } }
+            }
         }
     }
     if (!haveFixups && hdr.libsBase && hdr.libsBase != platformLibsBase()) { fprintf(stderr, "[image] %s was built against system libraries at %llx, now at %llx (reboot / OS update); booting normally\n", path, (unsigned long long)hdr.libsBase, (unsigned long long)platformLibsBase()); close(fd); return; }
@@ -1599,6 +1608,7 @@ static void imageRestoreAndRun(const char* path)
     pread(fd, regionsBuf, hdr.nregions * sizeof(ImageRegion), sizeof(ImageHeader));
     std::span<ImageRegion> regions(regionsBuf, hdr.nregions);
     size_t mapped = 0, copied = 0;
+    struct DataSeg { uint64_t* dst; const uint64_t* src; size_t words; }; DataSeg dataSegs[16]; size_t nDataSegs = 0; // no heap here: the allocator's state is being overlaid
     bool verbose = !!getenv("BUN_IMAGE_VERBOSE");
     for (auto& r : regions) {
         if (verbose) { fprintf(stderr, "[image] restoring %llx+%llx kind=%llu tag=%llu\n", r.addr, r.len, r.kind & 0xff, r.kind >> 8); }
@@ -1622,9 +1632,13 @@ static void imageRestoreAndRun(const char* path)
             continue;
         }
         if ((r.kind & 0xff) == 1) {
-            // __DATA of the running binary: make writable and copy (mmap over a segment mapping also works but keep it simple)
+            // Data segments of the running binary are copied last (below): once they are overwritten our GOT/stdio state is the builder's,
+            // so nothing may call into libc between that copy and the extern-library fixups.
             if (mprotect((void*)r.addr, r.len, PROT_READ | PROT_WRITE)) { fprintf(stderr, "[image] mprotect __DATA %llx failed errno %d\n", r.addr, errno); _exit(3); }
-            if (pread(fd, (void*)r.addr, r.len, r.fileOff) != (ssize_t)r.len) { fprintf(stderr, "[image] pread __DATA failed errno %d\n", errno); _exit(3); } copied += r.len;
+            void* scratch = mmap(nullptr, r.len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+            if (scratch == MAP_FAILED || pread(fd, scratch, r.len, r.fileOff) != (ssize_t)r.len) { fprintf(stderr, "[image] pread __DATA failed errno %d\n", errno); _exit(3); }
+            if (nDataSegs < 16) dataSegs[nDataSegs++] = { (uint64_t*)r.addr, (const uint64_t*)scratch, r.len / 8 }; copied += r.len;
+            continue;
         } else {
             void* m = mmap((void*)r.addr, r.len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, r.fileOff);
             if (m == MAP_FAILED) {
@@ -1685,7 +1699,12 @@ static void imageRestoreAndRun(const char* path)
 #endif
     // pthread TLS keys created by the build process (WTF::ThreadSpecific etc.) must exist here too, or setspecific silently fails; burn keys up to the image's high-water mark.
     if (hdr.reserved[1]) { for (int i = 0; i < 1024; i++) { pthread_key_t k = 0; if (pthread_key_create(&k, nullptr)) break; if ((uint64_t)k + 1 >= hdr.reserved[1]) break; } }
-    if (haveFixups && !fixups.empty()) { size_t applied = 0; for (auto& f : fixups) if (f.lib < libDelta.size() && libDelta[f.lib]) { *(uint64_t*)f.addr += libDelta[f.lib]; applied++; } if (verbose || applied) fprintf(stderr, "[image] rebased %zu/%zu extern-library pointers\n", applied, fixups.size()); }
+    { // libc-free critical section: overwrite our data segments with the builder's, then rebase extern-library pointers. Plain loops only (no PLT calls).
+        for (size_t di = 0; di < nDataSegs; di++) { DataSeg& d = dataSegs[di]; volatile uint64_t* dst = d.dst; const uint64_t* src = d.src; for (size_t k = 0; k < d.words; k++) dst[k] = src[k]; }
+        if (haveFixups) for (size_t k = 0; k < nFixups; k++) { ImageFixup& f = fixups[k]; if (f.lib < nLibDelta && libDelta[f.lib]) *(volatile uint64_t*)f.addr += libDelta[f.lib]; }
+    }
+    for (size_t di = 0; di < nDataSegs; di++) munmap((void*)dataSegs[di].src, dataSegs[di].words * 8);
+    if (haveFixups && (verbose || nFixups)) fprintf(stderr, "[image] rebased %zu extern-library pointers\n", nFixups);
     fprintf(stderr, "[image] restored %zu regions: %.1fMB mapped clean, %.1fMB __DATA copied\n", regions.size(), mapped / 1048576.0, copied / 1048576.0);
     // From here on all globals/heap are the build process's. Adopt the image's main Thread object for this OS thread.
     WTF::Thread* mainThread = (WTF::Thread*)hdr.mainThread;

@@ -763,6 +763,5 @@ test("errored pipeline releases the compression coder eagerly", async () => {
   // release measures 7 MiB release / 8 MiB debug+ASAN.
   expect(deltaMiB).toBeLessThan(64);
   expect(exitCode).toBe(0);
-}, // A debug/ASAN child running 512 pipelines plus per-iteration full GCs
-// outlives the default per-test timeout.
+}, // outlives the default per-test timeout. // A debug/ASAN child running 512 pipelines plus per-iteration full GCs
 60_000);

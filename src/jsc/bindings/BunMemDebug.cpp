@@ -231,7 +231,12 @@ static bool findSiblingImage(char* out, size_t cap)
     else if (home) snprintf(dir, sizeof dir, "%s/.cache/bun/images", home);
     else return false;
     { char partial[4200]; snprintf(partial, sizeof partial, "%s", dir); for (char* q = partial + 1; *q; q++) if (*q == '/') { *q = 0; mkdir(partial, 0755); *q = '/'; } mkdir(partial, 0755); }
-    snprintf(out, cap, "%s/%llx-%llx-%llx-%llx-%llx.img", dir, (unsigned long long)est.st_size, (unsigned long long)est.st_mtime, (unsigned long long)zst.st_size, (unsigned long long)zst.st_mtime, (unsigned long long)(platformLibsBase() ^ platformBuildId()));
+#if OS(LINUX)
+    uint64_t keyExtra = platformBuildId(); // system libraries may slide on Linux (extern-library fixups), so their base is not part of the identity
+#else
+    uint64_t keyExtra = platformLibsBase() ^ platformBuildId();
+#endif
+    snprintf(out, cap, "%s/%llx-%llx-%llx-%llx-%llx.img", dir, (unsigned long long)est.st_size, (unsigned long long)est.st_mtime, (unsigned long long)zst.st_size, (unsigned long long)zst.st_mtime, (unsigned long long)keyExtra);
     if (access(out, R_OK) == 0)
         return true;
     if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] inflating %s -> %s\n", zpath, out);

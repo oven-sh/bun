@@ -988,6 +988,9 @@ pub(crate) fn install_isolated_packages(
                 // nothing matched - create a new entry
             }
 
+            // Names the on-disk store entry (`+<16 hex>` suffix); documented as a
+            // stable format in docs/pm/isolated-installs.mdx#the-peer-set-suffix.
+            // Changing the derivation is breaking.
             let new_entry_peer_hash: store::entry::PeerHash = 'peer_hash: {
                 let peers = &node_peers[entry.node_id.get() as usize];
                 if peers.len() == 0 {

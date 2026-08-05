@@ -58,12 +58,11 @@ impl WeakImpl {
 
 // `WeakImpl` is an opaque `UnsafeCell`-backed ZST handle (`&WeakImpl` is
 // ABI-identical to non-null `*const WeakImpl`; C++ slot mutation is interior).
-// `new` is `safe fn`: the weak handle registers against `value`'s own cell
-// (callers pass a live object value — enforced by the `is_object()` guard in
-// the constructors below, which implies a readable cell header), and `ctx` is
-// an opaque round-trip pointer C++ only stores and forwards to the finalizer
-// (never dereferenced as Rust data) — same contract as `JSC__VM__holdAPILock`.
-// `delete` consumes the allocation and so stays `unsafe fn`.
+// `new` is `safe fn`: it registers against `value`'s own cell (the
+// `is_object()` guard in the constructors below admits only live object
+// values), and `ctx` is an opaque round-trip pointer C++ only stores and
+// forwards to the finalizer. `delete` consumes the allocation and so stays
+// `unsafe fn`.
 unsafe extern "C" {
     fn Bun__WeakRef__delete(this: *mut WeakImpl);
     safe fn Bun__WeakRef__new(
@@ -91,10 +90,9 @@ impl<T> Default for Weak<T> {
 
 impl<T> Weak<T> {
     /// A weak handle with no finalize callback, registered against `value`'s
-    /// own cell (no global needed). `get()` reads `None` from the moment GC
-    /// reaps the referent, before any sweep runs cell destructors.
-    ///
-    /// Non-object values produce an empty handle (`get()` is `None`).
+    /// own cell. `get()` reads `None` from the moment GC reaps the referent,
+    /// before any sweep runs cell destructors; non-object values produce an
+    /// empty handle.
     pub fn create_passive(value: JSValue) -> Self {
         if !value.is_object() {
             return Self::default();

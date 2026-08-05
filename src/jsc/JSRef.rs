@@ -62,11 +62,9 @@ use crate::{JSGlobalObject, JSValue};
 ///
 /// # States
 ///
-/// - **Weak**: Holds a passive `JSC::Weak` handle registered against the
-///   value's cell. Does NOT prevent garbage collection. `try_get()` returns
-///   `None` from the moment GC reaps the referent — before the lazy sweep
-///   runs the wrapper's destructor (which is what flips the ref to
-///   `Finalized`) — so a deferred reader can never observe a dead cell.
+/// - **Weak**: A passive `JSC::Weak` handle on the value's cell. Does NOT
+///   prevent garbage collection. `try_get()` reads `None` from the moment GC
+///   reaps the referent, before any sweep runs the wrapper's destructor.
 ///
 /// - **Strong**: Holds a Strong reference that prevents garbage collection.
 ///   The JavaScript object will stay alive as long as this reference exists.
@@ -98,10 +96,9 @@ use crate::{JSGlobalObject, JSValue};
 /// Common pattern: Start strong, downgrade to weak when idle, upgrade to strong when active.
 /// See ServerWebSocket, UDPSocket, MySQLConnection, and ValkeyClient for examples.
 ///
-/// `JsRef` is `!Send + !Sync` (transitively via `Weak` and `Strong`): the
-/// `StrongRootBlock` slot backing `Strong` hangs off the per-VM JSVMClientData,
-/// and the `JSC::Weak` handle backing `Weak` lives in the cell's `WeakSet`;
-/// both must be created and dropped on the JS thread.
+/// `JsRef` is `!Send + !Sync` (transitively via `Weak` and `Strong`): both
+/// handles live in per-VM GC structures and must be created and dropped on
+/// the JS thread.
 pub enum JsRef {
     Weak(Weak<()>),
     Strong(Strong),
@@ -149,8 +146,7 @@ impl JsRef {
         if matches!(self, JsRef::Finalized) {
             return;
         }
-        // Overwriting `*self` drops the prior variant (a `Strong`'s `Drop`
-        // releases its block slot; a `Weak`'s `Drop` frees its handle).
+        // The assignment drops the prior variant's handle.
         *self = JsRef::Weak(Weak::create_passive(value));
     }
 
@@ -166,10 +162,8 @@ impl JsRef {
     pub fn upgrade(&mut self, global: &JSGlobalObject) {
         match self {
             JsRef::Weak(weak) => {
-                // A reaped referent cannot be resurrected: stay `Weak` (dead)
-                // so readers keep seeing `None`. This also makes an upgrade
-                // that races wrapper collection a skip instead of a re-root
-                // of a dead cell.
+                // A reaped referent cannot be resurrected: stay dead-`Weak`
+                // so readers keep seeing `None`.
                 if let Some(value) = weak.get() {
                     *self = JsRef::Strong(Strong::create(value, global));
                 }
@@ -186,8 +180,7 @@ impl JsRef {
             JsRef::Weak(_) => {}
             JsRef::Strong(strong) => {
                 // Register the weak handle while the `Strong` still roots the
-                // referent, so there is no window in which the value is
-                // unrooted; the old `Strong` is dropped by the assignment.
+                // referent, so the value is never unrooted.
                 let weak = match strong.get() {
                     Some(value) => Weak::create_passive(value),
                     None => Weak::default(),
@@ -251,19 +244,15 @@ impl Default for JsRef {
 }
 
 /// Non-registering sibling of [`JsRef`] for wrapper back-pointers that are
-/// only read synchronously while the wrapper is rooted by the caller (the
-/// receiver of a host fn, or a value just created / passed in on the JS
-/// stack).
+/// only read synchronously while the wrapper is rooted by the caller
+/// (host-fn receiver, or a value just created on the JS stack).
 ///
-/// Holds the bare `JSValue` with no GC registration, so it costs nothing per
-/// object — a [`JsRef::Weak`] allocates a `JSC::Weak` handle, and for
-/// precise-allocated wrapper cells that means a `WeakBlock` in the cell's own
-/// `WeakSet` (1 KB each), which is too heavy to pay on every `Request` /
-/// `Response` construction. In exchange `try_get()` says nothing about
-/// liveness: a read after the wrapper dies hands back a dangling value.
-/// Deferred readers (event-loop callbacks, queued tasks, socket/timer
-/// dispatch) must use [`JsRef`], whose weak read goes dead the moment GC
-/// reaps the referent.
+/// The bare `JSValue` costs nothing per object, where a registered
+/// [`JsRef::Weak`] on a precise-allocated wrapper cell costs a 1 KB
+/// `WeakBlock` in the cell's own `WeakSet` — too heavy for every
+/// `Request`/`Response` construction. In exchange `try_get()` says nothing
+/// about liveness, so deferred readers (event-loop callbacks, queued tasks)
+/// must use [`JsRef`].
 pub enum RawJsRef {
     Value(JSValue),
     Finalized,

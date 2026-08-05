@@ -362,7 +362,9 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
           const body = await r.text();
           console.log(JSON.stringify({ status: r.status, body }));
         `);
-        const { stdout, exitCode } = await collect(proc);
+        const { stdout, stderr, exitCode } = await collect(proc);
+        // stderr first: on a crash it carries the panic/ASAN report.
+        expect(stderr).toBe("");
         expect(stdout.trim()).toBe('{"status":200,"body":""}');
         expect(exitCode).toBe(0);
       },

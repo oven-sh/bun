@@ -1644,7 +1644,10 @@ impl<'a> PackageInstaller<'a> {
                         ) {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
-                            Err(ForTarballError::InvalidURL) => {
+                            // NetworkDisabled (`--offline`) was already logged
+                            // by `generate_network_task_for_tarball`; count the
+                            // failure and advance the tree like InvalidURL.
+                            Err(ForTarballError::InvalidURL | ForTarballError::NetworkDisabled) => {
                                 self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
                             }
                             Err(ForTarballError::AlreadyFailed) => self
@@ -1676,7 +1679,7 @@ impl<'a> PackageInstaller<'a> {
                         ) {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
-                            Err(ForTarballError::InvalidURL) => {
+                            Err(ForTarballError::InvalidURL | ForTarballError::NetworkDisabled) => {
                                 self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
                             }
                             Err(ForTarballError::AlreadyFailed) => self
@@ -1714,7 +1717,7 @@ impl<'a> PackageInstaller<'a> {
                         ) {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
-                            Err(ForTarballError::InvalidURL) => {
+                            Err(ForTarballError::InvalidURL | ForTarballError::NetworkDisabled) => {
                                 self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
                             }
                             Err(ForTarballError::AlreadyFailed) => self

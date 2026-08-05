@@ -1113,38 +1113,81 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     }
                                 }
 
-                                if verbose_install() {
-                                    bun_core::pretty_errorln!(
-                                        "Enqueue package manifest for download: {}",
-                                        bstr::BStr::new(&name_str)
-                                    );
-                                }
+                                if this.options.enable.offline() {
+                                    // No usable cached manifest (offline mode
+                                    // already treats any cached manifest as
+                                    // fresh, so reaching this point means the
+                                    // manifest is absent). Report instead of
+                                    // fetching, mirroring the non-retryable
+                                    // manifest failure handling in `run_tasks`.
+                                    if run_tasks::is_network_task_required(this, task_id) {
+                                        bun_ast::add_error_pretty!(
+                                            this.log_mut(),
+                                            None,
+                                            bun_ast::Loc::EMPTY,
+                                            "no cached manifest for package <b>{}<r> and network requests are disabled (--offline)",
+                                            bstr::BStr::new(&name_str),
+                                        );
+                                    } else {
+                                        bun_ast::add_warning_pretty!(
+                                            this.log_mut(),
+                                            None,
+                                            bun_ast::Loc::EMPTY,
+                                            "no cached manifest for package <b>{}<r> and network requests are disabled (--offline)",
+                                            bstr::BStr::new(&name_str),
+                                        );
+                                    }
 
-                                // `get_network_task` touches only the
-                                // preallocated pool, not `string_bytes`;
-                                // `name_str` is an owned copy, so `this` is
-                                // free to reborrow `&mut`.
-                                let network_task = this.get_network_task();
-                                // SAFETY: `network_task` is the unique handle to a
-                                // freshly-vended pool slot. `write_init` resets every
-                                // defaulted field (callback is uninitialized and
-                                // overwritten by `for_manifest`).
-                                unsafe {
-                                    NetworkTask::write_init(network_task, task_id, this_ptr, None);
-                                }
+                                    if this.subcommand != package_manager_real::Subcommand::Remove {
+                                        use crate::package_manager_real::options::Do;
+                                        for request in this.update_requests.iter_mut() {
+                                            if strings::eql(request.name, &name_str) {
+                                                request.failed = true;
+                                                this.options.do_.remove(Do::SAVE_LOCKFILE);
+                                                this.options.do_.remove(Do::SAVE_YARN_LOCK);
+                                                this.options.do_.remove(Do::INSTALL_PACKAGES);
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    if verbose_install() {
+                                        bun_core::pretty_errorln!(
+                                            "Enqueue package manifest for download: {}",
+                                            bstr::BStr::new(&name_str)
+                                        );
+                                    }
 
-                                let scope = this.scope_for_package_name(&name_str);
-                                // SAFETY: network_task points to a valid initialized NetworkTask slot
-                                unsafe {
-                                    (*network_task).for_manifest(
-                                        &name_str,
-                                        scope,
-                                        loaded_manifest.as_ref(),
-                                        dependency.behavior.is_optional(),
-                                        needs_extended_manifest,
-                                    )?;
+                                    // `get_network_task` touches only the
+                                    // preallocated pool, not `string_bytes`;
+                                    // `name_str` is an owned copy, so `this` is
+                                    // free to reborrow `&mut`.
+                                    let network_task = this.get_network_task();
+                                    // SAFETY: `network_task` is the unique handle to a
+                                    // freshly-vended pool slot. `write_init` resets every
+                                    // defaulted field (callback is uninitialized and
+                                    // overwritten by `for_manifest`).
+                                    unsafe {
+                                        NetworkTask::write_init(
+                                            network_task,
+                                            task_id,
+                                            this_ptr,
+                                            None,
+                                        );
+                                    }
+
+                                    let scope = this.scope_for_package_name(&name_str);
+                                    // SAFETY: network_task points to a valid initialized NetworkTask slot
+                                    unsafe {
+                                        (*network_task).for_manifest(
+                                            &name_str,
+                                            scope,
+                                            loaded_manifest.as_ref(),
+                                            dependency.behavior.is_optional(),
+                                            needs_extended_manifest,
+                                        )?;
+                                    }
+                                    enqueue_network_task(this, network_task);
                                 }
-                                enqueue_network_task(this, network_task);
                             }
                         } else {
                             this.peer_dependencies.write_item(id)?;
@@ -1330,7 +1373,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
             }
 
-            if let Some(network_task) = run_tasks::generate_network_task_for_tarball(
+            match run_tasks::generate_network_task_for_tarball(
                 this,
                 task_id,
                 &url,
@@ -1344,10 +1387,19 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 },
                 None,
                 crate::network_task::Authorization::NoAuthorization,
-            )? {
-                // reshaped for borrowck — see `enqueue_tarball_for_download`.
-                let nt: *mut NetworkTask = network_task;
-                enqueue_network_task(this, nt);
+            ) {
+                Ok(Some(network_task)) => {
+                    // reshaped for borrowck — see `enqueue_tarball_for_download`.
+                    let nt: *mut NetworkTask = network_task;
+                    enqueue_network_task(this, nt);
+                }
+                Ok(None) => {}
+                // `--offline` with the tarball missing from the cache: already
+                // reported by `generate_network_task_for_tarball`; resolution
+                // of this dependency stays pending and the install fails with
+                // that error.
+                Err(crate::network_task::ForTarballError::NetworkDisabled) => {}
+                Err(err) => return Err(err.into()),
             }
             Ok(())
         }
@@ -1553,7 +1605,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     // immediately so the `&mut *this` borrow ends before
                     // `enqueue_network_task(this, …)` reborrows it (NLL).
                     let network_task: Option<*mut NetworkTask> =
-                        run_tasks::generate_network_task_for_tarball(
+                        match run_tasks::generate_network_task_for_tarball(
                             this,
                             task_id,
                             url,
@@ -1567,8 +1619,14 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             },
                             None,
                             crate::network_task::Authorization::NoAuthorization,
-                        )?
-                        .map(std::ptr::from_mut::<NetworkTask>);
+                        ) {
+                            Ok(task) => task.map(std::ptr::from_mut::<NetworkTask>),
+                            // `--offline`: already reported by
+                            // `generate_network_task_for_tarball`; the install
+                            // fails with that error.
+                            Err(crate::network_task::ForTarballError::NetworkDisabled) => None,
+                            Err(err) => return Err(err.into()),
+                        };
                     if let Some(network_task) = network_task {
                         enqueue_network_task(this, network_task);
                     }
@@ -1698,6 +1756,7 @@ fn enqueue_git_clone(
                 env: crate::repository::SharedEnv::get(this.env_mut()),
                 dep_id,
                 res: *res,
+                network_disabled: this.options.enable.offline(),
             }),
         },
         id: task_id,
@@ -1904,6 +1963,129 @@ fn enqueue_local_tarball(
     unsafe { &raw mut (*task).threadpool_task }
 }
 
+/// Enqueue a threadpool task that reads `<tarball_dir>/<name>@<version>.tgz`
+/// and extracts it into the package's npm cache folder, replacing the registry
+/// download when `--tarball-dir` is set. The lockfile integrity is verified
+/// against the file's bytes exactly like a downloaded tarball, and the task
+/// completes through the same `Extract`/`LocalTarball` path (same `task_id`),
+/// so waiting installers and patch application behave identically.
+///
+/// With `require_exists` (online mode) the file is stat'd first and `None` is
+/// returned when it is absent, so the caller can fall back to the network.
+/// Offline, a missing file becomes the task's read error, which names the
+/// exact path. `None` is also returned when the joined path does not fit in a
+/// `PathBuffer`. `apply_patch_task` is only consumed when a task is returned.
+pub(crate) fn enqueue_npm_tarball_from_tarball_dir(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    dependency_id: DependencyID,
+    package: &Package,
+    apply_patch_task: &mut Option<Box<PatchTask>>,
+    require_exists: bool,
+) -> Option<*mut ThreadPool::Task> {
+    debug_assert!(package.resolution.tag == ResolutionTag::Npm);
+    debug_assert!(!this.options.tarball_directory.is_empty());
+
+    // SAFETY: `string_bytes` is not resized in this fn; the slice is copied
+    // into the filename store / path buffer before any `&mut this` use that
+    // could append to it.
+    let pkg_name = this.lockfile.str_detached(&package.name);
+
+    // `<dir>/<name>@<version>.tgz`, with `@scope/` scoped names as a
+    // subdirectory. Relative `tarball_dir` paths resolve against the project
+    // root when the task reads the file (`normalize: true`).
+    let mut path_buf = PathBuffer::uninit();
+    let tarball_path: &[u8] = {
+        let mut dir = this.options.tarball_directory;
+        while let [head @ .., b'/'] | [head @ .., b'\\'] = dir {
+            dir = head;
+        }
+        let string_buf = this.lockfile.buffers.string_bytes.as_slice();
+        let version = package.resolution.npm().version;
+        use std::io::Write;
+        let total = path_buf.0.len();
+        let mut cursor = &mut path_buf.0[..];
+        if write!(
+            &mut cursor,
+            "{}/{}@{}.tgz",
+            bun_fmt::s(dir),
+            bun_fmt::s(pkg_name),
+            version.fmt(string_buf),
+        )
+        .is_err()
+        {
+            return None;
+        }
+        let written = total - cursor.len();
+        &path_buf.0[..written]
+    };
+
+    if require_exists {
+        // Same resolution as `File::read_from_user_input`, which the task
+        // uses to read the file (`normalize: true`).
+        let mut abs_buf = PathBuffer::uninit();
+        let abs = Path::resolve_path::join_abs_string_buf_z::<Path::platform::Loose>(
+            FileSystem::instance().top_level_dir(),
+            &mut abs_buf.0,
+            &[tarball_path],
+        );
+        if !bun_sys::exists(abs.as_bytes()) {
+            return None;
+        }
+    }
+
+    let apply_patch_task = apply_patch_task.take();
+
+    // Mirrors `enqueue_local_tarball`, but with the npm resolution (so the
+    // extract lands in the npm cache folder name the installer looks for) and
+    // without workspace-relative path normalization.
+    let value = Task::Task {
+        package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
+        log: bun_ast::Log::init(),
+        tag: crate::package_manager_task::Tag::LocalTarball,
+        request: crate::package_manager_task::Request {
+            local_tarball: ManuallyDrop::new(crate::package_manager_task::LocalTarballRequest {
+                tarball: ExtractTarball {
+                    package_manager: bun_ptr::BackRef::new(this),
+                    name: StringOrTinyString::init_append_if_needed(
+                        pkg_name,
+                        &mut crate::network_task::filename_store_appender(),
+                    )
+                    .expect("unreachable"),
+                    resolution: package.resolution,
+                    // Borrowed views — see `enqueue_local_tarball`.
+                    cache_dir: get_cache_directory(this),
+                    temp_dir: get_temporary_directory(this).handle.fd(),
+                    dependency_id,
+                    integrity: package.meta.integrity,
+                    url: StringOrTinyString::init_append_if_needed(
+                        tarball_path,
+                        &mut crate::network_task::filename_store_appender(),
+                    )
+                    .expect("unreachable"),
+                    skip_verify: !this
+                        .options
+                        .do_
+                        .contains(crate::package_manager_real::options::Do::VERIFY_INTEGRITY),
+                    in_trusted_dependencies: this.lockfile.in_trusted_dependencies(pkg_name),
+                },
+                tarball_path: StringOrTinyString::init_append_if_needed(
+                    tarball_path,
+                    &mut crate::network_task::filename_store_appender(),
+                )
+                .expect("unreachable"),
+                normalize: true,
+            }),
+        },
+        id: task_id,
+        apply_patch_task,
+        ..Task::uninit()
+    };
+    let task = this.preallocated_resolve_tasks.get_init(value).as_ptr();
+    // SAFETY: `get_init` just fully initialized the slot.
+    Some(unsafe { &raw mut (*task).threadpool_task })
+}
+
 fn update_name_and_name_hash_from_version_replacement(
     lockfile: &Lockfile::Lockfile,
     original_name: SemverString,
@@ -2077,11 +2259,15 @@ fn get_or_put_resolved_package_with_find_result(
         }),
         // Do we need to download the tarball?
         install::PreinstallState::Extract => 'extract: {
-            // Skip tarball download when prefetch_resolved_tarballs is disabled (e.g., --lockfile-only)
+            // Skip tarball download when prefetch_resolved_tarballs is disabled
+            // (e.g., --lockfile-only). Also skip under `--offline`: the install
+            // phase re-checks the cache and either reads from `--tarball-dir`
+            // or reports the package as unavailable, with full context.
             if !this
                 .options
                 .do_
                 .contains(crate::package_manager_real::options::Do::PREFETCH_RESOLVED_TARBALLS)
+                || this.options.enable.offline()
             {
                 break 'extract Some(ResolvedPackageResult {
                     package,
@@ -2099,20 +2285,20 @@ fn get_or_put_resolved_package_with_find_result(
             break 'extract Some(ResolvedPackageResult {
                 package,
                 is_first_time: true,
-                task: Some(ResolvedPackageTask::NetworkTask(
-                    run_tasks::generate_network_task_for_tarball(
-                        this,
-                        task_id,
-                        manifest.str(&find_result.package.tarball_url),
-                        behavior.is_required(),
-                        dependency_id,
-                        &package,
-                        name_and_version_hash,
-                        // its npm.
-                        crate::network_task::Authorization::AllowAuthorization,
-                    )?
-                    .expect("unreachable"),
-                )),
+                // `None` when `--tarball-dir` already enqueued a local read
+                // of the tarball (dedupe can't hit: asserted above).
+                task: run_tasks::generate_network_task_for_tarball(
+                    this,
+                    task_id,
+                    manifest.str(&find_result.package.tarball_url),
+                    behavior.is_required(),
+                    dependency_id,
+                    &package,
+                    name_and_version_hash,
+                    // its npm.
+                    crate::network_task::Authorization::AllowAuthorization,
+                )?
+                .map(|task| ResolvedPackageTask::NetworkTask(task)),
             });
         }
         install::PreinstallState::CalcPatchHash => Some(ResolvedPackageResult {

@@ -74,6 +74,14 @@ bun install <name>@<version>
 
 ### Network & Registry Settings
 
+<ParamField path="--offline" type="boolean">
+  Disallow network requests; fail if a package is not available locally
+</ParamField>
+
+<ParamField path="--tarball-dir" type="string">
+  Read package tarballs from a directory of `<name>@<version>.tgz` files instead of downloading them
+</ParamField>
+
 <ParamField path="--ca" type="string">
   Provide a Certificate Authority signing certificate
 </ParamField>

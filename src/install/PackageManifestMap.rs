@@ -48,6 +48,9 @@ pub enum CacheBehavior {
 pub struct DiskCacheCtx {
     pub(crate) enable_manifest_cache: bool,
     pub(crate) enable_manifest_cache_control: bool,
+    /// `--offline`: a manifest loaded from disk is authoritative regardless of
+    /// its cache-control expiry (there is no network to revalidate against).
+    pub(crate) offline: bool,
     /// `pm.getCacheDirectory()` — pre-opened so the lookup never needs `&mut
     /// PackageManager`. `None` iff `enable_manifest_cache` is false (the only
     /// branch that reads it is gated on that flag).
@@ -215,9 +218,10 @@ impl PackageManifestMap {
                             return None;
                         }
 
-                        if ctx.enable_manifest_cache_control
-                            && manifest.pkg.public_max_age
-                                > ctx.timestamp_for_manifest_cache_control
+                        if ctx.offline
+                            || (ctx.enable_manifest_cache_control
+                                && manifest.pkg.public_max_age
+                                    > ctx.timestamp_for_manifest_cache_control)
                         {
                             let value_ptr = vac.insert(Value::Manifest(manifest));
                             let Value::Manifest(m) = value_ptr else {

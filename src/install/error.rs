@@ -44,6 +44,8 @@ pub enum Error {
     TarballFailedToExtract,
     #[error("TarballFailedToDownload")]
     TarballFailedToDownload,
+    #[error("NetworkDisabled")]
+    NetworkDisabled,
     #[error("BadRequest")]
     BadRequest,
     #[error("TooManyRequests")]
@@ -289,6 +291,7 @@ impl Error {
             Self::TarballHTTP5xx => "TarballHTTP5xx",
             Self::TarballFailedToExtract => "TarballFailedToExtract",
             Self::TarballFailedToDownload => "TarballFailedToDownload",
+            Self::NetworkDisabled => "NetworkDisabled",
             Self::BadRequest => "BadRequest",
             Self::TooManyRequests => "TooManyRequests",
             Self::HTTPInternalServerError => "HTTPInternalServerError",

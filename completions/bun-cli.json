@@ -307,6 +307,21 @@
           "multiple": false
         },
         {
+          "name": "offline",
+          "description": "Disallow network requests; fail if a package is not cached",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tarball-dir",
+          "description": "Read package tarballs from a directory of name@version.tgz files instead of downloading them",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "force",
           "shortName": "f",
           "description": "Always request the latest versions from the registry & reinstall all dependencies",
@@ -615,6 +630,21 @@
           "name": "frozen-lockfile",
           "description": "Disallow changes to lockfile",
           "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Disallow network requests; fail if a package is not cached",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tarball-dir",
+          "description": "Read package tarballs from a directory of name@version.tgz files instead of downloading them",
+          "hasValue": true,
+          "valueType": "val",
           "required": false,
           "multiple": false
         },
@@ -933,6 +963,21 @@
           "multiple": false
         },
         {
+          "name": "offline",
+          "description": "Disallow network requests; fail if a package is not cached",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tarball-dir",
+          "description": "Read package tarballs from a directory of name@version.tgz files instead of downloading them",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "force",
           "shortName": "f",
           "description": "Always request the latest versions from the registry & reinstall all dependencies",
@@ -1191,6 +1236,21 @@
           "name": "frozen-lockfile",
           "description": "Disallow changes to lockfile",
           "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Disallow network requests; fail if a package is not cached",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tarball-dir",
+          "description": "Read package tarballs from a directory of name@version.tgz files instead of downloading them",
+          "hasValue": true,
+          "valueType": "val",
           "required": false,
           "multiple": false
         },
@@ -1509,6 +1569,21 @@
           "multiple": false
         },
         {
+          "name": "offline",
+          "description": "Disallow network requests; fail if a package is not cached",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tarball-dir",
+          "description": "Read package tarballs from a directory of name@version.tgz files instead of downloading them",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "force",
           "shortName": "f",
           "description": "Always request the latest versions from the registry & reinstall all dependencies",
@@ -1792,6 +1867,21 @@
           "multiple": false
         },
         {
+          "name": "offline",
+          "description": "Disallow network requests; fail if a package is not cached",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tarball-dir",
+          "description": "Read package tarballs from a directory of name@version.tgz files instead of downloading them",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "force",
           "shortName": "f",
           "description": "Always request the latest versions from the registry & reinstall all dependencies",
@@ -2051,6 +2141,21 @@
           "multiple": false
         },
         {
+          "name": "offline",
+          "description": "Disallow network requests; fail if a package is not cached",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tarball-dir",
+          "description": "Read package tarballs from a directory of name@version.tgz files instead of downloading them",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "force",
           "shortName": "f",
           "description": "Always request the latest versions from the registry & reinstall all dependencies",
@@ -2299,6 +2404,21 @@
           "name": "frozen-lockfile",
           "description": "Disallow changes to lockfile",
           "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Disallow network requests; fail if a package is not cached",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tarball-dir",
+          "description": "Read package tarballs from a directory of name@version.tgz files instead of downloading them",
+          "hasValue": true,
+          "valueType": "val",
           "required": false,
           "multiple": false
         },
@@ -2604,6 +2724,21 @@
           "name": "frozen-lockfile",
           "description": "Disallow changes to lockfile",
           "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Disallow network requests; fail if a package is not cached",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tarball-dir",
+          "description": "Read package tarballs from a directory of name@version.tgz files instead of downloading them",
+          "hasValue": true,
+          "valueType": "val",
           "required": false,
           "multiple": false
         },
@@ -3027,6 +3162,21 @@
           "name": "frozen-lockfile",
           "description": "Disallow changes to lockfile",
           "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Disallow network requests; fail if a package is not cached",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tarball-dir",
+          "description": "Read package tarballs from a directory of name@version.tgz files instead of downloading them",
+          "hasValue": true,
+          "valueType": "val",
           "required": false,
           "multiple": false
         },

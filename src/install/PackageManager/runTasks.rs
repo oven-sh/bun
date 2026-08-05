@@ -1787,7 +1787,7 @@ pub fn generate_network_task_for_tarball<'a>(
                 .patchfile_hash()?,
         ))
     });
-    let apply_patch_task = if let Some((h, patch_hash)) = patch {
+    let mut apply_patch_task = if let Some((h, patch_hash)) = patch {
         let task: *mut PatchTask =
             PatchTask::new_apply_patch_hash(this, package.meta.id, patch_hash, h);
         // SAFETY: `task` is a fresh non-null `heap::alloc` from
@@ -1800,6 +1800,74 @@ pub fn generate_network_task_for_tarball<'a>(
     } else {
         None
     };
+
+    let offline = this.options.enable.offline();
+
+    // `--tarball-dir` supplies npm tarball bytes from a local directory:
+    // unconditionally under `--offline` (a missing file becomes the task's
+    // read error, naming the path), and whenever the file exists otherwise
+    // (falling back to the network when it does not).
+    if package.resolution.tag == crate::resolution::Tag::Npm
+        && !this.options.tarball_directory.is_empty()
+    {
+        if let Some(task) = enqueue::enqueue_npm_tarball_from_tarball_dir(
+            this,
+            task_id,
+            dependency_id,
+            package,
+            &mut apply_patch_task,
+            !offline,
+        ) {
+            this.task_batch.push(ThreadPoolBatch::from(task));
+            let _ = schedule_tasks(this);
+            return Ok(None);
+        }
+    }
+
+    if offline {
+        // Everything reaching this point needs the network, which offline
+        // mode forbids.
+
+        // reshaped for borrowck — format the description before `log_mut()`
+        // reborrows `this`.
+        let description = {
+            use std::fmt::Write;
+            let string_buf = this.lockfile.buffers.string_bytes.as_slice();
+            let name = this.lockfile.str(&package.name);
+            let mut description = String::new();
+            if name.is_empty() {
+                write!(description, "{}", bstr::BStr::new(url)).expect("infallible")
+            } else {
+                write!(
+                    description,
+                    "{}@{}",
+                    bstr::BStr::new(name),
+                    package.resolution.fmt(string_buf, PathSep::Posix),
+                )
+                .expect("infallible")
+            }
+            description
+        };
+        if is_network_task_required(this, task_id) {
+            bun_ast::add_error_pretty!(
+                this.log_mut(),
+                None,
+                bun_ast::Loc::EMPTY,
+                "<b>{}<r> is missing from the cache and network requests are disabled (--offline)",
+                description,
+            );
+        } else {
+            bun_ast::add_warning_pretty!(
+                this.log_mut(),
+                None,
+                bun_ast::Loc::EMPTY,
+                "<b>{}<r> is missing from the cache and network requests are disabled (--offline)",
+                description,
+            );
+        }
+        mark_network_task_failed(this, task_id);
+        return Err(ForTarballError::NetworkDisabled);
+    }
     // Borrowed views: `cache_dir` and `temp_dir` are owned by the `PackageManager`
     // singleton and the `TemporaryDirectory` once-cell, respectively. They flow
     // into `ExtractTarball::{cache_dir,temp_dir}`, which must be `Fd` (not `Dir`)

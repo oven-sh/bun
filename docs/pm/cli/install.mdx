@@ -174,6 +174,35 @@ See [lockfile](/pm/lockfile) for more on `bun.lock`.
 
 ---
 
+## Offline installs
+
+`--offline` disallows all network requests. Cached registry manifests are used regardless of their age, and any package that is not available locally is an error instead of a download:
+
+```bash terminal icon="terminal"
+bun install --frozen-lockfile --offline
+```
+
+This is equivalent to `install.offline = true` in `bunfig.toml` or `BUN_CONFIG_OFFLINE=1` in the environment.
+
+By default, offline installs source package bytes from Bun's cache (populated by a previous online install). Alternatively, `--tarball-dir` points at a directory of package tarballs, so a build system or a checked-in mirror can provide the bytes without any prior online install:
+
+```bash terminal icon="terminal"
+bun install --frozen-lockfile --offline --tarball-dir=./vendor/tarballs
+```
+
+The file for a package `<name>` at `<version>` is `<tarball-dir>/<name>@<version>.tgz`, with scoped packages in a `@scope/` subdirectory:
+
+```txt
+vendor/tarballs/react@18.2.0.tgz
+vendor/tarballs/@types/react@18.2.42.tgz
+```
+
+Each tarball is verified against the lockfile's integrity hash before it is installed, so the directory's contents cannot silently diverge from the lockfile. A missing file or an integrity mismatch fails the install. `--tarball-dir` applies to npm registry packages; Git, GitHub, and remote tarball dependencies must already be in the cache when installing offline.
+
+For fully hermetic builds, point `BUN_INSTALL_CACHE_DIR` (or `--cache-dir`) at a directory inside the build sandbox: Bun still extracts packages into that cache before linking, but nothing outside the sandbox is read or written.
+
+---
+
 ## Omitting dependencies
 
 To omit dev, peer, or optional dependencies, use the `--omit` flag.

@@ -1339,6 +1339,13 @@ impl<'a> Parser<'a> {
         if let Some(v) = install_obj.get(b"frozenLockfile").and_then(|e| e.as_bool()) {
             install.frozen_lockfile = Some(v);
         }
+        if let Some(v) = install_obj.get(b"offline").and_then(|e| e.as_bool()) {
+            install.offline = Some(v);
+        }
+        if let Some(tarball_dir) = install_obj.get(b"tarballDir") {
+            self.expect_string(&tarball_dir)?;
+            install.tarball_directory = tarball_dir.as_string(self.bump).map(Into::into);
+        }
         if let Some(v) = install_obj
             .get(b"saveTextLockfile")
             .and_then(|e| e.as_bool())

@@ -407,6 +407,29 @@ impl<'a> Task<'a> {
                     let url = req.url.slice();
                     let mut attempt: u8 = 1;
 
+                    // A clone task is only enqueued when the extracted package
+                    // is missing from the cache, and even a cached bare repo
+                    // would be `git fetch`ed — so under `--offline` fail the
+                    // task instead of spawning git. Failing (rather than
+                    // skipping the enqueue) keeps every waiting installer
+                    // entry draining through the normal completion path.
+                    if req.network_disabled {
+                        this.log.add_error_fmt(
+                            None,
+                            Loc::EMPTY,
+                            format_args!(
+                                "git dependency \"{}\" is missing from the cache and network requests are disabled (--offline)",
+                                bstr::BStr::new(name),
+                            ),
+                        );
+                        this.err = Some(crate::Error::NetworkDisabled);
+                        this.status = Status::Fail;
+                        this.data = Data {
+                            git_clone: ManuallyDrop::new(Fd::invalid()),
+                        };
+                        break 'body;
+                    }
+
                     let dir = 'brk: {
                         if let Some(https) = Repository::try_https(url) {
                             match Repository::download(
@@ -661,6 +684,9 @@ pub struct GitCloneRequest {
     pub(crate) env: &'static dot_env::Map,
     pub(crate) dep_id: DependencyID,
     pub(crate) res: Resolution,
+    /// `--offline`: captured on the main thread at enqueue time so the worker
+    /// can fail the clone without reading `manager.options`.
+    pub(crate) network_disabled: bool,
 }
 
 pub struct GitCheckoutRequest {

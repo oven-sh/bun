@@ -61,6 +61,20 @@ fn start_manifest_task(
     if run_tasks::has_created_network_task(manager, task_id, is_optional) {
         return Ok(());
     }
+
+    if manager.options.enable.offline() {
+        // Lockfile migration needs this manifest and it is not cached; report
+        // instead of fetching. The migration then fails with this error.
+        bun_ast::add_error_pretty!(
+            manager.log_mut(),
+            None,
+            bun_ast::Loc::EMPTY,
+            "no cached manifest for package <b>{}<r> and network requests are disabled (--offline)",
+            bstr::BStr::new(pkg_name),
+        );
+        return Ok(());
+    }
+
     manager.start_progress_bar_if_none();
 
     // reshaped for borrowck — `get_network_task()`

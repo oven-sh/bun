@@ -737,6 +737,12 @@ pub enum ForTarballError {
     /// original failure was already reported) and advance their own bookkeeping.
     #[error("TarballFailedToDownload")]
     AlreadyFailed,
+    /// `--offline` blocked the download and the package had no local source.
+    /// The precise error was already logged by
+    /// `generate_network_task_for_tarball`; callers advance their bookkeeping
+    /// like `AlreadyFailed`.
+    #[error("NetworkDisabled")]
+    NetworkDisabled,
 }
 bun_core::oom_from_alloc!(ForTarballError);
 impl From<ForTarballError> for crate::Error {
@@ -745,6 +751,7 @@ impl From<ForTarballError> for crate::Error {
             ForTarballError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
             ForTarballError::InvalidURL => crate::Error::InvalidURL,
             ForTarballError::AlreadyFailed => crate::Error::TarballFailedToDownload,
+            ForTarballError::NetworkDisabled => crate::Error::NetworkDisabled,
         }
     }
 }

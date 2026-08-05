@@ -402,6 +402,66 @@ it("reload() works", () => {
   expect(router.match("/posts")!.name).toBe("/posts");
 });
 
+it("reload() throws the same validation errors the constructor would", () => {
+  // The constructor and reload() share one route scan, and any tree the
+  // constructor rejects must also be rejected by reload() on a live router
+  // instead of being partially loaded with routes silently dropped or
+  // reassigned.
+  const cases: { label: string; mutate: (dir: string) => void; message: string | RegExp }[] = [
+    {
+      label: "duplicate static route via second extension",
+      mutate: dir => fs.writeFileSync(path.join(dir, "a.js"), "export default 2;"),
+      message: /^Route "\/a" is already defined by /,
+    },
+    {
+      label: "catch-all directory with children",
+      mutate: dir => {
+        fs.mkdirSync(path.join(dir, "[...x]"));
+        fs.writeFileSync(path.join(dir, "[...x]", "child.tsx"), "export default 3;");
+      },
+      message: "Catch-all route must be at the end of the path",
+    },
+    {
+      label: "non-ASCII route filename",
+      mutate: dir => fs.writeFileSync(path.join(dir, "résumé.tsx"), "export default 4;"),
+      message: "Route name must be plaintext",
+    },
+  ];
+  // Dangling symlinks are a POSIX-only shape: Windows symlink creation needs
+  // privileges and the resolver path differs.
+  if (!isWindows) {
+    cases.push({
+      label: "dangling symlink",
+      mutate: dir => fs.symlinkSync(path.join(dir, "nowhere.tsx"), path.join(dir, "dangling.tsx")),
+      message: /^ENOENT opening route: /,
+    });
+  }
+
+  for (const { label, mutate, message } of cases) {
+    const { dir } = make(["a.tsx"]);
+    const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+    const originalFile = router.match("/a")!.filePath;
+    expect(originalFile).toBe(`${dir}/a.tsx`);
+
+    mutate(dir);
+
+    // reload() busts the resolver's directory cache and rescans; the rescan
+    // must surface the same error the constructor would on this tree.
+    expect(() => router.reload(), `[${label}] reload() should throw`).toThrow(message);
+
+    // A failed reload leaves the previously loaded routes in place; in
+    // particular the file backing /a must not have flipped to a.js.
+    expect(router.match("/a")!.filePath, `[${label}] route unchanged after failed reload`).toBe(originalFile);
+
+    // reload() already invalidated the directory cache above, so a fresh
+    // constructor call now sees the mutated tree and must reject it too.
+    expect(
+      () => new Bun.FileSystemRouter({ dir, style: "nextjs" }),
+      `[${label}] constructor should reject the mutated tree`,
+    ).toThrow(message);
+  }
+});
+
 it("reload() works with new dirs/files", () => {
   const { dir } = make(["posts.tsx"]);
 

@@ -1603,6 +1603,7 @@ impl<'a> PackageInstall<'a> {
 
     fn install_with_hardlink(&mut self, dest_dir: &Dir) -> crate::Result<InstallResult> {
         let mut state = InstallDirState::default();
+        #[cfg_attr(windows, allow(unused_mut))]
         let mut res = self.init_install_dir(&mut state, dest_dir, Method::Hardlink);
         // A peer installing the same package can rename the destination dir
         // aside between our mkdir and open (uninstall-before-install);

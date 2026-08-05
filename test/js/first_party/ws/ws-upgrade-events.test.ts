@@ -81,30 +81,46 @@ test.concurrent("ws emits 'unexpected-response' with status, headers and body on
   expect(exitCode).toBe(0);
 });
 
-// Diverges from real ws: with no 'unexpected-response' listener, real ws emits
-// "Unexpected server response: 503". Bun's shim only registers the native
-// handshake listener when the user subscribes to 'upgrade'/'unexpected-response',
-// so the unmodified native error surfaces instead.
-test.concurrent("ws emits native 'error' on non-101 when no 'unexpected-response' listener", async () => {
-  const { stdout, exitCode } = await run(/* js */ `
+// With no 'unexpected-response' listener, real ws emits
+// "Unexpected server response: <code>" to on('error'). Subscribing to 'error'
+// now arms the handshake bridge so the ws-style message is delivered whether
+// or not the user also subscribed to 'upgrade'.
+test.concurrent(
+  "ws on('error') gets 'Unexpected server response: <code>' on non-101 with no other listeners",
+  async () => {
+    const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { once } = require("events");
     const { WebSocket } = require("ws");
 
-    const server = createServer(s =>
-      s.once("data", () => s.end("HTTP/1.1 503 Service Unavailable\\r\\n\\r\\n")),
-    ).listen(0, "127.0.0.1");
+    const server = createServer(s => {
+      s.once("data", () => s.end("HTTP/1.1 503 Service Unavailable\\r\\n\\r\\n"));
+      s.on("error", () => {});
+    }).listen(0, "127.0.0.1");
     await once(server, "listening");
 
-    const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
-    const [err] = await once(ws, "error");
-    console.log(/Expected 101/.test(err.message) ? "got native 101 error" : "unexpected: " + err.message);
+    async function runOne(armUpgrade) {
+      const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
+      if (armUpgrade) ws.on("upgrade", () => {});
+      const messages = [];
+      ws.on("error", err => messages.push(err.message));
+      await once(ws, "close").catch(() => {});
+      return { count: messages.length, first: messages[0] };
+    }
+
+    const errorOnly = await runOne(false);
+    const withUpgrade = await runOne(true);
+    console.log(JSON.stringify({ errorOnly, withUpgrade }));
     server.close();
     process.exit(0);
   `);
-  expect(stdout).toMatchInlineSnapshot(`"got native 101 error"`);
-  expect(exitCode).toBe(0);
-});
+    // Both paths deliver the same ws-style error exactly once.
+    expect(stdout).toMatchInlineSnapshot(
+      `"{"errorOnly":{"count":1,"first":"Unexpected server response: 503"},"withUpgrade":{"count":1,"first":"Unexpected server response: 503"}}"`,
+    );
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent("ws emits 'upgrade' with headers before 'open' on 101", async () => {
   const { stdout, exitCode } = await run(/* js */ `
@@ -497,7 +513,10 @@ test.concurrent(
     const h = () => { count++; };
     ws.addEventListener("error", h);
     ws.addEventListener("error", h); // duplicate — must be a no-op
-    await once(ws, "close").catch(() => {});
+    // Wait for the native close via addEventListener so no EventEmitter 'error'
+    // listener is added (which would arm the handshake bridge and resolve
+    // early on the synthetic error, before the native error reaches h).
+    await new Promise(resolve => ws.addEventListener("close", resolve, { once: true }));
     server.close();
     try { ws.terminate(); } catch {}
     // removeEventListener must fully detach (no leaked wrapper left behind).

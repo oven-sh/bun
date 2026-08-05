@@ -286,6 +286,8 @@ function unescapeUnixSocketUrl(href: string) {
 
 class Debugger {
   #url?: URL;
+  // Kept for the Host-header allowlist after #url.hostname is rewritten to the bound IP.
+  #requestedHostname?: string;
   #createBackend: (refEventLoop: boolean, receive: (...messages: string[]) => void) => Backend;
   // node:inspector mode: connections speak the V8 Chrome DevTools Protocol and
   // /json discovery endpoints are served.
@@ -364,6 +366,7 @@ class Debugger {
 
   #listen(): void {
     const { protocol, hostname, port, pathname } = this.#url!;
+    this.#requestedHostname = hostname;
 
     if (protocol === "ws:" || protocol === "wss:" || protocol === "ws+tcp:") {
       const server = Bun.serve({
@@ -375,7 +378,14 @@ class Debugger {
       });
 
       this.#server = server;
-      this.#url!.hostname = server.hostname;
+      // server.hostname echoes the requested name; server.address is getsockname.
+      const { address: boundIp, family } =
+        (server as { address?: { address?: string; family?: string } }).address ?? {};
+      if (typeof boundIp === "string" && boundIp) {
+        this.#url!.hostname = family === "IPv6" ? `[${boundIp}]` : boundIp;
+      } else {
+        this.#url!.hostname = server.hostname;
+      }
       this.#url!.port = `${server.port}`;
       return;
     }
@@ -495,7 +505,7 @@ class Debugger {
     }
 
     const isUnix = this.#url!.protocol.includes("unix");
-    if (!isUnix && !isHostAllowed(headers.get("Host"), this.#url!.hostname)) {
+    if (!isUnix && !isHostAllowed(headers.get("Host"), this.#requestedHostname ?? this.#url!.hostname)) {
       return new Response(null, {
         status: 400, // Bad Request
       });
@@ -774,7 +784,8 @@ function bufferedWriter(writer: Writer): Writer {
   };
 }
 
-const defaultHostname = "localhost";
+// Node's --inspect default; `localhost` would bind a resolver-dependent loopback family.
+const defaultHostname = "127.0.0.1";
 const defaultPort = 6499;
 
 function parseUrl(input: string): URL {

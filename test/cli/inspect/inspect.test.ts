@@ -10,6 +10,9 @@ import { SocketFramer } from "./socket-framer";
 let inspectee: Subprocess;
 const anyPort = expect.stringMatching(/^\d+$/);
 const anyPathname = expect.stringMatching(/^\/[a-z0-9-]+$/);
+// When the user writes `localhost` explicitly, the banner shows whichever loopback
+// family Bun.serve actually bound (IPv6-first on some systems, IPv4-first on others).
+const localhostBoundIp = expect.stringMatching(/^(\[::1\]|127\.0\.0\.1)$/);
 
 /**
  * Get a function that creates a random `.sock` file in the specified temporary directory.
@@ -23,7 +26,7 @@ describe("websocket", () => {
       args: ["--inspect"],
       url: {
         protocol: "ws:",
-        hostname: "localhost",
+        hostname: "127.0.0.1",
         port: "6499",
         pathname: anyPathname,
       },
@@ -32,7 +35,7 @@ describe("websocket", () => {
       args: ["--inspect=0"],
       url: {
         protocol: "ws:",
-        hostname: "localhost",
+        hostname: "127.0.0.1",
         port: anyPort,
         pathname: anyPathname,
       },
@@ -41,7 +44,7 @@ describe("websocket", () => {
       args: [`--inspect=${randomPort()}`],
       url: {
         protocol: "ws:",
-        hostname: "localhost",
+        hostname: "127.0.0.1",
         port: anyPort,
         pathname: anyPathname,
       },
@@ -50,7 +53,7 @@ describe("websocket", () => {
       args: ["--inspect=localhost"],
       url: {
         protocol: "ws:",
-        hostname: "localhost",
+        hostname: localhostBoundIp,
         port: "6499",
         pathname: anyPathname,
       },
@@ -59,7 +62,7 @@ describe("websocket", () => {
       args: ["--inspect=localhost/"],
       url: {
         protocol: "ws:",
-        hostname: "localhost",
+        hostname: localhostBoundIp,
         port: "6499",
         pathname: "/",
       },
@@ -68,7 +71,7 @@ describe("websocket", () => {
       args: ["--inspect=localhost:0"],
       url: {
         protocol: "ws:",
-        hostname: "localhost",
+        hostname: localhostBoundIp,
         port: anyPort,
         pathname: anyPathname,
       },
@@ -77,7 +80,7 @@ describe("websocket", () => {
       args: ["--inspect=localhost:0/"],
       url: {
         protocol: "ws:",
-        hostname: "localhost",
+        hostname: localhostBoundIp,
         port: anyPort,
         pathname: "/",
       },
@@ -86,7 +89,7 @@ describe("websocket", () => {
       args: ["--inspect=localhost/foo/bar"],
       url: {
         protocol: "ws:",
-        hostname: "localhost",
+        hostname: localhostBoundIp,
         port: "6499",
         pathname: "/foo/bar",
       },
@@ -149,7 +152,7 @@ describe("websocket", () => {
       args: ["--inspect=/"],
       url: {
         protocol: "ws:",
-        hostname: "localhost",
+        hostname: "127.0.0.1",
         port: "6499",
         pathname: "/",
       },
@@ -158,7 +161,7 @@ describe("websocket", () => {
       args: ["--inspect=/foo"],
       url: {
         protocol: "ws:",
-        hostname: "localhost",
+        hostname: "127.0.0.1",
         port: "6499",
         pathname: "/foo",
       },
@@ -167,7 +170,7 @@ describe("websocket", () => {
       args: ["--inspect=/foo/baz/"],
       url: {
         protocol: "ws:",
-        hostname: "localhost",
+        hostname: "127.0.0.1",
         port: "6499",
         pathname: "/foo/baz/",
       },
@@ -176,7 +179,7 @@ describe("websocket", () => {
       args: ["--inspect=:0"],
       url: {
         protocol: "ws:",
-        hostname: "localhost",
+        hostname: "127.0.0.1",
         port: anyPort,
         pathname: anyPathname,
       },
@@ -185,7 +188,7 @@ describe("websocket", () => {
       args: ["--inspect=:0/"],
       url: {
         protocol: "ws:",
-        hostname: "localhost",
+        hostname: "127.0.0.1",
         port: anyPort,
         pathname: "/",
       },
@@ -194,7 +197,7 @@ describe("websocket", () => {
       args: ["--inspect=ws://localhost/"],
       url: {
         protocol: "ws:",
-        hostname: "localhost",
+        hostname: localhostBoundIp,
         port: anyPort,
         pathname: "/",
       },
@@ -203,7 +206,7 @@ describe("websocket", () => {
       args: ["--inspect=ws://localhost:0/"],
       url: {
         protocol: "ws:",
-        hostname: "localhost",
+        hostname: localhostBoundIp,
         port: anyPort,
         pathname: "/",
       },
@@ -212,7 +215,7 @@ describe("websocket", () => {
       args: ["--inspect=ws://localhost:6499/foo/bar"],
       url: {
         protocol: "ws:",
-        hostname: "localhost",
+        hostname: localhostBoundIp,
         port: "6499",
         pathname: "/foo/bar",
       },
@@ -294,6 +297,43 @@ describe("websocket", () => {
 
   // FIXME: Depends on https://github.com/oven-sh/bun/pull/4649
   test.todo("bun --inspect=ws+unix:///tmp/inspect.sock");
+
+  // https://github.com/oven-sh/bun/issues/4716
+  // Default --inspect must bind 127.0.0.1 (like Node), not `localhost`, so the
+  // printed URL is reachable even when server/client disagree on which address
+  // family `localhost` resolves to (IPv6-first resolvers, WSL forwarding, etc.).
+  test("default --inspect binds 127.0.0.1 and the printed URL is connectable", async () => {
+    await using proc = spawn({
+      cwd: import.meta.dir,
+      cmd: [bunExe(), "--inspect=0", "inspectee.js"],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+
+    let url: URL | undefined;
+    let stderr = "";
+    const decoder = new TextDecoder();
+    for await (const chunk of proc.stderr as ReadableStream) {
+      stderr += decoder.decode(chunk);
+      const m = stripAnsi(stderr).match(/ws:\/\/\S+/);
+      if (m) {
+        url = new URL(m[0]);
+        break;
+      }
+    }
+    if (!url) throw new Error("Unable to find listening URL in:\n" + stderr);
+
+    expect(url.hostname).toBe("127.0.0.1");
+
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const socket = new WebSocket(url);
+    socket.addEventListener("open", () => resolve());
+    socket.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+    socket.addEventListener("close", cause => reject(new Error("WebSocket closed", { cause })));
+    await promise;
+    socket.close();
+  });
 
   afterEach(() => {
     inspectee?.kill();

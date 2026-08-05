@@ -186,14 +186,14 @@ static void reexecWithoutASLRIfSlid()
     posix_spawn(nullptr, exe, nullptr, &attr, *_NSGetArgv(), *_NSGetEnviron()); // SETEXEC: only returns on failure
     fprintf(stderr, "[image] could not re-exec without ASLR; continuing slid (image build/restore will not work)\n");
 #elif OS(LINUX)
-    if (getenv("BUN_IMAGE_REEXECED"))
-        return;
-    int persona = personality(0xffffffff);
-    if (persona != -1 && (persona & ADDR_NO_RANDOMIZE) && !needEnv)
+    // Linux: the executable is non-PIE (never slides) and system libraries may slide (extern-library fixups), so ASLR stays on;
+    // we only re-exec to get the allocator/JIT/JSC options into the environment before they are read at startup.
+    if (getenv("BUN_IMAGE_REEXECED") || !needEnv)
         return;
     setenv("BUN_IMAGE_REEXECED", "1", 1);
     setImageEnvDefaults();
-    if (persona != -1 && personality(persona | ADDR_NO_RANDOMIZE) != -1) {
+    setenv("BUN_IMAGE_LIB_FIXUPS", "1", 0);
+    {
         extern char** environ;
         // argv: read our own cmdline
         std::vector<std::string> args; { FILE* f = fopen("/proc/self/cmdline", "r"); std::string cur; int c; while (f && (c = fgetc(f)) != EOF) { if (!c) { args.push_back(cur); cur.clear(); } else cur += (char)c; } if (f) fclose(f); }
@@ -1621,7 +1621,12 @@ static void imageRestoreAndRun(const char* path)
             }
         }
     }
-    if (!(haveFixups && getenv("BUN_IMAGE_LIB_FIXUPS")) && hdr.libsBase && hdr.libsBase != platformLibsBase()) { fprintf(stderr, "[image] %s was built against system libraries at %llx, now at %llx (reboot / OS update); booting normally\n", path, (unsigned long long)hdr.libsBase, (unsigned long long)platformLibsBase()); close(fd); return; }
+#if OS(LINUX)
+    bool fixupsWanted = haveFixups && !(getenv("BUN_IMAGE_LIB_FIXUPS") && !strcmp(getenv("BUN_IMAGE_LIB_FIXUPS"), "0"));
+#else
+    bool fixupsWanted = haveFixups && getenv("BUN_IMAGE_LIB_FIXUPS");
+#endif
+    if (!fixupsWanted && hdr.libsBase && hdr.libsBase != platformLibsBase()) { fprintf(stderr, "[image] %s was built against system libraries at %llx, now at %llx (reboot / OS update); booting normally\n", path, (unsigned long long)hdr.libsBase, (unsigned long long)platformLibsBase()); close(fd); return; }
     mi_scavenger_stop(); // this process's scavenger thread must not touch allocator state while/after we overlay it
     // No heap use from here until the overlay is done: with malloc routed to mimalloc, this process's heap sits at the same VA as the image's.
     if (hdr.nregions > 8192) { fprintf(stderr, "[image] too many regions\n"); _exit(2); }
@@ -1630,7 +1635,11 @@ static void imageRestoreAndRun(const char* path)
     std::span<ImageRegion> regions(regionsBuf, hdr.nregions);
     size_t mapped = 0, copied = 0;
     struct DataSeg { uint64_t* dst; const uint64_t* src; size_t words; }; DataSeg dataSegs[16]; size_t nDataSegs = 0; // no heap here: the allocator's state is being overlaid
-    bool useLibFixups = haveFixups && getenv("BUN_IMAGE_LIB_FIXUPS"); // experimental (Linux): let system libraries slide; see SNAPSHOT.md 'ASLR'
+#if OS(LINUX)
+    bool useLibFixups = haveFixups && !(getenv("BUN_IMAGE_LIB_FIXUPS") && !strcmp(getenv("BUN_IMAGE_LIB_FIXUPS"), "0")); // Linux default: system libraries may slide (see SNAPSHOT.md 'ASLR')
+#else
+    bool useLibFixups = haveFixups && getenv("BUN_IMAGE_LIB_FIXUPS");
+#endif
     uint64_t linkerRanges[8][2]; size_t nLinkerRanges = useLibFixups ? platformLinkerOwnedRanges(linkerRanges, 8) : 0;
     bool verbose = !!getenv("BUN_IMAGE_VERBOSE");
     for (auto& r : regions) {

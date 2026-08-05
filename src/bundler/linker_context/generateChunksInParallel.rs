@@ -8,7 +8,7 @@ use bun_collections::StringHashMap;
 use bun_core::String as BunString;
 use bun_core::strings;
 use bun_paths as path;
-use bun_threading::thread_pool as ThreadPoolLib;
+use bun_threading::{WaitGroup, thread_pool as ThreadPoolLib};
 
 use crate::BundleV2;
 use crate::Chunk;
@@ -100,6 +100,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             let mut batch = ThreadPoolLib::Batch::default();
             let mut tasks: Vec<PrepareCssAstTask> = Vec::with_capacity(total_count);
+            let wait_group = WaitGroup::init_with_count(total_count);
             for chunk in chunks.iter_mut() {
                 if chunk.content.is_css() {
                     tasks.push(PrepareCssAstTask {
@@ -111,6 +112,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         // `PrepareCssAstTask.linker` is `*mut LinkerContext<'static>`
                         // (raw ptr is invariant); `.cast()` erases the inner `'a` to satisfy it.
                         linker: std::ptr::from_mut::<LinkerContext>(c).cast(),
+                        wait_group: &raw const wait_group,
                     });
                     // Capacity pre-reserved → push never reallocates → ptr stays stable.
                     let task = tasks.last_mut().unwrap();
@@ -122,7 +124,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // the link step); `pool` is the arena-allocated bundler ThreadPool.
             let worker_pool = c.worker_pool();
             worker_pool.schedule(batch);
-            worker_pool.wait_for_all();
+            wait_group.wait();
 
             debug!("  DONE {} prepare CSS ast (total count)", total_count);
         } else if cfg!(debug_assertions) {
@@ -181,6 +183,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // batch holds raw pointers into this buffer.
             let mut combined_part_ranges: Vec<PendingPartRange> = Vec::with_capacity(total_count);
             let mut batch = ThreadPoolLib::Batch::default();
+            let wait_group = WaitGroup::init_with_count(total_count);
             for (chunk, chunk_ctx) in chunks.iter_mut().zip(chunk_contexts.iter_mut()) {
                 match &chunk.content {
                     crate::chunk::Content::Javascript(js) => {
@@ -196,10 +199,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 // conflating the borrow with
                                 // LinkerContext's `'a`. Launder via raw ptr so borrowck
                                 // doesn't pin `chunk_contexts` for `'a`; tasks complete
-                                // before `chunk_contexts` drops (we `wait_for_all` below).
+                                // before `chunk_contexts` drops (we wait on `wait_group` below).
                                 ctx: unsafe {
                                     bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
                                 },
+                                wait_group: &raw const wait_group,
                             });
                             batch.push(ThreadPoolLib::Batch::from(
                                 &raw mut combined_part_ranges.last_mut().unwrap().task,
@@ -219,10 +223,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 // conflating the borrow with
                                 // LinkerContext's `'a`. Launder via raw ptr so borrowck
                                 // doesn't pin `chunk_contexts` for `'a`; tasks complete
-                                // before `chunk_contexts` drops (we `wait_for_all` below).
+                                // before `chunk_contexts` drops (we wait on `wait_group` below).
                                 ctx: unsafe {
                                     bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
                                 },
+                                wait_group: &raw const wait_group,
                             });
                             batch.push(ThreadPoolLib::Batch::from(
                                 &raw mut combined_part_ranges.last_mut().unwrap().task,
@@ -241,10 +246,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             // conflating the borrow with
                             // LinkerContext's `'a`. Launder via raw ptr so borrowck
                             // doesn't pin `chunk_contexts` for `'a`; tasks complete
-                            // before `chunk_contexts` drops (we `wait_for_all` below).
+                            // before `chunk_contexts` drops (we wait on `wait_group` below).
                             ctx: unsafe {
                                 bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
                             },
+                            wait_group: &raw const wait_group,
                         });
                         batch.push(ThreadPoolLib::Batch::from(
                             &raw mut combined_part_ranges.last_mut().unwrap().task,
@@ -257,7 +263,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // the link step); `pool` is the arena-allocated bundler ThreadPool.
             let worker_pool = c.worker_pool();
             worker_pool.schedule(batch);
-            worker_pool.wait_for_all();
+            wait_group.wait();
             debug!("  DONE {} compiling part ranges", total_count);
         }
 

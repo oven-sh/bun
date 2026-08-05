@@ -199,7 +199,6 @@ pub struct ThreadPool {
     join_event: Event,
     run_queue: node::Queue,
     threads: AtomicPtr<Thread>,
-    wait_group: WaitGroup,
     /// Used by `schedule` to optimize for the case where the thread pool isn't running yet.
     is_running: AtomicBool,
     stats: PoolStats,
@@ -234,7 +233,6 @@ impl ThreadPool {
             join_event: Event::default(),
             run_queue: node::Queue::default(),
             threads: AtomicPtr::new(ptr::null_mut()),
-            wait_group: WaitGroup::init(),
             is_running: AtomicBool::new(false),
             stats: PoolStats {
                 // Seed wall-clock origin so the first `dump_stats` window is
@@ -506,14 +504,17 @@ impl ThreadPool {
             ctx: Ctx,
             values: *mut [V],
             run_fn: F,
+            /// Scoped to this call, so unrelated tasks sharing the pool cannot
+            /// delay it.
+            wait_group: WaitGroup,
         }
 
         #[repr(C)]
         struct RunnerTask<Ctx, V, F> {
             task: Task,
             // LIFETIMES.tsv row 2144: BORROW_PARAM. The stack-local `WaitContext`
-            // strictly outlives every `RunnerTask` (wait_for_all() blocks until all
-            // tasks finish), so this is the canonical `BackRef` invariant.
+            // strictly outlives every `RunnerTask` (`wait_group.wait()` blocks until
+            // all tasks finish), so this is the canonical `BackRef` invariant.
             ctx: bun_ptr::BackRef<WaitContext<Ctx, V, F>>,
             i: usize,
         }
@@ -526,24 +527,31 @@ impl ThreadPool {
                 unsafe { &mut *bun_core::from_field_ptr!(RunnerTask<Ctx, V, F>, task, task) };
             let i = runner_task.i;
             let wctx = runner_task.ctx.get();
-            // SAFETY: `values` slice outlives all RunnerTasks (wait_for_all() blocks until
-            // every task finishes); each task owns a distinct index `i`.
+            // SAFETY: `values` slice outlives all RunnerTasks (`wait_group.wait()` blocks
+            // until every task finishes); each task owns a distinct index `i`.
             let value: *mut V = unsafe { &raw mut (*wctx.values)[i] };
             // SAFETY: `value` is live and exclusively owned by this task per the index.
             unsafe { wctx.run_fn.call(&wctx.ctx, value, i) };
+            // Must stay last: publishing count==0 releases `each_impl`, which drops
+            // the frame owning `wctx`. Touching `wctx`/`runner_task` below this line
+            // is a use-after-free. `finish()` itself does not touch `self` after
+            // publishing zero (WaitGroup.rs).
+            wctx.wait_group.finish();
         }
 
+        let len = values.len();
         let wait_context = WaitContext {
             ctx,
             values: std::ptr::from_mut::<[V]>(values),
             run_fn,
+            wait_group: WaitGroup::init_with_count(len),
         };
 
-        let mut tasks: Vec<RunnerTask<Ctx, V, F>> = Vec::with_capacity(values.len());
+        let mut tasks: Vec<RunnerTask<Ctx, V, F>> = Vec::with_capacity(len);
         let mut batch = Batch::default();
-        let mut offset = values.len();
+        let mut offset = len;
 
-        for _ in 0..values.len() {
+        for _ in 0..len {
             offset -= 1;
             tasks.push(RunnerTask {
                 i: offset,
@@ -560,7 +568,7 @@ impl ThreadPool {
             batch.push(Batch::from(ptr::addr_of_mut!(runner_task.task)));
         }
         self.schedule(batch);
-        self.wait_for_all();
+        wait_context.wait_group.wait();
         // `tasks` drops here after all worker threads have finished touching it.
     }
 
@@ -577,23 +585,6 @@ impl ThreadPool {
             head: Task::node_of(head.unwrap()),
             tail: Task::node_of(tail.unwrap()),
         };
-
-        // .monotonic access is okay because:
-        //
-        // * If the thread pool hasn't started yet, no thread could concurrently set
-        //   `is_running` to true, because thread pool initialization should only
-        //   happen on one thread.
-        //
-        // * If the thread pool is running, the current thread could be one of the threads
-        //   in the thread pool, but `is_running` was necessarily set to true before the
-        //   thread was created.
-        if self.is_running.load(Ordering::Relaxed) {
-            self.wait_group.add(len);
-        } else {
-            // `&self` precludes `&mut WaitGroup` here, so use the relaxed
-            // atomic add even though the pool isn't running yet.
-            self.wait_group.add(len);
-        }
 
         let current: *mut Thread = 'blk: {
             if !try_current {
@@ -635,11 +626,6 @@ impl ThreadPool {
     /// This function should only be called from threads that are part of the thread pool.
     pub fn schedule_inside_thread_pool(&self, batch: Batch) {
         self.schedule_impl(&batch, true);
-    }
-
-    /// Wait for all tasks to complete. This does not shut down or deinit the thread pool.
-    pub fn wait_for_all(&self) {
-        self.wait_group.wait();
     }
 
     fn force_spawn(&self) {
@@ -1236,7 +1222,6 @@ impl Thread {
                         .fetch_add(now_ns().wrapping_sub(task_start), Ordering::Relaxed);
                     pool.stats.tasks.fetch_add(1, Ordering::Relaxed);
                 }
-                pool.wait_group.finish();
             }
 
             Output::flush();

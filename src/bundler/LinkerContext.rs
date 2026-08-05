@@ -1581,7 +1581,7 @@ pub struct GenerateChunkCtx<'a> {
     pub(crate) c: bun_ptr::ParentRef<LinkerContext<'a>, bun_ptr::Mut>,
     /// Backref to the full `chunks: &mut [Chunk]` slice owned by
     /// `generate_chunks_in_parallel`. The slice outlives every
-    /// `GenerateChunkCtx` (joined via `wait_for_all`), so [`bun_ptr::BackRef`]'s
+    /// `GenerateChunkCtx` (joined via the batch `WaitGroup`), so [`bun_ptr::BackRef`]'s
     /// owner-outlives-holder invariant holds and per-task reads go through
     /// safe `Deref`. Tasks that need write provenance (HTML loader) recover
     /// the raw `*mut [Chunk]` via [`bun_ptr::BackRef::as_ptr`].
@@ -1634,6 +1634,27 @@ pub struct PendingPartRange<'a> {
     pub(crate) task: ThreadPoolLib::Task,
     pub(crate) ctx: &'a GenerateChunkCtx<'a>,
     pub(crate) i: u32,
+    /// Owned by the scheduling stack frame, which blocks in `wait()` until every
+    /// task in the batch has finished. Counted down via [`BatchDone`].
+    pub(crate) wait_group: *const WaitGroup,
+}
+
+/// Counts one task down on a batch-scoped [`WaitGroup`] when dropped.
+///
+/// [`pending_part_range_prologue`] returns this as the **first** tuple element so
+/// that callbacks bind it first and it therefore drops *last* — after the
+/// per-thread `Worker` is ungot and after any crash-trace guard. Releasing the
+/// barrier earlier would let the scheduling frame (which owns the tasks and the
+/// `WaitGroup`) be destroyed while this callback is still running.
+pub(crate) struct BatchDone(*const WaitGroup);
+
+impl Drop for BatchDone {
+    fn drop(&mut self) {
+        // SAFETY: the scheduling frame blocks in `WaitGroup::wait()` until every
+        // task in the batch has finished, so the pointee outlives this call.
+        // `finish()` does not touch `self` after publishing zero (WaitGroup.rs).
+        unsafe { (*self.0).finish() };
+    }
 }
 
 /// Shared prologue for `generate_compile_result_for_{js,css}_chunk` thread-pool
@@ -1663,6 +1684,7 @@ pub struct PendingPartRange<'a> {
 pub(crate) unsafe fn pending_part_range_prologue<'a>(
     task: *mut ThreadPoolLib::Task,
 ) -> (
+    BatchDone,
     &'a PendingPartRange<'a>,
     *mut LinkerContext<'a>,
     *mut Chunk,
@@ -1679,7 +1701,13 @@ pub(crate) unsafe fn pending_part_range_prologue<'a>(
     let chunk_ptr: *mut Chunk = ctx.chunk.as_ptr();
     let worker = crate::thread_pool::Worker::get(ctx.bundle());
     let worker = scopeguard::guard(worker, |w| w.unget());
-    (part_range, c_ptr, chunk_ptr, worker)
+    (
+        BatchDone(part_range.wait_group),
+        part_range,
+        c_ptr,
+        chunk_ptr,
+        worker,
+    )
 }
 
 impl<'a> LinkerContext<'a> {

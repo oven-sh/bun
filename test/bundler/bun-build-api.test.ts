@@ -1,6 +1,7 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
+import { execFileSync } from "child_process";
+import { mkdirSync, promises as fsPromises, readFileSync, symlinkSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -17,6 +18,64 @@ import { SourceMapConsumer } from "source-map";
 import { buildNoThrow } from "./buildNoThrow";
 
 describe("Bun.build", () => {
+  // A blocked task on the shared WorkPool must not delay Bun.build(). Asserts
+  // ordering, not timing: the build must finish while the blocker is still
+  // pending. Before the batch-scoped WaitGroup, Bun.build() waited for the whole
+  // pool to drain, so it finished only after the blocker did.
+  test.skipIf(isWindows)("is not blocked by unrelated WorkPool tasks", async () => {
+    using dir = tempDir("bun-build-pool-independence", {
+      "entry.js": "export const x = 1;\n",
+    });
+    const fifo = join(String(dir), "blocker.fifo");
+    execFileSync("mkfifo", [fifo]);
+
+    // Occupies one WorkPool worker: node:fs readFile is an AsyncFSTask, and
+    // opening a FIFO with no writer parks the worker until a writer appears.
+    let blockerSettled = false;
+    const blocker = fsPromises.readFile(fifo).then(
+      () => void (blockerSettled = true),
+      () => void (blockerSettled = true),
+    );
+
+    let released = false;
+    const release = async () => {
+      if (released) return;
+      released = true;
+      try {
+        const w = await fsPromises.open(fifo, "w");
+        try {
+          await w.write("x");
+        } finally {
+          await w.close();
+        }
+      } catch (e) {
+        // Let the `finally` retry and surface the failure instead of it
+        // becoming an unhandled rejection from the timer.
+        released = false;
+        throw e;
+      }
+    };
+
+    // The pool counts a task at schedule time, synchronously inside readFile(),
+    // so no wait is needed before building. The safety release keeps a
+    // regression from deadlocking here, and must fire before the 5s default
+    // timeout so the assertion below reports instead.
+    const safety = setTimeout(() => void release().catch(() => {}), isDebug || isASAN ? 3000 : 1500);
+
+    let settledAtBuildEnd: boolean;
+    try {
+      const build = await Bun.build({ entrypoints: [join(String(dir), "entry.js")] });
+      settledAtBuildEnd = blockerSettled;
+      expect(build.success).toBe(true);
+    } finally {
+      clearTimeout(safety);
+      await release();
+      await blocker;
+    }
+
+    expect(settledAtBuildEnd).toBe(false);
+  });
+
   test("css works", async () => {
     const dir = tempDirWithFiles("bun-build-api-css", {
       "a.css": `

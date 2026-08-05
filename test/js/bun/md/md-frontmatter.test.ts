@@ -57,6 +57,7 @@ describe("Bun.markdown.frontmatter", () => {
   });
 
   test("scalar and sequence metadata throws (must be a mapping)", () => {
+    expect(() => frontmatter("---\nFoo\n---\nBar\n")).toThrow(SyntaxError);
     expect(() => frontmatter("---\nFoo\n---\nBar\n")).toThrow("YAML front matter must be a mapping");
     expect(() => frontmatter("---\n- a\n- b\n---\nbody")).toThrow("YAML front matter must be a mapping");
     // The likelier typo: a missing colon parses as a valid YAML scalar.

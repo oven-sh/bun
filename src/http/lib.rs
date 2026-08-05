@@ -2061,7 +2061,10 @@ impl<'a> HTTPClient<'a> {
             self.state.response_stage = ResponseStage::Fail;
             self.state.fail = Some(err);
             self.state.stage = Stage::Fail;
-            if self.flags.defer_terminal_dispatch_until_connecting_is_complete {
+            if self
+                .flags
+                .defer_terminal_dispatch_until_connecting_is_complete
+            {
                 return;
             }
             self.dispatch_result_and_reset(false);
@@ -2727,7 +2730,8 @@ impl<'a> HTTPClient<'a> {
         // `complete_connecting_process()` cannot be a Drop guard here
         // (it needs `&mut self`, which would alias every other `self.*` call in the body),
         // so it is called explicitly before each return.
-        self.flags.defer_terminal_dispatch_until_connecting_is_complete = true;
+        self.flags
+            .defer_terminal_dispatch_until_connecting_is_complete = true;
 
         // Aborted before connecting
         if self.signals.get(signals::Field::Aborted) {
@@ -3925,8 +3929,12 @@ impl<'a> HTTPClient<'a> {
     }
 
     fn complete_connecting_process(&mut self) {
-        if self.flags.defer_terminal_dispatch_until_connecting_is_complete {
-            self.flags.defer_terminal_dispatch_until_connecting_is_complete = false;
+        if self
+            .flags
+            .defer_terminal_dispatch_until_connecting_is_complete
+        {
+            self.flags
+                .defer_terminal_dispatch_until_connecting_is_complete = false;
             if self.state.stage == Stage::Fail {
                 self.dispatch_result_and_reset(true);
             } else if self.flags.is_preconnect_only && self.state.stage == Stage::Done {
@@ -3995,7 +4003,10 @@ impl<'a> HTTPClient<'a> {
             self.state.fail = Some(err);
             self.state.stage = Stage::Fail;
 
-            if !self.flags.defer_terminal_dispatch_until_connecting_is_complete {
+            if !self
+                .flags
+                .defer_terminal_dispatch_until_connecting_is_complete
+            {
                 self.dispatch_result_and_reset(true);
             }
         }
@@ -4417,7 +4428,10 @@ impl<'a> HTTPClient<'a> {
         self.flags.proxy_tunneling = false;
         // True when pooled-socket reuse reached here synchronously inside
         // `start_`/`connect`; `complete_connecting_process` dispatches then.
-        if self.flags.defer_terminal_dispatch_until_connecting_is_complete {
+        if self
+            .flags
+            .defer_terminal_dispatch_until_connecting_is_complete
+        {
             return;
         }
         self.dispatch_preconnect_result();

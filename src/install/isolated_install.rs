@@ -488,6 +488,7 @@ pub(crate) fn install_isolated_packages(
                     let mut nodes_slice = nodes.slice();
                     // disjoint-column views via `split_mut`.
                     let store::node::NodeColumnsMut {
+                        pkg_id: node_pkg_ids,
                         nodes: node_nodes,
                         dep_id: node_dep_ids,
                         parent_id: node_parent_ids,
@@ -601,7 +602,12 @@ pub(crate) fn install_isolated_packages(
                                         break 'walk;
                                     }
                                 }
-                                node_peers[curr_id.get() as usize].insert(peer, &set_ctx)?;
+                                // A package is never its own peer (same guard as the
+                                // first-pass walk); this path replicates it, so it must
+                                // skip self too or the two diverge on `peer_hash`.
+                                if node_pkg_ids[curr_id.get() as usize] != peer.pkg_id {
+                                    node_peers[curr_id.get() as usize].insert(peer, &set_ctx)?;
+                                }
                                 curr_id = node_parent_ids[curr_id.get() as usize];
                             }
                         }
@@ -634,6 +640,7 @@ pub(crate) fn install_isolated_packages(
             let mut nodes_slice = nodes.slice();
             // disjoint-column views via `split_mut`.
             let store::node::NodeColumnsMut {
+                pkg_id: node_pkg_ids,
                 parent_id: node_parent_ids,
                 dependencies: node_dependencies,
                 peers: node_peers,
@@ -846,6 +853,12 @@ pub(crate) fn install_isolated_packages(
                 }
 
                 for &visited_parent_id in &visited_parent_node_ids {
+                    // A package is never its own peer. Without this skip, a peer-dep
+                    // cycle (A peers B, B peers A) adds A to its own peer set via B's
+                    // walk, so `peer_hash` diverges and `.bun/` gets duplicate entries.
+                    if node_pkg_ids[visited_parent_id.get() as usize] == resolved_pkg_id {
+                        continue;
+                    }
                     let ctx = store::node::TransitivePeerOrderedArraySetCtx {
                         string_buf,
                         pkg_names,

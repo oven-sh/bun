@@ -1188,6 +1188,7 @@ extern "C" void Bun__imageContinueEventLoop();
 extern "C" void uws_adopt_loop_for_current_thread(struct us_loop_t*);
 void _mi_scavenger_forked_child(void); // C++-mangled (mimalloc is built as C++ here)
 extern "C" void Bun__imageAdoptMainThreadVM();
+extern "C" char** environ;
 // ===== v0 heap image experiment (macOS, no-ASLR, JIT off): dump all mimalloc/JSC memory + __DATA at idle; a fresh process maps it back and runs JS on the image VM.
 
 // ---- platform seam for the image product path (region walk, residency, data segments, JIT copy) ----

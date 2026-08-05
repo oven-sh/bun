@@ -101,6 +101,18 @@ describe.skipIf(!isASAN)("worker teardown with off-thread jobs in flight does no
     "Bun.Archive.blob (Archive AsyncTask)": `
       const archive = new Bun.Archive({ "a.bin": buf(), "b/b.txt": "hello" });
       lanes(2, () => archive.blob());`,
+    "Bun.write file-to-file (CopyFilePromiseTask)": `
+      const fs = require("node:fs/promises");
+      let ci = 0;
+      const setup = fs.writeFile(d.dir + "/copysrc.bin", Buffer.alloc(8 << 20, 0x62));
+      lanes(2, async () => {
+        await setup;
+        ci++;
+        await Bun.write(Bun.file(d.dir + "/copydst" + (ci % 4) + ".bin"), Bun.file(d.dir + "/copysrc.bin"));
+      });`,
+    "Bun.Image pipeline (AsyncImageTask)": `
+      const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+      lanes(2, () => new Bun.Image(png).resize(256, 256).png().bytes());`,
     "dynamic import (RuntimeTranspilerStore)": `
       const fs = require("node:fs/promises");
       let di = 0;

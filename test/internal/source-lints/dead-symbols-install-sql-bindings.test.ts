@@ -114,6 +114,15 @@ test("dead C++ bindings do not reappear", () => {
   expect(resurrected).toEqual([]);
 });
 
+test("the WebKit weak error finalizer stays defined", () => {
+  // Bun__errorInstance__finalize has zero in-tree callers but is
+  // weak-referenced by JSC::ErrorInstance::finalizeUnconditionally in
+  // vendor/WebKit; removing it breaks the darwin LTO link.
+  expect(headFile("src/jsc/bindings/ErrorStackTrace.cpp")).toMatch(
+    /extern "C" void Bun__errorInstance__finalize\(void\*/,
+  );
+});
+
 test("dead built-in JS exports and build defines do not reappear", () => {
   const checks: Array<[string, RegExp]> = [
     // repl shim surface no requirer (repl.js, internal/repl/*) ever touched.

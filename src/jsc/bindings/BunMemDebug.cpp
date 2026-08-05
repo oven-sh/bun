@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/ExecutableAllocator.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <wtf/text/AtomStringTable.h>
 #include <JavaScriptCore/VMInlines.h>
@@ -734,6 +735,31 @@ static void dumpDirtyMap(JSC::VM& vm)
 #endif
 }
 
+// Census of cells allocated after the image was made (mortal blocks + non-immortal precise allocations), by class.
+static void dumpNewCells(JSC::VM& vm)
+{
+    JSC::JSLockHolder lock(vm);
+    vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+    struct E { size_t n = 0, bytes = 0; };
+    std::map<std::string, E> byClass; size_t total = 0, totalBytes = 0, mortalBlocks = 0, mortalBlockLive = 0;
+    vm.heap.objectSpace().forEachBlock([&](JSC::MarkedBlock::Handle* h) { if (!h->block().isImmortal()) mortalBlocks++; });
+    JSC::HeapIterationScope scope(vm.heap);
+    vm.heap.objectSpace().forEachLiveCell(scope, [&](JSC::HeapCell* cell, JSC::HeapCell::Kind kind) {
+        bool isNew = cell->isPreciseAllocation() ? !cell->preciseAllocation().isImmortal() : !cell->markedBlock().isImmortal();
+        if (!isNew) return IterationStatus::Continue;
+        size_t sz = cell->cellSize();
+        std::string name = isJSCellKind(kind) ? std::string(static_cast<JSC::JSCell*>(cell)->className()) : std::string("(aux) ") + (cell->isPreciseAllocation() ? "precise" : cell->markedBlock().handle().subspace()->name());
+        auto& e = byClass[name]; e.n++; e.bytes += sz; total++; totalBytes += sz;
+        if (!cell->isPreciseAllocation()) mortalBlockLive += sz;
+        return IterationStatus::Continue;
+    });
+    fprintf(stderr, "[newcells] after full GC: %zu new cells, %.2fMB cell bytes; %zu mortal MarkedBlocks = %.2fMB (%.0f%% live)\n", total, totalBytes / 1048576.0, mortalBlocks, mortalBlocks * JSC::MarkedBlock::blockSize / 1048576.0, mortalBlocks ? 100.0 * mortalBlockLive / (mortalBlocks * JSC::MarkedBlock::blockSize) : 0.0);
+    std::vector<std::pair<size_t, std::string>> rows;
+    for (auto& [k, e] : byClass) { char line[200]; snprintf(line, sizeof line, "  %-44s %8zu  %8.2fMB", k.c_str(), e.n, e.bytes / 1048576.0); rows.push_back({ e.bytes, line }); }
+    std::sort(rows.begin(), rows.end(), std::greater<>());
+    for (size_t i = 0; i < std::min<size_t>(rows.size(), 30); i++) fprintf(stderr, "%s\n", rows[i].second.c_str());
+}
+
 // Re-clean: any frozen page that is dirty but byte-identical to the snapshot gets remapped from the file again.
 static void recleanFrozenPages(JSC::VM& vm)
 {
@@ -920,6 +946,12 @@ static void imageDump(JSC::VM& vm, const char* path)
                 regions.push_back({ addr, size, 0, ((uint64_t)tag << 8) | 3 }); // reservation, no data
                 size_t npages = size / pg; std::vector<int> disp(npages); mach_vm_size_t dispCount = npages;
                 if (mach_vm_page_range_query(mach_task_self(), addr, size, (mach_vm_address_t)disp.data(), &dispCount) == KERN_SUCCESS) {
+                    { // freed JIT pages are MADV_FREE_REUSABLE'd and still read as present; keep only pages the executable allocator has handed out
+                        Locker locker { JSC::ExecutableAllocator::singleton().getLock() };
+                        size_t dropped = 0;
+                        for (size_t i = 0; i < dispCount; i++) if (disp[i] && !JSC::ExecutableAllocator::singleton().isValidExecutableMemory(locker, (void*)(addr + i * pg)) && !JSC::ExecutableAllocator::singleton().isValidExecutableMemory(locker, (void*)(addr + i * pg + pg / 2))) { disp[i] = 0; dropped++; }
+                        if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] JIT: dropped %zu resident-but-free pages\n", dropped);
+                    }
                     for (size_t i = 0; i < dispCount;) {
                         if (!disp[i]) { i++; continue; }
                         size_t j = i; while (j < dispCount && disp[j]) j++;
@@ -1163,6 +1195,7 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
         else if (!strncmp(buf, "cellprofile", 11)) req = 7;
         else if (!strncmp(buf, "imagedump", 9)) req = 8;
         else if (!strncmp(buf, "trapreport", 10)) req = 9;
+        else if (!strncmp(buf, "newcells", 8)) req = 10;
         else if (!strncmp(buf, "shrink", 6)) req = 3;
         else if (!strncmp(buf, "gc", 2)) req = 2;
         else req = 1;
@@ -1187,6 +1220,7 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
         return;
     }
     if (req == 9) { imageTrapReport(); return; }
+    if (req == 10) { dumpNewCells(*vm); return; }
     if (req == 8) {
         Bun__requestSnapshot(vm, getenv("BUN_IMAGE_OUT") ? getenv("BUN_IMAGE_OUT") : "/tmp/bun.img"); // unwinds JS via termination; the run loop takes it at top level and exits
         return;

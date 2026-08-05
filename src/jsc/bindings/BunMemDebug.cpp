@@ -235,12 +235,28 @@ static bool findSiblingImage(char* out, size_t cap)
     return imageInflateZstd(zpath, out);
 }
 
+static bool siblingImageExists() // cheap pre-check (no inflate): is there an <exe>.img or <exe>.img.zst at all?
+{
+    const char* off = getenv("BUN_IMAGE"); if (off && (!strcmp(off, "0") || !strcmp(off, "false"))) return false;
+    char exe[4096], p[4300];
+#if OS(DARWIN)
+    uint32_t len = sizeof exe; if (_NSGetExecutablePath(exe, &len) != 0) return false;
+#else
+    ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1); if (n <= 0) return false; exe[n] = 0;
+#endif
+    snprintf(p, sizeof p, "%s.img", exe); if (!access(p, R_OK)) return true;
+    snprintf(p, sizeof p, "%s.img.zst", exe); return !access(p, R_OK);
+}
+
 extern "C" void Bun__imageMaybeRestore()
 {
     char sibling[4200];
+    bool wantImage = getenv("BUN_IMAGE_IN") || getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT") || siblingImageExists();
+    if (wantImage)
+        reexecWithoutASLRIfSlid(); // first: the cache key / libs-base check below must see the final (unslid) library layout
     if (!getenv("BUN_IMAGE_IN") && !getenv("BUN_IMAGE_OUT") && !getenv("CLAUDE_CODE_SNAPSHOT_OUT") && findSiblingImage(sibling, sizeof sibling))
         setenv("BUN_IMAGE_IN", sibling, 1);
-    if (getenv("BUN_IMAGE_IN") || getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT"))
+    if (false)
         reexecWithoutASLRIfSlid();
     if (const char* in = getenv("BUN_IMAGE_IN")) {
         char path[1024]; snprintf(path, sizeof path, "%s", in);

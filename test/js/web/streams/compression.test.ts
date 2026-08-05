@@ -720,6 +720,8 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
 // error, cancel), not left to the cell's finalizer. Finalizers run late, so a
 // busy loop of pipelines whose SOURCE errors otherwise retains every context:
 // Bun.gc(true) cannot reclaim them and RSS grows by ~280 KiB per iteration.
+// The 60s timeout covers the debug/ASAN child: 512 pipelines plus a full GC
+// per RSS sample outlive the default per-test timeout there.
 test("errored pipeline releases the compression coder eagerly", async () => {
   const src = `
       const N = 512, WARM = 64;
@@ -733,7 +735,13 @@ test("errored pipeline releases the compression coder eagerly", async () => {
             c.enqueue(new Uint8Array(8192).fill(n));
           },
         });
-        try { await new Response(source.pipeThrough(new CompressionStream("gzip"))).arrayBuffer(); } catch {}
+        try {
+          await new Response(source.pipeThrough(new CompressionStream("gzip"))).arrayBuffer();
+        } catch (error) {
+          if (error instanceof Error && error.message === "source failed") return;
+          throw error;
+        }
+        throw new Error("expected the pipeline to reject with the source error");
       }
       for (let i = 0; i < WARM; i++) await run();
       const before = rss();
@@ -763,4 +771,4 @@ test("errored pipeline releases the compression coder eagerly", async () => {
   // release measures 7 MiB release / 8 MiB debug+ASAN.
   expect(deltaMiB).toBeLessThan(64);
   expect(exitCode).toBe(0);
-}, 60_000); // outlives the default per-test timeout. // A debug/ASAN child running 512 pipelines plus per-iteration full GCs
+}, 60_000);

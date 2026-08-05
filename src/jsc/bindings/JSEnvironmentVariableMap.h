@@ -13,6 +13,9 @@ namespace Bun {
 
 JSC::JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
 
+// process.env.TZ -> JSC date cache; accepts POSIX forms beyond IANA names.
+bool setTimeZoneFromEnvValue(JSC::JSGlobalObject*, const WTF::String&);
+
 // worker_threads SHARE_ENV: a `process.env` whose reads/writes/enumeration go
 // through the SharedEnvStore of the tree its global belongs to.
 JSC::JSValue createSharedEnvironmentVariablesMap(Zig::GlobalObject* globalObject);

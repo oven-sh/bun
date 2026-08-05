@@ -23,6 +23,13 @@
 #include "SharedEnvStore.h"
 #include "wtf/NeverDestroyed.h"
 #include "WebCoreJSBuiltins.h"
+#include <JavaScriptCore/IntlObject.h>
+#include <wtf/text/MakeString.h>
+
+#if OS(UNIX)
+#include <limits.h>
+#include <stdlib.h>
+#endif
 
 using namespace JSC;
 
@@ -461,15 +468,105 @@ static constexpr ASCIILiteral kProxyEnvVarNames[] = {
     "no_proxy"_s,
 };
 
+// POSIX "STD[+|-]hh" -> "Etc/GMT[+|-]h"; both count hours west of UTC so the sign carries over.
+static String posixStdOffsetToEtcGMT(StringView v)
+{
+    size_t i = 0;
+    if (!v.isEmpty() && v[0] == '<') {
+        size_t end = v.find('>');
+        if (end == notFound)
+            return String();
+        i = end + 1;
+    } else {
+        while (i < v.length() && isASCIIAlpha(v[i]))
+            ++i;
+        if (i < 3)
+            return String();
+    }
+    bool negative = false;
+    if (i < v.length() && (v[i] == '+' || v[i] == '-')) {
+        negative = v[i] == '-';
+        ++i;
+    }
+    size_t hstart = i;
+    while (i < v.length() && isASCIIDigit(v[i]))
+        ++i;
+    if (i == hstart || i - hstart > 2 || i != v.length())
+        return String();
+    int hours = 0;
+    for (size_t j = hstart; j < i; ++j)
+        hours = hours * 10 + (v[j] - '0');
+    if (hours == 0)
+        return "UTC"_s;
+    if (negative ? hours > 14 : hours > 12)
+        return String();
+    return makeString("Etc/GMT"_s, negative ? '-' : '+', hours);
+}
+
+bool setTimeZoneFromEnvValue(JSC::JSGlobalObject* globalObject, const WTF::String& raw)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto commit = [&](const String& name) -> bool {
+        if (!WTF::setTimeZoneOverride(name))
+            return false;
+        WTF::timeZoneDidChange();
+        vm.dateCache.clearForTimeZoneChange();
+        return true;
+    };
+
+    if (raw.isEmpty())
+        return commit(emptyString());
+
+    String tz = raw.startsWith(':') ? raw.substring(1) : raw;
+
+#if OS(UNIX)
+    if (tz.startsWith('/')) {
+        auto extractZoneInfoSuffix = [](StringView path) -> String {
+            constexpr auto marker = "/zoneinfo/"_s;
+            size_t pos = path.reverseFind(marker);
+            if (pos == notFound)
+                return String();
+            StringView suffix = path.substring(pos + marker.length());
+            if (suffix.startsWith("posix/"_s) || suffix.startsWith("right/"_s))
+                suffix = suffix.substring(6);
+            if (suffix.isEmpty() || suffix == "posixrules"_s || suffix == "localtime"_s)
+                return String();
+            return suffix.toString();
+        };
+        String zone = extractZoneInfoSuffix(tz);
+        if (zone.isNull()) {
+            CString utf8 = tz.utf8();
+            char buf[PATH_MAX];
+            if (const char* resolved = realpath(utf8.data(), buf))
+                zone = extractZoneInfoSuffix(StringView::fromLatin1(resolved));
+        }
+        if (!zone.isNull())
+            tz = WTF::move(zone);
+    }
+#endif
+
+    if (JSC::intlResolveTimeZoneID(tz))
+        return commit(tz);
+
+    if (!tz.isEmpty()) {
+        String primary = JSC::toPrimaryIanaTimeZoneIdentifier(StringView(tz));
+        if (!primary.isEmpty() && primary != tz && JSC::intlResolveTimeZoneID(primary))
+            return commit(primary);
+    }
+
+    if (String etc = posixStdOffsetToEtcGMT(tz); !etc.isNull() && JSC::intlResolveTimeZoneID(etc))
+        return commit(etc);
+
+    commit(emptyString());
+    return false;
+}
+
 // The parse-and-apply bodies for the three side-effecting env vars, shared by
 // the regular process.env CustomSetters and applySharedEnvSideEffects so a new
 // side-effecting var need only be added in one place.
 static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
 {
-    if (value.length() < 32 && WTF::setTimeZoneOverride(value)) {
-        WTF::timeZoneDidChange();
-        JSC::getVM(globalObject).dateCache.clearForTimeZoneChange();
-    }
+    setTimeZoneFromEnvValue(globalObject, value);
 }
 static void applyTLSRejectFromString(JSGlobalObject*, const String& value)
 {

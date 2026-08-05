@@ -3607,11 +3607,13 @@ pub(crate) mod __gated_printer {
                     self.print(b"{");
                     let props = e.properties.slice();
                     if !props.is_empty() {
-                        if !e.is_single_line {
+                        // JSON always expands objects, so fold !IS_JSON in to keep indent()/unindent() paired.
+                        let single_line = e.is_single_line && !IS_JSON;
+                        if !single_line {
                             self.indent();
                         }
 
-                        if e.is_single_line && !IS_JSON {
+                        if single_line {
                             self.print_space();
                         } else {
                             self.print_newline();
@@ -3622,7 +3624,7 @@ pub(crate) mod __gated_printer {
                         if props.len() > 1 {
                             for property in &props[1..] {
                                 self.print(b",");
-                                if e.is_single_line && !IS_JSON {
+                                if single_line {
                                     self.print_space();
                                 } else {
                                     self.print_newline();
@@ -3632,7 +3634,7 @@ pub(crate) mod __gated_printer {
                             }
                         }
 
-                        if e.is_single_line && !IS_JSON {
+                        if single_line {
                             self.print_space();
                         } else {
                             self.unindent();

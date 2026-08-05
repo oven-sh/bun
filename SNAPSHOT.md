@@ -62,6 +62,10 @@ With LLInt+DFG only, borrowed bytecode and generational GC on (the current scrip
 
 Restored or not, footprint grows ~10–25 MB per trivial turn over the first turns (4 "pong" turns: 122 → 152 MB). Live JS cells grow only ~1.3 MB/turn; the growth is JSC tiering artifacts in malloc (baseline JIT `JITData`/IC stubs/`JIT::link`, DFG/FTL OSR-exit vectors, MetadataTables) as each turn executes more not-yet-compiled code. Measured over restore + 4 turns: `BUN_JSC_useBaselineJIT=0 BUN_JSC_useFTLJIT=0` (LLInt → DFG only) → idle 37 vs 44 MB, after 4 turns **114 vs 150 MB**, CPU 1.67 s vs 1.94 s. FTL off alone or higher DFG thresholds don't help.
 
+## Linux status
+
+The product path (`imageDump`/`imageRestoreAndRun`) goes through a small platform seam with Linux implementations written but not yet compiled/tested: `/proc/self/maps` + `mincore` region scan, linker-symbol data segment bounds, `personality(ADDR_NO_RANDOMIZE)` self re-exec, epoll+eventfd loop reinit in usockets, `/proc/self/task` thread wait, `/proc/self/fd` paths. The attribution tooling (dirtymap etc.) is Darwin-only.
+
 ## Known gotchas
 
 - `static`/`call_once`/function-local statics and env reads cached at boot carry the *build* process's values.

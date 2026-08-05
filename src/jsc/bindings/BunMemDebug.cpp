@@ -50,6 +50,10 @@
 #include <mach/mach.h>
 #include <crt_externs.h>
 #include <spawn.h>
+#if OS(LINUX)
+#include <sys/personality.h>
+#include <dirent.h>
+#endif
 #include <termios.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -144,6 +148,21 @@ static void reexecWithoutASLRIfSlid()
     posix_spawnattr_setflags(&attr, flags | 0x0100 /* _POSIX_SPAWN_DISABLE_ASLR */ | POSIX_SPAWN_SETEXEC);
     posix_spawn(nullptr, exe, nullptr, &attr, *_NSGetArgv(), *_NSGetEnviron()); // SETEXEC: only returns on failure
     fprintf(stderr, "[image] could not re-exec without ASLR; continuing slid (image build/restore will not work)\n");
+#elif OS(LINUX)
+    if (getenv("BUN_IMAGE_REEXECED"))
+        return;
+    int persona = personality(0xffffffff);
+    if (persona != -1 && (persona & ADDR_NO_RANDOMIZE))
+        return;
+    setenv("BUN_IMAGE_REEXECED", "1", 1);
+    if (persona != -1 && personality(persona | ADDR_NO_RANDOMIZE) != -1) {
+        extern char** environ;
+        // argv: read our own cmdline
+        std::vector<std::string> args; { FILE* f = fopen("/proc/self/cmdline", "r"); std::string cur; int c; while (f && (c = fgetc(f)) != EOF) { if (!c) { args.push_back(cur); cur.clear(); } else cur += (char)c; } if (f) fclose(f); }
+        std::vector<char*> argv; for (auto& a : args) argv.push_back(a.data()); argv.push_back(nullptr);
+        execve("/proc/self/exe", argv.data(), environ);
+    }
+    fprintf(stderr, "[image] could not re-exec without ASLR; continuing (image build/restore will not work)\n");
 #endif
 }
 
@@ -165,6 +184,7 @@ static void imageDump(JSC::VM& vm, const char* path);
 extern "C" void Bun__imageDumpNow(JSC::VM* vm, const char* path)
 {
     mi_scavenger_stop(); // joins mimalloc's background thread: nothing may hold allocator locks while we freeze
+#if OS(DARWIN)
     // Pool workers were told to exit; give them (bounded) time to actually be gone, and any straggler inside the allocator time to leave it.
     for (int attempt = 0; attempt < 200; attempt++) {
         thread_act_array_t threads; mach_msg_type_number_t count = 0; unsigned pool = 0;
@@ -189,6 +209,15 @@ extern "C" void Bun__imageDumpNow(JSC::VM* vm, const char* path)
             vm_deallocate(mach_task_self(), (vm_address_t)threads, count * sizeof(thread_act_t));
         }
     }
+#else
+    // Pool workers were told to exit; give them (bounded) time to actually be gone, and any straggler inside the allocator time to leave it.
+    for (int attempt = 0; attempt < 200; attempt++) {
+        unsigned pool = 0;
+        if (DIR* d = opendir("/proc/self/task")) { while (struct dirent* e = readdir(d)) { if (e->d_name[0] == '.') continue; char pth[128], name[64] = ""; snprintf(pth, sizeof pth, "/proc/self/task/%s/comm", e->d_name); if (FILE* f = fopen(pth, "r")) { if (fgets(name, sizeof name, f) && !strncmp(name, "Bun Pool", 8)) pool++; fclose(f); } } closedir(d); }
+        if (!pool && mi_prof_lock_is_free()) break;
+        usleep(10000);
+    }
+#endif
     if (!mi_prof_lock_is_free()) fprintf(stderr, "[image] WARNING: mimalloc profiler lock is held at snapshot time (some thread is mid-free)\n");
     { // the termination that unwound JS to get us here is done with; none of it may persist into the image (it would read as "terminating" forever on restore)
         JSC::JSLockHolder lock(*vm);
@@ -1128,7 +1157,7 @@ struct ImageFileFd { int fd; int flags; char path[1000]; };
 static ImageFileFd s_imageFileFds[32]; static int s_imageFileFdCount = 0; // writable regular files (logs) get reopened O_APPEND at the same fd number
 static void imageDump(JSC::VM& vm, const char* path)
 {
-#if OS(DARWIN)
+#if OS(DARWIN) || OS(LINUX)
     JSC::JSLockHolder lock(vm);
     s_imageTermiosFd = -1;
     for (int fd = 0; fd < 3; fd++) if (isatty(fd) && !tcgetattr(fd, &s_imageTermios)) { s_imageTermiosFd = fd; break; }
@@ -1138,7 +1167,11 @@ static void imageDump(JSC::VM& vm, const char* path)
         s_imageOpenFds[fd / 64] |= 1ull << (fd % 64);
         struct stat st; if (s_imageFileFdCount < 32 && !fstat(fd, &st) && S_ISREG(st.st_mode)) {
             ImageFileFd& f = s_imageFileFds[s_imageFileFdCount]; f.fd = fd; f.flags = fcntl(fd, F_GETFL);
+#if OS(DARWIN)
             if ((f.flags & O_ACCMODE) != O_RDONLY && fcntl(fd, F_GETPATH, f.path) != -1) s_imageFileFdCount++;
+#else
+            { char lnk[64]; snprintf(lnk, sizeof lnk, "/proc/self/fd/%d", fd); ssize_t n = readlink(lnk, f.path, sizeof f.path - 1); if ((f.flags & O_ACCMODE) != O_RDONLY && n > 0) { f.path[n] = 0; s_imageFileFdCount++; } }
+#endif
         }
     }
     { // Error objects keep raw StackFrames (CodeBlock pointers) until .stack is first read; resolve them now so nothing in the image points at code we drop or re-link
@@ -1262,12 +1295,11 @@ static void imageDump(JSC::VM& vm, const char* path)
 // Restore: called from Bun__memdebugInstall (very early in main) when BUN_IMAGE_IN is set. Never returns.
 static void imageRestoreAndRun(const char* path)
 {
-#if OS(DARWIN)
+#if OS(DARWIN) || OS(LINUX)
     int fd = open(path, O_RDONLY);
     if (fd < 0) { fprintf(stderr, "[image] cannot open %s\n", path); _exit(2); }
     ImageHeader hdr; pread(fd, &hdr, sizeof hdr, 0);
-    const struct mach_header_64* mh = (const struct mach_header_64*)_dyld_get_image_header(0);
-    if (memcmp(hdr.magic, "BUNIMG0", 8) || hdr.textBase != (uint64_t)mh) { fprintf(stderr, "[image] bad magic or ASLR slide differs (image text %llx vs ours %p) — run both under noaslr\n", hdr.textBase, mh); _exit(2); }
+    if (memcmp(hdr.magic, "BUNIMG0", 8) || hdr.textBase != platformTextBase()) { fprintf(stderr, "[image] bad magic or ASLR slide differs (image text %llx vs ours %llx)\n", (unsigned long long)hdr.textBase, (unsigned long long)platformTextBase()); _exit(2); }
     mi_scavenger_stop(); // this process's scavenger thread must not touch allocator state while/after we overlay it
     // No heap use from here until the overlay is done: with malloc routed to mimalloc, this process's heap sits at the same VA as the image's.
     if (hdr.nregions > 8192) { fprintf(stderr, "[image] too many regions\n"); _exit(2); }
@@ -1292,7 +1324,7 @@ static void imageRestoreAndRun(const char* path)
             continue;
         }
         if ((r.kind & 0xff) == 4) {
-            mach_vm_deallocate(mach_task_self(), r.addr, r.len);
+            munmap((void*)r.addr, r.len);
             void* m = mmap((void*)r.addr, r.len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
             if (m == MAP_FAILED) { fprintf(stderr, "[image] mmap reserve %llx+%llx failed errno %d\n", r.addr, r.len, errno); _exit(3); }
             continue;
@@ -1306,7 +1338,7 @@ static void imageRestoreAndRun(const char* path)
             if (m == MAP_FAILED) {
                 // e.g. a reservation with restrictive max_prot already sits there: deallocate the range and retry
                 int e1 = errno;
-                mach_vm_deallocate(mach_task_self(), r.addr, r.len);
+                munmap((void*)r.addr, r.len);
                 m = mmap((void*)r.addr, r.len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, r.fileOff);
                 if (m == MAP_FAILED) { fprintf(stderr, "[image] mmap %llx+%llx (tag %llu) failed errno %d then %d — skipping\n", r.addr, r.len, r.kind >> 8, e1, errno); continue; }
             }

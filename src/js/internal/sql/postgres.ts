@@ -421,6 +421,12 @@ class PostgresAdapter
       code: "ERR_POSTGRES_CONNECTION_CLOSED",
     });
   }
+  acquisitionTimeoutError(ms: number, max: number) {
+    return new PostgresError(
+      `Connection timeout after ${ms}ms: no connection in the pool of ${max} became available. Ensure reserved connections are released, or raise \`max\` / \`connectionTimeout\`.`,
+      { code: "ERR_POSTGRES_CONNECTION_TIMEOUT" },
+    );
+  }
   notTaggedCallError() {
     return new PostgresError("Query not called as a tagged template literal", {
       code: "ERR_POSTGRES_NOT_TAGGED_CALL",

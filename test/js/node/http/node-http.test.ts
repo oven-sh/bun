@@ -4139,3 +4139,81 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     expect(serverSide.destroyed).toBe(true);
   }
 });
+
+it("connectionListener queues pipelined responses like Node", async () => {
+  // Both requests parse in one socket 'data' event, so the second one's
+  // headers complete while the first response is still assigned (its 'finish'
+  // detach is deferred a tick). The second response must be queued, not
+  // assigned - assignSocket throws ERR_HTTP_SOCKET_ASSIGNED - and its output
+  // must be held back until the first response completes.
+  async function exchange(handler: (req: any, res: any) => void, requestBytes: string, done: (buf: string) => boolean) {
+    const server = createServer(handler);
+    const [clientSide, serverSide] = duplexPair();
+    server.emit("connection", serverSide);
+    try {
+      return await new Promise<string>((resolve, reject) => {
+        let buf = "";
+        clientSide.on("data", d => {
+          buf += d;
+          if (done(buf)) resolve(buf);
+        });
+        clientSide.on("error", reject);
+        clientSide.on("close", () => reject(new Error("closed before expected output: " + buf)));
+        clientSide.write(requestBytes);
+      });
+    } finally {
+      clientSide.destroy();
+      serverSide.destroy();
+    }
+  }
+
+  // Handler finishes after the current tick: the second request is dispatched
+  // while the first response is still in flight.
+  {
+    const out = await exchange(
+      (req, res) => setImmediate(() => res.end("ok:" + req.url)),
+      "GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n",
+      buf => buf.includes("ok:/a") && buf.includes("ok:/b"),
+    );
+    expect(out.indexOf("ok:/a")).toBeLessThan(out.indexOf("ok:/b"));
+    expect(out.match(/HTTP\/1\.1 200/g)).toHaveLength(2);
+  }
+
+  // The queued response is written (write + end, chunked) before the first
+  // one finishes: its bytes must still go out second, after the first body.
+  {
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>(resolve => (releaseFirst = resolve));
+    const out = await exchange(
+      (req, res) => {
+        if (req.url === "/a") {
+          firstGate.then(() => res.end("first"));
+        } else {
+          res.write("second-part1");
+          res.end("second-part2");
+          releaseFirst();
+        }
+      },
+      "GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n",
+      buf => buf.includes("second-part2") && buf.endsWith("0\r\n\r\n"),
+    );
+    expect(out.indexOf("first")).toBeLessThan(out.indexOf("second-part1"));
+    expect(out.indexOf("second-part1")).toBeLessThan(out.indexOf("second-part2"));
+    const second = out.slice(out.indexOf("HTTP/1.1 200", 1));
+    expect(second).toContain("Transfer-Encoding: chunked");
+  }
+
+  // Three pipelined requests answered synchronously: each finish hands the
+  // socket to the next queued response.
+  {
+    const out = await exchange(
+      (req, res) => res.end("r:" + req.url + ";"),
+      "GET /1 HTTP/1.1\r\nHost: x\r\n\r\nGET /2 HTTP/1.1\r\nHost: x\r\n\r\nGET /3 HTTP/1.1\r\nHost: x\r\n\r\n",
+      buf => buf.includes("r:/3;"),
+    );
+    expect(out.indexOf("r:/1;")).toBeGreaterThanOrEqual(0);
+    expect(out.indexOf("r:/1;")).toBeLessThan(out.indexOf("r:/2;"));
+    expect(out.indexOf("r:/2;")).toBeLessThan(out.indexOf("r:/3;"));
+    expect(out.match(/HTTP\/1\.1 200/g)).toHaveLength(3);
+  }
+});

@@ -235,6 +235,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
 function connectionListenerHTTP1(server, socket, options) {
   const http = require("node:http");
   const { HTTPParser, prepareError, calculateLenientFlags, continueExpression } = require("node:_http_common");
+  const { queuePipelinedResponse, advanceResponsePipeline } = require("node:_http_server");
   const { kHandle: kHttp1ResponseHandle } = require("internal/http");
   const { allMethods } = process.binding("http_parser");
 
@@ -326,12 +327,22 @@ function connectionListenerHTTP1(server, socket, options) {
       }
     };
     res[kHttp1ResponseHandle] = handle;
-    res.assignSocket(socket);
-    // node's resOnFinish: release the socket once the response completes so the next
-    // keep-alive request's response can attach (assignSocket throws
-    // ERR_HTTP_SOCKET_ASSIGNED while a previous response is still assigned).
+    // Node's parserOnIncoming outgoing queue: while the previous response is
+    // still assigned (its deferred 'finish' has not detached it yet -
+    // pipelined requests always land here), this response is queued and its
+    // write()/end() buffer until the finish path below assigns it the socket.
+    // assignSocket would throw ERR_HTTP_SOCKET_ASSIGNED.
+    if (socket._httpMessage) {
+      queuePipelinedResponse(socket, res, versionMajor < 1 || versionMinor < 1);
+    } else {
+      res.assignSocket(socket);
+    }
+    // node's resOnFinish: release the socket once the response completes so
+    // the next keep-alive request's response can attach, then hand it to the
+    // next queued pipelined response (replaying whatever it buffered).
     res.on("finish", function onFallbackResponseFinish() {
       this.detachSocket(socket);
+      advanceResponsePipeline(server, socket);
     });
 
     // Node's parserOnIncoming Expect routing (the native dispatcher applies the

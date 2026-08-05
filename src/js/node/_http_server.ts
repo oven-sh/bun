@@ -948,16 +948,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // Node.js, this response is queued (res.socket === null) and its
           // writes are buffered until the in-flight response finishes and the
           // pipeline assigns it the socket (advanceResponsePipeline).
-          http_res[kPipelinedQueuedState] = {
-            ops: [],
-            bytes: 0,
-            headerBytes: 0,
-            needDrain: false,
-            ended: false,
-            isAncient: !!isAncientHTTP,
-            socket,
-          };
-          (socket[kPipelinedResponses] ??= []).push(http_res);
+          queuePipelinedResponse(socket, http_res, !!isAncientHTTP);
           // A pipelined dispatch can arrive after the previous response finished and detached
           // (bytes still flushing keep it pending), leaving nothing in flight to advance the
           // queue. Kick the pipeline once this dispatch settles.
@@ -2566,6 +2557,23 @@ function advancePipelineIfIdleNT(server, socket) {
   }
 }
 
+// Like the dispatcher's pipelined branch and Node.js's parserOnIncoming
+// outgoing queue: park the response behind the connection's in-flight one.
+// Its write()/end() buffer (kPipelinedQueuedState) until
+// advanceResponsePipeline assigns it the socket and replays them.
+function queuePipelinedResponse(socket, res, isAncient) {
+  res[kPipelinedQueuedState] = {
+    ops: [],
+    bytes: 0,
+    headerBytes: 0,
+    needDrain: false,
+    ended: false,
+    isAncient,
+    socket,
+  };
+  (socket[kPipelinedResponses] ??= []).push(res);
+}
+
 function advanceResponsePipeline(server, socket) {
   // The previous response on this connection closed it (Connection: close,
   // HTTP/1.0, maxRequestsPerSocket): like Node.js's resOnFinish, advancing
@@ -2584,7 +2592,6 @@ function advanceResponsePipeline(server, socket) {
   res[kPipelinedQueuedState] = undefined;
   releasePipelineOutgoingData(socket, queued.bytes);
   const handle = res[kHandle];
-  const socketHandle = socket[kHandle];
 
   if (res.destroyed || !handle) {
     // The queued response was destroyed before it could be sent; the
@@ -2595,22 +2602,36 @@ function advanceResponsePipeline(server, socket) {
     return;
   }
 
-  if (
-    !socketHandle ||
-    socket.destroyed ||
-    !socketHandle.startPipelinedResponse(handle, !!queued.isAncient, !requestShouldKeepAlive(res.req))
-  ) {
-    // The connection is already gone; the socket close path destroys queued
-    // responses, but make sure this (already dequeued) one is not skipped.
-    if (!res.destroyed) {
-      res.destroy();
+  if (socket instanceof NodeHTTPServerSocket) {
+    const socketHandle = socket[kHandle];
+    if (
+      !socketHandle ||
+      socket.destroyed ||
+      !socketHandle.startPipelinedResponse(handle, !!queued.isAncient, !requestShouldKeepAlive(res.req))
+    ) {
+      // The connection is already gone; the socket close path destroys queued
+      // responses, but make sure this (already dequeued) one is not skipped.
+      if (!res.destroyed) {
+        res.destroy();
+      }
+      return;
     }
-    return;
-  }
 
-  if (res.assignSocket === ServerResponse.prototype.assignSocket) {
-    assignSocketInternal(res, socket);
+    if (res.assignSocket === ServerResponse.prototype.assignSocket) {
+      assignSocketInternal(res, socket);
+    } else {
+      res.assignSocket(socket);
+    }
   } else {
+    // internal/http1_server_fallback connection (a foreign duplex): each
+    // response's JS handle writes to the socket itself, so there is no native
+    // socket handle to switch. The prototype assignSocket also installs the
+    // 'close' listener a plain stream needs. Clear `finished` before the
+    // assignment: assignSocket's _flush would otherwise emit 'prefinish' for
+    // an already-ended queued response before its ops have been replayed.
+    if (queued.ended) {
+      res.finished = false;
+    }
     res.assignSocket(socket);
   }
   socket[kRequest] = res.req;
@@ -4017,4 +4038,7 @@ export default {
   Server,
   ServerResponse,
   kConnectionsCheckingInterval,
+  // Pipelining internals shared with internal/http1_server_fallback.
+  queuePipelinedResponse,
+  advanceResponsePipeline,
 };

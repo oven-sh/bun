@@ -1834,10 +1834,6 @@ describe.skipIf(!isASAN)("async crypto jobs: process.exit() in the callback leak
     ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
     LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dirname, "../../../leaksan.supp")}`,
   };
-  // LSan symbolizes any report through llvm-symbolizer against the debug
-  // binary, which takes several seconds.
-  const timeout = 30_000;
-
   const cases = {
     "generateKeyPair (KeyObject output)": `crypto.generateKeyPair("rsa", { modulusLength: 512 }, done);`,
     "generateKeyPair (encrypted PEM output)": `crypto.generateKeyPair("rsa", {
@@ -1869,29 +1865,25 @@ describe.skipIf(!isASAN)("async crypto jobs: process.exit() in the callback leak
   };
 
   for (const [name, snippet] of Object.entries(cases)) {
-    test.concurrent(
-      name,
-      async () => {
-        await using proc = Bun.spawn({
-          cmd: [
-            bunExe(),
-            "-e",
-            `const crypto = require("crypto");
+    test.concurrent(name, async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const crypto = require("crypto");
              const done = err => {
                if (err) { console.error(err); process.exit(2); }
                process.exit(0);
              };
              ${snippet}`,
-          ],
-          env: lsanEnv,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stderr).not.toContain("LeakSanitizer");
-        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
-      },
-      timeout,
-    );
+        ],
+        env: lsanEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("LeakSanitizer");
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    });
   }
 });

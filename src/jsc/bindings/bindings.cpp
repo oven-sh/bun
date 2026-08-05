@@ -3212,6 +3212,47 @@ bool JSC__JSValue__asArrayBuffer(
     return true;
 }
 
+// Pin the backing ArrayBuffer (so it cannot be detached) and read its
+// vector()/byteLength(). A FastTypedArray has no ArrayBuffer to detach so it
+// is left unpinned (avoiding slowDownAndWasteMemory()) unless `force_pin`,
+// which promotes it for an off-thread borrow. SharedArrayBuffer is never
+// detachable and is left unpinned. Detached or non-buffer -> (nullptr, 0).
+// Returns true iff a pin was taken that the caller must release with
+// JSC__JSValue__unpinArrayBuffer.
+CPP_DECL bool JSC__JSValue__pinAndReadArrayBufferBytes(
+    JSC::EncodedJSValue encodedValue, bool force_pin, uint8_t** out_ptr, size_t* out_byte_len)
+{
+    *out_ptr = nullptr;
+    *out_byte_len = 0;
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (!value.isCell()) [[unlikely]]
+        return false;
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
+        bool pinned = false;
+        if (force_pin || view->hasArrayBuffer()) {
+            if (auto* buf = view->possiblySharedBuffer(); buf && !buf->isShared()) {
+                buf->pin();
+                pinned = true;
+            }
+        }
+        *out_ptr = static_cast<uint8_t*>(view->vector());
+        *out_byte_len = view->byteLength();
+        return pinned;
+    }
+    if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
+        auto* buffer = jsBuffer->impl();
+        bool pinned = false;
+        if (!buffer->isShared()) {
+            buffer->pin();
+            pinned = true;
+        }
+        *out_ptr = static_cast<uint8_t*>(buffer->data());
+        *out_byte_len = buffer->byteLength();
+        return pinned;
+    }
+    return false;
+}
+
 // Pin/unpin the backing ArrayBuffer of a JSArrayBuffer or JSArrayBufferView so
 // its storage cannot move or be freed while a native borrower holds a slice
 // into it. SharedArrayBuffer is never detachable and never moves, so it is left

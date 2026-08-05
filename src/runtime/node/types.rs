@@ -299,11 +299,7 @@ impl bun_jsc::Unprotect for StringOrBuffer {
     #[inline]
     fn unprotect(&mut self) {
         if let Self::Buffer(buffer) = self {
-            if buffer.pinned {
-                buffer.pinned = false;
-                buffer.buffer.unpin();
-            }
-            buffer.buffer.value.unprotect();
+            buffer.unprotect();
         }
     }
 }
@@ -319,7 +315,7 @@ impl StringOrBuffer {
             Self::ThreadsafeString(_) => {}
             Self::EncodedSlice(_) => {}
             Self::Buffer(buffer) => {
-                buffer.buffer.value.protect();
+                buffer.to_thread_safe();
             }
         }
     }
@@ -353,8 +349,9 @@ impl StringOrBuffer {
                 result
             }
             Self::Buffer(buffer) => {
-                if buffer.buffer.value != JSValue::ZERO {
-                    return Ok(buffer.buffer.value);
+                let value = buffer.value();
+                if value != JSValue::ZERO {
+                    return Ok(value);
                 }
                 Ok(buffer.to_node_buffer(ctx))
             }
@@ -437,15 +434,10 @@ impl StringOrBuffer {
             | JSType::BigInt64Array
             | JSType::BigUint64Array
             | JSType::DataView => {
-                let buffer = if is_async {
-                    Buffer::from_js_pinned(global, value)
-                        .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
-                } else {
-                    Buffer::from_array_buffer(global, value)
-                };
+                let buffer = Buffer::from_array_buffer(global, value);
 
                 if is_async {
-                    buffer.buffer.value.protect();
+                    buffer.to_thread_safe();
                 }
 
                 *out = Self::Buffer(buffer);
@@ -508,14 +500,9 @@ impl StringOrBuffer {
         allow_string_object: bool,
     ) -> JsResult<bool> {
         if value.is_cell() && value.js_type().is_array_buffer_like() {
-            let buffer = if is_async {
-                Buffer::from_js_pinned(global, value)
-                    .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
-            } else {
-                Buffer::from_array_buffer(global, value)
-            };
+            let buffer = Buffer::from_array_buffer(global, value);
             if is_async {
-                buffer.buffer.value.protect();
+                buffer.to_thread_safe();
             }
             *out = Self::Buffer(buffer);
             return Ok(true);
@@ -1142,35 +1129,10 @@ impl PathLikeExt for PathLike {
         };
         use jsc::JSType;
         match arg.js_type() {
-            JSType::Uint8Array | JSType::DataView => {
-                let mut buffer = Buffer::from_js_pinned(ctx, arg)
-                    .unwrap_or_else(|| Buffer::from_typed_array(ctx, arg));
-                if let Err(err) = Valid::path_buffer(&buffer, ctx)
-                    .and_then(|_| Valid::path_null_bytes(buffer.slice(), ctx))
-                {
-                    if buffer.pinned {
-                        buffer.pinned = false;
-                        buffer.buffer.unpin();
-                    }
-                    return Err(err);
-                }
-
-                arguments.protect_eat();
-                Ok(Some(Self::Buffer(buffer)))
-            }
-
-            JSType::ArrayBuffer => {
-                let mut buffer = Buffer::from_js_pinned(ctx, arg)
-                    .unwrap_or_else(|| Buffer::from_array_buffer(ctx, arg));
-                if let Err(err) = Valid::path_buffer(&buffer, ctx)
-                    .and_then(|_| Valid::path_null_bytes(buffer.slice(), ctx))
-                {
-                    if buffer.pinned {
-                        buffer.pinned = false;
-                        buffer.buffer.unpin();
-                    }
-                    return Err(err);
-                }
+            JSType::Uint8Array | JSType::DataView | JSType::ArrayBuffer => {
+                let buffer = Buffer::from_array_buffer(ctx, arg);
+                Valid::path_buffer(&buffer, ctx)
+                    .and_then(|_| Valid::path_null_bytes(buffer.slice(), ctx))?;
 
                 arguments.protect_eat();
                 Ok(Some(Self::Buffer(buffer)))

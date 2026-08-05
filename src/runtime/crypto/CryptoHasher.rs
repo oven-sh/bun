@@ -12,7 +12,7 @@ use bun_jsc::{
 use crate::crypto::evp::{AlgorithmExt as _, EVP};
 use crate::crypto::{HMAC, create_crypto_error, evp};
 use crate::generated_classes::PropertyName;
-use crate::node::{BlobOrStringOrBuffer, Encoding, StringOrBuffer};
+use crate::node::{BlobOrStringOrBuffer, Buffer, Encoding, StringOrBuffer};
 use bun_sha_hmac::sha as hashers;
 
 // sha3/blake2 algorithms with no BoringSSL streaming context:
@@ -271,7 +271,7 @@ impl CryptoHasher {
         };
 
         // ?Node.StringOrBuffer (static-method arm: only `undefined` → None)
-        let mut output: Option<StringOrBuffer> = match next_eat() {
+        let output: Option<StringOrBuffer> = match next_eat() {
             Some(arg) => match StringOrBuffer::from_js(global, arg)? {
                 Some(v) => Some(v),
                 None => {
@@ -294,9 +294,6 @@ impl CryptoHasher {
                 );
             }
         };
-        if let Some(StringOrBuffer::Buffer(buffer)) = &mut output {
-            buffer.buffer = ArrayBuffer::from_typed_array(global, buffer.buffer.value);
-        }
 
         Self::hash_(global, algorithm, &input, output)
     }
@@ -376,7 +373,7 @@ impl CryptoHasher {
         global: &JSGlobalObject,
         evp: &mut EVP,
         input: &BlobOrStringOrBuffer,
-        output: Option<ArrayBuffer>,
+        output: Option<&Buffer>,
     ) -> JsResult<JSValue> {
         let mut output_digest_buf: Digest = [0u8; EVP_MAX_MD_SIZE_USIZE];
         let mut output_digest_slice: &mut [u8] = &mut output_digest_buf;
@@ -388,20 +385,19 @@ impl CryptoHasher {
             )));
         }
 
-        if let Some(output_buf) = &output {
+        if let Some(output_buf) = output {
             let size = evp.size() as usize;
-            let bytes_len = output_buf.byte_slice().len();
+            let (ptr, bytes_len) = output_buf.bytes();
             if bytes_len < size {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "TypedArray must be at least {} bytes",
                     size
                 )));
             }
-            // SAFETY: `output_buf.ptr` is the JSC-owned writable backing store
+            // SAFETY: `ptr` is the pinned JSC-owned writable backing store
             // (`bytes_len >= size` checked above; not detached since len > 0);
-            // borrowed for this frame only. Build the `&mut` directly from the
-            // raw `*mut u8` field — never via `&[u8].as_ptr()` (Stacked-Borrows UB).
-            output_digest_slice = unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, size) };
+            // borrowed for this frame only.
+            output_digest_slice = unsafe { core::slice::from_raw_parts_mut(ptr, size) };
         }
 
         let Some(len) = evp.hash(boring_engine(global), input.slice(), output_digest_slice) else {
@@ -412,7 +408,7 @@ impl CryptoHasher {
         };
 
         if let Some(output_buf) = output {
-            Ok(output_buf.value)
+            Ok(output_buf.value())
         } else {
             // Clone to GC-managed memory
             ArrayBuffer::create_buffer(global, &output_digest_slice[0..len as usize])
@@ -441,8 +437,7 @@ impl CryptoHasher {
 
         if let Some(string_or_buffer) = output {
             if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
-                let ab = buffer.buffer;
-                return Self::hash_to_bytes(global, &mut evp, input, Some(ab));
+                return Self::hash_to_bytes(global, &mut evp, input, Some(buffer));
             }
             // `inline else => |*str|` — every non-buffer arm yields a string-like
             // `defer str.deinit()` — handled by Drop.
@@ -690,8 +685,7 @@ impl CryptoHasher {
     ) -> JsResult<JSValue> {
         if let Some(string_or_buffer) = output {
             if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
-                let ab = buffer.buffer;
-                return this.digest_to_bytes(global, Some(ab));
+                return this.digest_to_bytes(global, Some(buffer));
             }
             // `defer str.deinit()` — handled by Drop.
             let Some(encoding) = Encoding::from(string_or_buffer.slice()) else {
@@ -715,26 +709,22 @@ impl CryptoHasher {
     fn digest_to_bytes(
         &self,
         global: &JSGlobalObject,
-        output: Option<ArrayBuffer>,
+        output: Option<&Buffer>,
     ) -> JsResult<JSValue> {
         let mut output_digest_buf: evp::Digest = [0u8; EVP_MAX_MD_SIZE_USIZE];
         let buf_len = output_digest_buf.len();
         let output_digest_slice: &mut [u8];
-        if let Some(output_buf) = &output {
-            let bytes_len = output_buf.byte_slice().len();
+        if let Some(output_buf) = output {
+            let (ptr, bytes_len) = output_buf.bytes();
             if bytes_len < buf_len {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "TypedArray must be at least {} bytes",
                     boring_ssl::EVP_MAX_MD_SIZE
                 )));
             }
-            // Reshaped for borrowck.
-            // SAFETY: `bytes_len >= EVP_MAX_MD_SIZE` checked above; `output_buf.ptr`
-            // is the JSC-owned writable backing store, outliving this frame. Build
-            // the `&mut` directly from the raw `*mut u8` field — never via
-            // `&[u8].as_ptr()` (Stacked-Borrows UB).
-            output_digest_slice =
-                unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, bytes_len) };
+            // SAFETY: `bytes_len >= EVP_MAX_MD_SIZE` checked above; `ptr` is the
+            // pinned JSC-owned writable backing store, outliving this frame.
+            output_digest_slice = unsafe { core::slice::from_raw_parts_mut(ptr, bytes_len) };
         } else {
             output_digest_slice = &mut output_digest_buf;
         }
@@ -748,7 +738,7 @@ impl CryptoHasher {
         }
 
         if let Some(output_buf) = output {
-            Ok(output_buf.value)
+            Ok(output_buf.value())
         } else {
             // Clone to GC-managed memory
             ArrayBuffer::create_buffer(global, result)
@@ -930,8 +920,7 @@ impl CryptoHasherZig {
     ) -> JsResult<JSValue> {
         if let Some(string_or_buffer) = output {
             if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
-                let ab = buffer.buffer;
-                return Self::hash_by_name_inner_to_bytes::<A>(global, input, Some(ab));
+                return Self::hash_by_name_inner_to_bytes::<A>(global, input, Some(buffer));
             }
             let Some(encoding) = Encoding::from(string_or_buffer.slice()) else {
                 return Err(global
@@ -983,7 +972,7 @@ impl CryptoHasherZig {
     fn hash_by_name_inner_to_bytes<A: ZigHashAlgo>(
         global: &JSGlobalObject,
         input: &BlobOrStringOrBuffer,
-        output: Option<ArrayBuffer>,
+        output: Option<&Buffer>,
     ) -> JsResult<JSValue> {
         // `defer input.deinit()` — handled by Drop.
 
@@ -996,26 +985,21 @@ impl CryptoHasherZig {
         let mut h = A::init();
         let digest_length_comptime = A::DIGEST_LENGTH as usize;
 
-        if let Some(output_buf) = &output {
-            if output_buf.byte_slice().len() < digest_length_comptime {
+        h.update(input.slice());
+
+        if let Some(output_buf) = output {
+            let (ptr, bytes_len) = output_buf.bytes();
+            if bytes_len < digest_length_comptime {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "TypedArray must be at least {} bytes",
                     digest_length_comptime
                 )));
             }
-        }
-
-        h.update(input.slice());
-
-        if let Some(output_buf) = output {
-            // SAFETY: length checked above; `output_buf.ptr` is the JSC-owned
-            // writable backing store, outliving this frame. Build the `&mut`
-            // directly from the raw `*mut u8` field — never via `&[u8].as_ptr()`
-            // (Stacked-Borrows UB).
-            let out =
-                unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, digest_length_comptime) };
+            // SAFETY: length checked above; `ptr` is the pinned JSC-owned
+            // writable backing store, outliving this frame.
+            let out = unsafe { core::slice::from_raw_parts_mut(ptr, digest_length_comptime) };
             h.final_(out);
-            Ok(output_buf.value)
+            Ok(output_buf.value())
         } else {
             let mut out = [0u8; EVP_MAX_MD_SIZE_USIZE];
             h.final_(&mut out[..digest_length_comptime]);
@@ -1251,7 +1235,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         };
 
         // ?Node.StringOrBuffer (static-method arm: only `undefined` → None)
-        let mut output: Option<StringOrBuffer> = match next_eat() {
+        let output: Option<StringOrBuffer> = match next_eat() {
             Some(arg) => match StringOrBuffer::from_js(global, arg)? {
                 Some(v) => Some(v),
                 None => {
@@ -1274,9 +1258,6 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
                 );
             }
         };
-        if let Some(StringOrBuffer::Buffer(buffer)) = &mut output {
-            buffer.buffer = ArrayBuffer::from_typed_array(global, buffer.buffer.value);
-        }
 
         Self::hash_(global, &input, output)
     }
@@ -1322,12 +1303,12 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     fn hash_to_bytes(
         global: &JSGlobalObject,
         input: &BlobOrStringOrBuffer,
-        output: Option<ArrayBuffer>,
+        output: Option<&Buffer>,
     ) -> JsResult<JSValue> {
         let mut output_digest_buf: H::Digest = H::new_digest();
         let output_digest_slice: &mut H::Digest;
-        if let Some(output_buf) = &output {
-            let bytes_len = output_buf.byte_slice().len();
+        if let Some(output_buf) = output {
+            let (ptr, bytes_len) = output_buf.bytes();
             if bytes_len < H::DIGEST {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "TypedArray must be at least {} bytes",
@@ -1335,10 +1316,8 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
                 )));
             }
             // SAFETY: `bytes_len >= H::DIGEST` checked above; `H::Digest = [u8; H::DIGEST]`;
-            // `output_buf.ptr` is the JSC-owned writable backing store. Build the
-            // `&mut` directly from the raw `*mut u8` field — never via
-            // `&[u8].as_ptr()` (Stacked-Borrows UB).
-            output_digest_slice = unsafe { &mut *output_buf.ptr.cast::<H::Digest>() };
+            // `ptr` is the pinned JSC-owned writable backing store.
+            output_digest_slice = unsafe { &mut *ptr.cast::<H::Digest>() };
         } else {
             output_digest_slice = &mut output_digest_buf;
         }
@@ -1354,7 +1333,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         }
 
         if let Some(output_buf) = output {
-            Ok(output_buf.value)
+            Ok(output_buf.value())
         } else {
             ArrayBuffer::create_uint8_array(global, output_digest_slice.as_ref())
         }
@@ -1375,8 +1354,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
 
         if let Some(string_or_buffer) = output {
             if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
-                let ab = buffer.buffer;
-                return Self::hash_to_bytes(global, input, Some(ab));
+                return Self::hash_to_bytes(global, input, Some(buffer));
             }
             let Some(encoding) = Encoding::from(string_or_buffer.slice()) else {
                 return Err(global
@@ -1465,8 +1443,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         }
         if let Some(string_or_buffer) = output {
             if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
-                let ab = buffer.buffer;
-                return this.digest_to_bytes(global, Some(ab));
+                return this.digest_to_bytes(global, Some(buffer));
             }
             let Some(encoding) = Encoding::from(string_or_buffer.slice()) else {
                 return Err(global
@@ -1489,12 +1466,12 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     fn digest_to_bytes(
         &self,
         global: &JSGlobalObject,
-        output: Option<ArrayBuffer>,
+        output: Option<&Buffer>,
     ) -> JsResult<JSValue> {
         let mut output_digest_buf: H::Digest = H::new_digest();
         let output_digest_slice: &mut H::Digest;
-        if let Some(output_buf) = &output {
-            let bytes_len = output_buf.byte_slice().len();
+        if let Some(output_buf) = output {
+            let (ptr, bytes_len) = output_buf.bytes();
             if bytes_len < H::DIGEST {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "TypedArray must be at least {} bytes",
@@ -1502,10 +1479,8 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
                 )));
             }
             // SAFETY: `bytes_len >= H::DIGEST`; `H::Digest = [u8; H::DIGEST]`;
-            // `output_buf.ptr` is the JSC-owned writable backing store. Build the
-            // `&mut` directly from the raw `*mut u8` field — never via
-            // `&[u8].as_ptr()` (Stacked-Borrows UB).
-            output_digest_slice = unsafe { &mut *output_buf.ptr.cast::<H::Digest>() };
+            // `ptr` is the pinned JSC-owned writable backing store.
+            output_digest_slice = unsafe { &mut *ptr.cast::<H::Digest>() };
         } else {
             output_digest_slice = &mut output_digest_buf;
         }
@@ -1514,7 +1489,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         self.digested.set(true);
 
         if let Some(output_buf) = output {
-            Ok(output_buf.value)
+            Ok(output_buf.value())
         } else {
             ArrayBuffer::create_uint8_array(global, output_digest_buf.as_ref())
         }

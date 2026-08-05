@@ -618,3 +618,63 @@ test.concurrent("getBuffer replies survive GC with adopted backing stores intact
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
 });
+
+// MarkedArrayBuffer pins lazily: on the sync path StringOrBuffer::from_js
+// captures only the JSValue, and the first slice() call pins + reads
+// vector()/byteLength(). So when the second argument's toString() transfers
+// the first argument's buffer before the command is serialized, the key is
+// observed as zero-length rather than serialized from a stale (freed) pointer.
+test.concurrent("redis.set reads a Buffer key only after every later argument has been coerced", async () => {
+  const src = `
+    const net = require("node:net");
+    let received = Buffer.alloc(0);
+    const server = net.createServer(sock => {
+      sock.on("data", chunk => {
+        received = Buffer.concat([received, chunk]);
+        // Reply +OK to whatever arrives so the client resolves.
+        sock.write("+OK\\r\\n");
+      });
+    });
+    await new Promise(r => server.listen(0, r));
+    const url = "redis://127.0.0.1:" + server.address().port;
+
+    const client = new Bun.RedisClient(url, { enableAutoPipelining: false });
+    const key = Buffer.from(new ArrayBuffer(19));
+    try {
+      await client.connect();
+
+      key.set(Buffer.from("lazy-pin-test:key-A"));
+      class DetachKey extends String {
+        toString() {
+          structuredClone(key.buffer, { transfer: [key.buffer] });
+          Bun.gc(true);
+          return "the-value";
+        }
+      }
+      await client.set(key, new DetachKey("x"));
+    } finally {
+      client.close();
+      server.close();
+    }
+
+    // RESP: *3\\r\\n$3\\r\\nSET\\r\\n$<keylen>\\r\\n<key>\\r\\n$9\\r\\nthe-value\\r\\n
+    const text = received.toString("latin1");
+    const m = /\\$3\\r\\nSET\\r\\n\\$(\\d+)\\r\\n/.exec(text);
+    if (!m) throw new Error("no SET in wire bytes: " + JSON.stringify(text));
+    console.log(JSON.stringify({ detached: key.byteLength === 0, keyLen: Number(m[1]) }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({ detached: true, keyLen: 0 });
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});

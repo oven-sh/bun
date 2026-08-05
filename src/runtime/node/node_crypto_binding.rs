@@ -979,16 +979,10 @@ mod _impl {
 
             ctx.check_scrypt_params(global)?;
 
-            let mut ctx = scopeguard::ScopeGuard::into_inner(ctx);
+            let ctx = scopeguard::ScopeGuard::into_inner(ctx);
 
             if IS_ASYNC {
                 return Ok((ctx, callback));
-            }
-
-            for input in [&mut ctx.password, &mut ctx.salt] {
-                if let StringOrBuffer::Buffer(buffer) = input {
-                    buffer.buffer = ArrayBuffer::from_typed_array(global, buffer.buffer.value);
-                }
             }
 
             Ok((ctx, JSValue::UNDEFINED))

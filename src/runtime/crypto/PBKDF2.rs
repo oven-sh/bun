@@ -2,8 +2,7 @@ use core::ffi::c_uint;
 
 use bun_boringssl_sys as boringssl;
 use bun_jsc::{
-    AnyTaskJob, AnyTaskJobCtx, ArrayBuffer, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue,
-    JsResult,
+    AnyTaskJob, AnyTaskJobCtx, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsResult,
 };
 
 use crate::node::StringOrBuffer;
@@ -202,10 +201,6 @@ impl PBKDF2 {
             }
         };
 
-        if guard.salt.slice().len() > i32::MAX as usize {
-            return Err(global_this.throw_invalid_arguments(format_args!("salt is too long")));
-        }
-
         guard.password = match StringOrBuffer::from_js_maybe_async(
             global_this,
             arg0,
@@ -222,14 +217,12 @@ impl PBKDF2 {
             }
         };
 
-        if guard.password.slice().len() > i32::MAX as usize {
-            return Err(global_this.throw_invalid_arguments(format_args!("password is too long")));
+        if guard.salt.slice().len() > i32::MAX as usize {
+            return Err(global_this.throw_invalid_arguments(format_args!("salt is too long")));
         }
 
-        if !is_async {
-            if let StringOrBuffer::Buffer(buffer) = &mut guard.salt {
-                buffer.buffer = ArrayBuffer::from_typed_array(global_this, buffer.buffer.value);
-            }
+        if guard.password.slice().len() > i32::MAX as usize {
+            return Err(global_this.throw_invalid_arguments(format_args!("password is too long")));
         }
 
         if is_async {

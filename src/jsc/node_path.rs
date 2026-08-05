@@ -114,13 +114,9 @@ impl Clone for PathLike {
             } else {
                 s.borrow()
             }),
-            Self::Buffer(b) => Self::Buffer(MarkedArrayBuffer {
-                buffer: b.buffer,
-                // The clone borrows the JS-owned backing store; only the
-                // original (if any) owns the allocation.
-                owns_buffer: false,
-                pinned: false,
-            }),
+            // The clone borrows the JS-owned backing store; only the
+            // original (if any) owns the allocation or the pin.
+            Self::Buffer(b) => Self::Buffer(b.borrow()),
             Self::SliceWithUnderlyingString(s) => {
                 // `dupe_ref()` alone leaves `utf8` empty (lib.rs:1603) — a
                 // cloned PathLike would then return b"" from `slice()`. Clone
@@ -150,12 +146,8 @@ impl Drop for PathLike {
             // `CowSlice` frees its backing in its own `Drop` iff it owns it;
             // a borrowed path is a no-op.
             Self::String(_) => {}
-            Self::Buffer(b) => {
-                if b.pinned {
-                    b.pinned = false;
-                    b.buffer.unpin();
-                }
-            }
+            // `MarkedArrayBuffer::Drop` releases the pin.
+            Self::Buffer(_) => {}
             Self::SliceWithUnderlyingString(s) | Self::ThreadsafeString(s) => {
                 core::mem::take(s).deinit();
             }
@@ -208,7 +200,7 @@ impl PathLike {
                 *self = Self::ThreadsafeString(owned);
             }
             Self::Buffer(b) => {
-                b.buffer.value.protect();
+                b.to_thread_safe();
             }
             Self::String(_) | Self::ThreadsafeString(_) | Self::EncodedSlice(_) => {}
         }
@@ -222,7 +214,7 @@ impl Unprotect for PathLike {
     #[inline]
     fn unprotect(&mut self) {
         if let Self::Buffer(b) = self {
-            b.buffer.value.unprotect();
+            b.unprotect();
         }
     }
 }

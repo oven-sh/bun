@@ -6,8 +6,7 @@ use bun_core::ZigString;
 use bun_io::KeepAlive;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult,
-    WorkPoolTask,
+    self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, WorkPoolTask,
 };
 // JSC-side ZigString carries `to_js` (the `bun_core::ZigString` repr-twin
 // lives in `bun_jsc::zig_string`); used for ASCII→JS conversions only.
@@ -899,7 +898,7 @@ fn js_password_object_verify_sync(
         };
     }
 
-    let Some(mut password) = StringOrBuffer::from_js(global_object, arguments[0])? else {
+    let Some(password) = StringOrBuffer::from_js(global_object, arguments[0])? else {
         return Err(global_object.throw_invalid_argument_type(
             "verify",
             "password",
@@ -915,10 +914,6 @@ fn js_password_object_verify_sync(
             "string or TypedArray",
         ));
     };
-
-    if let StringOrBuffer::Buffer(buffer) = &mut password {
-        buffer.buffer = ArrayBuffer::from_typed_array(global_object, buffer.buffer.value);
-    }
 
     // defer password.deinit() / hash_.deinit() — Drop at scope exit.
 

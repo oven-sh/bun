@@ -191,6 +191,19 @@ ExceptionOr<String> canonicalizePathname(StringView pathnameValue)
     if (pathnameValue.isEmpty())
         return pathnameValue.toString();
 
+    // Node and Chromium implement this step by parsing a full URL string that ends in
+    // pathnameValue, so the basic URL parser's "remove any leading and trailing C0 control
+    // or space" preprocessing strips trailing C0/space from the value. URL::setPath below
+    // goes through parseAllowingC0AtEnd and keeps them as %NN, which makes a pattern with
+    // stray trailing whitespace match neither the clean URL nor the whitespace one. Strip
+    // them here for parity. Leading C0/space is shielded by the "/-" prefix in both
+    // implementations and stays percent-encoded.
+    while (!pathnameValue.isEmpty() && pathnameValue[pathnameValue.length() - 1] <= 0x20)
+        pathnameValue = pathnameValue.left(pathnameValue.length() - 1);
+
+    if (pathnameValue.isEmpty())
+        return String { emptyString() };
+
     bool hasLeadingSlash = pathnameValue[0] == '/';
     String maybeAddSlashPrefix = hasLeadingSlash ? pathnameValue.toString() : makeString("/-"_s, pathnameValue);
 

@@ -1420,6 +1420,53 @@ describe("crypto.KeyObjects", () => {
     testSignVerify(publicKey, privateKey);
   });
 
+  describe("EC key generation with paramEncoding: 'explicit'", () => {
+    // BoringSSL cannot serialize explicit EC parameters; Bun accepts the option and
+    // generates a key pair using named-curve encoding rather than failing keygen.
+    test.each(["P-256", "P-384", "P-521", "prime256v1", "secp384r1", "secp521r1"])(
+      "sync %s returns KeyObjects",
+      namedCurve => {
+        const { publicKey, privateKey } = generateKeyPairSync("ec", {
+          namedCurve,
+          paramEncoding: "explicit",
+        });
+        expect(publicKey.asymmetricKeyType).toBe("ec");
+        expect(privateKey.asymmetricKeyType).toBe("ec");
+        testSignVerify(publicKey, privateKey);
+      },
+    );
+
+    test("sync with PEM encoding returns usable keys", () => {
+      const { publicKey, privateKey } = generateKeyPairSync("ec", {
+        namedCurve: "P-256",
+        paramEncoding: "explicit",
+        publicKeyEncoding: { type: "spki", format: "pem" },
+        privateKeyEncoding: { type: "sec1", format: "pem" },
+      });
+      expect(publicKey).toMatch(spkiExp);
+      expect(privateKey).toMatch(sec1Exp);
+      testSignVerify(publicKey, privateKey);
+    });
+
+    test("async invokes callback with a key pair", async () => {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      generateKeyPair("ec", { namedCurve: "P-256", paramEncoding: "explicit" }, (err, publicKey, privateKey) => {
+        if (err) return reject(err);
+        resolve({ publicKey, privateKey });
+      });
+      const { publicKey, privateKey } = await (promise as Promise<{ publicKey: KeyObject; privateKey: KeyObject }>);
+      expect(publicKey.asymmetricKeyType).toBe("ec");
+      expect(privateKey.asymmetricKeyType).toBe("ec");
+      testSignVerify(publicKey, privateKey);
+    });
+
+    test("invalid paramEncoding values are still rejected", () => {
+      expect(() => generateKeyPairSync("ec", { namedCurve: "P-256", paramEncoding: "otherEncoding" })).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+      );
+    });
+  });
+
   test(`Test sync elliptic curve key generation, e.g. for ECDSA, with an encrypted private key`, async () => {
     const { publicKey, privateKey } = generateKeyPairSync("ec", {
       namedCurve: "prime256v1",

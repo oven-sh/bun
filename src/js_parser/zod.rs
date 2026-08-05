@@ -574,16 +574,66 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             | js_ast::ExprData::EIdentifier(_)
             | js_ast::ExprData::EImportIdentifier(_)
             | js_ast::ExprData::EMissing(_) => true,
+            // Operators are treated as pure on pure operands. A pathological
+            // operand (an identifier bound to an object with a side-effecting
+            // valueOf/toString) could observe the thunk's re-evaluation; zod
+            // schema arguments are primitives in practice, and zod itself
+            // applies these operators to the same values during parsing.
             js_ast::ExprData::EUnary(u) => {
-                u.op == OpCode::UnNeg
-                    && matches!(u.value.data, js_ast::ExprData::ENumber(_))
+                matches!(
+                    u.op,
+                    OpCode::UnNeg
+                        | OpCode::UnPos
+                        | OpCode::UnNot
+                        | OpCode::UnCpl
+                        | OpCode::UnVoid
+                        | OpCode::UnTypeof
+                ) && self.zod_is_pure_value(u.value)
+            }
+            js_ast::ExprData::EBinary(b) => {
+                matches!(
+                    b.op,
+                    OpCode::BinAdd
+                        | OpCode::BinSub
+                        | OpCode::BinMul
+                        | OpCode::BinDiv
+                        | OpCode::BinRem
+                        | OpCode::BinPow
+                        | OpCode::BinLt
+                        | OpCode::BinLe
+                        | OpCode::BinGt
+                        | OpCode::BinGe
+                        | OpCode::BinShl
+                        | OpCode::BinShr
+                        | OpCode::BinUShr
+                        | OpCode::BinLooseEq
+                        | OpCode::BinLooseNe
+                        | OpCode::BinStrictEq
+                        | OpCode::BinStrictNe
+                        | OpCode::BinNullishCoalescing
+                        | OpCode::BinLogicalOr
+                        | OpCode::BinLogicalAnd
+                        | OpCode::BinBitwiseOr
+                        | OpCode::BinBitwiseAnd
+                        | OpCode::BinBitwiseXor
+                ) && self.zod_is_pure_value(b.left)
+                    && self.zod_is_pure_value(b.right)
+            }
+            js_ast::ExprData::EIf(i) => {
+                self.zod_is_pure_value(i.test)
+                    && self.zod_is_pure_value(i.yes)
+                    && self.zod_is_pure_value(i.no)
             }
             // Wrapper calls this pass emitted are pure by construction
             // (thunk + IR string + pure refs); they appear as arguments of
             // enclosing schema-producing calls, e.g. inside z.lazy(...).
             js_ast::ExprData::ECall(c) => self.zod_wrapped_lookup(c).is_some(),
             js_ast::ExprData::ETemplate(t) => {
-                t.tag.is_none() && t.parts.is_empty()
+                t.tag.is_none()
+                    && t.parts
+                        .slice()
+                        .iter()
+                        .all(|part| self.zod_is_pure_value(part.value))
             }
             js_ast::ExprData::EArray(arr) => {
                 arr.items.slice().iter().all(|item| self.zod_is_pure_value(*item))
@@ -1308,10 +1358,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if let Some(n) = p.zod_number_value(*arg) {
                 return Some(NumArg::Lit(n));
             }
-            if matches!(
-                arg.data,
-                js_ast::ExprData::EIdentifier(_) | js_ast::ExprData::EImportIdentifier(_)
-            ) {
+            if p.zod_is_pure_value(*arg) {
                 let idx = refs.len() as u32;
                 refs.push(*arg);
                 return Some(NumArg::Ref(idx));
@@ -1323,10 +1370,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if let Some(s) = p.zod_string_value(*arg) {
                 return Some(StrArg::Lit(s));
             }
-            if matches!(
-                arg.data,
-                js_ast::ExprData::EIdentifier(_) | js_ast::ExprData::EImportIdentifier(_)
-            ) {
+            if p.zod_is_pure_value(*arg) {
                 let idx = refs.len() as u32;
                 refs.push(*arg);
                 return Some(StrArg::Ref(idx));
@@ -1585,12 +1629,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::ExprData::EBoolean(b) => Some(LitVal::Bool(b.value)),
             js_ast::ExprData::ENull(_) => Some(LitVal::Null),
             js_ast::ExprData::EUndefined(_) => Some(LitVal::Undefined),
-            js_ast::ExprData::EIdentifier(_) | js_ast::ExprData::EImportIdentifier(_) => {
-                let idx = refs.len() as u32;
-                refs.push(expr);
-                Some(LitVal::Ref(idx))
+            _ => {
+                if self.zod_is_pure_value(expr) {
+                    let idx = refs.len() as u32;
+                    refs.push(expr);
+                    Some(LitVal::Ref(idx))
+                } else {
+                    None
+                }
             }
-            _ => None,
         }
     }
 

@@ -4640,8 +4640,7 @@ struct StreamPair<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bo
     pub stream: WebCore::ReadableStream,
 }
 
-struct HeaderResponseSizePair<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool>
-{
+struct HeaderResponseSizePair<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> {
     pub this: &'a RequestContext<ThisServer, SSL, DBG, H3>,
     pub(crate) size: usize,
 }

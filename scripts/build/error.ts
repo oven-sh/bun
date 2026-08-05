@@ -50,4 +50,3 @@ export function assert(
     throw new BuildError(message, context);
   }
 }
-

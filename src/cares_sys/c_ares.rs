@@ -23,8 +23,7 @@ pub type ares_socket_t = usize; // Windows `SOCKET` is `UINT_PTR` (integer, not 
 #[cfg(not(windows))]
 pub type ares_socket_t = c_int;
 
-type ares_sock_state_cb =
-    Option<unsafe extern "C" fn(*mut c_void, ares_socket_t, c_int, c_int)>;
+type ares_sock_state_cb = Option<unsafe extern "C" fn(*mut c_void, ares_socket_t, c_int, c_int)>;
 
 bun_opaque::opaque_ffi! {
     /// Nomicon opaque-FFI pattern. `UnsafeCell` makes the type `!Freeze` so a

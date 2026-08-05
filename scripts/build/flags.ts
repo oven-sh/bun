@@ -1711,4 +1711,3 @@ export function extraFlagsFor(cfg: Config, srcRelPath: string): string[] {
   }
   return [];
 }
-

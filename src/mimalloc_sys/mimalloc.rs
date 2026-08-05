@@ -20,13 +20,11 @@ unsafe extern "C" {
     pub fn mi_usable_size(p: *const c_void) -> usize;
 }
 
-unsafe extern "C" {
-}
+unsafe extern "C" {}
 
 pub type mi_output_fun = extern "C" fn(*const c_char, *mut c_void);
 
-unsafe extern "C" {
-}
+unsafe extern "C" {}
 
 unsafe extern "C" {
     /// No preconditions.
@@ -117,8 +115,7 @@ bun_opaque::opaque_ffi! {
     struct THeap;
 }
 
-unsafe extern "C" {
-}
+unsafe extern "C" {}
 
 #[repr(C)]
 pub struct struct_mi_heap_area_s {
@@ -271,5 +268,4 @@ pub unsafe fn mi_heap_zalloc_auto_align(heap: *mut Heap, size: usize, align: usi
     }
 }
 
-unsafe extern "C" {
-}
+unsafe extern "C" {}

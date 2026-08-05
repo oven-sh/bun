@@ -79,7 +79,6 @@ pub enum Status {
     Connected,
 }
 
-
 /// Valkey protocol types (standalone, TLS, Unix socket)
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Protocol {

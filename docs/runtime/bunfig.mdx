@@ -18,6 +18,21 @@ To configure Bun globally, you can also create a `.bunfig.toml` file at one of t
 
 If Bun finds both a global and a local `bunfig`, it shallow-merges them, with local overriding global. CLI flags override `bunfig` settings where applicable.
 
+## System-wide configuration
+
+For corporate or shared environments where an administrator wants to enforce default `bunfig.toml` settings across every user on a machine, Bun loads a system-wide config first (lowest priority, overridden by global and project configs).
+
+Bun looks for the system config at:
+
+- `/etc/bunfig.toml` on POSIX systems (Linux, macOS)
+- `%ALLUSERSPROFILE%\bunfig.toml` on Windows (typically `C:\ProgramData\bunfig.toml`)
+
+Auto-discovery of these default paths only applies to package-manager commands (`bun install`, `bun add`, `bun remove`, `bunx`, etc.) — same scope as the `$HOME/.bunfig.toml` lookup above, and for the same reason: every other command path (`bun run`, `bun test`, `bun file.ts`, compiled standalone binaries) would otherwise pay a filesystem probe on every invocation.
+
+To apply a system config across all commands, set `BUN_SYSTEM_CONFIG` to an absolute path. The environment variable is honored on every command path, including compiled standalone binaries. Pointing `BUN_SYSTEM_CONFIG` at a non-existent or malformed file is treated as an error (fail loudly), so policy typos are caught immediately.
+
+Merge order is **system → home → project**; later overrides earlier, with the same shallow-merge semantics as the home/project merge.
+
 ## Runtime
 
 Top-level fields in `bunfig.toml` configure Bun's runtime behavior.

@@ -150,6 +150,14 @@ impl Hardlinker {
                                 sys::Result::Ok(()) => {}
                                 sys::Result::Err(link_err1) => match link_err1.get_errno() {
                                     sys::E::UV_EEXIST | sys::E::EEXIST => {
+                                        // A concurrent install already linked
+                                        // this exact file; not a conflict.
+                                        if sys::windows::same_file_w(
+                                            destfile_path.as_ptr(),
+                                            self.src.slice_z().as_ptr(),
+                                        ) {
+                                            break 'body None;
+                                        }
                                         if crate::PackageManager::verbose_install() {
                                             bun_core::pretty_errorln!(
                                                 "Hardlinking {} to a path that already exists: {}",
@@ -263,6 +271,18 @@ impl Hardlinker {
                                 sys::Result::Ok(()) => {}
                                 sys::Result::Err(link_err1) => match link_err1.get_errno() {
                                     sys::E::EEXIST => {
+                                        // A concurrent install already linked
+                                        // this exact file; not a conflict.
+                                        if let (Ok(src_st), Ok(dest_st)) = (
+                                            sys::fstatat(entry.dir, entry.basename),
+                                            sys::fstatat(Fd::cwd(), self.dest.slice_z()),
+                                        ) {
+                                            if src_st.st_dev == dest_st.st_dev
+                                                && src_st.st_ino == dest_st.st_ino
+                                            {
+                                                break 'body None;
+                                            }
+                                        }
                                         let _ = Fd::cwd().delete_tree(self.dest.slice());
                                         match sys::linkat(
                                             entry.dir,

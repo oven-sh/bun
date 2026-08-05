@@ -75,10 +75,8 @@ pub struct Options {
     pub(crate) public_hoist_pattern: Option<Api::PnpmMatcher>,
     pub(crate) hoist_pattern: Option<Api::PnpmMatcher>,
 
-    /// Isolated linker only: when `false`, skip creating the
-    /// `node_modules/.bun/node_modules` fallback directory entirely, so store
-    /// packages can only resolve dependencies they declare. Equivalent to
-    /// pnpm's `hoist=false`; takes precedence over `hoist_pattern`.
+    /// Isolated linker: `false` skips the `node_modules/.bun/node_modules`
+    /// fallback (pnpm's `hoist=false`); takes precedence over `hoist_pattern`.
     pub(crate) hoist: bool,
 
     // Security scanner module path

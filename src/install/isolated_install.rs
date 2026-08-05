@@ -1920,10 +1920,8 @@ pub(crate) fn install_isolated_packages(
         break 'is_new_bun_modules true;
     };
 
-    // A previous install with hoisting enabled leaves
-    // `node_modules/.bun/node_modules` behind, and module resolution would
-    // keep finding undeclared dependencies through it. Remove it so turning
-    // hoisting off guarantees store packages only resolve what they declare.
+    // A previous install with hoisting enabled left the fallback directory
+    // behind; remove it so undeclared imports stop resolving through it.
     if !manager.options.hoist && !is_new_bun_modules {
         use bun_sys::FdExt as _;
         let _ = Fd::cwd().delete_tree(paths::path_literal!("node_modules/.bun/node_modules"));

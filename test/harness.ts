@@ -2015,11 +2015,11 @@ cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
     if (opts.globalStore !== undefined) {
       bunfig += `globalStore = ${opts.globalStore}\n`;
     }
-    if (opts.publicHoistPattern) {
+    if (opts.publicHoistPattern !== undefined) {
       if (typeof opts.publicHoistPattern === "string") {
-        bunfig += `publicHoistPattern = "${opts.publicHoistPattern}"\n`;
+        bunfig += `publicHoistPattern = ${JSON.stringify(opts.publicHoistPattern)}\n`;
       } else {
-        bunfig += `publicHoistPattern = [${opts.publicHoistPattern.map(p => `"${p}"`).join(", ")}]\n`;
+        bunfig += `publicHoistPattern = [${opts.publicHoistPattern.map(p => JSON.stringify(p)).join(", ")}]\n`;
       }
     }
     if (opts.hoistPattern !== undefined) {

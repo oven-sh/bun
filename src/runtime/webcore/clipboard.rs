@@ -7,13 +7,78 @@ use core::ptr;
 
 use bun_jsc::{AnyTaskJob, AnyTaskJobCtx, JSGlobalObject};
 
-/// Opaque `WebCore::ClipboardRequest*` (a leaked +1), handed back exactly once:
-/// `then()` via `requestComplete`, or `Drop` via `requestAbandon` on VM shutdown.
+/// Opaque `WebCore::ClipboardRequest*` (a leaked +1), handed back exactly
+/// once: `complete`/`fail` on the JS thread, or `Drop` (abandon) on VM
+/// shutdown. The sole owner of the request FFI, so everything above it is
+/// safe code.
 struct RequestHandle(*mut c_void);
 
 // SAFETY: off the JS thread the pointer is only read through the atomic
-// `requestIsCancelled`; `then` passes it back to C++ on the JS thread.
+// `is_cancelled`; completion happens back on the JS thread.
 unsafe impl Send for RequestHandle {}
+
+impl RequestHandle {
+    fn is_cancelled(&self) -> bool {
+        // SAFETY: the leaked ref keeps the request alive; the flag is atomic.
+        unsafe { Bun__Clipboard__requestIsCancelled(self.0) }
+    }
+
+    /// Settles with `items` on the JS thread.
+    fn complete(self, global: &JSGlobalObject, items: &[(Mime, Vec<u8>)]) {
+        let views: Vec<Representation> = items
+            .iter()
+            .map(|(mime, bytes)| Representation {
+                ty: mime.as_str().as_ptr(),
+                ty_len: mime.as_str().len(),
+                bytes: bytes.as_ptr(),
+                len: bytes.len(),
+            })
+            .collect();
+        // SAFETY: JS thread with a live global; the views borrow `items` for
+        // the duration of the call; consumes the leaked ref exactly once.
+        unsafe {
+            Bun__Clipboard__requestComplete(
+                global,
+                self.take(),
+                views.as_ptr(),
+                views.len(),
+                ptr::null(),
+                0,
+            )
+        };
+    }
+
+    /// Rejects with the platform's reason on the JS thread.
+    fn fail(self, global: &JSGlobalObject, unavailable: Unavailable) {
+        let message = unavailable.message();
+        // SAFETY: JS thread with a live global; `message` is 'static;
+        // consumes the leaked ref exactly once.
+        unsafe {
+            Bun__Clipboard__requestComplete(
+                global,
+                self.take(),
+                ptr::null(),
+                0,
+                message.as_ptr(),
+                message.len(),
+            )
+        };
+    }
+
+    /// Hands the raw pointer out without running `Drop`'s abandon.
+    fn take(self) -> *mut c_void {
+        core::mem::ManuallyDrop::new(self).0
+    }
+}
+
+impl Drop for RequestHandle {
+    fn drop(&mut self) {
+        // Dropped without settling (VM shutdown): balance the leaked ref.
+        // SAFETY: still the live leaked reference; `complete`/`fail` bypass
+        // Drop via `take`.
+        unsafe { Bun__Clipboard__requestAbandon(self.0) };
+    }
+}
 
 /// Mirrors `WebCore::ClipboardRepresentation`; pointers borrow for the call.
 #[repr(C)]
@@ -92,129 +157,76 @@ enum Outcome {
 pub(crate) struct ClipboardCtx {
     op: Op,
     outcome: Option<Outcome>,
+    /// `then()` takes it; a job dropped earlier abandons via `RequestHandle::drop`.
     request: Option<RequestHandle>,
-}
-
-impl Drop for ClipboardCtx {
-    fn drop(&mut self) {
-        // A still-present handle means the job was dropped before `then()`
-        // (VM shutdown); balance the leaked ref.
-        if let Some(request) = self.request.take() {
-            // SAFETY: `request.0` is the live leaked reference C++ handed over.
-            unsafe { Bun__Clipboard__requestAbandon(request.0) };
-        }
-    }
 }
 
 impl AnyTaskJobCtx for ClipboardCtx {
     fn run(&mut self, _global: *mut JSGlobalObject) {
         let _guard = CLIPBOARD_LOCK.lock_guard();
-        self.outcome =
-            Some(match &self.op {
-                Op::ReadText => match platform::read_type(Mime::TextPlain) {
-                    Ok(Some(bytes)) => Outcome::Representations(vec![(Mime::TextPlain, bytes)]),
-                    Ok(None) => Outcome::Representations(Vec::new()),
-                    Err(unavailable) => Outcome::Failed(unavailable),
-                },
-                Op::Read => {
-                    let mut present: Vec<(Mime, Vec<u8>)> = Vec::new();
-                    let mut readable = false;
-                    let mut unavailable = Unavailable::Platform;
-                    for mime in SUPPORTED {
-                        // The whole read fails only when every type does.
-                        match platform::read_type(*mime) {
-                            Ok(Some(bytes)) => {
-                                readable = true;
-                                present.push((*mime, bytes));
-                            }
-                            Ok(None) => readable = true,
-                            Err(reason) => unavailable = reason,
+        self.outcome = Some(match &self.op {
+            Op::ReadText => match platform::read_type(Mime::TextPlain) {
+                Ok(Some(bytes)) => Outcome::Representations(vec![(Mime::TextPlain, bytes)]),
+                Ok(None) => Outcome::Representations(Vec::new()),
+                Err(unavailable) => Outcome::Failed(unavailable),
+            },
+            Op::Read => {
+                let mut present: Vec<(Mime, Vec<u8>)> = Vec::new();
+                let mut readable = false;
+                let mut unavailable = Unavailable::Platform;
+                for mime in SUPPORTED {
+                    // The whole read fails only when every type does.
+                    match platform::read_type(*mime) {
+                        Ok(Some(bytes)) => {
+                            readable = true;
+                            present.push((*mime, bytes));
                         }
-                    }
-                    if readable {
-                        Outcome::Representations(present)
-                    } else {
-                        Outcome::Failed(unavailable)
+                        Ok(None) => readable = true,
+                        Err(reason) => unavailable = reason,
                     }
                 }
-                Op::Write(items) => {
-                    // A superseded write is cancelled on the JS thread; honoring it
-                    // here, under the lock, keeps its AbortError honest (the write
-                    // never reaches the OS). `then()` still runs; the settled
-                    // promise ignores it.
-                    // SAFETY: the handle's leaked ref keeps the request alive and
-                    // the flag is atomic.
-                    if self.request.as_ref().is_some_and(|request| unsafe {
-                        Bun__Clipboard__requestIsCancelled(request.0)
-                    }) {
-                        Outcome::Representations(Vec::new())
-                    } else {
-                        let borrowed: Vec<(Mime, &[u8])> =
-                            items.iter().map(|(m, b)| (*m, b.as_slice())).collect();
-                        match platform::write_types(&borrowed) {
-                            Ok(()) => Outcome::Representations(Vec::new()),
-                            Err(unavailable) => Outcome::Failed(unavailable),
-                        }
+                if readable {
+                    Outcome::Representations(present)
+                } else {
+                    Outcome::Failed(unavailable)
+                }
+            }
+            Op::Write(items) => {
+                // A superseded write is cancelled on the JS thread; honoring it
+                // here, under the lock, keeps its AbortError honest (the write
+                // never reaches the OS). `then()` still runs; the settled
+                // promise ignores it.
+                if self.request.as_ref().is_some_and(RequestHandle::is_cancelled) {
+                    Outcome::Representations(Vec::new())
+                } else {
+                    let borrowed: Vec<(Mime, &[u8])> =
+                        items.iter().map(|(m, b)| (*m, b.as_slice())).collect();
+                    match platform::write_types(&borrowed) {
+                        Ok(()) => Outcome::Representations(Vec::new()),
+                        Err(unavailable) => Outcome::Failed(unavailable),
                     }
                 }
-            });
+            }
+        });
     }
 
     fn then(&mut self, global: &JSGlobalObject) -> bun_jsc::JsResult<()> {
         let request = self.request.take().expect("then() runs once");
         match self.outcome.take().expect("run() filled the outcome") {
-            Outcome::Representations(items) => {
-                // Borrowed views over `items`, which outlives the call.
-                let views: Vec<Representation> = items
-                    .iter()
-                    .map(|(mime, bytes)| Representation {
-                        ty: mime.as_str().as_ptr(),
-                        ty_len: mime.as_str().len(),
-                        bytes: bytes.as_ptr(),
-                        len: bytes.len(),
-                    })
-                    .collect();
-                // SAFETY: JS thread, live global, and the views borrow `items`
-                // for the duration of the call.
-                unsafe {
-                    Bun__Clipboard__requestComplete(
-                        global,
-                        request.0,
-                        views.as_ptr(),
-                        views.len(),
-                        ptr::null(),
-                        0,
-                    )
-                };
-            }
-            Outcome::Failed(unavailable) => complete_with_failure(global, request.0, unavailable),
+            Outcome::Representations(items) => request.complete(global, &items),
+            Outcome::Failed(unavailable) => request.fail(global, unavailable),
         }
         Ok(())
     }
 }
 
-fn complete_with_failure(global: &JSGlobalObject, request: *mut c_void, unavailable: Unavailable) {
-    let message = unavailable.message();
-    // SAFETY: JS thread, live global, and `message` is a 'static literal.
-    unsafe {
-        Bun__Clipboard__requestComplete(
-            global,
-            request,
-            ptr::null(),
-            0,
-            message.as_ptr(),
-            message.len(),
-        )
-    };
-}
-
 /// `create_and_schedule` consumes `ctx` on every path, so a failure has
-/// already balanced the request via `Drop`.
-fn schedule(global: &JSGlobalObject, op: Op, request: *mut c_void) {
+/// already balanced the request via `RequestHandle`'s Drop.
+fn schedule(global: &JSGlobalObject, op: Op, request: RequestHandle) {
     let ctx = ClipboardCtx {
         op,
         outcome: None,
-        request: Some(RequestHandle(request)),
+        request: Some(request),
     };
     let _ = AnyTaskJob::create_and_schedule(global, ctx);
 }
@@ -253,13 +265,13 @@ pub extern "C" fn Bun__Clipboard__writesSingleRepresentation() -> bool {
 /// `Clipboard.prototype.readText`.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Clipboard__scheduleReadText(global: &JSGlobalObject, request: *mut c_void) {
-    schedule(global, Op::ReadText, request);
+    schedule(global, Op::ReadText, RequestHandle(request));
 }
 
 /// `Clipboard.prototype.read`: one job reads every supported representation.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Clipboard__scheduleRead(global: &JSGlobalObject, request: *mut c_void) {
-    schedule(global, Op::Read, request);
+    schedule(global, Op::Read, RequestHandle(request));
 }
 
 /// `Clipboard.prototype.writeText` (bytes already WebIDL `DOMString`-converted).
@@ -274,7 +286,11 @@ pub unsafe extern "C" fn Bun__Clipboard__scheduleWriteText(
 ) {
     // SAFETY: forwarded from the caller's contract.
     let bytes = unsafe { copy_bytes(text, len) };
-    schedule(global, Op::Write(vec![(Mime::TextPlain, bytes)]), request);
+    schedule(
+        global,
+        Op::Write(vec![(Mime::TextPlain, bytes)]),
+        RequestHandle(request),
+    );
 }
 
 /// `Clipboard.prototype.write` (WebCore already collected Blobs + checked support).
@@ -287,6 +303,7 @@ pub unsafe extern "C" fn Bun__Clipboard__scheduleWrite(
     representations: *const Representation,
     count: usize,
 ) {
+    let request = RequestHandle(request);
     let mut items: Vec<(Mime, Vec<u8>)> = Vec::with_capacity(count);
     if !representations.is_null() {
         // SAFETY: forwarded from the caller's contract.
@@ -302,7 +319,7 @@ pub unsafe extern "C" fn Bun__Clipboard__scheduleWrite(
             let Some(mime) = Mime::from_bytes(&ty) else {
                 // Unreachable when WebCore validated support; reject rather
                 // than write a partial item.
-                complete_with_failure(global, request, Unavailable::Platform);
+                request.fail(global, Unavailable::Platform);
                 return;
             };
             items.push((mime, bytes));
@@ -439,15 +456,12 @@ mod platform {
     use core::ffi::{CStr, c_uint, c_void};
     use core::ptr;
 
-    use bun_sys::windows::clipboard::{
-        self as win32, CF_UNICODETEXT, GMEM_MOVEABLE, GMEM_ZEROINIT,
-    };
+    use bun_sys::windows::clipboard::{self as win32, CF_UNICODETEXT};
 
     use super::{Mime, Unavailable};
 
     fn register(name: &CStr) -> Option<c_uint> {
-        // SAFETY: a static NUL-terminated name; registering twice is fine.
-        match unsafe { win32::RegisterClipboardFormatA(name.as_ptr()) } {
+        match win32::register_format(name) {
             0 => None,
             id => Some(id),
         }
@@ -652,9 +666,33 @@ mod platform {
         out
     }
 
+    /// An HGLOBAL this process still owns; freed on Drop unless the clipboard
+    /// accepted it (`release`).
+    struct OwnedGlobal(*mut c_void);
+
+    impl OwnedGlobal {
+        fn from_bytes(payload: &[u8]) -> Option<OwnedGlobal> {
+            let h = win32::global_from_bytes(payload);
+            if h.is_null() { None } else { Some(OwnedGlobal(h)) }
+        }
+
+        /// The system took ownership; do not free.
+        fn release(self) {
+            core::mem::forget(self);
+        }
+    }
+
+    impl Drop for OwnedGlobal {
+        fn drop(&mut self) {
+            // SAFETY: the handle came from `global_from_bytes` and the
+            // clipboard never accepted it, so it is still ours to free.
+            unsafe { win32::GlobalFree(self.0) };
+        }
+    }
+
     /// `GMEM_MOVEABLE` HGLOBAL holding `bytes` (NUL-terminated UTF-16 for
-    /// text, the `CF_HTML` envelope for HTML); null on allocation failure.
-    fn make_global(mime: Mime, bytes: &[u8]) -> *mut c_void {
+    /// text, the `CF_HTML` envelope for HTML); `None` on allocation failure.
+    fn make_global(mime: Mime, bytes: &[u8]) -> Option<OwnedGlobal> {
         let wide;
         let enveloped;
         let converted;
@@ -668,13 +706,9 @@ mod platform {
                 };
                 // Replaces ill-formed sequences; the sentinel appends the NUL
                 // `CF_UNICODETEXT` requires.
-                match bun_core::strings::to_utf16_alloc_for_real(text, false, true) {
-                    Ok(w) => {
-                        wide = w;
-                        bytemuck::cast_slice::<u16, u8>(&wide)
-                    }
-                    Err(_) => return ptr::null_mut(),
-                }
+                let w = bun_core::strings::to_utf16_alloc_for_real(text, false, true).ok()?;
+                wide = w;
+                bytemuck::cast_slice::<u16, u8>(&wide)
             }
             Mime::TextHtml => {
                 enveloped = build_cf_html(bytes);
@@ -682,24 +716,7 @@ mod platform {
             }
             Mime::ImagePng => bytes,
         };
-        // `GlobalAlloc(_, 0)` returns a discarded object whose lock fails, so
-        // allocate >= 1 zeroed byte.
-        let h = win32::GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, payload.len().max(1));
-        if h.is_null() {
-            return ptr::null_mut();
-        }
-        // SAFETY: lock + copy + unlock stay within the fresh allocation, which
-        // is freed on failure and otherwise returned unlocked.
-        unsafe {
-            let dst = win32::GlobalLock(h);
-            if dst.is_null() {
-                win32::GlobalFree(h);
-                return ptr::null_mut();
-            }
-            ptr::copy_nonoverlapping(payload.as_ptr(), dst.cast::<u8>(), payload.len());
-            win32::GlobalUnlock(h);
-        }
-        h
+        OwnedGlobal::from_bytes(payload)
     }
 
     pub(super) fn write_types(items: &[(Mime, &[u8])]) -> Result<(), Unavailable> {
@@ -707,43 +724,26 @@ mod platform {
             return Ok(());
         }
         // Prepare every HGLOBAL first: `EmptyClipboard` destroys the previous
-        // contents, so nothing fallible may follow it.
-        let mut prepared: Vec<(c_uint, *mut c_void)> = Vec::with_capacity(items.len());
+        // contents, so nothing fallible may follow it. Any early return frees
+        // the unaccepted handles via OwnedGlobal's Drop.
+        let mut prepared: Vec<(c_uint, OwnedGlobal)> = Vec::with_capacity(items.len());
         for (mime, bytes) in items {
-            let Some(format) = write_format(*mime) else {
-                free_all(&prepared);
-                return Err(Unavailable::Platform);
-            };
-            let h = make_global(*mime, bytes);
-            if h.is_null() {
-                free_all(&prepared);
-                return Err(Unavailable::Platform);
-            }
-            prepared.push((format, h));
+            let format = write_format(*mime).ok_or(Unavailable::Platform)?;
+            let global = make_global(*mime, bytes).ok_or(Unavailable::Platform)?;
+            prepared.push((format, global));
         }
-        let Some(clipboard) = ClipboardGuard::open() else {
-            free_all(&prepared);
-            return Err(Unavailable::Platform);
-        };
+        let clipboard = ClipboardGuard::open().ok_or(Unavailable::Platform)?;
         if !clipboard.empty() {
-            free_all(&prepared);
             return Err(Unavailable::Platform);
         }
-        for (index, (format, h)) in prepared.iter().enumerate() {
-            if !clipboard.set(*format, *h) {
-                // The clipboard rejected this handle and never saw the rest.
-                free_all(&prepared[index..]);
+        for (format, global) in prepared {
+            // A rejected handle (and the rest of the iterator) drops and frees.
+            if !clipboard.set(format, global.0) {
                 return Err(Unavailable::Platform);
             }
+            global.release();
         }
         Ok(())
-    }
-
-    fn free_all(handles: &[(c_uint, *mut c_void)]) {
-        for (_, h) in handles {
-            // SAFETY: every handle here was never accepted by the clipboard.
-            unsafe { win32::GlobalFree(*h) };
-        }
     }
 }
 

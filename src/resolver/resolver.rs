@@ -288,34 +288,27 @@ use bun_ast::SideEffects;
 // `LazyLock`. These append-only arenas are that storage; the `Box<T>` heap
 // address is stable across `Vec` growth, so handing out `&'static T` is sound.
 //
-// Entries are never removed, but `bust_dir_cache` + recompute re-parses the
-// directory's package.json / tsconfig.json each time (a failed bare-specifier
-// resolve busts the importer dir and retries; watchers bust on every change
-// event), so unconditional appends grow the arenas per bust, unbounded. The
-// interners below dedupe: re-interning a file whose bytes (and parse-shaping
-// options) are unchanged returns the existing allocation, and the arenas only
-// grow when contents actually change — which is the point of the bust.
+// Every `bust_dir_cache` + recompute re-parses the directory's package.json /
+// tsconfig.json (failed bare-specifier resolves retry through a bust; watchers
+// bust per change event), so the interners below reuse the existing entry for
+// unchanged inputs and the arenas only grow when file contents change.
 
-/// Resolver state (beyond the file bytes) that shapes what
-/// `PackageJSON::parse` produces; an interned copy is only reused for a parse
-/// with an identical shape.
+/// Resolver state beyond the file bytes that shapes what `PackageJSON::parse`
+/// produces; an interned copy is only reused for an identical shape.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct PackageJsonParseShape {
     /// `ALLOW_DEPENDENCIES` in `parse_package_json` (populates `dependencies`).
     allow_dependencies: bool,
     /// `Resolver.care_about_scripts` (populates `scripts` / `config`).
     include_scripts: bool,
-    /// `parse` routes dependency-version parsing and lockfile id inference
-    /// through the auto-installer when one is wired.
+    /// The auto-installer changes dependency-version parsing and id inference.
     has_auto_installer: bool,
-    /// Content hash of `opts.main_fields` — only listed fields land in
-    /// `PackageJSON::main_fields`. Hashed rather than borrowed: opts are
-    /// per-resolver and may be freed while the interned copy lives on.
+    /// Only fields listed in `opts.main_fields` are captured. Hashed, not
+    /// borrowed: opts are per-resolver and may be freed first.
     main_fields_hash: u64,
 }
 
-/// Order-sensitive content hash of `opts.main_fields` for
-/// [`PackageJsonParseShape`] (length-prefixed so `["ab"]` ≠ `["a", "b"]`).
+/// Order-sensitive, length-prefixed content hash of `opts.main_fields`.
 fn main_fields_hash(fields: &[Box<[u8]>]) -> u64 {
     let mut hasher = XxHash64Streaming::new(0);
     for field in fields {
@@ -327,53 +320,41 @@ fn main_fields_hash(fields: &[Box<[u8]>]) -> u64 {
 
 struct InternedPackageJson {
     shape: PackageJsonParseShape,
-    /// Points at a `PackageJsonInterner::arena` slot. `NonNull` (not
-    /// `&'static`) so mut-provenance from intern time survives to write sites
-    /// (`package_manager_package_id`).
+    /// Arena slot; `NonNull` (not `&'static`) so mut-provenance from intern
+    /// time survives to the `package_manager_package_id` write sites.
     ptr: core::ptr::NonNull<PackageJSON>,
 }
 
-// SAFETY: `ptr` targets an append-only arena slot owned by the same `Guarded`
-// static; it crosses threads exactly like the `&'static PackageJSON` refs the
-// DirInfo cache already hands out.
+// SAFETY: `ptr` targets an append-only arena slot; it crosses threads exactly
+// like the `&'static PackageJSON` refs the DirInfo cache already hands out.
 unsafe impl Send for InternedPackageJson {}
 
 #[derive(Default)]
 struct PackageJsonInterner {
-    /// Process-lifetime storage; never shrinks (un-busted DirInfos may hold
-    /// `&'static` refs to old entries even after a newer parse replaces them
-    /// in `by_path`).
-    // `Box` is load-bearing: handed-out pointers target the box interior,
-    // which is stable across `Vec` realloc; unboxing would dangle.
+    /// Never shrinks: replaced entries may still be referenced by un-busted
+    /// DirInfos. `Box` keeps handed-out pointers stable across `Vec` realloc.
     #[expect(clippy::vec_box)]
     arena: Vec<Box<PackageJSON>>,
-    /// Interned copies per package.json path (keys are `dirname_store`
-    /// slices, so `'static`), at most one per parse shape.
+    /// Keys are `dirname_store` slices (`'static`); one slot per parse shape.
     by_path: bun_collections::StringHashMap<Vec<InternedPackageJson>>,
 }
 
 static PACKAGE_JSON_INTERNER: std::sync::LazyLock<bun_threading::Guarded<PackageJsonInterner>> =
     std::sync::LazyLock::new(Default::default);
 
-/// Number of `PackageJSON` parses retained by the process-lifetime arena.
-/// Read via `bun:internal-for-testing` so tests can assert dir-cache busts
-/// reuse the interned copy instead of appending one per bust.
+/// Arena length; read via `bun:internal-for-testing` by leak regression tests.
 pub fn package_json_arena_len() -> usize {
     PACKAGE_JSON_INTERNER.lock().arena.len()
 }
 
-/// Intern a parsed `PackageJSON` into the process-lifetime DirInfo arena,
-/// reusing the existing allocation when the path, the source bytes, and the
-/// parse shape match an already-interned copy.
-/// Returns `NonNull` (not `&'static`) so mut-provenance survives to write
-/// sites — handing out `&T` here and casting back to `*mut T` would be UB
-/// under Stacked Borrows.
+/// Intern `pkg`, reusing the existing allocation when path, bytes, and shape
+/// match. Returns `NonNull` (not `&'static`) so mut-provenance survives to
+/// write sites — a `&T`-to-`*mut T` cast would be UB under Stacked Borrows.
 fn intern_package_json(
     pkg: PackageJSON,
     shape: PackageJsonParseShape,
 ) -> core::ptr::NonNull<PackageJSON> {
-    // `PackageJSON::parse` interned the path into `dirname_store`
-    // (process-lifetime), so the key is genuinely `'static`.
+    // The path was interned into `dirname_store`, so it is genuinely `'static`.
     let path: &'static [u8] = pkg.source.path.text;
     let mut guard = PACKAGE_JSON_INTERNER.lock();
     let interner = &mut *guard;
@@ -386,10 +367,8 @@ fn intern_package_json(
         // SAFETY: ARENA — arena slots are never freed or moved.
         let cached: &PackageJSON = unsafe { slot.ptr.as_ref() };
         if strings::eql(&cached.source_contents, &pkg.source_contents) {
-            // Same bytes, same shape: hand out the interned copy; the fresh
-            // parse drops. Carry over a package id the fresh parse resolved
-            // (from the caller or the lockfile), but never clear one written
-            // earlier by `enqueue_dependency_to_resolve`.
+            // Reuse; the fresh parse drops. Carry over a resolved package id,
+            // but never clear one written by `enqueue_dependency_to_resolve`.
             let fresh_id = pkg.package_manager_package_id;
             if fresh_id != Install::INVALID_PACKAGE_ID
                 && cached.package_manager_package_id != fresh_id
@@ -426,11 +405,9 @@ fn intern_package_json(
     ptr
 }
 
-/// One file the tsconfig merge visited: absolute path + raw bytes (`None`
-/// when the file was unreadable, e.g. a missing `extends` parent). The reuse
-/// check re-reads exactly these files and compares, so an unchanged extends
-/// chain skips the whole parse+merge while a parent that appears, vanishes,
-/// or changes forces a re-merge.
+/// One file the tsconfig merge visited; `contents: None` = unreadable (e.g. a
+/// missing `extends` parent). The reuse check re-reads these, so any change,
+/// appearance, or disappearance in the chain forces a re-merge.
 #[derive(Clone, PartialEq, Eq)]
 struct TsconfigChainLink {
     path: Box<[u8]>,
@@ -450,28 +427,25 @@ unsafe impl Send for InternedTsconfig {}
 
 #[derive(Default)]
 struct TsconfigInterner {
-    /// Process-lifetime storage; never shrinks (see `PackageJsonInterner`).
+    /// Never shrinks; see `PackageJsonInterner::arena`.
     #[expect(clippy::vec_box)]
     arena: Vec<Box<TSConfigJSON>>,
-    /// Latest interned merge per root tsconfig/jsconfig path. Keys are owned
-    /// copies — the lookup path lives in a threadlocal buffer.
+    /// Keyed by root tsconfig/jsconfig path (owned copies — the lookup path
+    /// lives in a threadlocal buffer).
     by_path: bun_collections::StringHashMap<InternedTsconfig>,
 }
 
 static TSCONFIG_INTERNER: std::sync::LazyLock<bun_threading::Guarded<TsconfigInterner>> =
     std::sync::LazyLock::new(Default::default);
 
-/// Number of merged `TSConfigJSON`s retained by the process-lifetime arena.
-/// Read via `bun:internal-for-testing`; see [`package_json_arena_len`].
+/// Arena length; read via `bun:internal-for-testing` by leak regression tests.
 pub fn tsconfig_arena_len() -> usize {
     TSCONFIG_INTERNER.lock().arena.len()
 }
 
-/// Intern the merged tsconfig for `root_path` (the directory's
-/// tsconfig/jsconfig path), reusing the existing allocation when the
-/// extends chain read byte-identical files. `merged` is the caller's
-/// heap-allocated merge result (`heap::into_raw`); on reuse it is destroyed
-/// here.
+/// Intern the merge for `root_path`, reusing the existing allocation when the
+/// chain matches. `merged` came from `heap::into_raw`; on reuse it is
+/// destroyed here.
 fn intern_tsconfig(
     root_path: &[u8],
     chain: Vec<TsconfigChainLink>,
@@ -509,10 +483,8 @@ fn intern_tsconfig(
     ptr
 }
 
-/// Reuse check for `parse_package_json`: when an interned copy exists for
-/// (`package_json_path`, `shape`) and its source bytes equal `contents`,
-/// return it without parsing — a discarded re-parse still grows the
-/// thread-local AST store (see `PackageJSON::read_for_parse`).
+/// Return the interned copy for (`package_json_path`, `shape`) when its bytes
+/// equal `contents`, skipping the parse (see `PackageJSON::read_for_parse`).
 fn reuse_interned_package_json(
     package_json_path: &[u8],
     shape: PackageJsonParseShape,
@@ -530,9 +502,8 @@ fn reuse_interned_package_json(
     if !strings::eql(&cached.source_contents, contents) {
         return None;
     }
-    // A parse would have applied the caller-provided lockfile id
-    // (`PackageJSON::parse` does so before any inference); mirror that, but
-    // never clear an id written earlier by `enqueue_dependency_to_resolve`.
+    // Apply the caller-provided lockfile id as the parse would have, but never
+    // clear an id written by `enqueue_dependency_to_resolve`.
     if let Some(id) = package_id {
         if id != Install::INVALID_PACKAGE_ID && cached.package_manager_package_id != id {
             // SAFETY: `ptr` carries mut-provenance from intern time; same
@@ -4114,10 +4085,8 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Fast path for `dir_info_uncached`: reuse the interned merged tsconfig
-    /// for `root_path` when every file in its recorded extends chain is
-    /// byte-identical on disk. Any read error or mismatch returns `None` and
-    /// the caller re-parses (the parse path owns error reporting).
+    /// Reuse the interned merge for `root_path` when its recorded extends
+    /// chain is unchanged on disk; `None` means the caller must re-parse.
     fn reuse_interned_tsconfig(
         &mut self,
         root_path: &[u8],
@@ -4139,8 +4108,7 @@ impl<'a> Resolver<'a> {
             }
         }
         // Re-check under the lock: another thread may have re-interned this
-        // path while files were being read; only reuse when the recorded
-        // chain still matches what was just validated.
+        // path while the files were being read.
         let guard = TSCONFIG_INTERNER.lock();
         let slot = guard.by_path.get(root_path)?;
         (slot.chain == chain).then_some(slot.ptr)
@@ -4257,8 +4225,6 @@ impl<'a> Resolver<'a> {
         // NOTE: return the `Box` so the caller (`dir_info_uncached`) takes
         // ownership — intermediate configs in an extends-chain are dropped via
         // `heap::take`, the final one is interned into the DirInfo cache.
-        // The copied-out bytes feed the caller's `TsconfigChainLink` record
-        // (only real parses reach here, so the copy is off the reuse path).
         Ok((Some(result), Box::from(&source.contents[..])))
     }
 
@@ -6649,17 +6615,12 @@ impl<'a> Resolver<'a> {
             }
 
             if let Some(tsconfigpath) = tsconfig_path {
-                // Fast path: when this path was merged before and every file
-                // in its recorded extends chain is byte-identical on disk,
-                // reuse the interned merge without parsing. A dir-cache bust
-                // re-runs this on every failed bare-specifier resolve, and a
-                // re-parse retains memory even when its result is discarded
-                // (see `PackageJSON::read_for_parse`).
+                // Reuse the interned merge when the recorded extends chain is
+                // byte-identical on disk; see `PackageJSON::read_for_parse`
+                // for why skipping the parse matters.
                 info.tsconfig_json = self.reuse_interned_tsconfig(tsconfigpath);
                 if info.tsconfig_json.is_none() {
-                    // Every file feeding the merge below (root + extends parents,
-                    // in walk order), recorded so the next recompute can prove
-                    // the chain unchanged.
+                    // Every file the merge below reads, in walk order.
                     let mut chain: Vec<TsconfigChainLink> = Vec::new();
                     let parsed_tsconfig: Option<*mut TSConfigJSON> = match self.parse_tsconfig(
                         tsconfigpath,
@@ -6740,10 +6701,8 @@ impl<'a> Resolver<'a> {
                                         config.map(bun_core::heap::into_raw)
                                     }
                                     Err(err) => {
-                                        // Recorded with `contents: None` so the
-                                        // reuse check re-merges once this parent
-                                        // becomes readable (e.g. it gets
-                                        // created after an unresolved extends).
+                                        // `contents: None` so the reuse check
+                                        // re-merges once this parent appears.
                                         chain.push(TsconfigChainLink {
                                             path: Box::from(abs_path),
                                             contents: None,

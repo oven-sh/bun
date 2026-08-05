@@ -407,12 +407,9 @@ impl PackageJSON {
     }
 
     /// Joins `input_path` + "package.json", interns the joined path, and reads
-    /// the file (with the same error logging `parse` always had). Split from
-    /// [`parse_with_contents`] so `Resolver::parse_package_json` can compare
-    /// the raw bytes against the already-interned copy and skip the parse
-    /// entirely when they match — a re-parse is not free even when its result
-    /// is discarded (nested JSON object/array handles land in the thread-local
-    /// AST store, which individual frees never shrink).
+    /// the file. Split from [`parse_with_contents`] so the caller can skip the
+    /// parse when the bytes match the interned copy — even a discarded
+    /// re-parse permanently grows the thread-local AST store.
     pub(crate) fn read_for_parse(
         r: &mut resolver::Resolver<'_>,
         input_path: &[u8],

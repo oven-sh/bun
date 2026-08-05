@@ -78,6 +78,7 @@
 #endif
 #include <JavaScriptCore/Completion.h>
 #include <zstd.h>
+#include <dlfcn.h>
 #pragma clang diagnostic ignored "-Wformat" // uint64_t is unsigned long on Linux, unsigned long long on Darwin; this file prints a lot of addresses
 #include <signal.h>
 #include <sys/mman.h>
@@ -196,6 +197,7 @@ static void reexecWithoutASLRIfSlid()
 
 // `<executable>.img` next to the binary is used automatically (BUN_IMAGE=0 opts out; BUN_IMAGE_IN overrides).
 static bool imageInflateZstd(const char* zpath, const char* outPath);
+static uint64_t platformLibsBase();
 static bool findSiblingImage(char* out, size_t cap)
 {
     const char* off = getenv("BUN_IMAGE");
@@ -219,7 +221,7 @@ static bool findSiblingImage(char* out, size_t cap)
     else if (home) snprintf(dir, sizeof dir, "%s/.cache/bun/images", home);
     else return false;
     { char partial[4200]; snprintf(partial, sizeof partial, "%s", dir); for (char* q = partial + 1; *q; q++) if (*q == '/') { *q = 0; mkdir(partial, 0755); *q = '/'; } mkdir(partial, 0755); }
-    snprintf(out, cap, "%s/%llx-%llx-%llx-%llx.img", dir, (unsigned long long)est.st_size, (unsigned long long)est.st_mtime, (unsigned long long)zst.st_size, (unsigned long long)zst.st_mtime);
+    snprintf(out, cap, "%s/%llx-%llx-%llx-%llx-%llx.img", dir, (unsigned long long)est.st_size, (unsigned long long)est.st_mtime, (unsigned long long)zst.st_size, (unsigned long long)zst.st_mtime, (unsigned long long)platformLibsBase());
     if (access(out, R_OK) == 0)
         return true;
     if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] inflating %s -> %s\n", zpath, out);
@@ -1130,6 +1132,9 @@ static void platformWriteJIT(void* dst, const void* src, size_t len)
 }
 static bool platformIsJITRegion(const PlatformRegion& r) { return r.tag == 64 && r.executable && r.anon; }
 static uint64_t platformTextBase() { return (uint64_t)&_mh_execute_header; }
+extern "C" const void* _dyld_get_shared_cache_range(size_t* length);
+// System libraries' load address: image words that point into them (ICU vtables, pthread main-thread handle, ...) are only valid while this matches.
+static uint64_t platformLibsBase() { size_t len = 0; return (uint64_t)_dyld_get_shared_cache_range(&len); }
 #elif OS(LINUX)
 extern "C" char __executable_start[];
 extern "C" char __data_start[], _edata[], __bss_start[], _end[];
@@ -1162,9 +1167,10 @@ template<typename F> static void platformDataSegments(F&& f)
 static void platformWriteJIT(void* dst, const void* src, size_t len) { memcpy(dst, src, len); __builtin___clear_cache((char*)dst, (char*)dst + len); }
 static bool platformIsJITRegion(const PlatformRegion& r) { return r.executable && r.anon && r.addr >= 0x3c0000000ull && r.addr < 0x400000000ull; } // BUN_IMAGE_JIT_ADDR window
 static uint64_t platformTextBase() { return (uint64_t)__executable_start; }
+static uint64_t platformLibsBase() { return (uint64_t)dlsym(RTLD_DEFAULT, "getpid"); } // libc's slide stands in for all system libs
 #endif
 
-struct ImageHeader { char magic[8]; uint64_t textBase; uint64_t vm; uint64_t globalObject; uint64_t mainThread; uint64_t nregions; uint64_t reserved[8]; };
+struct ImageHeader { char magic[8]; uint64_t textBase; uint64_t vm; uint64_t globalObject; uint64_t mainThread; uint64_t nregions; uint64_t reserved[8]; uint64_t libsBase; uint64_t spare[7]; }; // 176 bytes; region table follows
 struct ImageRegion { uint64_t addr; uint64_t len; uint64_t fileOff; uint64_t kind; }; // kind: 0 heap(anon), 1 __DATA segment
 
 // First-writer trap: image pages are made read-only; the fault handler records the writer's stack, unprotects the page and resumes.
@@ -1365,8 +1371,8 @@ static void imageDump(JSC::VM& vm, const char* path)
     for (auto& r : regions) { if (r.kind == 0 && sp >= r.addr && sp < r.addr + r.len) continue; out.push_back(r); }
     int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) { fprintf(stderr, "[image] open %s failed\n", path); return; }
-    ImageHeader hdr {}; memcpy(hdr.magic, "BUNIMG0", 8);
-    hdr.textBase = platformTextBase(); hdr.vm = (uint64_t)&vm;
+    ImageHeader hdr {}; memcpy(hdr.magic, "BUNIMG1", 8);
+    hdr.textBase = platformTextBase(); hdr.libsBase = platformLibsBase(); hdr.vm = (uint64_t)&vm;
     hdr.globalObject = (uint64_t)defaultGlobalObject();
     hdr.mainThread = (uint64_t)&WTF::Thread::currentSingleton();
     hdr.reserved[0] = (uint64_t)mi_theap_get_default(); // main thread's mimalloc theap (TLS-referenced, lives in the heap)
@@ -1410,7 +1416,8 @@ static void imageRestoreAndRun(const char* path)
     int fd = open(path, O_RDONLY);
     if (fd < 0) { fprintf(stderr, "[image] cannot open %s\n", path); _exit(2); }
     ImageHeader hdr; pread(fd, &hdr, sizeof hdr, 0);
-    if (memcmp(hdr.magic, "BUNIMG0", 8) || hdr.textBase != platformTextBase()) { fprintf(stderr, "[image] bad magic or ASLR slide differs (image text %llx vs ours %llx)\n", (unsigned long long)hdr.textBase, (unsigned long long)platformTextBase()); _exit(2); }
+    if (memcmp(hdr.magic, "BUNIMG1", 8) || hdr.textBase != platformTextBase()) { fprintf(stderr, "[image] bad magic or ASLR slide differs (image text %llx vs ours %llx)\n", (unsigned long long)hdr.textBase, (unsigned long long)platformTextBase()); _exit(2); }
+    if (hdr.libsBase && hdr.libsBase != platformLibsBase()) { fprintf(stderr, "[image] %s was built against system libraries at %llx, now at %llx (reboot / OS update); booting normally\n", path, (unsigned long long)hdr.libsBase, (unsigned long long)platformLibsBase()); close(fd); return; }
     mi_scavenger_stop(); // this process's scavenger thread must not touch allocator state while/after we overlay it
     // No heap use from here until the overlay is done: with malloc routed to mimalloc, this process's heap sits at the same VA as the image's.
     if (hdr.nregions > 8192) { fprintf(stderr, "[image] too many regions\n"); _exit(2); }

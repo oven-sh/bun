@@ -863,8 +863,34 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         return true;
     }
 
+    if constexpr (isStrict) {
+        // Proxies skip the array fast path above, which is the only place array length is compared.
+        if (v1Array && v2Array) {
+            JSValue lengthValue = o1->get(globalObject, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, false);
+            uint64_t length1 = lengthValue.toLength(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            lengthValue = o2->get(globalObject, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, false);
+            uint64_t length2 = lengthValue.toLength(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (length1 != length2) {
+                return false;
+            }
+        }
+    }
+
     if constexpr (isStrict && !skipPrototype) {
-        if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
+        if (c1->type() == ProxyObjectType || c2->type() == ProxyObjectType) {
+            // calculatedClassName() is always "ProxyObject" for a Proxy; compare observable prototypes instead.
+            JSValue p1 = o1->getPrototype(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            JSValue p2 = o2->getPrototype(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (p1 != p2) {
+                return false;
+            }
+        } else if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
             return false;
         }
     }
@@ -1009,6 +1035,20 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     if constexpr (isStrict) {
         if (propertyArrayLength1 != propertyArrayLength2) {
             return false;
+        }
+        if (c1->type() == ProxyObjectType || c2->type() == ProxyObjectType) {
+            // A Proxy `has` trap can make the getIfPropertyExists probe below vacuous; compare the own-key sets directly.
+            for (size_t j = 0; j < propertyArrayLength1; j++) {
+                UniquedStringImpl* name1 = a1[j].impl();
+                bool found = false;
+                for (size_t k = 0; k < propertyArrayLength2; k++) {
+                    if (a2[k].impl() == name1) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) return false;
+            }
         }
     }
 
@@ -1736,7 +1776,7 @@ bool Bun__deepMatch(
     JSObject* obj = objValue.getObject();
     JSObject* subsetObj = subsetValue.getObject();
 
-    PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+    PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(throwScope, false);
 
@@ -1745,12 +1785,38 @@ bool Bun__deepMatch(
     // - two "simple" arrays
     // similar to what is done in deepEquals (canPerformFastPropertyEnumerationForIterationBun)
 
+    bool objIsArray = isArray(globalObject, objValue);
+    RETURN_IF_EXCEPTION(throwScope, false);
+    bool subsetIsArray = isArray(globalObject, subsetValue);
+    RETURN_IF_EXCEPTION(throwScope, false);
+
+    // An array expectation only matches an array; the reverse is allowed (object expectation is a key subset).
+    if (subsetIsArray && !objIsArray) {
+        return false;
+    }
+
     // arrays should match exactly
-    if (isArray(globalObject, objValue) && isArray(globalObject, subsetValue)) {
-        if (obj->getArrayLength() != subsetObj->getArrayLength()) {
+    if (objIsArray && subsetIsArray) {
+        uint64_t objLength = 0;
+        uint64_t subsetLength = 0;
+        if (!obj->isProxy() && !subsetObj->isProxy()) {
+            objLength = obj->getArrayLength();
+            subsetLength = subsetObj->getArrayLength();
+        } else {
+            // getArrayLength() reads the indexed butterfly, which a Proxy does not have.
+            JSValue lengthValue = obj->get(globalObject, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            objLength = lengthValue.toLength(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            lengthValue = subsetObj->get(globalObject, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            subsetLength = lengthValue.toLength(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, false);
+        }
+        if (objLength != subsetLength) {
             return false;
         }
-        PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+        PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
         obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(throwScope, false);
         if (objProps.size() != subsetProps.size()) {

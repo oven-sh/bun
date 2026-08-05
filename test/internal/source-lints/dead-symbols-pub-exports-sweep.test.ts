@@ -8,15 +8,38 @@
 //
 // This is a source-tree lint: it reads files from src/ and does not touch the
 // built binary, so it belongs in test/internal/source-lints/ per the README.
+//
+// The Rust checks read the working tree. The deleted-file and JS/C++ content
+// checks read the committed tree (HEAD) instead: `git stash` round-trips can
+// temporarily restore files a branch deletes (see the same note in
+// dead-code-escapes.test.ts), and those strays must not fail the lint. CI
+// runs against the committed tree, so HEAD is what matters.
 
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
 
 function src(p: string): string {
   return readFileSync(path.join(repoRoot, p), "utf8");
+}
+
+function headFile(p: string): string {
+  const r = Bun.spawnSync({
+    cmd: ["git", "-C", repoRoot, "show", `HEAD:${p}`],
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  return r.exitCode === 0 ? r.stdout.toString() : "";
+}
+
+function headTree(): Set<string> {
+  const r = Bun.spawnSync({
+    cmd: ["git", "-C", repoRoot, "ls-tree", "-r", "--name-only", "-z", "HEAD"],
+    stdout: "pipe",
+  });
+  return new Set(r.stdout.toString().split("\0").filter(Boolean));
 }
 
 test("dead FFI declarations (sys crates) do not reappear", () => {
@@ -83,13 +106,16 @@ test("orphaned files stay deleted", () => {
     "src/logo.svg",
     "src/favicon.png",
   ];
-  const resurrected = gone.filter(p => existsSync(path.join(repoRoot, p)));
+  const tree = headTree();
+  const resurrected = gone.filter(p => tree.has(p));
   expect(resurrected).toEqual([]);
 });
 
 test("dead JS/codegen helpers do not reappear", () => {
   const checks: Array<[string, RegExp]> = [
     ["src/js/internal/validators.ts", /\bfunction validateUndefined\b/],
+    // C++ host functions whose only callers were the removed $newCppFunction bindings
+    ["src/jsc/bindings/NodeValidator.cpp", /jsFunction_validate(SignalName|PlainFunction|Undefined)\b/],
     ["src/codegen/helpers.ts", /\bfunction camelCase\b/],
     ["src/codegen/helpers.ts", /\bfunction pascalCase\b/],
     ["src/codegen/replacements.ts", /\bwarnOnIdentifiersNotPresentAtRuntime\b/],
@@ -99,7 +125,7 @@ test("dead JS/codegen helpers do not reappear", () => {
     ["scripts/build/error.ts", /\bfunction assertDefined\b/],
     ["scripts/build/source.ts", /\bfunction depSourceStamp\b/],
   ];
-  const resurrected = checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
+  const resurrected = checks.filter(([file, re]) => re.test(headFile(file))).map(([file, re]) => `${file}: ${re.source}`);
   expect(resurrected).toEqual([]);
 });
 
@@ -108,13 +134,13 @@ test("stale commented-out C++ blocks stay deleted", () => {
     // minicoro scaffolding commented out since 2022; Bun__startMacro calls ctx() directly
     ["src/jsc/bindings/coroutine.cpp", /mco_create/],
     // pasted JS source of Node's getFlags() above the C++ reimplementation
-    ["src/jsc/bindings/JSX509CertificatePrototype.cpp", /const flags = \[\]/],
+    ["src/jsc/bindings/JSX509CertificatePrototype.cpp", /X509_CHECK_FLAG_ALWAYS_CHECK_SUBJECT/],
     // commented BINDING_INTEGRITY vtable checks (2024)
     ["src/jsc/bindings/webcore/JSCustomEvent.cpp", /expectedVTablePointer/],
     ["src/jsc/bindings/webcore/JSPerformanceServerTiming.cpp", /expectedVTablePointer/],
     // whole commented mainThreadNormalWorld() (2022)
     ["src/jsc/bindings/DOMWrapperWorld.cpp", /mainThreadNormalWorld/],
   ];
-  const resurrected = checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
+  const resurrected = checks.filter(([file, re]) => re.test(headFile(file))).map(([file, re]) => `${file}: ${re.source}`);
   expect(resurrected).toEqual([]);
 });

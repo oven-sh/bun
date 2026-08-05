@@ -4,7 +4,7 @@
 // does for EXDEV. https://github.com/oven-sh/bun/issues/36852
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
-import { cpSync, statSync } from "node:fs";
+import { cpSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -96,4 +96,78 @@ describe.skipIf(!isLinux || isMusl || !cc)("hardlink backend falls back to copyf
       });
     }
   }
+});
+
+// Several bun processes may install the same packages into the same
+// destination at once (e.g. parallel `bun x <tool>` invocations share one
+// bunx install dir and one cache). On Windows the racing hardlinks used to
+// surface as "EBUSY: failed copying files from cache to destination": a
+// dest created by a peer was deleted and relinked instead of being accepted,
+// and transient sharing violations were not retried.
+describe("concurrent installs into the same destination", () => {
+  const PKG_COUNT = 5;
+  const FILE_COUNT = 60;
+  const PROCESS_COUNT = 8;
+  const ROUNDS = 2;
+
+  test("tolerate each other instead of failing with EBUSY", async () => {
+    const deps: Record<string, string> = {};
+    for (let p = 0; p < PKG_COUNT; p++) {
+      deps[`many-files-${p}`] = `file:./many-files-${p}.tgz`;
+    }
+    using dir = tempDir("concurrent-install", {
+      "package.json": JSON.stringify({ name: "concurrent-install-test", dependencies: deps }),
+    });
+    const filler = Buffer.alloc(256, "x").toString();
+    for (let p = 0; p < PKG_COUNT; p++) {
+      const files: Record<string, string> = {
+        "package/package.json": JSON.stringify({ name: `many-files-${p}`, version: "1.0.0" }),
+      };
+      for (let f = 0; f < FILE_COUNT; f++) {
+        files[`package/lib/file${f}.js`] = `module.exports = ${f}; // ${filler}`;
+      }
+      const tarball = await new Bun.Archive(files, { compress: "gzip" }).bytes();
+      await Bun.write(join(String(dir), `many-files-${p}.tgz`), tarball);
+    }
+
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), "cache") };
+    const cmd = [bunExe(), "install", "--backend", "hardlink"];
+
+    // Warm the cache and the lockfile so the racing rounds below start at
+    // the cache-to-node_modules copy phase together.
+    {
+      await using warm = Bun.spawn({ cmd, cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([warm.stdout.text(), warm.stderr.text(), warm.exited]);
+      expect(stderr).not.toContain("error");
+      expect(stdout).toMatch(/\d+ packages? installed/);
+      expect(exitCode).toBe(0);
+    }
+
+    for (let round = 0; round < ROUNDS; round++) {
+      rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
+      const procs = Array.from({ length: PROCESS_COUNT }, () =>
+        Bun.spawn({ cmd, cwd: String(dir), env, stdout: "pipe", stderr: "pipe" }),
+      );
+      const results = await Promise.all(
+        procs.map(async proc => {
+          const [stdout, stderr, exitCode] = await Promise.all([
+            proc.stdout.text(),
+            proc.stderr.text(),
+            proc.exited,
+          ]);
+          return { stdout, stderr, exitCode };
+        }),
+      );
+      for (const { stdout, stderr, exitCode } of results) {
+        expect(stderr).not.toContain("EBUSY");
+        expect(stdout).not.toContain("Failed to install");
+        expect(exitCode).toBe(0);
+      }
+      // The racing installs must still converge on a complete tree.
+      for (let p = 0; p < PKG_COUNT; p++) {
+        const lib = join(String(dir), "node_modules", `many-files-${p}`, "lib");
+        expect(readdirSync(lib)).toHaveLength(FILE_COUNT);
+      }
+    }
+  }, 120_000);
 });

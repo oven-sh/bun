@@ -1758,10 +1758,8 @@ impl napi_async_work {
             env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
             execute,
             // SAFETY: `event_loop()` is the live JS-thread loop (non-null,
-            // stable address). Liveness across a worker `terminate()` is
-            // guaranteed by `schedule()`'s `offthread_job_begin()`: the worker
-            // shutdown barrier waits for `run()` to `offthread_job_end()`
-            // before the VM box (and this `EventLoop`) are freed.
+            // stable address); `schedule()`'s `offthread_job_begin()` keeps it
+            // alive across a worker `terminate()` until `run()` ends the job.
             event_loop: unsafe { bun_ptr::BackRef::from_raw(global.bun_vm().event_loop()) },
             complete,
             data,
@@ -1780,14 +1778,13 @@ impl napi_async_work {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    /// Shutdown-drain release: unref the loop `KeepAlive` taken in
-    /// `schedule()` and free the box. Does not call `complete` (it would run
-    /// after `NapiEnv::cleanup()`); the addon's `data` is left for the
-    /// process to reclaim.
+    /// Shutdown-drain release: unref the loop `KeepAlive` and free the box.
+    /// Does not call `complete` (it would run after `NapiEnv::cleanup()`);
+    /// the addon's `data` is left for the process to reclaim.
     ///
     /// # Safety
     /// `this` must be the heap work popped from the shutdown drain; the pool
-    /// thread no longer holds it (`outstanding_offthread` barrier).
+    /// thread no longer holds it.
     pub(crate) unsafe fn release_for_shutdown(this: *mut napi_async_work) {
         // SAFETY: see fn contract.
         unsafe { core::mem::take(&mut (*this).poll_ref) }.unref(bun_io::js_vm_ctx());
@@ -1813,10 +1810,9 @@ impl napi_async_work {
 
     fn run(&mut self) {
         let self_ptr: *mut Self = self;
-        // After `enqueue_task_concurrent` the JS thread may pick this work up,
-        // run `complete`, and `napi_delete_async_work` it before we reach the
-        // `offthread_job_end()` below; copy the handle out so that last
-        // access does not touch `self`.
+        // The JS thread may free this work right after the enqueue below;
+        // copy the handle out so the trailing `offthread_job_end()` does not
+        // touch `self`.
         let event_loop = self.event_loop;
         if let Err(state) = self.status.compare_exchange(
             AsyncWorkStatus::Pending as u32,

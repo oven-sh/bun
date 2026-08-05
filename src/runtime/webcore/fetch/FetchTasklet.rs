@@ -2531,8 +2531,7 @@ impl FetchTasklet {
                 if is_done {
                     // SAFETY: `task` is the live heap tasklet; HTTP-thread ref held.
                     FetchTasklet::deref_from_thread(task);
-                    // HTTP engagement over: release the worker-shutdown fence
-                    // taken in `queue()` (last VM access, via the local).
+                    // Final callback: last VM access, via the local.
                     vm.event_loop_shared().offthread_job_end();
                 }
                 return;
@@ -2586,8 +2585,7 @@ impl FetchTasklet {
                 if is_done {
                     // SAFETY: `task` is the live heap tasklet; HTTP-thread ref held.
                     FetchTasklet::deref_from_thread(task);
-                    // HTTP engagement over: release the worker-shutdown fence
-                    // taken in `queue()` (last VM access, via the local).
+                    // Final callback: last VM access, via the local.
                     vm.event_loop_shared().offthread_job_end();
                 }
                 return;
@@ -2623,8 +2621,7 @@ impl FetchTasklet {
                 FetchTasklet::deref_from_thread(task);
                 // SAFETY: second ref still held until this 1→0 transition.
                 FetchTasklet::deref_from_thread(task);
-                // HTTP engagement over: release the worker-shutdown fence
-                // taken in `queue()` (last VM access, via the local).
+                // Final callback: last VM access, via the local.
                 vm.event_loop_shared().offthread_job_end();
             }
             return;
@@ -2644,8 +2641,7 @@ impl FetchTasklet {
         if is_done {
             // SAFETY: `task` is the live heap tasklet; HTTP-thread ref held.
             FetchTasklet::deref_from_thread(task);
-            // HTTP engagement over: release the worker-shutdown fence taken
-            // in `queue()` (last VM access, via the local).
+            // Final callback: last VM access, via the local.
             vm.event_loop_shared().offthread_job_end();
         }
     }

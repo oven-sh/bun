@@ -114,8 +114,7 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         // pointer handed to the pool is derived from the raw `this` and nothing
         // touches the job afterwards.
         unsafe { (*this).poll.ref_(bun_io::js_vm_ctx()) };
-        // Holds the worker-shutdown fence open until `run_task` has posted the
-        // completion (see `EventLoop::outstanding_offthread`).
+        // Paired with the `offthread_job_end` in `run_task`.
         // SAFETY: `this` is live (caller contract).
         unsafe { (*this).vm }
             .event_loop_shared()
@@ -147,10 +146,8 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         // `run_from_js` reclaims it.
         let job = unsafe { &mut *Self::from_task_ptr(task) };
         let vm = job.vm;
-        // Worker teardown in progress: skip the compute entirely (these jobs
-        // include deliberately slow KDFs — pbkdf2/scrypt — that would
-        // otherwise stall `terminate()`). `run_from_js` early-outs on
-        // `is_shutting_down`, so `then` never observes the missing result.
+        // Teardown in progress: skip the compute (pbkdf2/scrypt are
+        // deliberately slow); `run_from_js` early-outs on `is_shutting_down`.
         if !vm.event_loop_shared().offthread_cancel_requested() {
             job.ctx.run(vm.global);
         }
@@ -158,9 +155,7 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         // ownership of it.
         vm.event_loop_shared()
             .enqueue_task_concurrent(ConcurrentTask::create(Task::init(std::ptr::from_mut(job))));
-        // Last VM access (via the `vm` local — the JS thread may free the job
-        // as soon as the enqueue lands); releases the worker-shutdown fence
-        // taken in `schedule`.
+        // Last VM access, via the `vm` local (the JS thread may free the job now).
         vm.event_loop_shared().offthread_job_end();
     }
 

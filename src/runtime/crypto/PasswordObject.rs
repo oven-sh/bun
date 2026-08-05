@@ -588,9 +588,7 @@ impl<Op: PasswordOp> PasswordJob<Op> {
                 bun_event_loop::Task::from_boxed(result),
             ));
         }
-        // SAFETY: `event_loop` outlives the job (fence still held). Last VM
-        // access; releases the worker-shutdown fence taken in
-        // `JSPasswordObject::run`.
+        // SAFETY: `event_loop` outlives the job (fence still held). Last VM access.
         unsafe { (*event_loop).offthread_job_end() };
         // `self: Box<Self>` drops here; Drop runs secure_zero on password (+op).
     }
@@ -608,10 +606,8 @@ impl<Op: PasswordOp> bun_event_loop::Taskable for PasswordResult<Op> {
 }
 
 impl<Op: PasswordOp> PasswordResult<Op> {
-    /// Shutdown-drain counterpart of [`Self::run_from_js`]: release the loop
-    /// keep-alive and free the box without settling the promise (dropping the
-    /// `JSPromiseStrong` only releases the Strong handle; JSC is still alive
-    /// during the drain). No JS runs.
+    /// Shutdown-drain counterpart of [`Self::run_from_js`]: unref the loop
+    /// keep-alive and free the box without settling the promise. No JS runs.
     ///
     /// # Safety
     /// `this` must be the queued box from `PasswordJob::run_owned`; sole owner.
@@ -687,8 +683,7 @@ impl JSPasswordObject {
             task: WorkPoolTask::default(),
         });
         job.r#ref.ref_(bun_io::js_vm_ctx());
-        // Holds the worker-shutdown fence open until `run_owned` has posted
-        // the completion (see `EventLoop::outstanding_offthread`).
+        // Paired with the `offthread_job_end` in `run_owned`.
         global_object
             .bun_vm()
             .event_loop_shared()

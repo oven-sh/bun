@@ -1309,8 +1309,7 @@ mod _async_tasks {
             // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
             // event loop is the only one that owns AsyncFSTask/UVFSRequest.
             task.r#ref.ref_(bun_io::js_vm_ctx());
-            // Holds the worker-shutdown fence open until `work_pool_callback`
-            // has posted the completion (see `EventLoop::outstanding_offthread`).
+            // Paired with the `offthread_job_end` in `work_pool_callback`.
             vm.event_loop_shared().offthread_job_begin();
             task.tracker.did_schedule(global_object);
             let promise = task.promise.value();
@@ -1329,9 +1328,8 @@ mod _async_tasks {
             // it exclusively until the enqueue below hands it to the JS thread.
             let vm = unsafe { (*this).global_object().bun_vm_concurrently() };
 
-            // Worker teardown in progress: skip the filesystem op (the promise
-            // will never settle; the shutdown drain reclaims the task unrun
-            // with `result` still the sentinel).
+            // Teardown in progress: skip the op; the shutdown drain reclaims
+            // the task unrun with `result` still the sentinel.
             // SAFETY: the job's own `outstanding_offthread` count keeps the VM
             // alive for this read.
             if !unsafe { (*vm).event_loop_shared() }.offthread_cancel_requested() {
@@ -1633,9 +1631,8 @@ mod _async_tasks {
             if !IS_SHELL {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
             }
-            // Holds the worker-shutdown fence open until `on_subtask_done`'s
-            // final enqueue (the whole copy tree, including `CpSingleTask`
-            // subtasks, finishes first by the `subtask_count` contract).
+            // Paired with the `offthread_job_end` in `on_subtask_done` (the
+            // copy tree finishes first by the `subtask_count` contract).
             task.evtloop.offthread_job_begin();
             task.tracker.did_schedule(global_object);
 
@@ -1763,8 +1760,7 @@ mod _async_tasks {
                     ),
                 });
             }
-            // Releases the worker-shutdown fence taken at create time (no-op
-            // for the mini loop).
+            // Last loop access, via the local copy; no-op for the mini loop.
             evtloop.offthread_job_end();
         }
 
@@ -2420,9 +2416,8 @@ mod _async_tasks {
                 pending_err_mutex: bun_threading::Mutex::default(),
             });
             task.r#ref.ref_(bun_io::js_vm_ctx());
-            // Holds the worker-shutdown fence open until `finish_concurrently`'s
-            // enqueue (the whole scan tree, including `ReaddirSubtask`s,
-            // finishes first by the `subtask_count` contract).
+            // Paired with the `offthread_job_end` in `finish_concurrently` (the
+            // scan tree finishes first by the `subtask_count` contract).
             vm.event_loop_shared().offthread_job_begin();
             task.tracker.did_schedule(global_object);
             let promise = task.promise.value();
@@ -2609,9 +2604,8 @@ mod _async_tasks {
                     std::ptr::from_mut::<Self>(self),
                 )));
             }
-            // SAFETY: `vm` stays alive until this releases the fence taken in
-            // `create` (last VM access; `self` is not touched — the JS thread
-            // may free it once the enqueue lands).
+            // SAFETY: `vm` stays alive until this end call (last VM access;
+            // `self` is not touched).
             unsafe { (*vm).event_loop_shared() }.offthread_job_end();
         }
 

@@ -1347,9 +1347,7 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             unsafe { napi_async_work::release_for_shutdown(task.ptr.cast::<napi_async_work>()) };
             true
         }
-        // Async `node:zlib` completion that reached the queue after the
-        // worker's last tick (the `outstanding_offthread` barrier guarantees
-        // the post lands before this drain). Release `write()`'s acquisitions
+        // Async `node:zlib` completion: release `write()`'s acquisitions
         // (Strong handle, pinned buffers, poll_ref, +1 ref) without calling
         // the JS write/error callbacks; JSC is still live here.
         task_tag::NativeZlib | task_tag::NativeBrotli | task_tag::NativeZstd => {
@@ -1373,10 +1371,9 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             }
             true
         }
-        // `run_from_js` early-outs on `is_shutting_down` (set before this
-        // drain on both the worker and `global_exit` paths) and reclaims the
-        // box via `heap::take`, so the erased dispatch here is a pure
-        // release: poll unref + `Drop for C`, no user code.
+        // `run_from_js` early-outs on `is_shutting_down` (already set on both
+        // drain paths) and frees the box, so the erased dispatch here is a
+        // pure release: poll unref + `Drop for C`, no user code.
         task_tag::AnyTaskJob => {
             // SAFETY: §Dispatch — `task.ptr` is a live heap `AnyTaskJob<C>`
             // enqueued by `AnyTaskJob::run_task`; the erased entry frees it.
@@ -1401,9 +1398,8 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             };
             true
         }
-        // `ConcurrentPromiseTask` completions: `destroy` drops the ctx box
-        // and the promise `Strong` (JSC still live) and runs no JS; pair it
-        // with the `run_from_js` unref it replaces.
+        // `ConcurrentPromiseTask` completions: unref + `destroy` (drops the
+        // ctx box and the promise `Strong`; JSC still live, no JS runs).
         task_tag::AsyncGlobWalkTask
         | task_tag::AsyncImageTask
         | task_tag::AsyncTransformTask

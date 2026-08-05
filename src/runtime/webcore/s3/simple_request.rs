@@ -471,9 +471,7 @@ impl S3HttpSimpleTask {
                 ((*this).vm.expect("vm set at task creation"), queued)
             };
             vm.event_loop_shared().enqueue_task_concurrent(queued);
-            // HTTP engagement over: release the worker-shutdown fence taken in
-            // `execute_simple_s3_request` (last VM access, via the local — the
-            // JS thread may consume and free `*this` once the enqueue lands).
+            // Final callback: last VM access, via the local.
             vm.event_loop_shared().offthread_job_end();
         }
     }

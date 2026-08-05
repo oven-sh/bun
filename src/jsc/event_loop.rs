@@ -89,20 +89,15 @@ pub struct EventLoop {
     pub entered_event_loop_count: isize,
     pub concurrent_ref: AtomicI32,
     /// Count of off-thread jobs (WorkPool, HTTP thread, bundler thread) whose
-    /// worker-side body can still dereference this `EventLoop`, the owning
-    /// `VirtualMachine`, or JSC-heap memory (completion posts via
-    /// `enqueue_task_concurrent`, buffers pinned by the scheduling call).
-    /// `WebWorker::shutdown` waits for this to reach zero before
-    /// `WebWorker__teardownJSCVM` frees the JSC heap and the raw VM dealloc
-    /// frees this struct; without the wait every such job is a use-after-free
-    /// when `worker.terminate()` lands mid-flight. Bracket with
-    /// [`Self::offthread_job_begin`] / [`Self::offthread_job_end`].
+    /// body can still dereference this `EventLoop`, the owning
+    /// `VirtualMachine`, or JSC-heap memory. `WebWorker::shutdown` waits for
+    /// zero before freeing any of those; without the wait every such job is a
+    /// use-after-free when `worker.terminate()` lands mid-flight. Bracket
+    /// with [`Self::offthread_job_begin`] / [`Self::offthread_job_end`].
     pub outstanding_offthread: AtomicU32,
-    /// Set by `WebWorker::shutdown` before it waits on
-    /// [`Self::outstanding_offthread`]. Off-thread job bodies that can skip
-    /// their (expensive) work load this first and complete immediately; the
-    /// completion is reclaimed unrun by the shutdown drain. Advisory: a body
-    /// that never checks it is still memory-safe, just slower to drain.
+    /// Set by `WebWorker::shutdown` before it waits on the count above. Job
+    /// bodies that can skip their (expensive) work check this first; the
+    /// unrun completion is reclaimed by the shutdown drain. Advisory only.
     pub offthread_cancel: AtomicBool,
     /// Atomic nullable pointer to the next-due `WTFTimer`.
     ///
@@ -1023,26 +1018,19 @@ impl EventLoop {
         self.wakeup();
     }
 
-    /// JS-thread: call when handing a job to another thread (`WorkPool`,
-    /// `HTTPThread::schedule`, the bundler thread) whose off-thread body will
-    /// dereference this `EventLoop` / the owning `VirtualMachine` / the JSC
-    /// heap. Rule of thumb: every `KeepAlive::ref_` paired with an off-thread
-    /// schedule gets a begin at the same site. Paired with exactly one
-    /// [`Self::offthread_job_end`] on the off thread; see
-    /// [`Self::outstanding_offthread`].
+    /// JS-thread: call when handing a job to another thread whose body will
+    /// dereference this `EventLoop` / the VM / the JSC heap (rule of thumb:
+    /// every `KeepAlive::ref_` paired with an off-thread schedule). Paired
+    /// with exactly one [`Self::offthread_job_end`] on the off thread.
     #[inline]
     pub fn offthread_job_begin(&self) {
         self.outstanding_offthread.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Off-thread: call after the job's last access to this `EventLoop` / VM /
-    /// JSC heap (typically right after the completion
-    /// `enqueue_task_concurrent`). Must be invoked through a pointer copied to
-    /// a local before that last access: once the count can reach zero the
-    /// JS-thread completion may free the job, and once the waiter observes
-    /// zero it frees the VM. The `Release` store pairs with
-    /// [`Self::wait_for_offthread_jobs`]'s `Acquire` load so the waiter cannot
-    /// observe zero until every prior access is visible.
+    /// Off-thread: call after the job's last VM access (typically right after
+    /// the completion enqueue), through a pointer copied to a local first —
+    /// once the waiter observes zero it frees the VM. The `Release` store
+    /// pairs with [`Self::wait_for_offthread_jobs`]'s `Acquire` load.
     #[inline]
     pub fn offthread_job_end(&self) {
         self.outstanding_offthread.fetch_sub(1, Ordering::Release);
@@ -1057,16 +1045,11 @@ impl EventLoop {
         self.offthread_cancel.store(true, Ordering::Release);
     }
 
-    /// Worker-shutdown barrier: wait (bounded by `timeout_ms`) for every
-    /// outstanding [`Self::offthread_job_begin`] to be matched by
-    /// [`Self::offthread_job_end`]. Returns `true` when the count reached
-    /// zero — the VM may be freed — and `false` on timeout, in which case the
-    /// caller must leak the VM (and everything an off-thread job can still
-    /// reach) instead of freeing it.
-    ///
-    /// The wait polls with a short `Futex` timeout rather than being woken by
-    /// `offthread_job_end`: a wake there would touch `self` after the
-    /// `fetch_sub` that is contractually the job's last access.
+    /// Worker-shutdown barrier: wait (bounded by `timeout_ms`) for the count
+    /// to reach zero. `true` ⇒ the VM may be freed; `false` (timeout) ⇒ the
+    /// caller must leak it. Polls with a short `Futex` timeout instead of a
+    /// wake from `offthread_job_end`, which must not touch `self` after its
+    /// `fetch_sub`.
     pub fn wait_for_offthread_jobs(&self, timeout_ms: u64) -> bool {
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
         loop {

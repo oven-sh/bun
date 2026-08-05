@@ -347,8 +347,7 @@ impl S3HttpDownloadStreamingTask {
             vm.event_loop_shared().enqueue_task_concurrent(task);
         }
         if is_done {
-            // HTTP engagement over: release the worker-shutdown fence taken at
-            // schedule time (last VM access, via the local).
+            // Final callback: last VM access, via the local.
             vm.event_loop_shared().offthread_job_end();
         }
     }

@@ -74,12 +74,9 @@ use crate::{self as jsc, JSGlobalObject, JSValue, JsError, LogJsc};
 bun_core::define_scoped_log!(log, Worker, hidden);
 
 /// How long `shutdown()` waits for `EventLoop::outstanding_offthread` to
-/// reach zero before giving up and leaking the VM (see the fence in
-/// `shutdown()`). The cancel fan-out bounds the common cases (HTTP work
-/// aborts; cancel-aware pool bodies skip their compute), so the deadline only
-/// fires for pathological jobs (a blocked filesystem op, an addon `execute`
-/// that never returns) — exactly the ones where a bounded leak beats an
-/// unbounded hang or a use-after-free.
+/// reach zero before leaking the VM instead. The cancel fan-out bounds the
+/// common cases; the deadline only fires for pathological jobs (a blocked
+/// filesystem op, an addon `execute` that never returns).
 const OFFTHREAD_JOB_WAIT_MS: u64 = 10_000;
 
 // ---- Immutable after `create()` (safe from any thread) ----------------------
@@ -1235,9 +1232,8 @@ impl WebWorker {
         let mut arena = self.arena.replace(None);
         let env_loader = self.worker_env_loader.replace(core::ptr::null_mut());
 
-        // `false` when the off-thread job fence below timed out: some job on
-        // another thread can still dereference VM-owned memory, so every free
-        // past step 3 is skipped (leak, not use-after-free).
+        // `false` when the off-thread fence timed out: a job can still reach
+        // VM-owned memory, so every free past step 3 is skipped.
         let mut drained = true;
 
         // ---- 1. Unpublish vm ------------------------------------------------
@@ -1317,19 +1313,14 @@ impl WebWorker {
             // or observes m_isShuttingDown under m_lock and drops. Idempotent;
             // teardownJSCVM sets it again.
             Bun__JSCTaskScheduler__markShuttingDown(vm.global());
-            // Off-thread job fence: every job this VM handed to another thread
+            // Off-thread job fence: jobs this VM handed to other threads
             // (WorkPool bodies, HTTP-thread fetch/S3 callbacks, the bundler
-            // thread) holds raw pointers into the VM box, its EventLoop, or
-            // JSC-heap memory (buffers pinned by the scheduling call), and the
-            // markTerminating/markShuttingDown gates above only cover the C++
-            // posters. Cancel what can be cancelled (in-flight HTTP work
-            // aborts; pool bodies that poll `offthread_cancel` skip their
-            // compute), then wait for `outstanding_offthread` to reach zero so
-            // nothing below frees memory a job can still touch. Completions
-            // posted while we wait are reclaimed unrun by the drain below,
-            // with JSC still alive. On timeout (a straggler past
-            // OFFTHREAD_JOB_WAIT_MS) `drained` stays false and steps 3/5 leak
-            // the VM instead of freeing it.
+            // thread) hold raw pointers into the VM box / EventLoop / JSC
+            // heap, and the gates above only cover the C++ posters. Cancel
+            // what can be cancelled, then wait for `outstanding_offthread` to
+            // hit zero before anything below frees that memory. Completions
+            // posted during the wait are reclaimed unrun by the drain below,
+            // with JSC still alive. On timeout steps 3/5 leak the VM instead.
             vm.event_loop_shared().request_offthread_cancel();
             vm.run_terminate_cancel_hooks();
             drained = vm
@@ -1358,9 +1349,8 @@ impl WebWorker {
         }
 
         // ---- 3. JSC VM teardown --------------------------------------------
-        // Skipped when the off-thread fence timed out: a straggling job may
-        // still read JSC-heap memory (ArrayBuffer stores, Strong-held cells),
-        // so the heap is leaked along with the VM box in step 5.
+        // Skipped on fence timeout: a straggler may still read JSC-heap
+        // memory, so the heap is leaked along with the VM box in step 5.
         if let Some(global) = global_object {
             if drained {
                 // `JSGlobalObject` is an opaque ZST handle; `opaque_ref` is the
@@ -1406,10 +1396,8 @@ impl WebWorker {
             bun_sys::windows::libuv::Loop::shutdown();
         }
         if !vm_ptr.is_null() && !drained {
-            // Fence timed out: a straggling off-thread job can still reach the
-            // VM box, its EventLoop/uws loop, the JSC heap, and the cloned env
-            // — leak them all. Only the thread-local VM binding is cleared
-            // (the thread is about to exit).
+            // Fence timeout: leak the VM box, loops, JSC heap, and cloned env;
+            // only clear the thread-local binding (the thread is exiting).
             virtual_machine::VMHolder::set_vm(None);
         }
         if !vm_ptr.is_null() && drained {
@@ -1455,10 +1443,9 @@ impl WebWorker {
         // skipped on glibc; under BUN_DESTRUCT_VM_ON_EXIT it would also gate
         // on `!bun_is_exiting()`. Everything that registers polls on the loop
         // (gc_controller, sockets, timers) has been deinit'd above.
-        // Leak-path exception: a straggling job's completion post still calls
-        // `wakeup()` through the (leaked) VM's loop pointer, so the loop must
-        // stay allocated; the arena backs VM-reachable allocations the same
-        // way.
+        // Leak-path exception: a straggler's completion post still calls
+        // `wakeup()` through the leaked VM's loop pointer, and the arena backs
+        // VM-reachable allocations, so both must stay allocated.
         if drained {
             bun_uws::on_thread_exit();
             drop(arena.take());

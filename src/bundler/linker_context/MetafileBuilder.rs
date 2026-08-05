@@ -229,10 +229,9 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
         }
     }
 
-    // Write inputs sorted by pretty path. Source indices are assigned while
-    // draining a hash map keyed by absolute paths, so index order varies with
-    // the directory the project lives in; emitting in index order would make
-    // metafile bytes differ between checkouts of the same project.
+    // Emit inputs sorted by pretty path: source indices are assigned in
+    // absolute-path hash order, so emitting in index order would make the
+    // metafile bytes depend on where the project directory lives.
     let mut ordered_inputs: Vec<u32> = Vec::with_capacity(sources.len());
     for source_index in 0..sources.len() as u32 {
         if !seen_sources.is_set(source_index as usize) {

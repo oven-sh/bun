@@ -1407,7 +1407,11 @@ impl Layers {
 }
 
 impl CssImportOrder {
-    pub(crate) fn hash<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
+    pub(crate) fn hash<H: bun_core::Hasher + ?Sized>(
+        &self,
+        hasher: &mut H,
+        sources: &[bun_ast::Source],
+    ) {
         // TODO: conditions, condition_import_records
 
         // core::mem::Discriminant is opaque/pointer-sized; hash an explicit u8 tag instead.
@@ -1433,10 +1437,12 @@ impl CssImportOrder {
                 hasher.update(b"\x00");
             }
             CssImportOrderKind::ExternalPath(path) => hasher.update(path.text),
-            // Note: `Index` is a `#[repr(transparent)]` u32 newtype but
-            // doesn't impl `AsBytes`; hash the inner u32.
+            // Hash the file's pretty path, not its source index: these hashes
+            // decide CSS chunk identity and output order, and source indices
+            // are assigned in a scheduling-dependent order.
             CssImportOrderKind::SourceIndex(idx) => {
-                bun_core::write_any_to_hasher(hasher, idx.get())
+                hasher.update(sources[idx.get() as usize].path.pretty);
+                hasher.update(b"\x00");
             }
         }
     }

@@ -1153,13 +1153,14 @@ test("request on a connection surviving graceful stop() never reaches a collecte
                 fetch() { return new Response("ok " + tag + " fallback"); },
               });
         const url = "http://127.0.0.1:" + server.port + (kind === "fetch" ? "/" : "/r/7");
+        const want = kind === "fetch" ? "ok " + tag : "ok " + tag + " 7";
         fr.register(server, url);
         // Two pooled keep-alive connections that outlive the server binding.
         await Promise.all([1, 2].map(() => fetch(url).then(r => r.text())));
         await new Promise(r => setImmediate(r));
         server.stop(); // graceful: pooled connections stay open
         server = null;
-        urls.push({ u: url, kind });
+        urls.push({ u: url, kind, want });
         if (urls.length > 6) urls.shift();
         churn();
         Bun.gc(false);
@@ -1169,17 +1170,17 @@ test("request on a connection surviving graceful stop() never reaches a collecte
         for (let i = 0; i < 3; i++) decoys.push(Bun.serve({ port: 0, fetch() { return new Response("decoy"); } }));
         churn();
         const rs = await Promise.all(
-          urls.map(({ u, kind }) => {
+          urls.map(({ u, kind, want }) => {
             const wasCollected = dead.has(u);
             return fetch(u).then(
-              async r => ({ kind, wasCollected, status: r.status, body: await r.text() }),
-              () => ({ kind, wasCollected, status: 0, body: "" }),
+              async r => ({ kind, want, wasCollected, status: r.status, body: await r.text() }),
+              () => ({ kind, want, wasCollected, status: 0, body: "" }),
             );
           }),
         );
         for (const d of decoys) d.stop(true);
-        for (const { kind, status, body, wasCollected } of rs) {
-          if (status === 200 && !body.startsWith("ok ")) {
+        for (const { kind, want, status, body, wasCollected } of rs) {
+          if (status === 200 && body !== want) {
             fails.push(kind + " round " + round + ": wrong body " + JSON.stringify(body.slice(0, 16)));
           } else if (status === 200 && wasCollected) {
             fails.push(kind + " round " + round + ": collected server answered");

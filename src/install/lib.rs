@@ -229,8 +229,8 @@ pub(crate) mod install {
 /// referenced unconditionally so the module must exist on all targets).
 // `#[path]` inside an inline `mod {}` resolves relative to the
 // synthetic `windows_shim/` directory, which doesn't exist on disk. Hoist the
-// file-backed module to crate level with an absolute-ish path and re-export
-// through the inline mod so `windows_shim::bin_linking_shim` keeps resolving.
+// file-backed module to crate level with an absolute-ish path and import it
+// inside the inline mod.
 #[cfg(windows)]
 #[path = "windows-shim/BinLinkingShim.rs"]
 pub mod _bin_linking_shim;

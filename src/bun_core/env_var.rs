@@ -268,6 +268,10 @@ pub mod feature_flag {
     // the client implementation matures. `--experimental-http3-fetch` is the
     // CLI equivalent.
     new_feature_flag!(pub BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT, "BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT", {});
+    // Rewrite statically-analyzable zod v4 schema expressions into lazy
+    // compiled wrappers (src/js_parser/zod.rs). Applies to both the runtime
+    // transpiler and `bun build`.
+    new_feature_flag!(pub BUN_FEATURE_FLAG_EXPERIMENTAL_ZOD, "BUN_FEATURE_FLAG_EXPERIMENTAL_ZOD", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_IO_POOL, "BUN_FEATURE_FLAG_FORCE_IO_POOL", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS, "BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS", {});
     new_feature_flag!(pub BUN_INSTRUMENTS, "BUN_INSTRUMENTS", {});

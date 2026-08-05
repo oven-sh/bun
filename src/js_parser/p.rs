@@ -203,6 +203,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// parser / visitor / lowerer body at startup.
     pub(crate) jsx_transform: JSXTransformType,
     pub(crate) macro_: MacroState<'a>,
+    pub(crate) zod: crate::zod::ZodState,
     pub(crate) arena: &'a Bump,
     pub(crate) options: ParserOptions<'a>,
     /// Raw pointer alias of `lexer.log`. Rust cannot store two `&'a mut Log` to one allocation
@@ -3645,6 +3646,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(star) = stmt.star_name_loc.to_nullable() {
             let name = self.load_name_from_ref(stmt.namespace_ref);
             stmt.namespace_ref = self.declare_symbol(js_ast::symbol::Kind::Import, star, name)?;
+            self.zod_maybe_track_import(path.text, stmt.namespace_ref, None);
 
             if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
                 if let Some(uses) = &mut self.parse_pass_symbol_uses {
@@ -3693,6 +3695,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.declare_symbol(js_ast::symbol::Kind::Import, name_loc.loc, name)?;
                 name_loc.ref_ = r#ref;
                 self.is_import_item.insert(r#ref, ());
+                self.zod_maybe_track_import(path.text, r#ref, Some(b"default"));
 
                 // ensure every e_import_identifier holds the namespace
                 if self.options.features.hot_module_reloading {
@@ -3774,6 +3777,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
             let alias: &'a [u8] = item.alias.slice();
             self.check_for_non_bmp_code_point(item.alias_loc, alias);
+            self.zod_maybe_track_import(path.text, r#ref, Some(alias));
 
             // ensure every e_import_identifier holds the namespace
             if self.options.features.hot_module_reloading {
@@ -8648,6 +8652,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             to_expr_wrapper_hoisted: bun_ast::binding::ToExprWrapper::dangling(),
             source,
             macro_: MacroState::init(),
+            zod: crate::zod::ZodState::init(),
             current_scope: scope,
             module_scope: scope,
             scopes_in_order: scope_order,

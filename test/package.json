@@ -111,7 +111,8 @@
     "webpack-cli": "4.7.2",
     "ws": "8.18.3",
     "xml2js": "0.6.2",
-    "yargs": "17.7.2"
+    "yargs": "17.7.2",
+    "zod": "4.4.3"
   },
   "private": true,
   "scripts": {

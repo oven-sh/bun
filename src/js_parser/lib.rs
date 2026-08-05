@@ -24,6 +24,7 @@ pub(crate) mod repl_transforms;
 pub mod scan;
 pub mod typescript;
 pub mod visit;
+pub(crate) mod zod;
 
 pub use p::P;
 pub use parse::parse_entry::{Options as ParserOptions, Parser};

@@ -267,6 +267,10 @@ pub mod Runtime {
         // Vestigial bool stub retained until its last reader (parseJSXElement.rs)
         // is ported to the real predicate; defaults false and is otherwise inert.
         pub jsx_optimization_inline: bool,
+
+        /// Rewrite statically-analyzable zod v4 schema expressions into lazy
+        /// compiled wrappers. See `src/js_parser/zod.rs`.
+        pub zod_transform: bool,
     }
 
     impl Default for Features {
@@ -306,6 +310,7 @@ pub mod Runtime {
                 bundler_feature_flags: None,
                 repl_mode: false,
                 jsx_optimization_inline: false,
+                zod_transform: false,
             }
         }
     }
@@ -390,6 +395,11 @@ pub mod Runtime {
                     hasher.update(flag);
                     hasher.update(b"\x00");
                 }
+            }
+
+            // Hashed only when enabled so existing cache entries stay valid.
+            if self.zod_transform {
+                hasher.update(b"zod_transform");
             }
         }
 

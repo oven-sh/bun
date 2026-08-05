@@ -2004,6 +2004,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        if p.options.features.zod_transform {
+            if let Some(result) = p.maybe_transform_zod_call(expr) {
+                *e = result;
+                return;
+            }
+        }
+
         if matches!(e_.target.data, Data::ERequireCallTarget) {
             e_.can_be_unwrapped_if_unused = E::CallUnwrap::Never;
 

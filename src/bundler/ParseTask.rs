@@ -2490,6 +2490,8 @@ pub mod parse_worker {
             || !(task.experimental_decorators || task.emit_decorator_metadata);
         opts.features.unwrap_commonjs_packages = topts.unwrap_commonjs_packages;
         opts.features.no_macros = topts.no_macros;
+        opts.features.zod_transform =
+            bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_ZOD.get().unwrap_or(false);
         // Modeled as
         // `Option<Box<StringSet>>` on both sides, so we deep-clone (small —
         // CLI-supplied flag set). PERF: retype

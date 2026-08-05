@@ -828,8 +828,13 @@ static void imageTrapArm()
     s_trapCap = 1 << 18; s_trapRecs = (TrapRec*)mmap(nullptr, s_trapCap * sizeof(TrapRec), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     struct sigaction sa {}; sa.sa_sigaction = imageTrapHandler; sa.sa_flags = SA_SIGINFO | SA_NODEFER; sigemptyset(&sa.sa_mask);
     sigaction(SIGBUS, &sa, &s_prevBus); sigaction(SIGSEGV, &sa, &s_prevSegv);
-    size_t n = 0; for (auto& r : s_frozenRanges) { if (!mprotect((void*)r.first, r.second - r.first, PROT_READ)) n += r.second - r.first; }
-    fprintf(stderr, "[imagetrap] armed: %.1fMB read-only\n", n / 1048576.0);
+    size_t n = 0;
+    const char* mode = getenv("BUN_IMAGE_TRAP");
+    if (mode && !strcmp(mode, "cells")) { // only MarkedBlock pages: syscalls never target them, so kernel-side EFAULTs can't derail the run
+        for (uintptr_t page : s_cellPages) if (!mprotect((void*)page, 16384, PROT_READ)) n += 16384;
+    } else
+        for (auto& r : s_frozenRanges) { if (!mprotect((void*)r.first, r.second - r.first, PROT_READ)) n += r.second - r.first; }
+    fprintf(stderr, "[imagetrap] armed: %.1fMB read-only (%s)\n", n / 1048576.0, mode);
 }
 static void imageTrapReport()
 {
@@ -867,7 +872,13 @@ static void imageDump(JSC::VM& vm, const char* path)
             return IterationStatus::Continue;
         });
     }
-    if (getenv("BUN_IMAGE_DELETE_CODE")) { JSC::sanitizeStackForVM(vm); vm.deleteAllCode(JSC::DeleteAllCodeIfNotCollecting); } // linked CodeBlocks, metadata (value profiles/ICs) and JIT code are per-run hot state; leave them out of the image
+    { // linked CodeBlocks, metadata (value profiles/ICs), UnlinkedCodeBlocks and JIT code are per-run hot state: measured 11-17MB cheaper to re-create them fresh than to dirty them in the image
+        const char* dc = getenv("BUN_IMAGE_DELETE_CODE"); // =0 keep all, =linked keep unlinked; default: drop everything
+        JSC::sanitizeStackForVM(vm);
+        if (dc && !strcmp(dc, "0")) { }
+        else if (dc && !strcmp(dc, "linked")) vm.deleteAllLinkedCode(JSC::DeleteAllCodeIfNotCollecting);
+        else vm.deleteAllCode(JSC::DeleteAllCodeIfNotCollecting);
+    }
     if (getenv("BUN_IMAGE_NOFREEZE")) vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     else vm.heap.freezeCurrentHeapAsImmortalImage(); // GC never writes image blocks again (frozen marks = liveness, side remembered set)
     mi_option_set(mi_option_purge_delay, 0);

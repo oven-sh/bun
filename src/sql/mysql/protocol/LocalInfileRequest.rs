@@ -1,19 +1,12 @@
 use super::any_mysql_error::Error as AnyMySQLError;
 use super::new_reader::{NewReader, ReaderContext};
 
+#[derive(Default)]
 pub struct LocalInfileRequest {
     // Callers populate this from `PacketHeader.length`, the 3-byte
     // MySQL packet length (always <= 0xFFFFFF), so `u32` holds it losslessly.
+    // Caller must set packet_size before decode.
     pub packet_size: u32,
-}
-
-impl Default for LocalInfileRequest {
-    fn default() -> Self {
-        Self {
-            // Caller must set packet_size before decode.
-            packet_size: 0,
-        }
-    }
 }
 
 impl LocalInfileRequest {

@@ -54,23 +54,23 @@ const html = Bun.markdown.html("some markdown", {
 
 All available options:
 
-| Option                 | Default | Description                                                 |
-| ---------------------- | ------- | ----------------------------------------------------------- |
-| `tables`               | `true`  | GFM tables                                                  |
-| `strikethrough`        | `true`  | GFM strikethrough (`~~text~~`)                              |
-| `tasklists`            | `true`  | GFM task lists (`- [x] item`)                               |
-| `autolinks`            | `false` | Enable autolinks — see [Autolinks](#autolinks)              |
-| `headings`             | `false` | Heading IDs and autolinks — see [Heading IDs](#heading-ids) |
-| `hardSoftBreaks`       | `false` | Treat soft line breaks as hard breaks                       |
-| `wikiLinks`            | `false` | Enable `[[wiki links]]`                                     |
-| `underline`            | `false` | `__text__` renders as `<u>` instead of `<strong>`           |
-| `latexMath`            | `false` | Enable `$inline$` and `$$display$$` math                    |
-| `collapseWhitespace`   | `false` | Collapse whitespace in text                                 |
-| `permissiveAtxHeaders` | `false` | ATX headers without space after `#`                         |
-| `noIndentedCodeBlocks` | `false` | Disable indented code blocks                                |
-| `noHtmlBlocks`         | `false` | Disable HTML blocks                                         |
-| `noHtmlSpans`          | `false` | Disable inline HTML                                         |
-| `tagFilter`            | `false` | GFM tag filter for disallowed HTML tags                     |
+| Option                 | Default | Description                                                           |
+| ---------------------- | ------- | --------------------------------------------------------------------- |
+| `tables`               | `true`  | GFM tables                                                            |
+| `strikethrough`        | `true`  | GFM strikethrough (`~~text~~`)                                        |
+| `tasklists`            | `true`  | GFM task lists (`- [x] item`)                                         |
+| `autolinks`            | `false` | Enable autolinks — see [Autolinks](#autolinks)                        |
+| `headings`             | `false` | Heading IDs and autolinks — see [Heading IDs](#heading-ids)           |
+| `hardSoftBreaks`       | `false` | Treat soft line breaks as hard breaks                                 |
+| `wikiLinks`            | `false` | Enable `[[wiki links]]`                                               |
+| `underline`            | `false` | `__text__` renders as `<u>` instead of `<strong>`                     |
+| `latexMath`            | `false` | Enable `$inline$` and `$$display$$` math                              |
+| `collapseWhitespace`   | `false` | Collapse whitespace in text                                           |
+| `permissiveAtxHeaders` | `false` | ATX headers without space after `#`                                   |
+| `noIndentedCodeBlocks` | `false` | Disable indented code blocks                                          |
+| `noHtmlBlocks`         | `false` | Disable HTML blocks                                                   |
+| `noHtmlSpans`          | `false` | Disable inline HTML                                                   |
+| `tagFilter`            | `false` | GFM tag filter for disallowed HTML tags                               |
 | `frontmatter`          | `true`  | Skip a leading front-matter block — see [Front matter](#front-matter) |
 
 #### Autolinks

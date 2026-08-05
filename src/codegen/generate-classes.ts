@@ -115,6 +115,7 @@ JSC_DEFINE_JIT_OPERATION(${DOMJITName(
   )}Wrapper, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue${formattedArgs}))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
     IGNORE_WARNINGS_BEGIN("frame-address")
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
@@ -122,6 +123,7 @@ JSC_DEFINE_JIT_OPERATION(${DOMJITName(
 #if BUN_DEBUG
     ${jsClassName}* wrapper = reinterpret_cast<${jsClassName}*>(thisValue);
     JSC::EncodedJSValue result = ${DOMJITName(symName)}(wrapper->wrapped(), lexicalGlobalObject${retArgs});
+    OPERATION_RETURN_IF_EXCEPTION(throwScope, result);
     JSValue decoded = JSValue::decode(result);
     if (wrapper->m_${fn}_expectedResultType) {
         if (decoded.isCell() && !decoded.isEmpty()) {
@@ -135,9 +137,9 @@ JSC_DEFINE_JIT_OPERATION(${DOMJITName(
           ? std::optional<JSC::JSType>(decoded.asCell()->type())
           : std::optional<JSC::JSType>(std::nullopt);
     }
-    return { result };
+    OPERATION_RETURN(throwScope, result);
 #endif
-    return {${DOMJITName(symName)}(reinterpret_cast<${jsClassName}*>(thisValue)->wrapped(), lexicalGlobalObject${retArgs})};
+    OPERATION_RETURN(throwScope, ${DOMJITName(symName)}(reinterpret_cast<${jsClassName}*>(thisValue)->wrapped(), lexicalGlobalObject${retArgs}));
 }
 `.trim();
 }
@@ -1221,6 +1223,7 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
       !proto[name].DOMJIT
         ? ""
         : `
+    RETURN_IF_EXCEPTION(scope, result);
     JSValue decoded = JSValue::decode(result);
     if (thisObject->m_${fn}_expectedResultType) {
       if (decoded.isCell() && !decoded.isEmpty()) {

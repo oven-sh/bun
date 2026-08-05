@@ -3929,7 +3929,7 @@ it("http2 allowHTTP1 fallback serves pipelined requests in order", async () => {
 
 it("http2 allowHTTP1 fallback aborts a queued pipelined response when the connection dies", async () => {
   const closedEvents = [];
-  const { promise: aborted, resolve: onAborted } = Promise.withResolvers();
+  const { promise: aborted, resolve: onAborted, reject: onSocketError } = Promise.withResolvers();
   let closesPending = 2;
   const onQueuedClose = tag => {
     closedEvents.push(tag);
@@ -3948,7 +3948,9 @@ it("http2 allowHTTP1 fallback aborts a queued pipelined response when the connec
     { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
     () => socket.write("GET /a HTTP/1.1\r\nHost: localhost\r\n\r\nGET /b HTTP/1.1\r\nHost: localhost\r\n\r\n"),
   );
-  socket.on("error", () => {});
+  // The server handler destroys this socket without an error, so any 'error'
+  // here is a real failure (e.g. the TLS handshake), not the expected close.
+  socket.on("error", onSocketError);
   try {
     await aborted;
     expect(closedEvents.sort()).toEqual(["reqB", "resB"]);

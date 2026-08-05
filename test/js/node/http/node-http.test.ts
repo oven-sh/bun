@@ -4309,8 +4309,14 @@ it("connectionListener pauses reads when queued pipelined responses back up", as
     }
   });
   server.emit("connection", serverSide);
+  const { promise: allServed, resolve: onAllServed, reject: onClientFailure } = Promise.withResolvers<void>();
   let received = "";
-  clientSide.on("data", d => (received += d));
+  clientSide.on("data", d => {
+    received += d;
+    if ((received.match(/HTTP\/1\.1 200 /g) || []).length >= N) onAllServed();
+  });
+  clientSide.on("error", onClientFailure);
+  clientSide.on("close", () => onClientFailure(new Error("closed before all responses: " + received)));
   // One write per request so the gate (checked per headers-complete) takes
   // effect between data events.
   for (let i = 0; i < N; i++) {
@@ -4322,9 +4328,7 @@ it("connectionListener pauses reads when queued pipelined responses back up", as
   expect(dispatched).toBeLessThan(N);
   // Draining the pipeline releases the gate and everything is served.
   releaseFirst();
-  while ((received.match(/HTTP\/1\.1 200 /g) || []).length < N) {
-    await new Promise(resolve => setImmediate(resolve));
-  }
+  await allServed;
   expect(dispatched).toBe(N);
   clientSide.destroy();
   serverSide.destroy();

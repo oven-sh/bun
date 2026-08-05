@@ -318,15 +318,25 @@ fn main_fields_hash(fields: &[Box<[u8]>]) -> u64 {
     hasher.digest()
 }
 
-struct InternedPackageJson {
-    shape: PackageJsonParseShape,
+/// The outcome of the last parse for a (path, shape) pair: either the
+/// interned struct, or the bytes of a file that read fine but produced no
+/// `PackageJSON` (invalid JSON, non-object root). Recording failures too is
+/// what lets a bust over an unchanged-but-broken file skip the re-parse.
+enum InternedPackageJsonState {
     /// Arena slot; `NonNull` (not `&'static`) so mut-provenance from intern
     /// time survives to the `package_manager_package_id` write sites.
-    ptr: core::ptr::NonNull<PackageJSON>,
+    Parsed(core::ptr::NonNull<PackageJSON>),
+    Unparseable(Box<[u8]>),
 }
 
-// SAFETY: `ptr` targets an append-only arena slot; it crosses threads exactly
-// like the `&'static PackageJSON` refs the DirInfo cache already hands out.
+struct InternedPackageJson {
+    shape: PackageJsonParseShape,
+    state: InternedPackageJsonState,
+}
+
+// SAFETY: the `Parsed` pointer targets an append-only arena slot; it crosses
+// threads exactly like the `&'static PackageJSON` refs the DirInfo cache
+// already hands out.
 unsafe impl Send for InternedPackageJson {}
 
 #[derive(Default)]
@@ -342,9 +352,38 @@ struct PackageJsonInterner {
 static PACKAGE_JSON_INTERNER: std::sync::LazyLock<bun_threading::Guarded<PackageJsonInterner>> =
     std::sync::LazyLock::new(Default::default);
 
+/// Number of `PackageJSON::parse_with_contents` runs. Read via
+/// `bun:internal-for-testing` by leak regression tests (together with
+/// [`package_json_arena_len`]) to assert busts skip re-parses.
+static PACKAGE_JSON_PARSE_COUNT: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
 /// Arena length; read via `bun:internal-for-testing` by leak regression tests.
 pub fn package_json_arena_len() -> usize {
     PACKAGE_JSON_INTERNER.lock().arena.len()
+}
+
+pub fn package_json_parse_count() -> usize {
+    PACKAGE_JSON_PARSE_COUNT.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// Point the (path, shape) slot at `state`, replacing any previous record.
+fn set_package_json_slot(
+    interner: &mut PackageJsonInterner,
+    path: &'static [u8],
+    shape: PackageJsonParseShape,
+    state: InternedPackageJsonState,
+) {
+    match interner.by_path.get_mut(path) {
+        Some(slots) => match slots.iter_mut().find(|slot| slot.shape == shape) {
+            Some(slot) => slot.state = state,
+            None => slots.push(InternedPackageJson { shape, state }),
+        },
+        None => interner
+            .by_path
+            .put_static_key(path, vec![InternedPackageJson { shape, state }])
+            .expect("unreachable"),
+    }
 }
 
 /// Intern `pkg`, reusing the existing allocation when path, bytes, and shape
@@ -359,13 +398,17 @@ fn intern_package_json(
     let mut guard = PACKAGE_JSON_INTERNER.lock();
     let interner = &mut *guard;
 
-    if let Some(slot) = interner
+    if let Some(InternedPackageJson {
+        state: InternedPackageJsonState::Parsed(ptr),
+        ..
+    }) = interner
         .by_path
         .get_mut(path)
         .and_then(|slots| slots.iter_mut().find(|slot| slot.shape == shape))
     {
+        let mut cached_ptr = *ptr;
         // SAFETY: ARENA — arena slots are never freed or moved.
-        let cached: &PackageJSON = unsafe { slot.ptr.as_ref() };
+        let cached: &PackageJSON = unsafe { cached_ptr.as_ref() };
         if strings::eql(&cached.source_contents, &pkg.source_contents) {
             // Reuse; the fresh parse drops. Carry over a resolved package id,
             // but never clear one written by `enqueue_dependency_to_resolve`.
@@ -373,36 +416,41 @@ fn intern_package_json(
             if fresh_id != Install::INVALID_PACKAGE_ID
                 && cached.package_manager_package_id != fresh_id
             {
-                // SAFETY: `ptr` carries mut-provenance from intern time; same
-                // single-writer contract as the `package_manager_package_id`
-                // write in `enqueue_dependency_to_resolve`.
-                unsafe { slot.ptr.as_mut() }.package_manager_package_id = fresh_id;
+                // SAFETY: the pointer carries mut-provenance from intern time;
+                // same single-writer contract as the write in
+                // `enqueue_dependency_to_resolve`.
+                unsafe { cached_ptr.as_mut() }.package_manager_package_id = fresh_id;
             }
-            return slot.ptr;
+            return cached_ptr;
         }
-        // Bytes changed: intern the new parse and repoint the slot. The stale
-        // copy stays in the arena — un-busted DirInfos may still reference it.
-        interner.arena.push(Box::new(pkg));
-        // SAFETY: entries are never removed; the box interior is stable across
-        // `Vec` realloc. Derive from `&mut **last` so the returned pointer
-        // carries mut-provenance.
-        let ptr = core::ptr::NonNull::from(&mut **interner.arena.last_mut().unwrap());
-        slot.ptr = ptr;
-        return ptr;
     }
 
+    // New path, new bytes, or a previously unparseable file: intern the fresh
+    // parse and repoint the slot. A replaced copy stays in the arena —
+    // un-busted DirInfos may still reference it.
     interner.arena.push(Box::new(pkg));
-    // SAFETY: as above — stable box interior, mut-provenance via `&mut **last`.
+    // SAFETY: entries are never removed; the box interior is stable across
+    // `Vec` realloc. Derive from `&mut **last` so the returned pointer
+    // carries mut-provenance.
     let ptr = core::ptr::NonNull::from(&mut **interner.arena.last_mut().unwrap());
-    let entry = InternedPackageJson { shape, ptr };
-    match interner.by_path.get_mut(path) {
-        Some(slots) => slots.push(entry),
-        None => interner
-            .by_path
-            .put_static_key(path, vec![entry])
-            .expect("unreachable"),
-    }
+    set_package_json_slot(interner, path, shape, InternedPackageJsonState::Parsed(ptr));
     ptr
+}
+
+/// Record that `path` read fine but produced no `PackageJSON`, so the next
+/// bust over identical bytes can skip the re-parse.
+fn intern_unparseable_package_json(
+    path: &'static [u8],
+    shape: PackageJsonParseShape,
+    contents: Box<[u8]>,
+) {
+    let mut guard = PACKAGE_JSON_INTERNER.lock();
+    set_package_json_slot(
+        &mut guard,
+        path,
+        shape,
+        InternedPackageJsonState::Unparseable(contents),
+    );
 }
 
 /// One file the tsconfig merge visited; `contents: None` = unreadable (e.g. a
@@ -417,8 +465,10 @@ struct TsconfigChainLink {
 struct InternedTsconfig {
     /// Every file that fed the merge, root first, in walk order.
     chain: Vec<TsconfigChainLink>,
-    /// Points at a `TsconfigInterner::arena` slot.
-    ptr: core::ptr::NonNull<TSConfigJSON>,
+    /// `TsconfigInterner::arena` slot, or `None` when the chain produced no
+    /// config (the root read fine but its JSONC failed to parse); recording
+    /// that outcome lets a bust over unchanged bytes skip the re-parse.
+    ptr: Option<core::ptr::NonNull<TSConfigJSON>>,
 }
 
 // SAFETY: same contract as `InternedPackageJson` — append-only arena slot
@@ -438,81 +488,115 @@ struct TsconfigInterner {
 static TSCONFIG_INTERNER: std::sync::LazyLock<bun_threading::Guarded<TsconfigInterner>> =
     std::sync::LazyLock::new(Default::default);
 
+/// Number of `parse_tsconfig` runs; see [`package_json_parse_count`].
+static TSCONFIG_PARSE_COUNT: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
 /// Arena length; read via `bun:internal-for-testing` by leak regression tests.
 pub fn tsconfig_arena_len() -> usize {
     TSCONFIG_INTERNER.lock().arena.len()
 }
 
-/// Intern the merge for `root_path`, reusing the existing allocation when the
-/// chain matches. `merged` came from `heap::into_raw`; on reuse it is
-/// destroyed here.
+pub fn tsconfig_parse_count() -> usize {
+    TSCONFIG_PARSE_COUNT.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// Intern the merge for `root_path` (`None` = the chain produced no config),
+/// reusing the existing allocation when the chain matches. A `Some` pointer
+/// came from `heap::into_raw`; on reuse it is destroyed here.
 fn intern_tsconfig(
     root_path: &[u8],
     chain: Vec<TsconfigChainLink>,
-    merged: *mut TSConfigJSON,
-) -> core::ptr::NonNull<TSConfigJSON> {
+    merged: Option<*mut TSConfigJSON>,
+) -> Option<core::ptr::NonNull<TSConfigJSON>> {
     let mut guard = TSCONFIG_INTERNER.lock();
     let interner = &mut *guard;
 
     if let Some(slot) = interner.by_path.get_mut(root_path) {
-        if slot.chain == chain {
-            // SAFETY: `merged` came from `heap::into_raw` in the caller's
-            // merge walk and is uniquely owned here.
-            TSConfigJSON::destroy(unsafe { bun_core::heap::take(merged) });
+        if slot.chain == chain && slot.ptr.is_some() == merged.is_some() {
+            if let Some(merged) = merged {
+                // SAFETY: `merged` came from `heap::into_raw` in the caller's
+                // merge walk and is uniquely owned here.
+                TSConfigJSON::destroy(unsafe { bun_core::heap::take(merged) });
+            }
             return slot.ptr;
         }
-        // Chain changed: intern the new merge and repoint the slot; the stale
-        // copy stays in the arena (un-busted DirInfos may still reference it).
+    }
+
+    // New path or changed chain: intern the new outcome and repoint the slot;
+    // a replaced merge stays in the arena (un-busted DirInfos may still
+    // reference it).
+    let ptr = merged.map(|merged| {
         // SAFETY: as above — reclaim the caller's allocation.
         interner.arena.push(unsafe { bun_core::heap::take(merged) });
         // SAFETY: see `intern_package_json` — stable box interior,
         // mut-provenance via `&mut **last`.
-        let ptr = core::ptr::NonNull::from(&mut **interner.arena.last_mut().unwrap());
-        *slot = InternedTsconfig { chain, ptr };
-        return ptr;
+        core::ptr::NonNull::from(&mut **interner.arena.last_mut().unwrap())
+    });
+    match interner.by_path.get_mut(root_path) {
+        Some(slot) => *slot = InternedTsconfig { chain, ptr },
+        None => interner
+            .by_path
+            .put(root_path, InternedTsconfig { chain, ptr })
+            .expect("unreachable"),
     }
-
-    // SAFETY: as above — reclaim the caller's allocation.
-    interner.arena.push(unsafe { bun_core::heap::take(merged) });
-    // SAFETY: as above.
-    let ptr = core::ptr::NonNull::from(&mut **interner.arena.last_mut().unwrap());
-    interner
-        .by_path
-        .put(root_path, InternedTsconfig { chain, ptr })
-        .expect("unreachable");
     ptr
 }
 
-/// Return the interned copy for (`package_json_path`, `shape`) when its bytes
-/// equal `contents`, skipping the parse (see `PackageJSON::read_for_parse`).
+/// Reuse outcome for `parse_package_json`'s fast path.
+enum PackageJsonReuse {
+    /// No usable record; parse.
+    Miss,
+    /// Unchanged bytes: the previous outcome stands (`None` = known
+    /// unparseable).
+    Hit(Option<core::ptr::NonNull<PackageJSON>>),
+}
+
+/// Fast path for `parse_package_json`: when the (path, shape) slot's recorded
+/// bytes equal `contents`, the previous outcome stands and the parse is
+/// skipped (see `PackageJSON::read_for_parse`).
 fn reuse_interned_package_json(
     package_json_path: &[u8],
     shape: PackageJsonParseShape,
     contents: &[u8],
     package_id: Option<Install::PackageID>,
-) -> Option<core::ptr::NonNull<PackageJSON>> {
+) -> PackageJsonReuse {
     let mut guard = PACKAGE_JSON_INTERNER.lock();
-    let slot = guard
+    let Some(slot) = guard
         .by_path
-        .get_mut(package_json_path)?
-        .iter_mut()
-        .find(|slot| slot.shape == shape)?;
-    // SAFETY: ARENA — arena slots are never freed or moved.
-    let cached: &PackageJSON = unsafe { slot.ptr.as_ref() };
-    if !strings::eql(&cached.source_contents, contents) {
-        return None;
-    }
-    // Apply the caller-provided lockfile id as the parse would have, but never
-    // clear an id written by `enqueue_dependency_to_resolve`.
-    if let Some(id) = package_id {
-        if id != Install::INVALID_PACKAGE_ID && cached.package_manager_package_id != id {
-            // SAFETY: `ptr` carries mut-provenance from intern time; same
-            // single-writer contract as the `package_manager_package_id`
-            // write in `enqueue_dependency_to_resolve`.
-            unsafe { slot.ptr.as_mut() }.package_manager_package_id = id;
+        .get_mut(package_json_path)
+        .and_then(|slots| slots.iter_mut().find(|slot| slot.shape == shape))
+    else {
+        return PackageJsonReuse::Miss;
+    };
+    match &slot.state {
+        InternedPackageJsonState::Parsed(ptr) => {
+            let mut cached_ptr = *ptr;
+            // SAFETY: ARENA — arena slots are never freed or moved.
+            let cached: &PackageJSON = unsafe { cached_ptr.as_ref() };
+            if !strings::eql(&cached.source_contents, contents) {
+                return PackageJsonReuse::Miss;
+            }
+            // Apply the caller-provided lockfile id as the parse would have,
+            // but never clear an id written by `enqueue_dependency_to_resolve`.
+            if let Some(id) = package_id {
+                if id != Install::INVALID_PACKAGE_ID && cached.package_manager_package_id != id {
+                    // SAFETY: the pointer carries mut-provenance from intern
+                    // time; same single-writer contract as the write in
+                    // `enqueue_dependency_to_resolve`.
+                    unsafe { cached_ptr.as_mut() }.package_manager_package_id = id;
+                }
+            }
+            PackageJsonReuse::Hit(Some(cached_ptr))
+        }
+        InternedPackageJsonState::Unparseable(recorded) => {
+            if strings::eql(recorded, contents) {
+                PackageJsonReuse::Hit(None)
+            } else {
+                PackageJsonReuse::Miss
+            }
         }
     }
-    Some(slot.ptr)
 }
 
 // `bun_core::declare_scope!` emits the per-scope `static ScopedLogger`; the
@@ -4085,12 +4169,14 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Reuse the interned merge for `root_path` when its recorded extends
-    /// chain is unchanged on disk; `None` means the caller must re-parse.
+    /// Reuse the interned outcome for `root_path` when its recorded extends
+    /// chain is unchanged on disk. Outer `None` means the caller must
+    /// re-parse; the inner value is the recorded merge (`None` = the chain
+    /// produced no config last time).
     fn reuse_interned_tsconfig(
         &mut self,
         root_path: &[u8],
-    ) -> Option<core::ptr::NonNull<TSConfigJSON>> {
+    ) -> Option<Option<core::ptr::NonNull<TSConfigJSON>>> {
         let chain: Vec<TsconfigChainLink> = {
             let guard = TSCONFIG_INTERNER.lock();
             // Clone the (small) record so files aren't read under the lock.
@@ -4148,6 +4234,7 @@ impl<'a> Resolver<'a> {
         file: &[u8],
         dirname_fd: FD,
     ) -> crate::CrateResult<(Option<Box<TSConfigJSON>>, Box<[u8]>)> {
+        TSCONFIG_PARSE_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
         let mut entry = self.caches.fs.read_file_with_allocator(
@@ -4255,12 +4342,12 @@ impl<'a> Resolver<'a> {
         else {
             return Ok(None);
         };
-        if let Some(interned) =
-            reuse_interned_package_json(package_json_path, shape, &contents, package_id)
-        {
-            return Ok(Some(interned));
+        match reuse_interned_package_json(package_json_path, shape, &contents, package_id) {
+            PackageJsonReuse::Hit(outcome) => return Ok(outcome),
+            PackageJsonReuse::Miss => {}
         }
 
+        PACKAGE_JSON_PARSE_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         // NOTE: `IncludeDependencies` is a
         // const generic on `PackageJSON::parse_with_contents`, `IncludeScripts`
         // is runtime (it only gates one branch).
@@ -4286,7 +4373,16 @@ impl<'a> Resolver<'a> {
                 include_scripts,
             )
         };
-        let Some(pkg) = pkg else { return Ok(None) };
+        let pkg = match pkg {
+            Ok(pkg) => pkg,
+            Err(contents) => {
+                // The file read fine but produced no `PackageJSON`; record the
+                // bytes so the next bust over an unchanged file skips the
+                // re-parse too.
+                intern_unparseable_package_json(package_json_path, shape, contents);
+                return Ok(None);
+            }
+        };
 
         // NOTE: the DirInfo cache holds `&'static` refs. PORTING.md
         // §Forbidden bars `Box::leak`; intern into the process-lifetime arena
@@ -6615,11 +6711,12 @@ impl<'a> Resolver<'a> {
             }
 
             if let Some(tsconfigpath) = tsconfig_path {
-                // Reuse the interned merge when the recorded extends chain is
-                // byte-identical on disk; see `PackageJSON::read_for_parse`
+                // Reuse the interned outcome when the recorded extends chain
+                // is byte-identical on disk; see `PackageJSON::read_for_parse`
                 // for why skipping the parse matters.
-                info.tsconfig_json = self.reuse_interned_tsconfig(tsconfigpath);
-                if info.tsconfig_json.is_none() {
+                if let Some(cached) = self.reuse_interned_tsconfig(tsconfigpath) {
+                    info.tsconfig_json = cached;
+                } else {
                     // Every file the merge below reads, in walk order.
                     let mut chain: Vec<TsconfigChainLink> = Vec::new();
                     let parsed_tsconfig: Option<*mut TSConfigJSON> = match self.parse_tsconfig(
@@ -6786,7 +6883,14 @@ impl<'a> Resolver<'a> {
                         // Interned into the process-lifetime arena (deduped against
                         // the previous merge for this path); outlives the resolver.
                         info.tsconfig_json =
-                            Some(intern_tsconfig(tsconfigpath, chain, merged_config));
+                            intern_tsconfig(tsconfigpath, chain, Some(merged_config));
+                    } else if !chain.is_empty() {
+                        // The root read fine but produced no config; record
+                        // that outcome so the next bust over unchanged bytes
+                        // skips the re-parse. (An unreadable root leaves the
+                        // chain empty and keeps its per-recompute error
+                        // reporting.)
+                        info.tsconfig_json = intern_tsconfig(tsconfigpath, chain, None);
                     }
                 }
                 info.enclosing_tsconfig_json = info.tsconfig_json();

@@ -3,30 +3,31 @@
 // and tsconfig.json into process-lifetime arenas that never free. A
 // long-running process doing `try { require("optional-dep") } catch {}` from a
 // directory with a package.json leaked one full parsed copy per miss (~178 KB
-// per miss for a 26 KB package.json). The interner now reuses the existing
-// allocation when the file bytes (and, for tsconfig, the whole extends chain)
-// are unchanged, so the arenas only grow when contents actually change.
+// per miss for a 26 KB package.json). The interner now reuses the previous
+// outcome (including parse failures) when the file bytes are unchanged, so
+// the arenas only grow and files only re-parse when contents change.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("dir cache busts don't re-intern unchanged package.json/tsconfig.json", async () => {
-  const pkg = { name: "dir-cache-bust-fixture", version: "1.0.0" };
+  const pkgA = JSON.stringify({ name: "dir-cache-bust-fixture", version: "1.0.0", main: "./a/x.js" });
+  const pkgB = JSON.stringify({ name: "dir-cache-bust-fixture", version: "1.0.0", main: "./b/y.js" });
   // The extends target does not exist at first; the recompute must notice
   // when it appears.
-  const tsconfigWithPaths = {
+  const tsWithPaths = JSON.stringify({
     extends: "./tsconfig.base.json",
     compilerOptions: { baseUrl: ".", paths: { "@app/*": ["./a/*"] } },
-  };
-  const tsconfigNoPaths = {
+  });
+  const tsNoPaths = JSON.stringify({
     extends: "./tsconfig.base.json",
     compilerOptions: { baseUrl: "." },
-  };
-  const tsconfigBase = {
+  });
+  const tsBase = JSON.stringify({
     compilerOptions: { paths: { "@app/*": ["./b/*"], "@base/*": ["./c/*"] } },
-  };
+  });
   using dir = tempDir("dir-cache-bust-leak", {
-    "package.json": JSON.stringify(pkg),
-    "tsconfig.json": JSON.stringify(tsconfigWithPaths),
+    "package.json": pkgA,
+    "tsconfig.json": tsWithPaths,
     "a/x.js": `module.exports = "a";`,
     "b/y.js": `module.exports = "b";`,
     "c/z.js": `module.exports = "c";`,
@@ -46,48 +47,103 @@ test("dir cache busts don't re-intern unchanged package.json/tsconfig.json", asy
           require2("pkg-that-does-not-exist-xyz");
         } catch {}
       };
-      const pkgLen = resolverInternals.packageJsonArenaLen;
-      const tsLen = resolverInternals.tsconfigArenaLen;
+      const misses = n => { for (let i = 0; i < n; i++) miss(); };
+      const counts = () => [
+        resolverInternals.packageJsonArenaLen(),
+        resolverInternals.tsconfigArenaLen(),
+        resolverInternals.packageJsonParseCount(),
+        resolverInternals.tsconfigParseCount(),
+      ];
+      const out = {};
 
       // Settle initial parses (the first miss busts + recomputes the dir).
       miss();
-      const before = require2("@app/x");
-      const p0 = pkgLen(), t0 = tsLen();
-      for (let i = 0; i < 25; i++) miss();
-      const p1 = pkgLen(), t1 = tsLen();
+      out.before = require2("@app/x");
+      out.mainBefore = require2(here);
+      const s0 = counts();
+      misses(25);
+      const s1 = counts();
+      // 25 misses over unchanged files retain nothing and re-parse nothing.
+      out.missGrowth = [s1[0] - s0[0], s1[1] - s0[1], s1[2] - s0[2], s1[3] - s0[3]];
 
-      // Real edits must still be picked up by the bust: one new interned copy
-      // each, then flat again.
-      writeFileSync(join(here, "package.json"), ${JSON.stringify(JSON.stringify({ ...pkg, description: "edited" }))});
-      writeFileSync(join(here, "tsconfig.json"), ${JSON.stringify(JSON.stringify(tsconfigNoPaths))});
+      // package.json-only edit: one new interned copy, tsconfig untouched,
+      // and the new parse is actually served ("main" changes the resolution).
+      writeFileSync(join(here, "package.json"), ${JSON.stringify(pkgB)});
       miss();
-      const p2 = pkgLen(), t2 = tsLen();
-      for (let i = 0; i < 25; i++) miss();
-      const p3 = pkgLen(), t3 = tsLen();
+      const s2 = counts();
+      out.pkgEditGrowth = [s2[0] - s1[0], s2[1] - s1[1]];
+      out.mainAfter = require2(here);
+
+      // tsconfig-only edit: one new merge, package.json untouched.
+      writeFileSync(join(here, "tsconfig.json"), ${JSON.stringify(tsNoPaths)});
+      miss();
+      const s3 = counts();
+      out.tsEditGrowth = [s3[0] - s2[0], s3[1] - s2[1]];
+
+      // Rewriting both files with identical bytes (fresh mtimes) stays flat:
+      // reuse is keyed on contents, not timestamps.
+      writeFileSync(join(here, "package.json"), ${JSON.stringify(pkgB)});
+      writeFileSync(join(here, "tsconfig.json"), ${JSON.stringify(tsNoPaths)});
+      misses(2);
+      const s4 = counts();
+      out.sameBytesGrowth = [s4[0] - s3[0], s4[1] - s3[1], s4[2] - s3[2], s4[3] - s3[3]];
 
       // A previously-missing extends parent appearing must re-merge even
       // though the root file itself is unchanged.
-      writeFileSync(join(here, "tsconfig.base.json"), ${JSON.stringify(JSON.stringify(tsconfigBase))});
+      writeFileSync(join(here, "tsconfig.base.json"), ${JSON.stringify(tsBase)});
       miss();
-      const p4 = pkgLen(), t4 = tsLen();
-      const after = require2("@app/y");
-      const viaBase = require2("@base/z");
-      for (let i = 0; i < 10; i++) miss();
-      const p5 = pkgLen(), t5 = tsLen();
+      const s5 = counts();
+      out.baseGrowth = [s5[0] - s4[0], s5[1] - s4[1]];
+      out.after = require2("@app/y");
+      out.viaBase = require2("@base/z");
+      misses(10);
+      const s6 = counts();
+      out.postBaseGrowth = [s6[0] - s5[0], s6[1] - s5[1]];
 
       // A parent that turns malformed re-merges once (without it), stays flat
       // while malformed, and re-merges once more when fixed.
       writeFileSync(join(here, "tsconfig.base.json"), "{ this is not json !!");
       miss();
-      const t6 = tsLen();
-      for (let i = 0; i < 10; i++) miss();
-      const t7 = tsLen();
-      writeFileSync(join(here, "tsconfig.base.json"), ${JSON.stringify(JSON.stringify(tsconfigBase))});
+      const s7 = counts();
+      out.tsMalformedGrowth = s7[1] - s6[1];
+      misses(10);
+      const s8 = counts();
+      out.tsMalformedFlat = [s8[1] - s7[1], s8[3] - s7[3]];
+      writeFileSync(join(here, "tsconfig.base.json"), ${JSON.stringify(tsBase)});
       miss();
-      const t8 = tsLen();
-      const viaBaseFixed = require2("@base/z2");
-      const p6 = pkgLen();
-      console.log(JSON.stringify({ before, after, viaBase, viaBaseFixed, p0, p1, p2, p3, p4, p5, p6, t0, t1, t2, t3, t4, t5, t6, t7, t8 }));
+      const s9 = counts();
+      out.tsFixedGrowth = s9[1] - s8[1];
+      out.viaBaseFixed = require2("@base/z2");
+
+      // A broken root package.json is negative-cached: the failed outcome is
+      // recorded (no arena growth) and unchanged bytes skip the re-parse.
+      writeFileSync(join(here, "package.json"), "{ this is not json !!");
+      miss();
+      const s10 = counts();
+      out.pkgBrokenGrowth = s10[0] - s9[0];
+      misses(10);
+      const s11 = counts();
+      out.pkgBrokenFlat = [s11[0] - s10[0], s11[2] - s10[2]];
+      writeFileSync(join(here, "package.json"), ${JSON.stringify(pkgB)});
+      miss();
+      const s12 = counts();
+      out.pkgRestoredGrowth = s12[0] - s11[0];
+
+      // Same for a broken root tsconfig: the no-config outcome is recorded.
+      writeFileSync(join(here, "tsconfig.json"), "{ this is not json !!");
+      miss();
+      const s13 = counts();
+      out.tsBrokenGrowth = s13[1] - s12[1];
+      misses(10);
+      const s14 = counts();
+      out.tsBrokenFlat = [s14[1] - s13[1], s14[3] - s13[3]];
+      writeFileSync(join(here, "tsconfig.json"), ${JSON.stringify(tsNoPaths)});
+      miss();
+      const s15 = counts();
+      out.tsRestoredGrowth = s15[1] - s14[1];
+
+      out.arenaLens = [s0[0], s0[1]];
+      console.log(JSON.stringify(out));
     `,
   });
 
@@ -102,54 +158,42 @@ test("dir cache busts don't re-intern unchanged package.json/tsconfig.json", asy
 
   expect(stderr).toBe("");
   const out = JSON.parse(stdout);
-  expect(out.p0).toBeGreaterThanOrEqual(1);
-  expect(out.t0).toBeGreaterThanOrEqual(1);
-  expect({
-    // tsconfig paths resolve through the (re)parsed configs end to end.
-    before: out.before,
-    after: out.after,
-    viaBase: out.viaBase,
-    // 25 misses over unchanged files retain nothing (including re-probing the
-    // still-missing extends parent).
-    pkgMissGrowth: out.p1 - out.p0,
-    tsMissGrowth: out.t1 - out.t0,
-    // An edit is picked up as exactly one new interned copy.
-    pkgEditGrowth: out.p2 - out.p1,
-    tsEditGrowth: out.t2 - out.t1,
-    // And misses after the edit are flat again.
-    pkgPostEditGrowth: out.p3 - out.p2,
-    tsPostEditGrowth: out.t3 - out.t2,
-    // The extends parent appearing re-merges the chain exactly once.
-    pkgBaseGrowth: out.p4 - out.p3,
-    tsBaseGrowth: out.t4 - out.t3,
-    pkgFinalGrowth: out.p5 - out.p4,
-    tsFinalGrowth: out.t5 - out.t4,
-    // A malformed parent re-merges once, stays flat while malformed, and
-    // re-merges once more when fixed.
-    tsMalformedGrowth: out.t6 - out.t5,
-    tsMalformedFlat: out.t7 - out.t6,
-    tsFixedGrowth: out.t8 - out.t7,
-    viaBaseFixed: out.viaBaseFixed,
-    pkgTailGrowth: out.p6 - out.p5,
-  }).toEqual({
+  expect(out.arenaLens[0]).toBeGreaterThanOrEqual(1);
+  expect(out.arenaLens[1]).toBeGreaterThanOrEqual(1);
+  expect(out).toEqual({
+    arenaLens: out.arenaLens,
+    // tsconfig paths and package.json "main" resolve through the (re)parsed
+    // structs end to end.
     before: "a",
+    mainBefore: "a",
+    mainAfter: "b",
     after: "b",
     viaBase: "c",
-    pkgMissGrowth: 0,
-    tsMissGrowth: 0,
-    pkgEditGrowth: 1,
-    tsEditGrowth: 1,
-    pkgPostEditGrowth: 0,
-    tsPostEditGrowth: 0,
-    pkgBaseGrowth: 0,
-    tsBaseGrowth: 1,
-    pkgFinalGrowth: 0,
-    tsFinalGrowth: 0,
-    tsMalformedGrowth: 1,
-    tsMalformedFlat: 0,
-    tsFixedGrowth: 1,
     viaBaseFixed: "c2",
-    pkgTailGrowth: 0,
+    // [pkgArena, tsArena, pkgParses, tsParses] over 25 unchanged misses.
+    missGrowth: [0, 0, 0, 0],
+    // Each single-file edit grows only its own arena by exactly one.
+    pkgEditGrowth: [1, 0],
+    tsEditGrowth: [0, 1],
+    // Same-bytes rewrites (fresh mtimes) retain and re-parse nothing.
+    sameBytesGrowth: [0, 0, 0, 0],
+    // The extends parent appearing re-merges the chain exactly once.
+    baseGrowth: [0, 1],
+    postBaseGrowth: [0, 0],
+    // Malformed parent: one re-merge without it, flat while unchanged
+    // ([arena, parses]), one re-merge when fixed.
+    tsMalformedGrowth: 1,
+    tsMalformedFlat: [0, 0],
+    tsFixedGrowth: 1,
+    // Broken root package.json: no arena growth, no re-parses while
+    // unchanged, one new copy once restored.
+    pkgBrokenGrowth: 0,
+    pkgBrokenFlat: [0, 0],
+    pkgRestoredGrowth: 1,
+    // Broken root tsconfig: same story.
+    tsBrokenGrowth: 0,
+    tsBrokenFlat: [0, 0],
+    tsRestoredGrowth: 1,
   });
   expect(exitCode).toBe(0);
 });

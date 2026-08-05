@@ -496,4 +496,8 @@ export const resolverInternals = {
   packageJsonArenaLen: $newRustFunction("resolver/resolver.rs", "jsPackageJsonArenaLen", 0) as () => number,
   /** Entries retained by the process-lifetime merged-tsconfig arena. */
   tsconfigArenaLen: $newRustFunction("resolver/resolver.rs", "jsTsconfigArenaLen", 0) as () => number,
+  /** Total package.json parses performed (reuse skips these). */
+  packageJsonParseCount: $newRustFunction("resolver/resolver.rs", "jsPackageJsonParseCount", 0) as () => number,
+  /** Total tsconfig parses performed (reuse skips these). */
+  tsconfigParseCount: $newRustFunction("resolver/resolver.rs", "jsTsconfigParseCount", 0) as () => number,
 };

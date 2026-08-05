@@ -114,4 +114,22 @@ pub(crate) fn resolver_resolver_js_tsconfig_arena_len(
     ))
 }
 
+pub(crate) fn resolver_resolver_js_package_json_parse_count(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(JSValue::js_number(
+        bun_resolver::resolver::package_json_parse_count() as f64,
+    ))
+}
+
+pub(crate) fn resolver_resolver_js_tsconfig_parse_count(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(JSValue::js_number(
+        bun_resolver::resolver::tsconfig_parse_count() as f64,
+    ))
+}
+
 // ported from: generated_js2native.rs

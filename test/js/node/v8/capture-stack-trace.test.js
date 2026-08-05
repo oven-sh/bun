@@ -1121,3 +1121,80 @@ test("lazy error-info materialization does not store an empty stack value when t
   });
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/13904
+test("captureStackTrace keeps frames when the caller frame was elided by a tail call", () => {
+  const inst = {};
+  function innerParse(data, callee) {
+    const err = new Error("invalid input");
+    Error.captureStackTrace(err, callee);
+    return err;
+  }
+  noInline(innerParse);
+  inst.parse = data => innerParse(data, inst.parse);
+
+  function initPlugin() {
+    const result = inst.parse({});
+    return [result];
+  }
+  noInline(initPlugin);
+
+  const [err] = initPlugin();
+  expect(err.stack).toContain("at innerParse");
+  expect(err.stack).toContain("at initPlugin");
+});
+
+test("captureStackTrace still clears frames for a host function not in the stack", () => {
+  Math.max(1, 2);
+  const e = new Error("test");
+  Error.captureStackTrace(e, Math.max);
+  expect(e.stack).toBe("Error: test");
+});
+
+test("captureStackTrace still clears frames for a sloppy-mode function not in the stack", () => {
+  const sloppyFn = (0, eval)("(function sloppyNotOnStack() { return 1; })");
+  sloppyFn();
+  const e = new Error("test");
+  Error.captureStackTrace(e, sloppyFn);
+  expect(e.stack).toBe("Error: test");
+});
+
+test("captureStackTrace keeps frames for a bound function not in the stack", () => {
+  function target() {
+    return 1;
+  }
+  const bound = target.bind(null);
+  function makeErr() {
+    const e = new Error("test");
+    Error.captureStackTrace(e, bound);
+    return [e];
+  }
+  noInline(makeErr);
+  function invoker() {
+    const r = makeErr();
+    return [r];
+  }
+  noInline(invoker);
+
+  const [[e]] = invoker();
+  expect(e.stack).toContain("at makeErr");
+  expect(e.stack).toContain("at invoker");
+});
+
+test("captureStackTrace keeps frames when the second argument is a non-callable object", () => {
+  function makeErr(arg) {
+    const e = new Error("test");
+    Error.captureStackTrace(e, arg);
+    return [e];
+  }
+  noInline(makeErr);
+  function outer() {
+    const r = makeErr({});
+    return [r];
+  }
+  noInline(outer);
+
+  const [[e]] = outer();
+  expect(e.stack).toContain("at makeErr");
+  expect(e.stack).toContain("at outer");
+});

@@ -113,6 +113,23 @@ JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::St
     return JSCStackTrace(newFrames);
 }
 
+static bool callerCouldBeTailCallElided(JSC::JSObject* callerObject)
+{
+    if (dynamicDowncast<JSC::JSBoundFunction>(callerObject))
+        return true;
+    if (auto* function = dynamicDowncast<JSC::JSFunction>(callerObject)) {
+        if (function->isHostFunction())
+            return false;
+        JSC::FunctionExecutable* executable = function->jsExecutable();
+        if (!executable->isInStrictContext())
+            return false;
+        return executable->isGeneratedForCall();
+    }
+    if (dynamicDowncast<JSC::InternalFunction>(callerObject))
+        return false;
+    return true;
+}
+
 void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit)
 {
     UNUSED_PARAM(callFrame);
@@ -154,13 +171,12 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     auto* globalObject = callerObject->globalObject();
     WTF::String callerName = Zig::functionName(vm, globalObject, callerObject);
 
-    // Match V8: remove all frames up to and including the caller. If the caller
-    // is not found anywhere in the sync portion of the stack, remove everything.
-    // We match by cell identity first, then by name — name matching is needed
-    // because a resumed async function's frame callee is the generator's `next`
-    // function (a different cell) but Zig::functionName still reports the
-    // original async function's name.
-    size_t removeCount = stackTrace.size();
+    // Match V8: remove all frames up to and including the caller. We match by
+    // cell identity first, then by name — name matching is needed because a
+    // resumed async function's frame callee is the generator's `next` function
+    // (a different cell) but Zig::functionName still reports the original
+    // async function's name.
+    std::optional<size_t> removeCount;
     for (size_t i = 0; i < stackTrace.size(); i++) {
         const auto& frame = stackTrace.at(i);
         if (frame.isAsyncFrame())
@@ -175,8 +191,11 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
         }
     }
 
-    if (removeCount > 0)
-        stackTrace.removeAt(0, removeCount);
+    if (!removeCount && !callerCouldBeTailCallElided(callerObject))
+        removeCount = stackTrace.size();
+
+    if (removeCount)
+        stackTrace.removeAt(0, *removeCount);
 
     if (stackTrace.size() > stackTraceLimit)
         stackTrace.shrink(stackTraceLimit);

@@ -242,6 +242,7 @@ impl Default for Flags {
 // ───────────────────────────── globals ─────────────────────────────
 
 pub(crate) static ASYNC_HTTP_ID_MONOTONIC: AtomicU32 = AtomicU32::new(0);
+pub use crate::async_http::active_requests_count;
 
 /// Set once at startup from `--experimental-http2-fetch` (before the HTTP
 /// thread spawns) and then only read on that thread.

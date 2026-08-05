@@ -246,6 +246,15 @@ impl ThreadPool {
         }
     }
 
+    /// (busy workers, queue non-empty) — the snapshot gate waits for (0, false).
+    pub fn activity(&self) -> (u16, bool) {
+        let sync = self.sync.load(Ordering::Relaxed);
+        (
+            sync.spawned().saturating_sub(sync.idle()),
+            !self.run_queue.is_empty_approx(),
+        )
+    }
+
     /// Heap-image restore: the worker threads counted in `sync` belonged to the process that built the image. Forget them (queue and
     /// config stay) so the next `schedule`/`notify` spawns fresh workers here.
     pub fn forget_threads_after_image_restore(&self) {
@@ -1537,6 +1546,11 @@ pub mod node {
 
         const _ALIGN_CHECK: () =
             assert!(core::mem::align_of::<Node>() >= ((Self::IS_CONSUMING | Self::HAS_CACHE) + 1));
+
+        /// Approximate (racy) emptiness: no pointer bits in `stack` and nothing in the consumer cache.
+        pub(super) fn is_empty_approx(&self) -> bool {
+            (self.stack.load(Ordering::Acquire) & Self::PTR_MASK) == 0 && self.cache.get().is_null()
+        }
 
         pub(super) fn push(&self, list: &List) {
             let List { head, tail } = *list;

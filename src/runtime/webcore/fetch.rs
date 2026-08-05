@@ -1193,6 +1193,24 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSValue::ZERO);
     }
 
+    if bun_core::image::building() && url_type == URLType::Remote {
+        // Nothing that talks to the network may exist across a snapshot: abort the caller's signal (so its own timeout/cleanup runs) and reject before any tasklet, body stream or listener is created.
+        if let Some(sig) = signal.take() {
+            // SAFETY: `sig` came from `AbortSignal::ref_()` above; unref after signalling.
+            unsafe {
+                (*sig).signal(global_this, jsc::CommonAbortReason::UserAbort);
+                (*sig).unref();
+            }
+        }
+        let err = global_this.to_type_error(jsc::ErrorCode::INVALID_STATE, format_args!("fetch() to the network is not available while building a snapshot; do it after restore"));
+        return Ok(
+            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                global_this,
+                err,
+            ),
+        );
+    }
+
     // We do this 2nd to last instead of last so that if it's a FormData
     // object, we can still insert the boundary.
     //
@@ -2097,15 +2115,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         unix_socket_path: core::mem::replace(&mut unix_socket_path, ZigStringSlice::empty()),
     };
 
-    if bun_core::image::building() {
-        let err = global_this.to_type_error(jsc::ErrorCode::INVALID_STATE, format_args!("fetch() to the network is not available while building a snapshot; defer it until the snapshot runs (Bun.isBuildingSnapshot)"));
-        return Ok(
-            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                global_this,
-                err,
-            ),
-        );
-    }
     let _ = FetchTasklet::queue(
         global_this,
         fetch_options,

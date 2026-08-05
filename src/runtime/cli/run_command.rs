@@ -1663,10 +1663,74 @@ pub fn take_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::VirtualMachine)
         unreachable!()
     };
     vm.jsc_vm().clear_has_termination_request();
+    // Only a quiet process makes a sound image: let in-flight work finish (bounded), and refuse to dump over anything still pending.
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(
+            bun_core::env_var::BUN_SNAPSHOT_QUIET_TIMEOUT
+                .get()
+                .unwrap_or(15),
+        );
+    loop {
+        let blockers = snapshot_blockers(vm);
+        if blockers.is_empty() {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            bun_core::Output::err_generic(
+                "snapshot: process did not become quiet: {}",
+                (blockers.join(", "),),
+            );
+            bun_core::Output::flush();
+            bun_core::Global::exit(70);
+        }
+        vm.tick();
+        vm.auto_tick();
+    }
     let cpath = std::ffi::CString::new(path).unwrap();
     // SAFETY: main thread, VM live, no JS on the stack.
     unsafe { Bun__imageDumpNow(vm.jsc_vm() as *const _ as *mut _, cpath.as_ptr()) };
     bun_core::Global::exit(0);
+}
+
+/// What still ties this process to work in flight; the image is only written when this is empty.
+fn snapshot_blockers(vm: &mut bun_jsc::virtual_machine::VirtualMachine) -> Vec<String> {
+    let mut out = Vec::new();
+    let el = vm.event_loop_shared();
+    if vm.active_tasks > 0 {
+        out.push(format!(
+            "{} active async tasks (fetch/fs/spawn awaiting completion)",
+            vm.active_tasks
+        ));
+    }
+    if el.tasks.readable_length() > 0
+        || !el.immediate_tasks.is_empty()
+        || !el.next_immediate_tasks.is_empty()
+    {
+        out.push("queued tasks/immediates".into());
+    }
+    if el.has_pending_refs() {
+        out.push("pending cross-thread refs".into());
+    }
+    let http = bun_http::active_requests_count();
+    if http > 0 {
+        out.push(format!("{http} HTTP requests in flight"));
+    }
+    let state = crate::jsc_hooks::runtime_state();
+    if !state.is_null() {
+        // SAFETY: main-thread RuntimeState.
+        let armed = unsafe { (*state).timer.active_timer_count };
+        if armed > 0 {
+            out.push(format!("{armed} ref'd timers armed (setTimeout/setInterval/AbortSignal.timeout) — clear them before snapshotting"));
+        }
+    }
+    let (busy, queued) = bun_threading::work_pool::WorkPool::get().activity();
+    if busy > 0 || queued {
+        out.push(format!(
+            "thread pool: {busy} busy workers{}",
+            if queued { ", queue non-empty" } else { "" }
+        ));
+    }
+    out
 }
 
 /// `Bun.unsafe.snapshot(path)` / cmd-file trigger: leave JS via an uncatchable termination and snapshot from the run loop.

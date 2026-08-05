@@ -287,7 +287,7 @@ pub struct VirtualMachine {
     pub(crate) ref_strings: crate::ref_string::Map,
     pub(crate) ref_strings_mutex: bun_threading::Mutex,
 
-    pub(crate) active_tasks: usize,
+    pub active_tasks: usize,
 
     pub rare_data: Option<Box<RareData>>,
     pub proxy_env_storage: crate::rare_data::ProxyEnvStorage,

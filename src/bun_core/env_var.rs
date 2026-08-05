@@ -91,6 +91,7 @@ new!(pub BUN_GC_IDLE_SHRINK_DISABLE: boolean, "BUN_GC_IDLE_SHRINK_DISABLE", {});
 new!(pub BUN_GC_TIMER_DEBUG: boolean, "BUN_GC_TIMER_DEBUG", {});
 new!(pub BUN_GC_STARTUP_FULLS: unsigned, "BUN_GC_STARTUP_FULLS", {});
 new!(pub BUN_IMAGE_VERBOSE: boolean, "BUN_IMAGE_VERBOSE", {});
+new!(pub BUN_SNAPSHOT_QUIET_TIMEOUT: unsigned, "BUN_SNAPSHOT_QUIET_TIMEOUT", {});
 new!(pub BUN_GC_IDLE_SHRINK_TICKS: unsigned, "BUN_GC_IDLE_SHRINK_TICKS", {});
 // TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior
 // so we'll keep it for now.

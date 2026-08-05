@@ -557,7 +557,7 @@ function __zodConclusive(n) {
     case "bool":
     case "big":
     case "date": {
-      // Coercion wraps a possibly-throwing conversion in try/catch, masking throws zod would propagate.
+      // zod also try/catches coercion, but an impure conversion hook (Symbol.toPrimitive/valueOf) can answer differently on zod's re-run, so a coercion failure proves nothing.
       if (n.co === 1) return false;
       var cs = n.c;
       if (cs) {

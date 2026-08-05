@@ -502,9 +502,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             | js_ast::ExprData::ERegExp(_)
             | js_ast::ExprData::EArrow(_)
             | js_ast::ExprData::EFunction(_)
-            | js_ast::ExprData::EIdentifier(_)
-            | js_ast::ExprData::EImportIdentifier(_)
             | js_ast::ExprData::EMissing(_) => true,
+            // Reassignable bindings (let/var/params/globals) could change between the eager refs capture and the thunk's re-evaluation, so only immutable ones qualify.
+            js_ast::ExprData::EIdentifier(id) => matches!(
+                self.symbols[id.ref_.inner_index() as usize].kind,
+                js_ast::symbol::Kind::Constant | js_ast::symbol::Kind::Import
+            ),
+            js_ast::ExprData::EImportIdentifier(_) => true,
             // Operators on pure operands count as pure: a side-effecting valueOf/toString could observe the re-run, but zod applies the same operators to the same values while parsing.
             js_ast::ExprData::EUnary(u) => {
                 matches!(
@@ -698,6 +702,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         Extracted::Ir(Ir::Enum { values })
                     }
                     js_ast::ExprData::EIdentifier(_) | js_ast::ExprData::EImportIdentifier(_) => {
+                        if !self.zod_is_pure_value(args[0]) {
+                            return Extracted::Bail;
+                        }
                         // Array of strings by const reference; TS enum objects also land here and the helper delegates for non-arrays at runtime.
                         let idx = refs.len() as u32;
                         refs.push(args[0]);
@@ -1091,7 +1098,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         | js_ast::ExprData::EIdentifier(_)
                         | js_ast::ExprData::EImportIdentifier(_)
                 );
-                if !fn_ok {
+                if !fn_ok || !self.zod_is_pure_value(*arg) {
                     return Extracted::Bail;
                 }
                 if let Some(params) = args.get(1) {
@@ -1396,6 +1403,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         Some(ZCheck::Regex { source, flags })
                     }
                     js_ast::ExprData::EIdentifier(_) | js_ast::ExprData::EImportIdentifier(_) => {
+                        if !self.zod_is_pure_value(*arg) {
+                            return Extracted::Bail;
+                        }
                         let idx = refs.len() as u32;
                         refs.push(*arg);
                         Some(ZCheck::RegexRef(idx))

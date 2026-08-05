@@ -31,6 +31,7 @@ let tarballDirOnline: Fixture;
 let tarballDirPrefetch: Fixture;
 let tarballDirPatched: Fixture;
 let manifestResolve: Fixture;
+let minimumAge: Fixture;
 
 const deps = {
   "one-dep": "1.0.0",
@@ -98,6 +99,7 @@ beforeAll(async () => {
   tarballDirPrefetch = await registry.createTestDir();
   tarballDirPatched = await registry.createTestDir();
   manifestResolve = await registry.createTestDir();
+  minimumAge = await registry.createTestDir();
 
   await Promise.all([
     seed(warmCache, { name: "warm-cache", dependencies: deps }),
@@ -127,6 +129,7 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
       }),
     ),
     seed(manifestResolve, { name: "manifest-resolve", dependencies: { "no-deps": "^1.0.0" } }),
+    seed(minimumAge, { name: "minimum-age", dependencies: { "no-deps": "^1.0.0" } }),
   ]);
 
   // Kill verdaccio so every request to it is refused. `registry.stop()` sends
@@ -344,6 +347,25 @@ test.concurrent("--offline --tarball-dir installs a patched dependency with a co
   expect(result.exitCode).toBe(0);
   expect(await installedVersion(tarballDirPatched, "no-deps")).toBe("1.0.1");
   expect(await patchedFile.text()).toBe("hello world\n");
+
+  // warm cache: --offline alone installs the patched package
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  result = await runInstall(packageDir, ["--offline"]);
+  expect(result.err).not.toContain("error:");
+  expect(result.exitCode).toBe(0);
+  expect(await patchedFile.text()).toBe("hello world\n");
+
+  // cold cache with no tarball dir: a clean offline failure, not an abort
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  for (const entry of await readdir(cacheDir)) {
+    if (entry.startsWith("no-deps")) {
+      await rm(join(cacheDir, entry), { recursive: true, force: true });
+    }
+  }
+  result = await runInstall(packageDir, ["--offline"]);
+  expect(result.err).toMatch(/error: .*is missing from the cache and network requests are disabled \(--offline\)/);
+  expect(result.err).not.toContain("returned error");
+  expect(result.exitCode).toBe(1);
 });
 
 test.concurrent("--offline resolves from the cached manifest without a lockfile", async () => {
@@ -358,6 +380,21 @@ test.concurrent("--offline resolves from the cached manifest without a lockfile"
   expect(await installedVersion(manifestResolve, "no-deps")).toBe("1.1.0");
 });
 
+test.concurrent("--offline names the cached manifest's missing publish dates under minimumReleaseAge", async () => {
+  // The manifest was cached without minimumReleaseAge configured, so it lacks
+  // the publish dates the age gate needs; offline that is a distinct failure
+  // from having no manifest at all.
+  const { packageDir } = minimumAge;
+  await rm(join(packageDir, "bun.lock"), { force: true });
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  const { err, exitCode } = await runInstall(packageDir, ["--offline", "--minimum-release-age=3600"]);
+  expect(err).toMatch(
+    /error: package .*no-deps.* has a cached manifest without the publish dates minimumReleaseAge requires and network requests are disabled \(--offline\)/,
+  );
+  expect(exitCode).toBe(1);
+});
+
 test.concurrent("--offline fails to resolve a package with no cached manifest", async () => {
   using dir = tempDir("offline-no-manifest-", {
     "package.json": JSON.stringify({ name: "no-manifest", dependencies: { "basic-1": "1.0.0" } }),
@@ -366,7 +403,7 @@ test.concurrent("--offline fails to resolve a package with no cached manifest", 
 
   const { err, exitCode } = await runInstall(String(dir), ["--offline"]);
   expect(err).toMatch(
-    /error: no cached manifest for package .*basic-1.* and network requests are disabled \(--offline\)/,
+    /error: package .*basic-1.* has no cached manifest and network requests are disabled \(--offline\)/,
   );
   expect(err).not.toContain("ConnectionRefused");
   expect(exitCode).toBe(1);

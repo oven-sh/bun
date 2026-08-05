@@ -1116,22 +1116,32 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 if this.options.enable.offline() {
                                     // Offline treats any cached manifest as
                                     // fresh, so reaching this point means the
-                                    // manifest is absent: report, don't fetch.
+                                    // manifest is absent, or present but
+                                    // unusable because `minimumReleaseAge`
+                                    // needs publish dates it lacks: report,
+                                    // don't fetch.
+                                    let problem: &str = if loaded_manifest.is_some() {
+                                        "has a cached manifest without the publish dates minimumReleaseAge requires"
+                                    } else {
+                                        "has no cached manifest"
+                                    };
                                     if run_tasks::is_network_task_required(this, task_id) {
                                         bun_ast::add_error_pretty!(
                                             this.log_mut(),
                                             None,
                                             bun_ast::Loc::EMPTY,
-                                            "no cached manifest for package <b>{}<r> and network requests are disabled (--offline); run an online install first",
+                                            "package <b>{}<r> {} and network requests are disabled (--offline); run an online install first",
                                             bstr::BStr::new(&name_str),
+                                            problem,
                                         );
                                     } else {
                                         bun_ast::add_warning_pretty!(
                                             this.log_mut(),
                                             None,
                                             bun_ast::Loc::EMPTY,
-                                            "no cached manifest for package <b>{}<r> and network requests are disabled (--offline); run an online install first",
+                                            "package <b>{}<r> {} and network requests are disabled (--offline); run an online install first",
                                             bstr::BStr::new(&name_str),
+                                            problem,
                                         );
                                     }
 

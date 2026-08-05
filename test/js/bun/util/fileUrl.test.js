@@ -21,7 +21,7 @@ describe("pathToFileURL", () => {
 });
 
 describe("fileURLToPath", () => {
-  const absoluteErrorMessage = "File URL path must be an absolute";
+  const absoluteErrorMessage = "File URL path must be absolute";
   it("should convert a file url to a path", () => {
     if (isWindows) {
       expect(() => fileURLToPath("file:///path/to/file.js")).toThrow(absoluteErrorMessage);
@@ -60,5 +60,19 @@ describe("fileURLToPath", () => {
     const url = pathToFileURL(import.meta.path);
     expect(fileURLToPath(url)).toBe(import.meta.path);
     expect(fileURLToPath(import.meta.url)).toBe(import.meta.path);
+  });
+
+  it("should throw on malformed percent-encoding", () => {
+    expect(() => fileURLToPath("file:///%c3%28")).toThrow(URIError);
+    expect(() => fileURLToPath("file:///%")).toThrow(URIError);
+    expect(() => fileURLToPath(new URL("file:///%c3"))).toThrow(URIError);
+  });
+
+  it("should accept a windows option", () => {
+    expect(fileURLToPath("file:///C:/foo", { windows: true })).toBe("C:\\foo");
+    expect(fileURLToPath("file:///foo/bar", { windows: false })).toBe("/foo/bar");
+    expect(() => fileURLToPath("file:///C:/a%5Cb", { windows: true })).toThrow(
+      "File URL path must not include encoded \\ or / characters",
+    );
   });
 });

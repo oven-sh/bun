@@ -1708,10 +1708,10 @@ static void imageRestoreAndRun(const char* path)
     if (hdr.reserved[1]) { for (int i = 0; i < 1024; i++) { pthread_key_t k = 0; if (pthread_key_create(&k, nullptr)) break; if ((uint64_t)k + 1 >= hdr.reserved[1]) break; } }
     { // libc-free critical section: overwrite our data segments with the builder's, then rebase extern-library pointers. Plain loops only (no PLT calls).
         // Process-owned libc globals that live in *our* data segment (copy relocations in a non-PIE executable): keep this process's values.
-        char** savedEnviron = environ;
+        char** volatile* environSlot = (char** volatile*)&environ; char** savedEnviron = *environSlot; // volatile: the overlay below rewrites it behind the compiler's back
         for (size_t di = 0; di < nDataSegs; di++) { DataSeg& d = dataSegs[di]; volatile uint64_t* dst = d.dst; const uint64_t* src = d.src; for (size_t k = 0; k < d.words; k++) dst[k] = src[k]; }
         if (useLibFixups) for (size_t k = 0; k < nFixups; k++) { ImageFixup& f = fixups[k]; if (f.lib < nLibDelta && libDelta[f.lib]) *(volatile uint64_t*)f.addr += libDelta[f.lib]; }
-        if (useLibFixups) environ = savedEnviron;
+        if (useLibFixups) *environSlot = savedEnviron;
     }
     for (size_t di = 0; di < nDataSegs; di++) munmap((void*)dataSegs[di].src, dataSegs[di].words * 8);
     if (useLibFixups && (verbose || nFixups)) fprintf(stderr, "[image] rebased %zu extern-library pointers\n", nFixups);

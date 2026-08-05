@@ -1602,7 +1602,7 @@ static void imageRestoreAndRun(const char* path)
             }
         }
     }
-    if (!haveFixups && hdr.libsBase && hdr.libsBase != platformLibsBase()) { fprintf(stderr, "[image] %s was built against system libraries at %llx, now at %llx (reboot / OS update); booting normally\n", path, (unsigned long long)hdr.libsBase, (unsigned long long)platformLibsBase()); close(fd); return; }
+    if (!(haveFixups && getenv("BUN_IMAGE_LIB_FIXUPS")) && hdr.libsBase && hdr.libsBase != platformLibsBase()) { fprintf(stderr, "[image] %s was built against system libraries at %llx, now at %llx (reboot / OS update); booting normally\n", path, (unsigned long long)hdr.libsBase, (unsigned long long)platformLibsBase()); close(fd); return; }
     mi_scavenger_stop(); // this process's scavenger thread must not touch allocator state while/after we overlay it
     // No heap use from here until the overlay is done: with malloc routed to mimalloc, this process's heap sits at the same VA as the image's.
     if (hdr.nregions > 8192) { fprintf(stderr, "[image] too many regions\n"); _exit(2); }
@@ -1611,6 +1611,7 @@ static void imageRestoreAndRun(const char* path)
     std::span<ImageRegion> regions(regionsBuf, hdr.nregions);
     size_t mapped = 0, copied = 0;
     struct DataSeg { uint64_t* dst; const uint64_t* src; size_t words; }; DataSeg dataSegs[16]; size_t nDataSegs = 0; // no heap here: the allocator's state is being overlaid
+    bool useLibFixups = haveFixups && getenv("BUN_IMAGE_LIB_FIXUPS"); // experimental (Linux): let system libraries slide; see SNAPSHOT.md 'ASLR'
     bool verbose = !!getenv("BUN_IMAGE_VERBOSE");
     for (auto& r : regions) {
         if (verbose) { fprintf(stderr, "[image] restoring %llx+%llx kind=%llu tag=%llu\n", r.addr, r.len, r.kind & 0xff, r.kind >> 8); }
@@ -1637,6 +1638,10 @@ static void imageRestoreAndRun(const char* path)
             // Data segments of the running binary are copied last (below): once they are overwritten our GOT/stdio state is the builder's,
             // so nothing may call into libc between that copy and the extern-library fixups.
             if (mprotect((void*)r.addr, r.len, PROT_READ | PROT_WRITE)) { fprintf(stderr, "[image] mprotect __DATA %llx failed errno %d\n", r.addr, errno); _exit(3); }
+            if (!useLibFixups) { // default: copy in place now (system libraries are at the recorded addresses thanks to the re-exec)
+                if (pread(fd, (void*)r.addr, r.len, r.fileOff) != (ssize_t)r.len) { fprintf(stderr, "[image] pread __DATA failed errno %d\n", errno); _exit(3); }
+                copied += r.len; continue;
+            }
             void* scratch = mmap(nullptr, r.len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
             if (scratch == MAP_FAILED || pread(fd, scratch, r.len, r.fileOff) != (ssize_t)r.len) { fprintf(stderr, "[image] pread __DATA failed errno %d\n", errno); _exit(3); }
             if (nDataSegs < 16) dataSegs[nDataSegs++] = { (uint64_t*)r.addr, (const uint64_t*)scratch, r.len / 8 }; copied += r.len;
@@ -1705,11 +1710,11 @@ static void imageRestoreAndRun(const char* path)
         // Process-owned libc globals that live in *our* data segment (copy relocations in a non-PIE executable): keep this process's values.
         char** savedEnviron = environ;
         for (size_t di = 0; di < nDataSegs; di++) { DataSeg& d = dataSegs[di]; volatile uint64_t* dst = d.dst; const uint64_t* src = d.src; for (size_t k = 0; k < d.words; k++) dst[k] = src[k]; }
-        if (haveFixups) for (size_t k = 0; k < nFixups; k++) { ImageFixup& f = fixups[k]; if (f.lib < nLibDelta && libDelta[f.lib]) *(volatile uint64_t*)f.addr += libDelta[f.lib]; }
-        environ = savedEnviron;
+        if (useLibFixups) for (size_t k = 0; k < nFixups; k++) { ImageFixup& f = fixups[k]; if (f.lib < nLibDelta && libDelta[f.lib]) *(volatile uint64_t*)f.addr += libDelta[f.lib]; }
+        if (useLibFixups) environ = savedEnviron;
     }
     for (size_t di = 0; di < nDataSegs; di++) munmap((void*)dataSegs[di].src, dataSegs[di].words * 8);
-    if (haveFixups && (verbose || nFixups)) fprintf(stderr, "[image] rebased %zu extern-library pointers\n", nFixups);
+    if (useLibFixups && (verbose || nFixups)) fprintf(stderr, "[image] rebased %zu extern-library pointers\n", nFixups);
     fprintf(stderr, "[image] restored %zu regions: %.1fMB mapped clean, %.1fMB __DATA copied\n", regions.size(), mapped / 1048576.0, copied / 1048576.0);
     // From here on all globals/heap are the build process's. Adopt the image's main Thread object for this OS thread.
     WTF::Thread* mainThread = (WTF::Thread*)hdr.mainThread;

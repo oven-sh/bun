@@ -302,6 +302,95 @@ it.concurrent("should retain a new line in the end of package.json", async () =>
   }
 });
 
+// https://github.com/oven-sh/bun/issues/9351
+it.concurrent("should preserve top-level key order when removing the last entry in a dependency group", async () => {
+  const ctx = await createTestContext();
+  try {
+    const package_dir = ctx.package_dir;
+    const remove_dir = tmpdirSync();
+    const pkg1_dir = join(remove_dir, "pkg1");
+    const pkg1_path = relative(package_dir, pkg1_dir);
+    await mkdir(pkg1_dir);
+    const pkg2_dir = join(remove_dir, "pkg2");
+    const pkg2_path = relative(package_dir, pkg2_dir);
+    await mkdir(pkg2_dir);
+
+    await writeFile(join(pkg1_dir, "package.json"), JSON.stringify({ name: "pkg1", version: "0.0.1" }));
+    await writeFile(join(pkg2_dir, "package.json"), JSON.stringify({ name: "pkg2", version: "0.0.1" }));
+
+    const manifest = (deps: Record<string, unknown>) =>
+      JSON.stringify(
+        {
+          name: "@neodon/bun-is-awesome",
+          version: "0.1.0",
+          private: true,
+          type: "module",
+          module: "index.ts",
+          scripts: { hello: "echo hello" },
+          ...deps,
+          license: "MIT",
+        },
+        null,
+        2,
+      ) + "\n";
+
+    await writeFile(
+      join(package_dir, "package.json"),
+      manifest({
+        dependencies: { pkg1: `file:${pkg1_path.replace(/\\/g, "/")}` },
+        devDependencies: { pkg2: `file:${pkg2_path.replace(/\\/g, "/")}` },
+      }),
+    );
+
+    const { exited: installExited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(await installExited).toBe(0);
+
+    // Remove the only entry in "dependencies": the section should disappear,
+    // but the surrounding top-level keys must stay in their original order.
+    const { exited: rmExited, stderr: rmStderr } = spawn({
+      cmd: [bunExe(), "remove", "pkg1"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await rmStderr.text();
+    expect(err).not.toContain("error:");
+    expect(await rmExited).toBe(0);
+
+    expect(await file(join(package_dir, "package.json")).text()).toBe(
+      manifest({
+        devDependencies: { pkg2: `file:${pkg2_path.replace(/\\/g, "/")}` },
+      }),
+    );
+
+    // Now remove the only entry in "devDependencies" as well.
+    const { exited: rmExited2, stderr: rmStderr2 } = spawn({
+      cmd: [bunExe(), "remove", "pkg2"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err2 = await rmStderr2.text();
+    expect(err2).not.toContain("error:");
+    expect(await rmExited2).toBe(0);
+
+    expect(await file(join(package_dir, "package.json")).text()).toBe(manifest({}));
+  } finally {
+    destroyTestContext(ctx);
+  }
+});
+
 it.concurrent("should remove peerDependencies", async () => {
   const ctx = await createTestContext();
   try {

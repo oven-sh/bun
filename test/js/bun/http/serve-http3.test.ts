@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createHash, randomBytes } from "crypto";
 import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
 import { join } from "path";
+import { fetchH3WithHeaderBlocks, hasCurlH3 } from "./fetch-h3";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces
 // `protocol: "http3"` so a regression that silently falls back to TCP
@@ -225,10 +226,21 @@ describe("Bun.serve HTTP/3", () => {
 
   test("writeEarlyHints returns false", async () => {
     await withServer(async port => {
-      const res = await fetchH3(port, "/early-hints");
-      expect(res.status).toBe(200);
-      expect(res.headers.get("link")).toBeNull();
-      expect(await res.text()).toBe("false");
+      const response = await fetchH3(port, "/early-hints");
+      expect(response.status).toBe(200);
+      expect(response.headers.get("link")).toBeNull();
+      expect(await response.text()).toBe("false");
+    });
+  });
+
+  test.if(hasCurlH3())("writeEarlyHints emits no informational response", async () => {
+    await withServer(async port => {
+      const { response, headerBlocks } = await fetchH3WithHeaderBlocks(`https://127.0.0.1:${port}/early-hints`);
+      expect(headerBlocks.some(block => /^HTTP\/3 103(?:\s|$)/m.test(block))).toBe(false);
+      expect(headerBlocks.some(block => /^link:\s*<\/app\.css>/im.test(block))).toBe(false);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("link")).toBeNull();
+      expect(await response.text()).toBe("false");
     });
   });
 

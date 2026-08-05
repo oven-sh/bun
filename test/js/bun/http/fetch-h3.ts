@@ -30,6 +30,10 @@ function findCurlH3(): string | null {
   return (resolved = null);
 }
 
+export function hasCurlH3(): boolean {
+  return findCurlH3() !== null;
+}
+
 type Init = {
   method?: string;
   headers?: HeadersInit;
@@ -45,6 +49,16 @@ type Init = {
  * only relying on what's listed above.
  */
 export async function fetchH3(input: string | URL, init: Init = {}): Promise<Response> {
+  return (await fetchH3WithHeaderBlocks(input, init)).response;
+}
+
+/**
+ * fetchH3() plus every raw response header block captured by curl.
+ */
+export async function fetchH3WithHeaderBlocks(
+  input: string | URL,
+  init: Init = {},
+): Promise<{ response: Response; headerBlocks: string[] }> {
   const bin = findCurlH3();
   if (!bin) throw new Error("fetchH3: no HTTP/3-capable curl (set CURL_HTTP3=/path/to/curl)");
 
@@ -119,8 +133,11 @@ export async function fetchH3(input: string | URL, init: Init = {}): Promise<Res
   }
 
   // With -L curl emits one header block per hop; the final response is last.
-  const blocks = headerText.trimEnd().split(/\r?\n\r?\n/);
-  const lastBlock = blocks[blocks.length - 1] ?? "";
+  const headerBlocks = headerText
+    .trimEnd()
+    .split(/\r?\n\r?\n/)
+    .filter(Boolean);
+  const lastBlock = headerBlocks[headerBlocks.length - 1] ?? "";
   const lines = lastBlock.split(/\r?\n/);
   const statusLine = lines.shift() ?? "HTTP/3 502";
   const status = Number(statusLine.match(/HTTP\/3\s+(\d{3})/)?.[1] ?? "502");
@@ -133,7 +150,10 @@ export async function fetchH3(input: string | URL, init: Init = {}): Promise<Res
   }
 
   const noBody = status === 204 || status === 304 || method === "HEAD";
-  return new Response(noBody ? null : new Uint8Array(bodyBytes), { status, headers });
+  return {
+    response: new Response(noBody ? null : new Uint8Array(bodyBytes), { status, headers }),
+    headerBlocks,
+  };
 }
 
 /**

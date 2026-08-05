@@ -949,6 +949,96 @@ describe("expect()", () => {
     }
   });
 
+  // Jest's .rejects.toThrow / .resolves.toThrow only treat the settled value as
+  // "thrown" when it is an Error (isError from @jest/expect-utils); any other
+  // value fails with "Received function did not throw".
+  test("rejects.toThrow requires an Error rejection value", async () => {
+    /** Run a matcher expected to fail and return its failure message.
+     * (bun throws synchronously; jest returns a rejecting promise.)
+     * @param {() => unknown} fn */
+    const failureMessage = async fn => {
+      try {
+        await fn();
+      } catch (e) {
+        return /** @type {any} */ (e).message;
+      }
+      throw new Error("expected the assertion to fail, but it passed");
+    };
+
+    // Non-Error settled values must not satisfy toThrow().
+    expect(await failureMessage(() => expect(Promise.reject("r")).rejects.toThrow("r"))).toContain("did not throw");
+    expect(await failureMessage(() => expect(Promise.reject("r")).rejects.toThrow())).toContain("did not throw");
+    expect(await failureMessage(() => expect(Promise.reject(42)).rejects.toThrow())).toContain("did not throw");
+    expect(await failureMessage(() => expect(Promise.reject(null)).rejects.toThrow())).toContain("did not throw");
+    expect(await failureMessage(() => expect(Promise.reject({ message: "r" })).rejects.toThrow("r"))).toContain(
+      "did not throw",
+    );
+    expect(
+      await failureMessage(() => expect(Promise.reject({ name: "X", message: "r", stack: "" })).rejects.toThrow("r")),
+    ).toContain("did not throw");
+    expect(await failureMessage(() => expect(Promise.resolve("r")).resolves.toThrow())).toContain("did not throw");
+
+    // ...and therefore they do satisfy .not.toThrow().
+    await expect(Promise.reject("r")).rejects.not.toThrow();
+    await expect(Promise.reject({ message: "r" })).rejects.not.toThrow("r");
+    // https://github.com/oven-sh/bun/issues/9687
+    await expect((async () => {})()).resolves.not.toThrow();
+    // https://github.com/oven-sh/bun/issues/14076
+    await expect(Promise.resolve("hello world")).resolves.not.toThrow();
+
+    // Error-like settled values still count as thrown.
+    await expect(Promise.reject(new Error("r"))).rejects.toThrow("r");
+    class ExpectRejectsCustomError extends Error {}
+    await expect(Promise.reject(new ExpectRejectsCustomError("x"))).rejects.toThrow("x");
+    await expect(Promise.reject(new AggregateError([], "agg"))).rejects.toThrow("agg");
+    await expect(Promise.reject(new DOMException("dom"))).rejects.toThrow("dom");
+    await expect(Promise.reject({ [Symbol.toStringTag]: "Error", message: "tagged" })).rejects.toThrow("tagged");
+    // The snapshot matchers use the same gate, so a value that counts as thrown
+    // without being an ErrorInstance snapshots its message, not `undefined`.
+    await expect(
+      Promise.reject({ [Symbol.toStringTag]: "Error", message: "tagged snapshot" }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(`"tagged snapshot"`);
+    const inheritsErrorPrototype = Object.create(Error.prototype);
+    inheritsErrorPrototype.message = "proto";
+    await expect(Promise.reject(inheritsErrorPrototype)).rejects.toThrow("proto");
+    await expect(Promise.resolve(new Error("res"))).resolves.toThrow("res");
+
+    // The check runs user traps. `value instanceof Error` on a Proxy whose
+    // getPrototypeOf throws propagates that error, same as Jest.
+    const hostileProxy = new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw new Error("trap");
+        },
+      },
+    );
+    expect(await failureMessage(() => expect(Promise.reject(hostileProxy)).rejects.toThrow())).toBe("trap");
+
+    if (isBun) {
+      // ResolveMessage and BuildMessage are error-like but do not extend Error
+      // (https://github.com/oven-sh/bun/issues/11780); they still count as thrown,
+      // matching the exception util.types.isNativeError already grants them.
+      const missingModule = "/definitely-does-not-exist/" + "expect-rejects-to-throw.ts";
+      await expect(import(missingModule)).rejects.toThrow("Cannot find module");
+      await expect(new Bun.Transpiler().transform("}")).rejects.toThrow();
+
+      // A cyclic getPrototypeOf trap must not spin the prototype walk forever.
+      // (Jest's `instanceof Error` genuinely hangs on this, so it is bun-only.)
+      const cyclicProxy = new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            return cyclicProxy;
+          },
+        },
+      );
+      expect(await failureMessage(() => expect(Promise.reject(cyclicProxy)).rejects.toThrow())).toContain(
+        "did not throw",
+      );
+    }
+  });
+
   test("deepEquals derived strings and strings", () => {
     let a = new String("hello");
     let b = "hello";

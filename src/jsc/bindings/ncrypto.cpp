@@ -547,6 +547,61 @@ bool BignumPointer::generate(const PrimeConfig& params,
             },
             &innerCb);
     }
+
+    // BoringSSL's probable_prime_dh() (the non-safe add/rem path inside
+    // BN_generate_prime_ex) applies the safe-prime trial-division criterion
+    // `rnd mod p <= 1` instead of `== 0`, and never re-randomizes or re-clamps
+    // the candidate to the requested bit range. For any odd prime q dividing
+    // `add`, `rnd mod q` is invariant across steps of `add`, so a start with
+    // `rnd mod q == 1` loops forever; and for small sizes the walk can return
+    // values well above the requested bit length. Implement OpenSSL's
+    // bn_probable_prime_dh semantics here and let BN_is_prime_fasttest_ex do
+    // the (correct) trial division.
+    if (params.add.get() != nullptr && !params.safe && params.bits >= 2) {
+        BignumCtxPointer ctx(BN_CTX_new());
+        BignumPointer t1(BN_new());
+        if (!ctx || !t1) [[unlikely]]
+            return false;
+        BIGNUM* rnd = get();
+        const BIGNUM* add = params.add.get();
+        const BIGNUM* rem = params.rem.get();
+        const unsigned bits = static_cast<unsigned>(params.bits);
+        int c1 = 0;
+        for (;;) {
+            if (!BN_rand(rnd, bits, BN_RAND_TOP_ONE, BN_RAND_BOTTOM_ODD))
+                return false;
+            // we need (rnd - rem) % add == 0
+            if (!BN_mod(t1.get(), rnd, add, ctx.get()))
+                return false;
+            if (!BN_sub(rnd, rnd, t1.get()))
+                return false;
+            if (rem == nullptr) {
+                if (!BN_add_word(rnd, 1))
+                    return false;
+            } else {
+                if (!BN_add(rnd, rnd, rem))
+                    return false;
+            }
+            if (BN_num_bits(rnd) < bits || BN_cmp_word(rnd, 3) < 0) {
+                if (!BN_add(rnd, rnd, add))
+                    return false;
+            }
+            for (;;) {
+                if (BN_num_bits(rnd) != bits)
+                    break;
+                if (!BN_GENCB_call(cb.get(), BN_GENCB_GENERATED, c1++))
+                    return false;
+                int r = BN_is_prime_fasttest_ex(rnd, BN_prime_checks_for_generation, ctx.get(), 1, cb.get());
+                if (r < 0)
+                    return false;
+                if (r == 1)
+                    return true;
+                if (!BN_add(rnd, rnd, add))
+                    return false;
+            }
+        }
+    }
+
     if (BN_generate_prime_ex(get(),
             params.bits,
             params.safe ? 1 : 0,

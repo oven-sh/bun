@@ -1170,3 +1170,67 @@ describe("spyOn", () => {
 
   // spyOn does not work with getters/setters yet.
 });
+
+describe("constructing a mock", () => {
+  // Previously, invoking a mock with `new` returned the implementation's
+  // result as-is, even when it was a primitive, which is invalid for a
+  // constructor and crashed the engine.
+  test("returns an object when there is no implementation", () => {
+    const fn = jest.fn();
+    const instance = new fn();
+    expect(typeof instance).toBe("object");
+    expect(instance).not.toBe(null);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  test("ignores a primitive return value", () => {
+    const fn = jest.fn(function () {
+      return 42;
+    });
+    const instance = Reflect.construct(fn, []);
+    expect(typeof instance).toBe("object");
+    expect(fn.mock.results[0]).toEqual({ type: "return", value: 42 });
+  });
+
+  test("returns the implementation's object return value", () => {
+    const result = { x: 1 };
+    const fn = jest.fn(function () {
+      return result;
+    });
+    expect(new fn()).toBe(result);
+  });
+
+  test("ignores a primitive from mockReturnValue", () => {
+    const fn = jest.fn().mockReturnValue(5);
+    const instance = new fn();
+    expect(typeof instance).toBe("object");
+    expect(fn()).toBe(5);
+  });
+
+  test("uses new.target's prototype for the instance", () => {
+    function Other() {}
+    const fn = jest.fn(function () {});
+    const instance = Reflect.construct(fn, [], Other);
+    expect(Object.getPrototypeOf(instance)).toBe(Other.prototype);
+  });
+
+  test("passes the instance to the implementation as this", () => {
+    let seenThis;
+    const fn = jest.fn(function () {
+      seenThis = this;
+      this.tagged = true;
+    });
+    const instance = new fn();
+    expect(seenThis).toBe(instance);
+    expect(instance.tagged).toBe(true);
+  });
+
+  if (isBun) {
+    test("constructing a spy on a non-function property does not crash", () => {
+      const obj = { foo: 123 };
+      const spy = spyOn(obj, "foo");
+      const instance = Reflect.construct(spy, []);
+      expect(typeof instance).toBe("object");
+    });
+  }
+});

@@ -171,13 +171,52 @@ function getHeapStatistics() {
     // ---- End of copied from Node
 
     external_memory: stats.extraMemorySize,
+    total_allocated_bytes: stats.heapCapacity,
   };
 }
+// JSC has one undivided heap; report its totals under "old_space" and keep V8's other space names for shape compatibility.
+const kHeapSpaces = [
+  "read_only_space",
+  "new_space",
+  "old_space",
+  "code_space",
+  "shared_space",
+  "trusted_space",
+  "shared_trusted_space",
+  "new_large_object_space",
+  "large_object_space",
+  "code_large_object_space",
+  "shared_large_object_space",
+  "shared_trusted_large_object_space",
+  "trusted_large_object_space",
+];
 function getHeapSpaceStatistics() {
-  notimpl("getHeapSpaceStatistics");
+  // process.memoryUsage() is O(1); jsc.heapStats() would walk every live cell for counts we don't need here.
+  const { heapTotal, heapUsed } = process.memoryUsage();
+  const spaces = $newArrayWithSize(kHeapSpaces.length);
+  for (let i = 0; i < kHeapSpaces.length; i++) {
+    const space_name = kHeapSpaces[i];
+    const isOldSpace = space_name === "old_space";
+    const used = isOldSpace ? heapUsed : 0;
+    const size = isOldSpace ? heapTotal : 0;
+    spaces[i] = {
+      space_name,
+      space_size: size,
+      space_used_size: used,
+      space_available_size: size > used ? size - used : 0,
+      physical_space_size: size,
+    };
+  }
+  return spaces;
 }
 function getHeapCodeStatistics() {
-  notimpl("getHeapCodeStatistics");
+  // JSC does not expose a code/bytecode size split.
+  return {
+    code_and_metadata_size: 0,
+    bytecode_and_metadata_size: 0,
+    external_script_source_size: 0,
+    cpu_profiler_metadata_size: 0,
+  };
 }
 function setFlagsFromString(flags) {
   // Validate before reporting the gap: node rejects a non-string argument

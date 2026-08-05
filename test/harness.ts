@@ -1511,9 +1511,10 @@ export async function runBunInstall(
   return { out, err, exited };
 }
 
-// stderr with `slow filesystem` warning removed
+// stderr with timing-dependent warnings removed (debug/ASAN builds can push any
+// lifecycle script over the 500ms slow-script threshold)
 export function stderrForInstall(err: string) {
-  return err.replace(/warn: Slow filesystem.*/g, "");
+  return err.replace(/warn: Slow filesystem.*/g, "").replace(/warn: .*'s \S+ script took .*\n?\n?/g, "");
 }
 
 export async function runBunUpdate(

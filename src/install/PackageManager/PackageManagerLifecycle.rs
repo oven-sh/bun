@@ -34,13 +34,40 @@ pub struct LifecycleScriptTimeLog {
     list: Vec<LifecycleScriptTimeLogEntry>,
 }
 
-pub struct LifecycleScriptTimeLogEntry {}
+pub struct LifecycleScriptTimeLogEntry {
+    pub(crate) package_name: Box<[u8]>,
+    pub(crate) script_id: u8,
+    /// nanoseconds
+    pub(crate) duration: u64,
+}
 
 impl LifecycleScriptTimeLog {
     pub(crate) fn append_concurrent(&mut self, entry: LifecycleScriptTimeLogEntry) {
         self.mutex.lock();
         self.list.push(entry);
         self.mutex.unlock();
+    }
+
+    pub(crate) fn print_and_clear(&mut self) {
+        #[cfg(debug_assertions)]
+        {
+            assert!(
+                self.mutex.try_lock(),
+                "LifecycleScriptTimeLog.print is not intended to be thread-safe"
+            );
+            self.mutex.unlock();
+        }
+
+        if let Some(longest) = self.list.iter().max_by_key(|e| e.duration) {
+            bun_core::warn!(
+                "{}'s {} script took {}",
+                BStr::new(&longest.package_name),
+                lockfile::Scripts::NAMES[longest.script_id as usize],
+                bun_fmt::fmt_duration_one_decimal(longest.duration),
+            );
+            Output::flush();
+        }
+        self.list.clear();
     }
 }
 

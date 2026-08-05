@@ -1034,6 +1034,8 @@ fn print_install_summary(
     if this.options.do_.summary() {
         print_summary_tree(this, install_summary, log_level)?;
 
+        this.lifecycle_script_time_log.print_and_clear();
+
         if !did_meta_hash_change {
             this.summary.remove = 0;
             this.summary.add = 0;

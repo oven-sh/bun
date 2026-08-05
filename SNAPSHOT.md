@@ -33,6 +33,10 @@ bun build --compile --compile-image app.ts --outfile app   # builds ./app, runs 
 
 The app decides when it is idle: call `Bun.unsafe.snapshot(process.env.BUN_IMAGE_OUT, { cancelTimers: true })` when `BUN_IMAGE_OUT` is set, and re-arm whatever it needs in `process.on('restore')`. The image-required environment (allocator/JIT placement, JSC tier options, ASLR off) is applied by a one-time self re-exec, so nothing needs to be set by the user. See `test/js/bun/image/`.
 
+### Single-file follow-up (not done)
+
+Today `--compile-image` leaves `app` + `app.img.zst` side by side (the exe finds `<self>.img[.zst]`). One file is possible without appending loose bytes (which would break the Mach-O signature): make it a two-pass compile that re-emits the executable with the `.img.zst` carried as an extra blob inside the existing `__BUN,__bun` section payload (StandaloneModuleGraph already has an offsets table; ELF/PE analogous), and have the loader hand that blob to the same inflate-to-`~/.cache/bun/images` path. Growing `__BUN` doesn't move `__TEXT/__DATA`, so the image stays valid; the build-identity check must then hash `__TEXT`/`__DATA` layout rather than use LC_UUID (re-signing changes it).
+
 ## Make an image (the app snapshots itself)
 
 ```sh

@@ -4249,6 +4249,7 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
         const blockEnd = parsed.frames.findIndex(
           f => [FRAME.HEADERS, FRAME.CONTINUATION].includes(f.type) && f.streamId === 1 && f.flags & END_HEADERS,
         );
+        expect(blockEnd).toBeGreaterThanOrEqual(0);
         const issuedAfter = outer === "continuation" ? blockEnd : parsed.frames.indexOf(dataFrames[0]);
         const after = parsed.frames.slice(issuedAfter + 1);
         const before = parsed.frames.slice(0, issuedAfter + 1);

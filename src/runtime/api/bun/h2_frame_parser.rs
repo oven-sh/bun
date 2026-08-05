@@ -9377,6 +9377,17 @@ impl H2FrameParser {
 
             if padding != 0 {
                 flags |= HeadersFrameFlags::PADDED as u8;
+                // Grow before any frame byte is written: failing after the header went out
+                // would abandon the frame mid-serialization (the JS-transport tracker would
+                // hold the stream mid-frame and the wire would owe a payload).
+                if encoded_headers
+                    .try_reserve(encoded_size + padding_overhead - encoded_headers.len())
+                    .is_err()
+                {
+                    return Err(
+                        global_object.throw(format_args!("Failed to allocate padding buffer"))
+                    );
+                }
             }
 
             let frame = FrameHeader {
@@ -9400,16 +9411,9 @@ impl H2FrameParser {
 
             // Handle padding
             if padding != 0 {
-                if encoded_headers
-                    .try_reserve(encoded_size + padding_overhead - encoded_headers.len())
-                    .is_err()
-                {
-                    return Err(
-                        global_object.throw(format_args!("Failed to allocate padding buffer"))
-                    );
-                }
                 // Zero-fill the padding region (RFC 7540 §6.2: padding octets MUST be zero) and
-                // ensure the slice we hand to writer covers only initialized bytes.
+                // ensure the slice we hand to writer covers only initialized bytes. Cannot
+                // allocate: the capacity was reserved above, before the frame header went out.
                 encoded_headers.resize(encoded_size + padding_overhead, 0);
                 let buffer = encoded_headers.as_mut_slice();
                 // memmove: shift right by 1 to make room for the pad-length byte

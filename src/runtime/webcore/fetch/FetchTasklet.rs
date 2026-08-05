@@ -668,6 +668,16 @@ impl FetchTasklet {
         }) {
             crate::webcore::readable_stream::NativeWireResult::Wired => return,
             crate::webcore::readable_stream::NativeWireResult::EndedInline(err) => {
+                // The source finished inside the wire attempt, so leave the
+                // sink in the state `end_from_stream` leaves it: ended, with
+                // the source and task detached. `write_end_request` below is
+                // the single balancing release of the `+1` taken above; a
+                // sink left `ended == false` here would make the terminal
+                // `cancel_request_body_sink` treat it as a live native sink
+                // and release that ref a second time, freeing the tasklet
+                // while it is still in use.
+                sink.ended = true;
+                sink.source.clear();
                 sink.task = None;
                 let err_js = err.map(|err| {
                     let err_js = err.to_js(&global_this);

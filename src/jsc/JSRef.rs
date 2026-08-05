@@ -1,5 +1,5 @@
-// The methods used below (`get() -> Option`, `has()`, `try_swap()`) live on
-// the Optional wrapper, so import it under the local name `Strong`.
+// The methods used below (`get() -> Option`, `has()`, `set()`) live on the
+// Optional wrapper, so import it under the local name `Strong`.
 use crate::strong::Optional as Strong;
 use crate::weak::Weak;
 use crate::{JSGlobalObject, JSValue};

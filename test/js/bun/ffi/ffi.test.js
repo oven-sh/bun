@@ -9,6 +9,7 @@ import {
   CString,
   dlopen,
   JSCallback,
+  linkSymbols,
   ptr,
   read,
   suffix,
@@ -1062,7 +1063,7 @@ it("JSCallback tolerates worker.terminate() arriving inside the callback", async
 // Runs in a subprocess for the same reason as the JSCallback tests above: the
 // linked library's native handle is not finalized on `bun test`'s exit path,
 // which the ASan lane's leak checker reports against this file.
-it.skipIf(isFFIUnavailable)("FFI functions are not constructors", async () => {
+it("FFI functions are not constructors", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

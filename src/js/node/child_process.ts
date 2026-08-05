@@ -12,6 +12,8 @@ const {
   validateOneOf,
 } = require("internal/validators");
 
+const markAsUncloneable = $newCppFunction("Worker.cpp", "jsFunctionMarkAsUncloneable", 1);
+
 var NetModule;
 
 var ObjectCreate = Object.create;
@@ -1106,6 +1108,12 @@ class ChildProcess extends EventEmitter {
   pid;
   channel;
   killed = false;
+
+  constructor() {
+    super();
+    // Node's ChildProcess has a native `_handle` the serializer rejects; Bun's #handle is private.
+    markAsUncloneable(this);
+  }
 
   [Symbol.dispose]() {
     if (!this.killed) {

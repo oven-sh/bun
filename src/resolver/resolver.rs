@@ -2466,7 +2466,10 @@ impl<'a> Resolver<'a> {
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         Self::assert_valid_cache_key(path);
         let first_bust = self.fs_mut().fs.bust_entries_cache(path);
-        let second_bust = self.dir_cache_mut().remove(path);
+        // Mark (not remove) so the recompute reuses the same slot; a removed
+        // slot is orphaned forever (see `BSSMapInner::mark_stale`) and the
+        // failed-resolve retry busts on every miss.
+        let second_bust = self.dir_cache_mut().mark_stale(path);
         bun_core::scoped_log!(
             ResolverDev,
             "Bust {} = {}, {}",
@@ -3390,7 +3393,7 @@ impl<'a> Resolver<'a> {
 
         if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
             if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                if entries.generation >= self.generation {
+                if !entries.stale && entries.generation >= self.generation {
                     dir_entries_option = cached_entry;
                     needs_iter = false;
                 } else {
@@ -4101,7 +4104,11 @@ impl<'a> Resolver<'a> {
         let top_result = self
             .dir_cache_mut()
             .get_or_put(path_without_trailing_slash)?;
-        if top_result.status != allocators::ItemStatus::Unknown {
+        // `Stale` falls through to the miss path, which recomputes into the
+        // same slot (`put_slot` reuses `top_result.index`).
+        if top_result.status == allocators::ItemStatus::Exists
+            || top_result.status == allocators::ItemStatus::NotFound
+        {
             return Ok(self
                 .dir_cache_mut()
                 .at_index(top_result.index)
@@ -4182,7 +4189,11 @@ impl<'a> Resolver<'a> {
             debug_assert!(top.as_ptr() == root_path.as_ptr());
             let result = self.dir_cache_mut().get_or_put(top)?;
 
-            if result.status != allocators::ItemStatus::Unknown {
+            // A `Stale` ancestor joins the queue so it gets recomputed (in
+            // place, via its preserved index) instead of serving stale data.
+            if result.status != allocators::ItemStatus::Unknown
+                && result.status != allocators::ItemStatus::Stale
+            {
                 top_parent = result;
                 break;
             }
@@ -4204,8 +4215,14 @@ impl<'a> Resolver<'a> {
                     Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                         // SAFETY: slot was written immediately above.
                         let slot = unsafe { queue[i].assume_init_mut() };
+                        // The interned dir name is immutable, so it's safe to
+                        // reuse even when stale; the fd is not (a stale listing
+                        // must be re-read from a fresh handle, matching
+                        // `entries_at_locked`'s refresh).
                         slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
-                        slot.fd = entries.fd;
+                        if !entries.stale {
+                            slot.fd = entries.fd;
+                        }
                     }
                     Fs::file_system::real_fs::EntriesOption::Err(err) => {
                         debuglog!(
@@ -4224,7 +4241,9 @@ impl<'a> Resolver<'a> {
 
         if top == root_path {
             let result = self.dir_cache_mut().get_or_put(root_path)?;
-            if result.status != allocators::ItemStatus::Unknown {
+            if result.status != allocators::ItemStatus::Unknown
+                && result.status != allocators::ItemStatus::Stale
+            {
                 top_parent = result;
             } else {
                 if i >= queue.len() {
@@ -4241,8 +4260,11 @@ impl<'a> Resolver<'a> {
                         Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                             // SAFETY: slot was written immediately above.
                             let slot = unsafe { queue[i].assume_init_mut() };
+                            // See the stale-fd note in the loop above.
                             slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
-                            slot.fd = entries.fd;
+                            if !entries.stale {
+                                slot.fd = entries.fd;
+                            }
                         }
                         Fs::file_system::real_fs::EntriesOption::Err(err) => {
                             debuglog!(
@@ -4488,7 +4510,7 @@ impl<'a> Resolver<'a> {
 
             if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
                 if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                    if entries.generation >= self.generation {
+                    if !entries.stale && entries.generation >= self.generation {
                         dir_entries_option = cached_entry;
                         needs_iter = false;
                     } else {

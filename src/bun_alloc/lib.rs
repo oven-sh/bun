@@ -1361,6 +1361,10 @@ pub enum ItemStatus {
     Unknown,
     Exists,
     NotFound,
+    /// The slot exists but was invalidated by [`BSSMapInner::mark_stale`]:
+    /// the caller must recompute the value and `put` it back into the same
+    /// slot (the `Result` carries the existing index).
+    Stale,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2536,8 +2540,13 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 // BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES>
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Key hashes whose slot awaits an in-place recompute (see
+/// [`BSSMapInner::mark_stale`]). Guarded by the map's own mutex.
+type StaleSet = std::collections::HashSet<HashKeyType, IndexMapHasher>;
+
 pub struct BSSMapInner<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool> {
     pub(crate) index: IndexMap,
+    pub(crate) stale_hashes: StaleSet,
     pub overflow_list: OverflowList<ValueType, BSS_OVERFLOW_BLOCK_SIZE>,
     pub(crate) mutex: Mutex,
     // Only `[0..backing_buf_used]` is initialized.
@@ -2564,6 +2573,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         unsafe {
             addr_of_mut!((*slot).mutex).write(Mutex::new());
             addr_of_mut!((*slot).index).write(IndexMap::default());
+            addr_of_mut!((*slot).stale_hashes).write(StaleSet::default());
             addr_of_mut!((*slot).backing_buf_used).write(0);
             OverflowList::init_counters_at(addr_of_mut!((*slot).overflow_list));
         }
@@ -2607,6 +2617,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
                     status: match v.index() {
                         i if i == NOT_FOUND.index() => ItemStatus::NotFound,
                         i if i == UNASSIGNED.index() => ItemStatus::Unknown,
+                        _ if self.stale_hashes.contains(&_key) => ItemStatus::Stale,
                         _ => ItemStatus::Exists,
                     },
                 })
@@ -2636,6 +2647,31 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     pub fn mark_not_found(&mut self, result: Result) {
         let _guard = self.mutex.lock();
         self.index.insert(result.hash, NOT_FOUND);
+        self.stale_hashes.remove(&result.hash);
+    }
+
+    /// Invalidate `denormalized_key` without discarding its slot: later
+    /// `get_or_put` calls report [`ItemStatus::Stale`] with the existing index
+    /// until a `put` stores a recomputed value back into that slot.
+    ///
+    /// This exists because slots are append-only and never reused for a
+    /// different key — values hand out `'static` borrows and inter-slot
+    /// indexes — so `remove` + re-`put` permanently orphans the old slot.
+    /// Callers that repeatedly invalidate the same key (e.g. the resolver's
+    /// dir-cache bust on failed resolves) must go through here to keep memory
+    /// bounded. `NOT_FOUND`/`UNASSIGNED` markers have no slot to refresh and
+    /// are removed as before. Returns whether anything was invalidated.
+    pub fn mark_stale(&mut self, denormalized_key: &[u8]) -> bool {
+        let _guard = self.mutex.lock();
+        let _key = Self::key_hash(denormalized_key);
+        match self.index.get(&_key) {
+            Some(v) if v.index() != NOT_FOUND.index() && v.index() != UNASSIGNED.index() => {
+                self.stale_hashes.insert(_key);
+                true
+            }
+            Some(_) => self.index.remove(&_key).is_some(),
+            None => false,
+        }
     }
 
     pub fn at_index(&mut self, index: IndexType) -> Option<&mut ValueType> {
@@ -2689,6 +2725,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
             unsafe { self.backing_buf[idx].assume_init_mut() }
         };
         self.index.insert(result.hash, result.index);
+        self.stale_hashes.remove(&result.hash);
         Ok(ret)
     }
 
@@ -2696,6 +2733,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     pub fn remove(&mut self, denormalized_key: &[u8]) -> bool {
         let _guard = self.mutex.lock();
         let _key = Self::key_hash(denormalized_key);
+        self.stale_hashes.remove(&_key);
         self.index.remove(&_key).is_some()
     }
 }

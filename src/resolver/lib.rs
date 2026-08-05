@@ -1202,7 +1202,7 @@ pub mod fs {
                         // scrutinee directly so no second `&mut *cached_ptr` is materialized
                         // while the first is on the borrow stack (Stacked Borrows hygiene).
                         match unsafe { &mut *cached_ptr } {
-                            EntriesOption::Entries(e) if e.generation < generation => {
+                            EntriesOption::Entries(e) if e.stale || e.generation < generation => {
                                 in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
                             }
                             cached => return Ok(cached),
@@ -1308,16 +1308,29 @@ pub mod fs {
             })))
         }
 
-        /// Evicts `file_path` from the directory-entry cache; returns whether
-        /// an entry was removed.
+        /// Invalidates `file_path` in the directory-entry cache; returns
+        /// whether anything was cached for it.
+        ///
+        /// A cached listing is marked stale rather than removed: the next read
+        /// refreshes the same `DirEntry` in place (the `in_place` path of
+        /// `read_directory_with_iterator` / `entries_at_locked`), reusing its
+        /// `EntryStore` slots and interned names. Removing it would orphan all
+        /// of that — the backing stores are append-only — leaking the whole
+        /// listing on every bust+re-read cycle (~190 bytes per directory entry
+        /// per failed-resolve retry).
         pub(crate) fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
             // `entries` is the process-global
-            // BSSMap singleton and `remove` mutates it; callers (transpiler /
+            // BSSMap singleton and the lookup mutates it; callers (transpiler /
             // hot-reloader / VM) reach this without `RESOLVER_MUTEX`, so take
             // `entries_mutex` to satisfy `EntriesMap::inner`'s aliasing
             // invariant. No caller already holds it (no re-entry from
             // `read_directory`/`dir_info_cached_maybe_log`).
             let _g = self.entries_mutex.lock_guard();
+            if let Some(EntriesOption::Entries(e)) = self.entries.get(file_path) {
+                e.stale = true;
+                return true;
+            }
+            // `Err` results and `NOT_FOUND` markers have no listing to refresh.
             self.entries.remove(file_path)
         }
 
@@ -1579,7 +1592,7 @@ pub mod fs {
             let result_ptr = std::ptr::from_mut::<EntriesOption>(self.entries.at_index(index)?);
             // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
             if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
-                if existing.generation < generation {
+                if existing.stale || existing.generation < generation {
                     let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
                     // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
                     let dir = unsafe { (*e_ptr).dir };

@@ -385,6 +385,10 @@ pub struct DirEntry {
     pub dir: &'static [u8],
     pub fd: Fd,
     pub(crate) generation: Generation,
+    /// Set by `bust_entries_cache`: the listing must be re-read (in place,
+    /// reusing this slot and its `Entry` allocations) before the next use.
+    /// Written and read under `entries_mutex`, like the rest of the struct.
+    pub(crate) stale: bool,
     pub data: dir_entry::EntryMap,
 }
 
@@ -397,6 +401,7 @@ impl DirEntry {
             dir,
             data: dir_entry::EntryMap::default(),
             generation,
+            stale: false,
             fd: Fd::INVALID,
         }
     }

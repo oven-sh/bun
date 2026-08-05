@@ -932,6 +932,16 @@ impl BuildCommand {
                     Global::exit(1);
                 }
 
+                if ctx.bundler_options.compile_image {
+                    if is_cross_compile {
+                        Output::print_errorln(format_args!(
+                            "--compile-image needs to run the executable, so it can't be used when cross-compiling"
+                        ));
+                        Global::exit(1);
+                    }
+                    write_heap_image_by_running(root_dir.fd, outfile);
+                }
+
                 // Write external sourcemap files next to the compiled executable.
                 // With --splitting, there can be multiple .map files (one per chunk).
                 if opt_source_map == options::SourceMapOption::External {
@@ -1419,4 +1429,54 @@ pub(crate) fn collect_compile_assets(
         }
     }
     Ok(())
+}
+
+/// `--compile-image`: run the freshly built executable with `BUN_IMAGE_OUT=<exe>.img`; the app snapshots itself once idle.
+fn write_heap_image_by_running(root_fd: bun_sys::Fd, outfile: &[u8]) {
+    let mut buf = bun_paths::PathBuffer::uninit();
+    let mut exe = match bun_sys::get_fd_path(root_fd, &mut buf) {
+        Ok(p) => p.to_vec(),
+        Err(_) => b".".to_vec(),
+    };
+    exe.push(b'/');
+    exe.extend_from_slice(outfile);
+    let mut img = exe.clone();
+    img.extend_from_slice(b".img");
+    let exe_str = String::from_utf8_lossy(&exe).into_owned();
+    let img_str = String::from_utf8_lossy(&img).into_owned();
+    Output::prettyln(format_args!(
+        "<d>[image]</r> running {} to produce {}",
+        exe_str, img_str
+    ));
+    Output::flush();
+    let status = std::process::Command::new(&exe_str)
+        .env("BUN_IMAGE_OUT", &img_str)
+        .status();
+    match status {
+        Ok(st) if std::path::Path::new(&img_str).exists() => {
+            let size = std::fs::metadata(&img_str).map(|m| m.len()).unwrap_or(0);
+            Output::prettyln(format_args!(
+                "<green>[image]</r> wrote {} ({:.1} MB, exit {})",
+                img_str,
+                size as f64 / 1048576.0,
+                st.code().unwrap_or(-1)
+            ));
+        }
+        Ok(st) => {
+            Output::print_errorln(format_args!(
+                "--compile-image: {} exited ({}) without writing {} — does the app call Bun.unsafe.snapshot()?",
+                exe_str,
+                st.code().unwrap_or(-1),
+                img_str
+            ));
+            Global::exit(1);
+        }
+        Err(e) => {
+            Output::print_errorln(format_args!(
+                "--compile-image: could not run {}: {}",
+                exe_str, e
+            ));
+            Global::exit(1);
+        }
+    }
 }

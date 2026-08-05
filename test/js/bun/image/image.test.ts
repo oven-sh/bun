@@ -23,3 +23,23 @@ for (const fixture of ["smoke-fixture.js", "heavy-fixture.js"]) {
     expect(exitCode).toBe(0);
   });
 }
+
+test.skipIf(!hasImages)("bun build --compile --compile-image writes <exe>.img and the exe restores from it with no env", async () => {
+  using dir = tempDir("bun-image-compile", {});
+  const exe = join(String(dir), "heavy");
+  const build = Bun.spawnSync({ cmd: [bunExe(), "build", "--compile", "--bytecode", "--format=esm", "--compile-image", join(import.meta.dir, "heavy-fixture.js"), "--outfile", exe], env: bunEnv, stderr: "pipe", stdout: "pipe" });
+  expect(build.stderr.toString() + build.stdout.toString()).toContain("[image] wrote");
+  expect(Bun.file(exe + ".img").size).toBeGreaterThan(1024 * 1024);
+  // No image env at all: the sibling .img is discovered and the process re-execs itself with what it needs.
+  await using proc = Bun.spawn({ cmd: [exe], env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH! }, stderr: "pipe", stdout: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("[image] restored");
+  expect(stdout).toContain("epoch 1");
+  expect(stdout).toContain("fetch -> hello from restored server");
+  expect(exitCode).toBe(0);
+  // Opt out.
+  const plain = Bun.spawnSync({ cmd: [exe], env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, BUN_IMAGE: "0" }, stderr: "pipe", stdout: "pipe" });
+  expect(plain.stdout.toString()).toContain("epoch 0");
+  expect(plain.exitCode).toBe(0);
+});
+

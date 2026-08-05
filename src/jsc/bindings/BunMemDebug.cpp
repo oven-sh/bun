@@ -148,11 +148,23 @@ static void imageRestoreAndRun(const char* path);
 extern "C" struct mach_header_64 _mh_execute_header;
 // Images (building or restoring one) need the executable at its link-time address. If dyld slid us, replace this process
 // with an unslid copy of ourselves (macOS private posix_spawn flag) — same argv/env, no external launcher needed.
+// The allocator / JIT placement and JSC tiering options an image depends on; applied (via the re-exec env) whenever an image is built or used.
+static void setImageEnvDefaults()
+{
+    setenv("MIMALLOC_DETERMINISTIC_HINT", "1", 0);
+    setenv("BUN_IMAGE_JIT_ADDR", "0x3c0000000", 0);
+    setenv("BUN_JSC_useBaselineJIT", "0", 0);
+    setenv("BUN_JSC_useFTLJIT", "0", 0);
+}
+static bool imageEnvIsSet() { return getenv("MIMALLOC_DETERMINISTIC_HINT") && getenv("BUN_IMAGE_JIT_ADDR"); }
+
 static void reexecWithoutASLRIfSlid()
 {
+    bool needEnv = !imageEnvIsSet();
+    setImageEnvDefaults();
 #if OS(DARWIN)
     constexpr uintptr_t linkBase = 0x100000000ull;
-    if ((uintptr_t)&_mh_execute_header == linkBase || getenv("BUN_IMAGE_REEXECED"))
+    if (((uintptr_t)&_mh_execute_header == linkBase && !needEnv) || getenv("BUN_IMAGE_REEXECED"))
         return;
     setenv("BUN_IMAGE_REEXECED", "1", 1);
     char exe[4096]; uint32_t len = sizeof exe;
@@ -167,7 +179,7 @@ static void reexecWithoutASLRIfSlid()
     if (getenv("BUN_IMAGE_REEXECED"))
         return;
     int persona = personality(0xffffffff);
-    if (persona != -1 && (persona & ADDR_NO_RANDOMIZE))
+    if (persona != -1 && (persona & ADDR_NO_RANDOMIZE) && !needEnv)
         return;
     setenv("BUN_IMAGE_REEXECED", "1", 1);
     if (persona != -1 && personality(persona | ADDR_NO_RANDOMIZE) != -1) {
@@ -181,8 +193,28 @@ static void reexecWithoutASLRIfSlid()
 #endif
 }
 
+// `<executable>.img` next to the binary is used automatically (BUN_IMAGE=0 opts out; BUN_IMAGE_IN overrides).
+static bool findSiblingImage(char* out, size_t cap)
+{
+    const char* off = getenv("BUN_IMAGE");
+    if (off && (!strcmp(off, "0") || !strcmp(off, "false")))
+        return false;
+    char exe[4096];
+#if OS(DARWIN)
+    uint32_t len = sizeof exe;
+    if (_NSGetExecutablePath(exe, &len) != 0) return false;
+#else
+    ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1); if (n <= 0) return false; exe[n] = 0;
+#endif
+    snprintf(out, cap, "%s.img", exe);
+    return access(out, R_OK) == 0;
+}
+
 extern "C" void Bun__imageMaybeRestore()
 {
+    char sibling[4200];
+    if (!getenv("BUN_IMAGE_IN") && !getenv("BUN_IMAGE_OUT") && !getenv("CLAUDE_CODE_SNAPSHOT_OUT") && findSiblingImage(sibling, sizeof sibling))
+        setenv("BUN_IMAGE_IN", sibling, 1);
     if (getenv("BUN_IMAGE_IN") || getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT"))
         reexecWithoutASLRIfSlid();
     if (const char* in = getenv("BUN_IMAGE_IN")) {

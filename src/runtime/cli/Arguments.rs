@@ -444,6 +444,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!("--bytecode                       Use a bytecode cache"),
         parse_param!(
+            "--compile-image                  After --compile, run the executable once with BUN_IMAGE_OUT so it writes <outfile>.img (the app must call Bun.unsafe.snapshot())"
+        ),
+        parse_param!(
             "--watch                          Automatically restart the process on file change"
         ),
         parse_param!(
@@ -2042,6 +2045,7 @@ fn parse_build_command_options(
 ) {
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
     ctx.bundler_options.bytecode = args.flag(b"--bytecode");
+    ctx.bundler_options.compile_image = args.flag(b"--compile-image");
 
     let production = args.flag(b"--production");
 

@@ -24,6 +24,15 @@ BUN_BUILD_BIN=~/code/bun-lowmem/build/release-local/bun-profile ./scripts/native
 
 An image is only valid for the exact binary that produced it (`__DATA` layout). Rebuild bun => rebuild CC => rebuild the image.
 
+## One-command form (any app)
+
+```sh
+bun build --compile --compile-image app.ts --outfile app   # builds ./app, runs it once with BUN_IMAGE_OUT, writes ./app.img
+./app                                                       # finds app.img next to itself and restores (BUN_IMAGE=0 to boot normally)
+```
+
+The app decides when it is idle: call `Bun.unsafe.snapshot(process.env.BUN_IMAGE_OUT, { cancelTimers: true })` when `BUN_IMAGE_OUT` is set, and re-arm whatever it needs in `process.on('restore')`. The image-required environment (allocator/JIT placement, JSC tier options, ASLR off) is applied by a one-time self re-exec, so nothing needs to be set by the user. See `test/js/bun/image/`.
+
 ## Make an image (the app snapshots itself)
 
 ```sh

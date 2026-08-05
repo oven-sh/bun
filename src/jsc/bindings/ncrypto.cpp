@@ -538,7 +538,7 @@ bool BignumPointer::generate(const PrimeConfig& params,
     if (innerCb) {
         cb = BignumGenCallbackPointer(BN_GENCB_new());
         if (!cb) [[unlikely]]
-            return -1;
+            return false;
         BN_GENCB_set(
             cb.get(),
             [](int a, int b, BN_GENCB* ctx) mutable -> int {

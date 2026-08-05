@@ -1,5 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { checkPrime, checkPrimeSync, randomBytes, randomFill, randomFillSync, randomInt } from "crypto";
+import {
+  checkPrime,
+  checkPrimeSync,
+  generatePrime,
+  generatePrimeSync,
+  randomBytes,
+  randomFill,
+  randomFillSync,
+  randomInt,
+} from "crypto";
 import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
 import { join } from "path";
 
@@ -342,3 +351,57 @@ describe.concurrent.skipIf(!isLinux || isMusl || !cc)(
     });
   },
 );
+
+describe("generatePrime propagates generation failures", () => {
+  const asyncGenerate = (size: number, opts: Parameters<typeof generatePrime>[1]) => {
+    const { promise, resolve, reject } = Promise.withResolvers<ArrayBuffer | bigint>();
+    generatePrime(size, opts, (err, p) => (err ? reject(err) : resolve(p)));
+    return promise;
+  };
+
+  it("generatePrimeSync throws when BN_generate_prime_ex rejects the size", () => {
+    expect(() => generatePrimeSync(1, { bigint: true })).toThrow(
+      expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_/) }),
+    );
+    expect(() => generatePrimeSync(1)).toThrow(expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_/) }));
+    expect(() => generatePrimeSync(2147483647, { bigint: true })).toThrow(
+      expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_/) }),
+    );
+  });
+
+  it("generatePrimeSync throws instead of returning an untested composite on {add: 0n}", () => {
+    // Without the fix this returned the raw random candidate (almost always composite)
+    // with no indication of failure. Run a few times since the candidate is random.
+    for (let i = 0; i < 8; i++) {
+      expect(() => generatePrimeSync(64, { add: 0n, bigint: true })).toThrow(
+        expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_/) }),
+      );
+    }
+  });
+
+  it("generatePrime delivers an error to the callback when generation fails", async () => {
+    await expect(asyncGenerate(1, { bigint: true })).rejects.toEqual(
+      expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_/) }),
+    );
+    await expect(asyncGenerate(1, {})).rejects.toEqual(
+      expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_/) }),
+    );
+    await expect(asyncGenerate(64, { add: 0n, bigint: true })).rejects.toEqual(
+      expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_/) }),
+    );
+  });
+
+  it("generatePrimeSync still produces a prime for valid inputs", () => {
+    const p = generatePrimeSync(64, { bigint: true });
+    expect(typeof p).toBe("bigint");
+    expect(p > 0n).toBe(true);
+    expect(checkPrimeSync(p)).toBe(true);
+  });
+
+  it("generatePrime still produces a prime for valid inputs", async () => {
+    const p = (await asyncGenerate(64, { bigint: true })) as bigint;
+    expect(typeof p).toBe("bigint");
+    expect(p > 0n).toBe(true);
+    expect(checkPrimeSync(p)).toBe(true);
+  });
+});

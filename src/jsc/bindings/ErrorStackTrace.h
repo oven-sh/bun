@@ -59,6 +59,7 @@ private:
     WTF::String m_sourceURL;
     WTF::String m_functionName;
     WTF::String m_typeName;
+    WTF::String m_receiverTypeName;
 
     // m_wasmFunctionIndexOrName has meaning only when m_isWasmFrame is set
     JSC::Wasm::IndexOrName m_wasmFunctionIndexOrName;
@@ -88,6 +89,9 @@ public:
     JSC::JSString* sourceURL();
     JSC::JSString* functionName();
     JSC::JSString* typeName();
+
+    const WTF::String& receiverTypeName() const { return m_receiverTypeName; }
+    void setReceiverTypeName(const WTF::String& name) { m_receiverTypeName = name; }
 
     bool isFunctionOrEval() const { return m_isFunctionOrEval; }
     bool isAsync() const { return m_isAsync; }
@@ -210,6 +214,13 @@ private:
 
 bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor);
 bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame);
+
+// True when functionName is exactly typeName or already starts with "typeName.".
+inline bool functionNameHasTypeNamePrefix(const WTF::String& functionName, const WTF::String& typeName)
+{
+    return functionName.startsWith(typeName)
+        && (functionName.length() == typeName.length() || functionName[typeName.length()] == '.');
+}
 
 String sourceURL(const JSC::SourceOrigin& origin);
 String sourceURL(JSC::SourceProvider* sourceProvider);

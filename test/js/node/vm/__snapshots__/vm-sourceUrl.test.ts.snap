@@ -7,7 +7,7 @@ throw new Error("hello");
 
 Error: hello
     at hellohello.js:2:16
-    at runInNewContext (unknown)
+    at Script.runInNewContext (unknown)
     at <anonymous> (<this-url>:6:5)"
 `;
 

@@ -36,6 +36,7 @@ private:
     JSC::WriteBarrier<JSC::Unknown> m_function;
     JSC::WriteBarrier<JSC::Unknown> m_functionName;
     JSC::WriteBarrier<JSC::Unknown> m_sourceURL;
+    JSC::WriteBarrier<JSC::Unknown> m_receiverTypeName;
     OrdinalNumber m_lineNumber;
     OrdinalNumber m_columnNumber;
     intptr_t m_sourceID;
@@ -73,6 +74,7 @@ public:
     }
 
     JSC::JSValue thisValue() const { return m_thisValue.get(); }
+    JSC::JSValue receiverTypeName() const { return m_receiverTypeName.get(); }
     JSC::JSValue function() const { return m_function.get(); }
     JSC::JSValue functionName() const { return m_functionName.get(); }
     JSC::JSValue sourceURL() const { return m_sourceURL.get(); }

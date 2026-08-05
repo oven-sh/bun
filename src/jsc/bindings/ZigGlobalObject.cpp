@@ -79,6 +79,7 @@
 #include "ConsoleObject.h"
 #include "DOMWrapperWorld-class.h"
 #include "ErrorStackTrace.h"
+#include "ErrorStackTraceMetadata.h"
 #include "IDLTypes.h"
 #include "ImportMetaObject.h"
 #include "JS2Native.h"
@@ -564,6 +565,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     vm.setOnComputeErrorInfo(computeErrorInfoWrapperToString);
     vm.setOnComputeErrorInfoJSValue(computeErrorInfoWrapperToJSValue);
     vm.setComputeLineColumnWithSourcemap(computeLineColumnWithSourcemap);
+    vm.setOnAppendStackTrace(Bun::captureStackFrameReceivers);
     vm.setOnEachMicrotaskTick([](JSC::VM& vm) -> void {
         // if you process.nextTick on a microtask we need this
         auto* globalObject = defaultGlobalObject();

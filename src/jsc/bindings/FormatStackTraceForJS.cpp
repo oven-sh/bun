@@ -22,6 +22,7 @@
 #include "BunClientData.h"
 #include "CallSite.h"
 #include "ErrorStackTrace.h"
+#include "ErrorStackTraceMetadata.h"
 #include "headers-handwritten.h"
 
 #include <wtf/Scope.h>
@@ -151,6 +152,10 @@ WTF::String formatStackTrace(
     JSC::JSObject* errorInstance)
 {
     WTF::StringBuilder sb;
+
+    const Bun::StackTraceMetadata* metadata = Bun::stackTraceMetadataFor(errorInstance);
+    size_t metadataCursor = 0;
+    unsigned syncFrameIndex = 0;
 
     if (!name.isEmpty()) {
         sb.append(name);
@@ -309,6 +314,13 @@ WTF::String formatStackTrace(
         }
 
         WTF::String functionName = Zig::functionName(vm, globalObjectForFrame, frame, errorInstance ? Zig::FinalizerSafety::NotInFinalizer : Zig::FinalizerSafety::MustNotTriggerGC, &flags);
+        WTF::String typeName;
+        // Async frames were spliced in after capture and have no sync-frame position.
+        if (!frame.isAsyncFrame()) {
+            if (const WTF::String* name = Bun::receiverTypeName(metadata, metadataCursor, syncFrameIndex))
+                typeName = *name;
+            syncFrameIndex++;
+        }
         OrdinalNumber originalLine = {};
         OrdinalNumber originalColumn = {};
         OrdinalNumber displayLine = {};
@@ -343,10 +355,13 @@ WTF::String formatStackTrace(
         }
 
         if (functionName.isEmpty()) {
-            if (flags & (static_cast<unsigned int>(FunctionNameFlags::Eval) | static_cast<unsigned int>(FunctionNameFlags::Function))) {
+            if (!typeName.isEmpty() || (flags & (static_cast<unsigned int>(FunctionNameFlags::Eval) | static_cast<unsigned int>(FunctionNameFlags::Function)))) {
                 functionName = "<anonymous>"_s;
             }
         }
+
+        if (!typeName.isEmpty() && !Zig::functionNameHasTypeNamePrefix(functionName, typeName))
+            functionName = makeString(typeName, '.', functionName);
 
         if (sourceURLForFrame.isEmpty()) {
             if (flags & static_cast<unsigned int>(FunctionNameFlags::Builtin)) {
@@ -433,6 +448,25 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSCStackTrace stackTrace = JSCStackTrace::fromExisting(vm, stackFrames);
+
+    if (const Bun::StackTraceMetadata* metadata = Bun::stackTraceMetadataFor(errorObject)) {
+        size_t cursor = 0;
+        unsigned syncFrameIndex = 0;
+        size_t filteredIndex = 0;
+        // Walk stackFrames with the same filter fromExisting applied so metadata indices line up.
+        for (auto& frame : stackFrames) {
+            bool kept = !Zig::isImplementationVisibilityPrivate(frame);
+            if (!frame.isAsyncFrame()) {
+                if (kept && filteredIndex < stackTrace.size()) {
+                    if (const WTF::String* name = Bun::receiverTypeName(metadata, cursor, syncFrameIndex))
+                        stackTrace.at(filteredIndex).setReceiverTypeName(*name);
+                }
+                syncFrameIndex++;
+            }
+            if (kept)
+                filteredIndex++;
+        }
+    }
 
     // Note: we cannot use tryCreateUninitializedRestricted here because we cannot allocate memory inside initializeIndex()
     MarkedArgumentBuffer callSites;

@@ -1438,17 +1438,4 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
 #endif
 }
 
-// Debug shim: who sends SIGKILL to ourselves? Our own callers of kill()/killpg() bind here (static binary); log and forward.
-#include <execinfo.h>
-#include <dlfcn.h>
-extern "C" int kill(pid_t pid, int sig)
-{
-    if (sig == SIGKILL && (pid == getpid() || pid == 0 || pid == -getpgrp() || -pid == getpid())) {
-        char line[128]; int n = snprintf(line, sizeof line, "[killshim] kill(%d, SIGKILL) from self (pid %d pgrp %d); backtrace:\n", pid, getpid(), getpgrp()); write(2, line, n);
-        void* frames[32]; int c = backtrace(frames, 32); backtrace_symbols_fd(frames, c, 2);
-        int fd = open("/tmp/killshim.log", O_WRONLY | O_CREAT | O_APPEND, 0644); if (fd >= 0) { write(fd, line, n); backtrace_symbols_fd(frames, c, fd); close(fd); }
-    }
-    static int (*real)(pid_t, int, int) = (int (*)(pid_t, int, int))dlsym(RTLD_NEXT, "__kill"); // libsystem_kernel's raw stub
-    return real ? real(pid, sig, 1) : -1;
-}
-static int Bun_debug_kill_shim = 1;
+

@@ -117,6 +117,8 @@ Ref<SourceProvider> SourceProvider::create(
             auto origin = getSourceOrigin();
 
             Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(resolvedSource.bytecode_cache, resolvedSource.bytecode_cache_size), destructor, {});
+            if (!resolvedSource.needsDeref)
+                bytecode->setPayloadIsPersistent(); // embedded in the executable: decoded instruction streams may alias it instead of copying
             auto provider = adoptRef(*new SourceProvider(
                 globalObject->bunVM(),
                 resolvedSource,

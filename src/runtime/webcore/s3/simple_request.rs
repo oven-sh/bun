@@ -7,7 +7,7 @@ use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_http::async_http::Options as HttpOptions;
 use bun_http::{
     AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, Headers, HeadersExt,
-    Method,
+    Method, Signals,
 };
 use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -133,6 +133,11 @@ pub struct S3HttpSimpleTask {
     /// concurrently for the lifetime of the request, so the task owns its own
     /// copy instead of borrowing caller memory.
     pub(crate) body: Box<[u8]>,
+    /// Backing store for `signals`. Wiring `aborted` gives the request a real
+    /// `async_http_id` and an abort-tracker entry, which is what lets
+    /// [`terminate_cancel_hook`] actually cancel it.
+    pub(crate) signal_store: bun_http::signals::Store,
+    pub(crate) signals: Signals,
     pub poll_ref: KeepAlive,
 }
 
@@ -160,6 +165,8 @@ impl Default for S3HttpSimpleTask {
             concurrent_task: ConcurrentTask::default(),
             proxy_url: Box::default(),
             body: Box::default(),
+            signal_store: bun_http::signals::Store::default(),
+            signals: Signals::default(),
             poll_ref: KeepAlive::default(),
         }
     }
@@ -511,6 +518,22 @@ impl Drop for S3HttpSimpleTask {
     }
 }
 
+/// `TerminateCancelHook::run` for an in-flight simple S3 request: set the
+/// task's abort signal (fails the request fast if it has not started yet),
+/// then ask the HTTP thread to shut the socket down by id; either path
+/// produces the final callback that releases the fence. Only the signal store
+/// and the id captured at schedule time are touched; the `http` storage is
+/// HTTP-thread-owned here.
+pub(crate) fn terminate_cancel_hook(ptr: *mut (), async_http_id: u64) {
+    // SAFETY: `ptr` is the live heap task registered at schedule time; hooks
+    // and the task's free both run on the owning JS thread, so no race.
+    unsafe { &(*ptr.cast::<S3HttpSimpleTask>()).signal_store }
+        .aborted
+        .store(true, core::sync::atomic::Ordering::Release);
+    #[allow(clippy::cast_possible_truncation)]
+    bun_http::http_thread().schedule_shutdown_by_id(async_http_id as u32);
+}
+
 // callers in `client.rs` / `multipart.rs` were translated with three different
 // names for the request-options struct (`Options`, `S3RequestOptions`, `S3SimpleRequestOptions`)
 // and two for the callback enum. Alias them here so the call sites compile without churn.
@@ -634,8 +657,14 @@ pub(crate) fn execute_simple_s3_request(
             Box::default()
         },
         body: Box::<[u8]>::from(options.body),
+        signal_store: bun_http::signals::Store::default(),
+        signals: Signals::default(),
         poll_ref,
     });
+    // SAFETY: `task_ptr` is freshly heap-allocated and not yet shared; scoped
+    // exclusive write. The store lives in the heap task, so the derived
+    // pointers stay valid for the request's lifetime.
+    unsafe { (*task_ptr).signals = (*task_ptr).signal_store.to() };
     // SAFETY: `task_ptr` is a freshly heap-allocated pointer; shared reads only until
     // the scoped exclusive `http` writes below.
     let task = unsafe { &*task_ptr };
@@ -680,6 +709,7 @@ pub(crate) fn execute_simple_s3_request(
         HttpOptions {
             http_proxy,
             verbose: Some(verbose),
+            signals: Some(task.signals),
             reject_unauthorized: Some(reject_unauthorized),
             ..Default::default()
         },
@@ -702,7 +732,7 @@ pub(crate) fn execute_simple_s3_request(
     vm.as_mut().register_terminate_cancel_hook(
         task_ptr.cast(),
         u64::from(async_http_id),
-        crate::webcore::s3::download_stream::terminate_cancel_hook,
+        terminate_cancel_hook,
     );
     bun_http::HTTPThread::schedule(batch);
     Ok(())

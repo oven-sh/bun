@@ -9,9 +9,15 @@ const TIMEOUT = 90_000;
 // worker still strands some allocations by design (requeued task boxes, the
 // deliberate fetch-tasklet box leak) and by known pre-existing bugs, so the
 // subprocesses run with leak detection off. UAF reports are unaffected.
+// Proxy vars cleared because the S3 client does not honor NO_PROXY; an
+// inherited proxy would hijack the S3 lane's requests to its local stub.
 const env = {
   ...bunEnv,
   ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+  HTTP_PROXY: undefined,
+  HTTPS_PROXY: undefined,
+  http_proxy: undefined,
+  https_proxy: undefined,
 };
 
 // Lines of the one tolerated crash signature (see the assertNoException
@@ -123,6 +129,19 @@ describe.skipIf(!isASAN)("worker teardown with off-thread jobs in flight does no
     "Bun.Image pipeline (AsyncImageTask)": `
       const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
       lanes(2, () => new Bun.Image(png).resize(256, 256).png().bytes());`,
+    // list() goes through list_objects' own S3HttpSimpleTask construction
+    // site, not execute_simple_s3_request; the lane pins that site's fence
+    // (an unbalanced counter here stalls every teardown into the 10s
+    // deadline, which the dt guard below catches deterministically).
+    "Bun.S3Client.list (S3HttpSimpleTask via list_objects)": `
+      // development: false so the dev-mode "failed" print for exchanges the
+      // teardown abort kills mid-delivery stays out of stderr.
+      const srv = Bun.serve({ port: 0, development: false, fetch: () => new Response('<?xml version="1.0" encoding="UTF-8"?><ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>', { headers: { "Content-Type": "application/xml" } }) });
+      const s3 = new Bun.S3Client({ accessKeyId: "k", secretAccessKey: "s", region: "us-east-1", bucket: "b", endpoint: srv.url.href });
+      // One list must complete before the door fires so its counter release
+      // has landed; an unbalanced fence then stalls teardown deterministically.
+      await s3.list().catch(() => {});
+      lanes(2, () => s3.list());`,
     "dynamic import (RuntimeTranspilerStore)": `
       const fs = require("node:fs/promises");
       let di = 0;
@@ -166,8 +185,10 @@ describe.skipIf(!isASAN)("worker teardown with off-thread jobs in flight does no
               'const { parentPort, workerData: d } = require("node:worker_threads");' +
               'const lanes = (n, f) => { for (let i = 0; i < n; i++) (async () => { for (;;) { try { await f(); } catch {} } })(); };' +
               'const buf = () => { const b = new Uint8Array(12 << 20); for (let i = 0; i < b.length; i += 4096) b[i] = i & 0xff; return b; };' +
-              ${JSON.stringify(body.trim())} + ";" +
-              'parentPort.postMessage("up");' +
+              // Async wrapper so a body can await setup (e.g. one completed
+              // request) before signaling readiness.
+              '(async () => {' + ${JSON.stringify(body.trim())} + ';' +
+              'parentPort.postMessage("up"); })();' +
               ${JSON.stringify(workerExit)};
             function ready(w) {
               return new Promise((res, rej) => {

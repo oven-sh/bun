@@ -353,13 +353,18 @@ impl S3HttpDownloadStreamingTask {
     }
 }
 
-/// `TerminateCancelHook::run` for an in-flight S3 request (simple or
-/// streaming): ask the HTTP thread to shut the socket down by id, which
+/// `TerminateCancelHook::run` for an in-flight streaming S3 request: set the
+/// task's abort signal (fails the request fast if it has not started yet),
+/// then ask the HTTP thread to shut the socket down by id; either path
 /// produces the final (`has_more == false`) callback that releases the fence.
-/// The task pointer is deliberately unused — the HTTP thread mutates the
-/// on-task `http` storage concurrently, so only the id captured at schedule
-/// time is safe to read here.
-pub(crate) fn terminate_cancel_hook(_ptr: *mut (), async_http_id: u64) {
+/// Only the signal store and the id captured at schedule time are touched;
+/// the `http` storage is HTTP-thread-owned here.
+pub(crate) fn terminate_cancel_hook(ptr: *mut (), async_http_id: u64) {
+    // SAFETY: `ptr` is the live heap task registered at schedule time; hooks
+    // and the task's free both run on the owning JS thread, so no race.
+    unsafe { &(*ptr.cast::<S3HttpDownloadStreamingTask>()).signal_store }
+        .aborted
+        .store(true, core::sync::atomic::Ordering::Release);
     #[allow(clippy::cast_possible_truncation)]
     bun_http::http_thread().schedule_shutdown_by_id(async_http_id as u32);
 }

@@ -764,8 +764,19 @@ pub(crate) fn install_isolated_packages(
 
                             let res = &pkg_resolutions[ids.pkg_id as usize];
 
-                            if peer_dep.version.tag != VersionTag::Npm
-                                || res.tag != ResolutionTag::Npm
+                            // `catalog:` peer dependencies only carry the catalog
+                            // name; resolve to the underlying version so the
+                            // satisfies check below behaves the same as if the
+                            // npm range had been written directly.
+                            let catalog_resolved;
+                            let peer_version = if peer_dep.version.tag == VersionTag::Catalog {
+                                catalog_resolved = lockfile.resolve_catalog_dependency(peer_dep);
+                                catalog_resolved.as_ref().unwrap_or(&peer_dep.version)
+                            } else {
+                                &peer_dep.version
+                            };
+
+                            if peer_version.tag != VersionTag::Npm || res.tag != ResolutionTag::Npm
                             {
                                 // TODO: print warning for this? we don't have a version
                                 // to compare to say if this satisfies or not.
@@ -773,8 +784,8 @@ pub(crate) fn install_isolated_packages(
                             }
 
                             // SAFETY: tag was checked == .Npm directly above for both
-                            // `peer_dep.version` and `res`.
-                            let peer_dep_version = &peer_dep.version.npm().version;
+                            // `peer_version` and `res`.
+                            let peer_dep_version = &peer_version.npm().version;
                             let res_version = &res.npm().version;
 
                             if !peer_dep_version.satisfies(*res_version, string_buf, string_buf) {

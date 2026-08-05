@@ -52,5 +52,5 @@ test.skipIf(!hasImages)("bun build --compile --compile-image writes <exe>.img an
     expect(z.exitCode).toBe(0);
   }
   expect(require("fs").readdirSync(join(cache, "bun", "images")).filter((f: string) => f.endsWith(".img")).length).toBe(1);
-});
+}, 30_000); // a compile plus five process launches (two of them inflating the .zst)
 

@@ -53,6 +53,9 @@ public:
         if (!isValidCookieDomain(init.domain)) {
             return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
         }
+        if (auto validation = validateAttributes(init.name, init.domain, init.path, init.secure, init.sameSite, init.partitioned); validation.hasException()) {
+            return validation.releaseException();
+        }
 
         return create(init.name, init.value, init.domain, init.path, init.expires, init.secure, init.sameSite, init.httpOnly, init.maxAge, init.partitioned);
     }
@@ -72,6 +75,9 @@ public:
         if (!isValidCookieDomain(domain)) {
             return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
         }
+        if (!domain.isEmpty() && hasHostPrefix(m_name)) {
+            return Exception { TypeError, hostPrefixDomainMessage };
+        }
         m_domain = domain;
         return {};
     }
@@ -82,6 +88,9 @@ public:
         if (!isValidCookiePath(path)) {
             return Exception { TypeError, "Invalid cookie path: contains invalid characters"_s };
         }
+        if (path != "/"_s && hasHostPrefix(m_name)) {
+            return Exception { TypeError, hostPrefixPathMessage };
+        }
         m_path = path;
         return {};
     }
@@ -91,10 +100,26 @@ public:
     bool hasExpiry() const { return m_expires != emptyExpiresAtValue; }
 
     bool secure() const { return m_secure; }
-    void setSecure(bool secure) { m_secure = secure; }
+    ExceptionOr<void> setSecure(bool secure)
+    {
+        if (!secure) {
+            if (auto validation = validateSecureRequired(m_name, m_sameSite, m_partitioned); validation.hasException()) {
+                return validation.releaseException();
+            }
+        }
+        m_secure = secure;
+        return {};
+    }
 
     CookieSameSite sameSite() const { return m_sameSite; }
-    void setSameSite(CookieSameSite sameSite) { m_sameSite = sameSite; }
+    ExceptionOr<void> setSameSite(CookieSameSite sameSite)
+    {
+        if (sameSite == CookieSameSite::None && !m_secure) {
+            return Exception { TypeError, sameSiteNoneSecureMessage };
+        }
+        m_sameSite = sameSite;
+        return {};
+    }
 
     bool httpOnly() const { return m_httpOnly; }
     void setHttpOnly(bool httpOnly) { m_httpOnly = httpOnly; }
@@ -103,7 +128,14 @@ public:
     void setMaxAge(double maxAge) { m_maxAge = maxAge; }
 
     bool partitioned() const { return m_partitioned; }
-    void setPartitioned(bool partitioned) { m_partitioned = partitioned; }
+    ExceptionOr<void> setPartitioned(bool partitioned)
+    {
+        if (partitioned && !m_secure) {
+            return Exception { TypeError, partitionedSecureMessage };
+        }
+        m_partitioned = partitioned;
+        return {};
+    }
 
     bool isExpired() const;
 
@@ -116,7 +148,21 @@ public:
     static bool isValidCookiePath(const String& path);
     static bool isValidCookieDomain(const String& domain);
 
+    static bool hasHostPrefix(const String& name);
+    static bool hasSecurePrefix(const String& name);
+
+    static ExceptionOr<void> validateAttributes(const String& name, const String& domain, const String& path, bool secure, CookieSameSite sameSite, bool partitioned);
+
+    static constexpr auto sameSiteNoneSecureMessage = "Invalid cookie: \"sameSite: none\" requires secure: true"_s;
+    static constexpr auto partitionedSecureMessage = "Invalid cookie: \"partitioned: true\" requires secure: true"_s;
+    static constexpr auto hostPrefixSecureMessage = "Invalid cookie: \"__Host-\" name prefix requires secure: true"_s;
+    static constexpr auto securePrefixSecureMessage = "Invalid cookie: \"__Secure-\" name prefix requires secure: true"_s;
+    static constexpr auto hostPrefixDomainMessage = "Invalid cookie: \"__Host-\" name prefix does not allow a domain"_s;
+    static constexpr auto hostPrefixPathMessage = "Invalid cookie: \"__Host-\" name prefix requires path: \"/\""_s;
+
 private:
+    static ExceptionOr<void> validateSecureRequired(const String& name, CookieSameSite sameSite, bool partitioned);
+
     Cookie(const String& name, const String& value,
         const String& domain, const String& path,
         int64_t expires, bool secure, CookieSameSite sameSite,

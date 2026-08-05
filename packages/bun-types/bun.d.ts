@@ -9600,6 +9600,11 @@ declare module "bun" {
     | [pkg: string, info: Pick<BunLockFileBasePackageInfo, "bin" | "binDir">];
 
   interface CookieInit {
+    /**
+     * A name starting with `__Secure-` requires `secure`, and a name starting with `__Host-`
+     * requires `secure`, no `domain`, and a `path` of `"/"`. Browsers ignore cookies that use
+     * one of these prefixes without meeting its requirements.
+     */
     name?: string;
     value?: string;
     domain?: string;
@@ -9607,9 +9612,16 @@ declare module "bun" {
     path?: string;
     expires?: number | Date | string;
     secure?: boolean;
-    /** Defaults to `lax`. */
+    /**
+     * Defaults to `"lax"`. `"none"` requires `secure: true`; browsers reject a
+     * `SameSite=None` cookie that is not `Secure`.
+     */
     sameSite?: CookieSameSite;
     httpOnly?: boolean;
+    /**
+     * Requires `secure: true`; browsers reject a `Partitioned` cookie that is
+     * not `Secure`.
+     */
     partitioned?: boolean;
     maxAge?: number;
   }
@@ -9668,12 +9680,14 @@ declare module "bun" {
     value: string;
 
     /**
-     * The cookie's `Domain` attribute, or `undefined` if not set
+     * The cookie's `Domain` attribute, or `undefined` if not set. Assigning a
+     * non-empty value throws a `TypeError` if `name` starts with `__Host-`.
      */
     domain?: string;
 
     /**
-     * The cookie's `Path` attribute. Defaults to `/`.
+     * The cookie's `Path` attribute. Defaults to `"/"`. Assigning any value
+     * other than `"/"` throws a `TypeError` if `name` starts with `__Host-`.
      */
     path: string;
 
@@ -9683,17 +9697,23 @@ declare module "bun" {
     expires?: Date;
 
     /**
-     * Whether the cookie has the `Secure` attribute
+     * Whether the cookie has the `Secure` attribute. Setting this to `false`
+     * throws a `TypeError` if `sameSite` is `"none"`, `partitioned` is `true`,
+     * or `name` starts with `__Secure-` or `__Host-`.
      */
     secure: boolean;
 
     /**
-     * The cookie's `SameSite` attribute. Defaults to `lax`.
+     * The cookie's `SameSite` attribute. Defaults to `"lax"`. Setting this to
+     * `"none"` requires `secure` to be `true`; browsers reject a `SameSite=None`
+     * cookie that is not `Secure`.
      */
     sameSite: CookieSameSite;
 
     /**
-     * Whether the cookie has the `Partitioned` attribute
+     * Whether the cookie has the `Partitioned` attribute. Setting this to `true`
+     * requires `secure` to be `true`; browsers reject a `Partitioned` cookie
+     * that is not `Secure`.
      */
     partitioned: boolean;
 

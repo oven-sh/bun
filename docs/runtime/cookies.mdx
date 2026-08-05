@@ -113,6 +113,22 @@ const cookie = new Bun.Cookie("visited", "true");
 cookies.set(cookie);
 ```
 
+Browsers drop a cookie whose attributes violate RFC 6265bis, so Bun throws a `TypeError` for these combinations instead of emitting a header every browser would ignore:
+
+- `sameSite: "none"` requires `secure: true`.
+- `partitioned: true` (CHIPS) requires `secure: true`.
+- A `__Secure-` name prefix requires `secure: true`.
+- A `__Host-` name prefix requires `secure: true`, no `domain`, and a `path` of `"/"`.
+
+```ts title="secure-required.ts" icon="/icons/typescript.svg"
+cookies.set("session", "abc123", { sameSite: "none", secure: true });
+cookies.set("__Host-session", "abc123", { secure: true });
+
+cookies.set("session", "abc123", { sameSite: "none" }); // TypeError
+cookies.set("id", "abc123", { partitioned: true }); // TypeError
+cookies.set("__Host-session", "abc123"); // TypeError
+```
+
 #### `delete(name: string): void`
 
 #### `delete(options: CookieStoreDeleteOptions): void`
@@ -130,6 +146,8 @@ cookies.delete({
   path: "/admin",
 });
 ```
+
+For a `__Host-` or `__Secure-` name, `delete()` adds `Secure` to the expiring cookie so the browser accepts it. For a `__Host-` name it also uses `path: "/"` and no `domain`, ignoring any supplied values, since that is the only shape the browser could have stored.
 
 #### `toJSON(): Record<string, string>`
 
@@ -379,6 +397,10 @@ const cookie = Bun.Cookie.from("session", "abc123", {
 
 ```ts title="types.ts" icon="/icons/typescript.svg"
 interface CookieInit {
+  /**
+   * A name starting with `__Secure-` requires `secure`, and a name starting with `__Host-`
+   * requires `secure`, no `domain`, and a `path` of `"/"`.
+   */
   name?: string;
   value?: string;
   domain?: string;
@@ -386,9 +408,10 @@ interface CookieInit {
   path?: string;
   expires?: number | Date | string;
   secure?: boolean;
-  /** Defaults to `lax`. */
+  /** Defaults to `"lax"`. `"none"` requires `secure: true`. */
   sameSite?: CookieSameSite;
   httpOnly?: boolean;
+  /** Requires `secure: true`. */
   partitioned?: boolean;
   maxAge?: number;
 }

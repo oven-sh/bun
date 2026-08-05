@@ -382,7 +382,7 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_setBody(JSC::JSGl
     if (arg0.isObject() && JSCookie::toWrapped(vm, arg0)) {
         auto* cookieImpl = JSCookie::toWrapped(vm, arg0);
         if (cookieImpl)
-            impl.set(Ref<Cookie>(*cookieImpl));
+            WebCore::propagateException(*lexicalGlobalObject, throwScope, impl.set(Ref<Cookie>(*cookieImpl)));
         return JSValue::encode(jsUndefined());
     } else if (arg0.isObject()) {
         auto* obj = arg0.getObject();
@@ -418,7 +418,7 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_setBody(JSC::JSGl
     }
     auto cookie = cookie_exception.releaseReturnValue();
 
-    impl.set(WTF::move(cookie));
+    WebCore::propagateException(*lexicalGlobalObject, throwScope, impl.set(WTF::move(cookie)));
 
     return JSValue::encode(jsUndefined());
 }

@@ -8,8 +8,8 @@ use bun_jsc::{AbortSignal, AbortSignalRef, GlobalRef};
 
 use crate::webcore::BlobExt as _;
 use crate::webcore::jsc::{
-    BuiltinName, CallFrame, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef,
-    JsResult, StringJsc as _,
+    BuiltinName, CallFrame, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsResult,
+    RawJsRef, StringJsc as _,
 };
 use bun_core::Output;
 use bun_core::{OwnedString, String as BunString, WTFStringImplExt as _, ZigStringSlice};
@@ -222,7 +222,7 @@ pub struct Response {
     /// Response was GC'd (null) instead of dereferencing a freed pointer when
     /// backpressure lets GC run between `render()` and the async callback.
     pub(crate) weak_ptr_data: WeakPtrData,
-    js_ref: JsCell<JsRef>,
+    js_ref: JsCell<RawJsRef>,
 
     // We must report a consistent value for this
     reported_estimated_size: Cell<usize>,
@@ -240,7 +240,7 @@ impl Default for Response {
             redirected: Cell::new(false),
             ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
-            js_ref: JsCell::new(JsRef::empty()),
+            js_ref: JsCell::new(RawJsRef::empty()),
             reported_estimated_size: Cell::new(0),
             abort_listener: JsCell::new(None),
         }
@@ -492,7 +492,7 @@ impl Response {
             core::ptr::from_ref::<Self>(self).cast_mut().cast::<()>(),
             global_object,
         );
-        self.js_ref.set(JsRef::init_weak(js_value));
+        self.js_ref.set(RawJsRef::init(js_value));
 
         self.check_body_stream_ref(global_object);
         js_value
@@ -931,11 +931,12 @@ impl Response {
             //   (Body.rs renames `deinit` → `reset`). `drop_in_place` here
             //   would leak refcounted payloads (WTFStringImpl, Blob store).
             // - `url: OwnedString` — assignment drops the old value (WTF deref).
-            // - `JsRef` — assignment drops the `Strong` arm (block slot released).
+            // - `RawJsRef` — plain value, no Drop; overwritten for the
+            //   Finalized/empty signal only.
             (*this).init.set(Init::default());
             (*this).body.get_mut().reset();
             (*this).url.set(OwnedString::new(BunString::empty()));
-            (*this).js_ref.set(JsRef::empty());
+            (*this).js_ref.set(RawJsRef::empty());
             (*this).abort_listener.set(None);
 
             // Contents are gone; the allocation itself stays until any outstanding
@@ -984,7 +985,7 @@ impl Response {
         // call if other refs remain, so hand ownership back to the raw refcount
         // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
         let this = bun_core::heap::release(self);
-        this.js_ref.with_mut(JsRef::finalize);
+        this.js_ref.with_mut(RawJsRef::finalize);
         // SAFETY: `heap::release` returned the live raw pointer for the +1 we
         // just reclaimed from the JS wrapper.
         Self::unref(this);
@@ -1216,9 +1217,8 @@ impl Response {
         }));
 
         // SAFETY: `response` is freshly boxed and uniquely owned here.
+        // `to_js` seeds `js_ref` itself.
         let js_value = unsafe { (*response).to_js(global_this) };
-        // SAFETY: `to_js` does not free the payload; still uniquely owned.
-        unsafe { (*response).js_ref.set(JsRef::init_weak(js_value)) };
         Ok(js_value)
     }
 
@@ -1248,7 +1248,7 @@ impl Response {
                             ..Default::default()
                         }),
                         body: JsCell::new(Body::new(BodyValue::Empty)),
-                        js_ref: JsCell::new(JsRef::init_weak(js_this)),
+                        js_ref: JsCell::new(RawJsRef::init(js_this)),
                         ..Default::default()
                     };
 
@@ -1355,7 +1355,7 @@ impl Response {
         let response = bun_core::heap::into_raw(Box::new(Response {
             body: JsCell::new(body),
             init: JsCell::new(init),
-            js_ref: JsCell::new(JsRef::init_weak(js_this)),
+            js_ref: JsCell::new(RawJsRef::init(js_this)),
             ..Default::default()
         }));
         // SAFETY: `response` is freshly boxed and uniquely owned by this fn

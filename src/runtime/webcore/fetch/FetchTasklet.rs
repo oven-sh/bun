@@ -838,7 +838,17 @@ impl FetchTasklet {
             bun_output::scoped_log!(FetchTasklet, "onBodyReceived Current Response");
             let size_hint = self.get_size_hint();
             response.set_size_hint(size_hint);
-            if let Some(readable) = response.get_body_readable_stream(&global_this) {
+            // Not `get_body_readable_stream`: this deferred callback reaches
+            // the Response through `native_response` (no JS root), so the
+            // wrapper may be unmarked but not yet swept and the `js_ref()` raw
+            // read is not liveness-checked. `Locked.readable` is a real
+            // `JSC::Weak` on the stream and reads `None` exactly when the
+            // stream is gone. Same guard as `BodyAbortListener::on_abort`.
+            let readable = match response.get_body_value() {
+                BodyValue::Locked(locked) => locked.readable.get(&global_this),
+                _ => None,
+            };
+            if let Some(readable) = readable {
                 bun_output::scoped_log!(
                     FetchTasklet,
                     "onBodyReceived CurrentResponse BodyReadableStream"
@@ -851,7 +861,17 @@ impl FetchTasklet {
                         self.drop_backpressure_if_unobserved(&readable, &bytes);
                     } else {
                         readable.value.ensure_still_alive();
-                        response.detach_readable_stream(&global_this);
+                        if self.response.get().is_some() {
+                            // Wrapper verified alive by the weak read: safe to
+                            // clear its cached-stream slot too.
+                            response.detach_readable_stream(&global_this);
+                        } else if let BodyValue::Locked(locked) = response.get_body_value() {
+                            // Dead wrapper: writing ZERO into its slot would
+                            // run a write barrier on an unmarked cell. Its
+                            // finalizer clears the slot; only release the
+                            // native ref here.
+                            let _ = core::mem::take(&mut locked.readable);
+                        }
                         bytes.on_data(Self::temporary_chunk(chunk, true))?;
                     }
 
@@ -1890,12 +1910,8 @@ impl FetchTasklet {
         // SAFETY: `response` is freshly allocated above; ownership transfers to JSC.
         let response_js = Response::make_maybe_pooled(&global_this, response);
         response_js.ensure_still_alive();
-        self.response = jsc::Weak::<FetchTasklet>::create(
-            response_js,
-            &global_this,
-            jsc::WeakRefType::FetchResponse,
-            self,
-        );
+        self.response =
+            jsc::Weak::<FetchTasklet>::create(response_js, jsc::WeakRefType::FetchResponse, self);
         // Response is intrusively refcounted; bump for native_response.
         // SAFETY: `response` is the live heap allocation owned by JSC after
         // `make_maybe_pooled`; `ref_` bumps the intrusive refcount.

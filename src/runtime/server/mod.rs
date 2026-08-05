@@ -549,11 +549,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.js_value.try_get().expect("js_value alive")
     }
 
-    /// Returns the wrapper while it is alive (`Strong` or `Weak`), or `None`
-    /// once `finalize()` has set `Finalized`. `Weak` means the wrapper cell is
-    /// still live (its WriteBarrier slots still root the handlers); only
-    /// `Finalized` means the slots are gone and the `config` shadows may point
-    /// at freed cells. Dispatch trampolines answer 503+close on `None`.
+    /// Returns the wrapper while it is alive, or `None` once GC has reaped
+    /// the cell (the `Weak` read goes dead before the sweep runs `finalize()`)
+    /// or `finalize()` has set `Finalized`. A live wrapper's WriteBarrier
+    /// slots root the handlers the `config` shadows point at. Dispatch
+    /// trampolines answer 503+close on `None`.
     pub(crate) fn js_value_for_dispatch(&self) -> Option<JSValue> {
         self.js_value.try_get()
     }
@@ -1750,10 +1750,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             && !self.has_listener()
             && !self.has_active_web_sockets()
         {
-            // Make the wrapper collectible. Dispatch still works while it is
-            // `Weak` (its WriteBarrier slots still root the handlers); the
-            // `js_value_for_dispatch` gate only trips once the wrapper is
-            // actually finalized.
+            // Make the wrapper collectible. Dispatch still works while the
+            // wrapper is alive; the `js_value_for_dispatch` gate trips as
+            // soon as GC reaps it.
             self.js_value.downgrade();
             if let Some(ws) = self.config.websocket.as_mut() {
                 ws.handler.app = None;

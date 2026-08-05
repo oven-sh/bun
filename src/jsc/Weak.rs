@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
-use crate::{JSGlobalObject, JSValue};
+use crate::JSValue;
 
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -19,13 +19,11 @@ bun_opaque::opaque_ffi! {
 
 impl WeakImpl {
     fn init(
-        global_this: &JSGlobalObject,
         value: JSValue,
         ref_type: WeakRefType,
         ctx: Option<NonNull<c_void>>,
     ) -> NonNull<WeakImpl> {
         NonNull::new(Bun__WeakRef__new(
-            global_this,
             value,
             ref_type,
             ctx.map_or(core::ptr::null_mut(), |p| p.as_ptr()),
@@ -60,14 +58,14 @@ impl WeakImpl {
 
 // `WeakImpl` is an opaque `UnsafeCell`-backed ZST handle (`&WeakImpl` is
 // ABI-identical to non-null `*const WeakImpl`; C++ slot mutation is interior).
-// `new` is `safe fn`: `&JSGlobalObject` is the non-null handle proof, and `ctx`
-// is an opaque round-trip pointer C++ only stores and forwards to the finalizer
-// (never dereferenced as Rust data) — same contract as `JSC__VM__holdAPILock`.
-// `delete` consumes the allocation and so stays `unsafe fn`.
+// `new` is `safe fn`: it registers against `value`'s own cell (the
+// `is_object()` guard in the constructors below admits only live object
+// values), and `ctx` is an opaque round-trip pointer C++ only stores and
+// forwards to the finalizer. `delete` consumes the allocation and so stays
+// `unsafe fn`.
 unsafe extern "C" {
     fn Bun__WeakRef__delete(this: *mut WeakImpl);
     safe fn Bun__WeakRef__new(
-        global: &JSGlobalObject,
         value: JSValue,
         ref_type: WeakRefType,
         ctx: *mut c_void,
@@ -91,28 +89,24 @@ impl<T> Default for Weak<T> {
 }
 
 impl<T> Weak<T> {
-    /// A weak handle with no finalize callback. `get()` reads `None` from the
-    /// moment GC reaps the referent, before any sweep runs cell destructors.
-    pub fn create_passive(value: JSValue, global_this: &JSGlobalObject) -> Self {
-        if value.is_empty() {
+    /// A weak handle with no finalize callback, registered against `value`'s
+    /// own cell. `get()` reads `None` from the moment GC reaps the referent,
+    /// before any sweep runs cell destructors; non-object values produce an
+    /// empty handle.
+    pub fn create_passive(value: JSValue) -> Self {
+        if !value.is_object() {
             return Self::default();
         }
         Self {
-            r#ref: Some(WeakImpl::init(global_this, value, WeakRefType::None, None)),
+            r#ref: Some(WeakImpl::init(value, WeakRefType::None, None)),
             _ctx: PhantomData,
         }
     }
 
-    pub fn create(
-        value: JSValue,
-        global_this: &JSGlobalObject,
-        ref_type: WeakRefType,
-        ctx: &mut T,
-    ) -> Self {
-        if !value.is_empty() {
+    pub fn create(value: JSValue, ref_type: WeakRefType, ctx: &mut T) -> Self {
+        if value.is_object() {
             return Self {
                 r#ref: Some(WeakImpl::init(
-                    global_this,
                     value,
                     ref_type,
                     Some(NonNull::from(ctx).cast::<c_void>()),
@@ -135,6 +129,13 @@ impl<T> Weak<T> {
         }
 
         Some(result)
+    }
+
+    /// True when a handle was registered, whether or not the referent is
+    /// still alive. Distinguishes a reaped handle (`is_registered()` with
+    /// `get() == None`) from a default/empty one.
+    pub fn is_registered(&self) -> bool {
+        self.r#ref.is_some()
     }
 
     pub fn clear(&mut self) {

@@ -77,9 +77,9 @@ impl Strong {
     /// Release the GC root while keeping the stream readable via `Weak`. The
     /// owning wrapper's `m_stream` `WriteBarrier` keeps the stream alive from
     /// here.
-    pub(crate) fn downgrade(&mut self, global: &JSGlobalObject) {
+    pub(crate) fn downgrade(&mut self) {
         if let Self::Held(s) = self {
-            *self = Self::Weak(bun_jsc::Weak::create_passive(s.get(), global));
+            *self = Self::Weak(bun_jsc::Weak::create_passive(s.get()));
         }
     }
 
@@ -103,7 +103,7 @@ impl Strong {
             match self {
                 Self::Held(s) => s.set(global, first.value),
                 Self::Weak(_) | Self::Empty => {
-                    *self = Self::Weak(bun_jsc::Weak::create_passive(first.value, global))
+                    *self = Self::Weak(bun_jsc::Weak::create_passive(first.value))
                 }
             }
             return Ok(Some(second));

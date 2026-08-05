@@ -14,6 +14,10 @@ enum NativeEnum {
 
 const Inner = z.object({ v: z.number() });
 const ConstDefault = z.string().default("x");
+const EnumObj = { A: "a", B: "b" } as const;
+// Reassigned after the schema map is built: the transform must leave schemas
+// referencing it untouched, or a materialized fallback would see 99.
+let mutableLimit = 1;
 function makeSchema() {
   return z.string().min(1);
 }
@@ -200,10 +204,13 @@ const SCHEMAS: Record<string, any> = {
   intersection: z.intersection(z.object({ a: z.string() }), z.object({ b: z.number() })),
   preprocess: z.preprocess(v => (typeof v === "string" ? v.trim() : v), z.string()),
   nativeEnum: z.nativeEnum(NativeEnum),
+  enumConstObj: z.enum(EnumObj),
   // Bail paths (these stay untransformed; they must still behave):
   described: z.string().describe("a described string"),
   metaSchema: z.number().meta({ title: "count" }),
+  mutableRefBails: z.string().min(mutableLimit),
 };
+mutableLimit = 99;
 
 const protoKeyInput = JSON.parse('{"__proto__": {"polluted": 1}, "a": "s"}');
 const nullProtoRecord = Object.assign(Object.create(null), { k: 1 });

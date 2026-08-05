@@ -77,18 +77,23 @@ itBundled("zod/ImpureArgumentBailsOut", {
       console.log(U.safeParse(1).success);
       const O = z.string().optional(msg());
       console.log(O.safeParse(undefined).success);
+      // A reassignable binding is not a stable capture; the schema stays untransformed.
+      let mut = 2;
+      const L = z.string().min(mut);
+      console.log(L.safeParse("ab").success);
       // A pure sibling still transforms.
       const T = z.string().min(2);
       console.log(T.safeParse("abc").success);
     `,
   },
-  run: { stdout: "false true\ntrue\ntrue\ntrue\ntrue" },
+  run: { stdout: "false true\ntrue\ntrue\ntrue\ntrue\ntrue" },
   onAfterBundle(api) {
     const code = api.readFile("/out.js");
     expect(code).toContain("min(limit())");
     expect(code).toContain("positive(msg())");
     expect(code).toContain("any(msg())");
     expect(code).toContain("optional(msg())");
+    expect(code).toContain("min(mut)");
     expect(code.split("__zod(() =>").length - 1).toBe(1);
   },
 });

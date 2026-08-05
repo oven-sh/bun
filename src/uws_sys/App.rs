@@ -304,6 +304,29 @@ impl<const SSL: bool> App<SSL> {
         }
     }
 
+    /// Serve on an fd that is already bound and listening (socket activation).
+    pub fn listen_from_fd(
+        &mut self,
+        handler: extern "C" fn(*mut UwsListenSocket, *mut c_void),
+        user_data: *mut c_void,
+        fd: crate::LIBUS_SOCKET_DESCRIPTOR,
+        flags: i32,
+    ) {
+        // Callers supply the C-ABI shim directly.
+        // SAFETY: self is a valid app; `fd` is validated as a listening socket by
+        // us_socket_group_listen_from_fd before adoption.
+        unsafe {
+            c::uws_app_listen_from_fd(
+                Self::SSL_FLAG,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
+                fd,
+                flags,
+                handler,
+                user_data,
+            )
+        }
+    }
+
     pub fn num_subscribers(&mut self, topic: &[u8]) -> u32 {
         // SAFETY: self is a valid app; topic valid for the call.
         unsafe {
@@ -629,6 +652,15 @@ pub mod c {
             pathlen: usize,
             flags: i32,
             handler: extern "C" fn(*mut UwsListenSocket, *const c_char, i32, *mut c_void),
+            user_data: *mut c_void,
+        );
+
+        pub(crate) fn uws_app_listen_from_fd(
+            ssl_flag: c_int,
+            app: *mut uws_app_t,
+            fd: crate::LIBUS_SOCKET_DESCRIPTOR,
+            options: i32,
+            handler: extern "C" fn(*mut UwsListenSocket, *mut c_void),
             user_data: *mut c_void,
         );
 

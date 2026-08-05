@@ -748,6 +748,12 @@ public:
         return std::move(*this);
     }
 
+    /* callback, fd that is already bound and listening (socket activation) */
+    TemplatedApp &&listen_from_fd(MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, LIBUS_SOCKET_DESCRIPTOR fd, int options) {
+        handler(httpContext ? trackListenSocket(httpContext->listen_from_fd(sslCtxOrNull(), fd, options)) : nullptr);
+        return std::move(*this);
+    }
+
     void setOnSocketClosed(HttpContextData<SSL>::OnSocketClosedCallback onClose) {
         httpContext->getSocketContextData()->onSocketClosed = onClose;
     }

@@ -441,6 +441,55 @@ struct us_listen_socket_t *us_socket_group_listen_unix(struct us_socket_group_t 
     return ls;
 }
 
+struct us_listen_socket_t *us_socket_group_listen_from_fd(struct us_socket_group_t *group,
+        unsigned char kind, struct ssl_ctx_st *ssl_ctx,
+        LIBUS_SOCKET_DESCRIPTOR fd, int options, int socket_ext_size, int *error) {
+    /* Adopting a connected or merely-bound fd would leave us polling something
+     * that never becomes acceptable, so the caller would hang instead of
+     * getting an error. SO_ACCEPTCONN is the only portable way to tell. */
+    int is_listening = 0;
+    socklen_t is_listening_len = sizeof(is_listening);
+    if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, (char *) &is_listening, &is_listening_len) != 0) {
+        int saved_errno = errno ? errno : ENOTSOCK;
+        *error = saved_errno;
+        errno = saved_errno;
+        return 0;
+    }
+    if (!is_listening) {
+        *error = EINVAL;
+        errno = EINVAL;
+        return 0;
+    }
+
+    if (bsd_set_nonblocking(fd) == LIBUS_SOCKET_ERROR) {
+        int saved_errno = errno;
+        *error = saved_errno;
+        errno = saved_errno;
+        return 0;
+    }
+
+    struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
+    us_poll_init(p, fd, POLL_TYPE_SEMI_SOCKET);
+    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
+        /* The fd stays the caller's on failure — we only take ownership once
+         * the listener is live, unlike the paths that create their own fd. */
+        int saved_errno = errno;
+        us_poll_free(p, group->loop);
+        *error = saved_errno;
+        errno = saved_errno;
+        return 0;
+    }
+
+    struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
+    us_internal_init_listen_socket(ls, group, kind, ssl_ctx, options, socket_ext_size);
+
+    if (options & LIBUS_LISTEN_DEFER_ACCEPT) {
+        ls->deferred_accept = bsd_set_defer_accept(fd);
+    }
+
+    return ls;
+}
+
 void us_listen_socket_close(struct us_listen_socket_t *ls) {
     struct us_socket_t *s = &ls->s;
     if (!us_socket_is_closed(s)) {

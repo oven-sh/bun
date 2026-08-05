@@ -513,8 +513,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
                 }
             }
-            server_config::Address::Tcp { port, hostname } => {
-                let mut port = *port;
+            server_config::Address::Tcp { .. } | server_config::Address::Fd(_) => {
+                // An adopted fd contributes no configured port/hostname; both
+                // come from the live listener below.
+                let (mut port, hostname) = match &self.config.address {
+                    server_config::Address::Tcp { port, hostname } => (*port, hostname),
+                    _ => (0u16, &None),
+                };
                 if let Some(listener) = self.listener {
                     // S012: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
                     port = bun_opaque::opaque_deref_mut(listener)
@@ -1858,6 +1863,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let global = self.global_this();
 
         let error_instance = match &self.config.address {
+            server_config::Address::Fd(fd) => {
+                let err = jsc::SystemError {
+                    errno: bun_sys::SystemErrno::EINVAL as i32,
+                    code: bun_core::String::static_("EINVAL").into(),
+                    message: bun_core::String::create_format(format_args!(
+                        "Failed to listen on file descriptor {fd}: not a bound, listening socket"
+                    ))
+                    .into(),
+                    syscall: bun_core::String::static_("listen").into(),
+                    fd: *fd,
+                    ..Default::default()
+                };
+                err.to_error_instance(global)
+            }
             server_config::Address::Tcp {
                 port,
                 hostname: _hostname,
@@ -2856,6 +2875,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         enum Addr {
             Tcp { port: u16, host: *const c_char },
             Unix { ptr: *const u8, len: usize },
+            Fd(i32),
         }
         let (addr, http1, options) = {
             let cfg = &this_ref.get().config;
@@ -2880,6 +2900,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     ptr: unix.as_ptr().cast(),
                     len: unix.as_bytes().len(),
                 },
+                server_config::Address::Fd(fd) => Addr::Fd(*fd),
             };
             (addr, cfg.http1, cfg.get_usockets_options())
         };
@@ -2996,6 +3017,28 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         trampoline::on_listen_unix::<SSL, DEBUG>,
                         this.cast::<c_void>(),
                         z,
+                        options,
+                    );
+                }
+            }
+            Addr::Fd(fd) => {
+                if Self::HAS_H3 {
+                    // SAFETY: `this` is the live boxed server; no other borrow is live across this take.
+                    if let Some(h3a) = unsafe { (*this).h3_app.take() } {
+                        // The inherited fd is a stream socket; H3 needs its own
+                        // UDP socket, which the supervisor did not hand us.
+                        bun_core::warn!("http3: true with fd — HTTP/3 listener skipped");
+                        // SAFETY: h3a is a live H3::App handle just taken from self.h3_app.
+                        unsafe { uws_sys::h3::App::destroy(h3a) };
+                    }
+                }
+                // SAFETY: app is a live uws handle owned by this server. No
+                // `&*this` is live across this call.
+                unsafe {
+                    (*app).listen_from_fd(
+                        trampoline::on_listen::<SSL, DEBUG>,
+                        this.cast::<c_void>(),
+                        fd,
                         options,
                     );
                 }

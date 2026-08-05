@@ -584,6 +584,7 @@ Server.prototype.listen = function () {
   const server = this;
   let port, host, onListen;
   let socketPath;
+  let fd;
   let tls = this[tlsSymbol];
 
   // This logic must align with:
@@ -596,6 +597,15 @@ Server.prototype.listen = function () {
       port = arg0.port;
       host = arg0.host;
       socketPath = arg0.path;
+
+      // Socket activation: the fd is already bound and listening, so it
+      // supersedes port/path rather than being one more thing to bind.
+      const arg0Fd = arg0.fd;
+      if (typeof arg0Fd === "number" && arg0Fd >= 0) {
+        fd = arg0Fd;
+        port = undefined;
+        socketPath = undefined;
+      }
 
       const otherTLS = arg0.tls;
       if (otherTLS && $isObject(otherTLS)) {
@@ -615,7 +625,7 @@ Server.prototype.listen = function () {
 
   // Bun defaults to port 3000.
   // Node defaults to port 0.
-  if (port === undefined && !socketPath) {
+  if (port === undefined && !socketPath && fd === undefined) {
     port = 0;
   }
 
@@ -635,7 +645,7 @@ Server.prototype.listen = function () {
     // listenInCluster
 
     if (isPrimary) {
-      server[kRealListen](tls, port, host, socketPath, false, onListen);
+      server[kRealListen](tls, port, host, socketPath, false, onListen, fd);
       return this;
     }
 
@@ -675,7 +685,7 @@ Server.prototype.listen = function () {
       sendHelper(message, null);
     });
 
-    server[kRealListen](tls, port, host, socketPath, true, onListen);
+    server[kRealListen](tls, port, host, socketPath, true, onListen, fd);
   } catch (err) {
     setTimeout(() => server.emit("error", err), 1);
   }
@@ -683,7 +693,7 @@ Server.prototype.listen = function () {
   return this;
 };
 
-Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, onListen) {
+Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, onListen, fd) {
   {
     const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
     const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
@@ -700,6 +710,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       port,
       hostname: host,
       unix: socketPath,
+      fd,
       reusePort,
       // Bindings to be used for WS Server
       websocket: {

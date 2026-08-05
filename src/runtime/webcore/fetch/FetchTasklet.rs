@@ -1890,12 +1890,8 @@ impl FetchTasklet {
         // SAFETY: `response` is freshly allocated above; ownership transfers to JSC.
         let response_js = Response::make_maybe_pooled(&global_this, response);
         response_js.ensure_still_alive();
-        self.response = jsc::Weak::<FetchTasklet>::create(
-            response_js,
-            &global_this,
-            jsc::WeakRefType::FetchResponse,
-            self,
-        );
+        self.response =
+            jsc::Weak::<FetchTasklet>::create(response_js, jsc::WeakRefType::FetchResponse, self);
         // Response is intrusively refcounted; bump for native_response.
         // SAFETY: `response` is the live heap allocation owned by JSC after
         // `make_maybe_pooled`; `ref_` bumps the intrusive refcount.

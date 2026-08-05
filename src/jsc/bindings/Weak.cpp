@@ -77,10 +77,13 @@ class WeakRef {
     WTF_MAKE_TZONE_ALLOCATED(WeakRef);
 
 public:
-    WeakRef(JSC::VM& vm, JSC::JSValue value, WeakRefType kind, void* ctx = nullptr)
+    // The weak handle is registered against the cell's own WeakSet, so no
+    // VM/globalObject is needed. Non-object values produce an empty handle.
+    WeakRef(JSC::JSValue value, WeakRefType kind, void* ctx = nullptr)
     {
-
         JSC::JSObject* object = value.getObject();
+        if (!object) [[unlikely]]
+            return;
         if (object->type() == JSC::JSType::GlobalProxyType)
             object = uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
 
@@ -107,9 +110,9 @@ extern "C" void Bun__WeakRef__delete(Bun::WeakRef* weakRef)
     delete weakRef;
 }
 
-extern "C" Bun::WeakRef* Bun__WeakRef__new(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, Bun::WeakRefType kind, void* ctx)
+extern "C" Bun::WeakRef* Bun__WeakRef__new(JSC::EncodedJSValue encodedValue, Bun::WeakRefType kind, void* ctx)
 {
-    return new Bun::WeakRef(globalObject->vm(), JSC::JSValue::decode(encodedValue), kind, ctx);
+    return new Bun::WeakRef(JSC::JSValue::decode(encodedValue), kind, ctx);
 }
 
 extern "C" JSC::EncodedJSValue Bun__WeakRef__get(Bun::WeakRef* weakRef)

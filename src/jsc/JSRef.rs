@@ -3,6 +3,7 @@ use core::marker::PhantomData;
 // The methods used below (`get() -> Option`, `has()`, `try_swap()`) live on
 // the Optional wrapper, so import it under the local name `Strong`.
 use crate::strong::Optional as Strong;
+use crate::weak::Weak;
 use crate::{JSGlobalObject, JSValue};
 
 /// Holds a reference to a JSValue with lifecycle management.
@@ -61,9 +62,11 @@ use crate::{JSGlobalObject, JSValue};
 ///
 /// # States
 ///
-/// - **Weak**: Holds a JSValue directly. Does NOT prevent garbage collection.
-///   The JSValue may become invalid if the object is collected.
-///   Use `try_get()` to safely check if the value is still alive.
+/// - **Weak**: Holds a passive `JSC::Weak` handle registered against the
+///   value's cell. Does NOT prevent garbage collection. `try_get()` returns
+///   `None` from the moment GC reaps the referent — before the lazy sweep
+///   runs the wrapper's destructor (which is what flips the ref to
+///   `Finalized`) — so a deferred reader can never observe a dead cell.
 ///
 /// - **Strong**: Holds a Strong reference that prevents garbage collection.
 ///   The JavaScript object will stay alive as long as this reference exists.
@@ -95,16 +98,17 @@ use crate::{JSGlobalObject, JSValue};
 /// Common pattern: Start strong, downgrade to weak when idle, upgrade to strong when active.
 /// See ServerWebSocket, UDPSocket, MySQLConnection, and ValkeyClient for examples.
 ///
-/// `JsRef` is `!Send + !Sync` (transitively via `JSValue` and `Strong`): the
-/// `StrongRootBlock` slot backing `Strong` hangs off the per-VM JSVMClientData
-/// and must be dropped on the JS thread.
+/// `JsRef` is `!Send + !Sync` (transitively via `Weak` and `Strong`): the
+/// `StrongRootBlock` slot backing `Strong` hangs off the per-VM JSVMClientData,
+/// and the `JSC::Weak` handle backing `Weak` lives in the cell's `WeakSet`;
+/// both must be created and dropped on the JS thread.
 pub enum JsRef {
-    Weak(JSValue),
+    Weak(Weak<()>),
     Strong(Strong),
     Finalized,
 }
 
-// Belt-and-suspenders: JSValue and Strong are already !Send/!Sync, but make it
+// Belt-and-suspenders: Weak and Strong are already !Send/!Sync, but make it
 // explicit so a future refactor of those types cannot accidentally make JsRef
 // sendable.
 const _: PhantomData<*const ()> = PhantomData;
@@ -112,7 +116,7 @@ const _: PhantomData<*const ()> = PhantomData;
 impl JsRef {
     pub fn init_weak(value: JSValue) -> Self {
         debug_assert!(!value.is_empty_or_undefined_or_null());
-        JsRef::Weak(value)
+        JsRef::Weak(Weak::create_passive(value))
     }
 
     pub fn init_strong(value: JSValue, global: &JSGlobalObject) -> Self {
@@ -121,18 +125,12 @@ impl JsRef {
     }
 
     pub fn empty() -> Self {
-        JsRef::Weak(JSValue::UNDEFINED)
+        JsRef::Weak(Weak::default())
     }
 
     pub fn try_get(&self) -> Option<JSValue> {
         match self {
-            JsRef::Weak(weak) => {
-                if weak.is_empty_or_undefined_or_null() {
-                    None
-                } else {
-                    Some(*weak)
-                }
-            }
+            JsRef::Weak(weak) => weak.get(),
             JsRef::Strong(strong) => strong.get(),
             JsRef::Finalized => None,
         }
@@ -148,17 +146,12 @@ impl JsRef {
 
     pub fn set_weak(&mut self, value: JSValue) {
         debug_assert!(!value.is_empty_or_undefined_or_null());
-        match self {
-            JsRef::Weak(_) => {}
-            JsRef::Strong(_) => {
-                // `Strong`'s `Drop` releases the block slot when `*self` is
-                // overwritten below, so no explicit deinit is needed.
-            }
-            JsRef::Finalized => {
-                return;
-            }
+        if matches!(self, JsRef::Finalized) {
+            return;
         }
-        *self = JsRef::Weak(value);
+        // Overwriting `*self` drops the prior variant (a `Strong`'s `Drop`
+        // releases its block slot; a `Weak`'s `Drop` frees its handle).
+        *self = JsRef::Weak(Weak::create_passive(value));
     }
 
     pub fn set_strong(&mut self, value: JSValue, global: &JSGlobalObject) {
@@ -173,9 +166,13 @@ impl JsRef {
     pub fn upgrade(&mut self, global: &JSGlobalObject) {
         match self {
             JsRef::Weak(weak) => {
-                debug_assert!(!weak.is_empty_or_undefined_or_null());
-                let weak = *weak;
-                *self = JsRef::Strong(Strong::create(weak, global));
+                // A reaped referent cannot be resurrected: stay `Weak` (dead)
+                // so readers keep seeing `None`. This also makes an upgrade
+                // that races wrapper collection a skip instead of a re-root
+                // of a dead cell.
+                if let Some(value) = weak.get() {
+                    *self = JsRef::Strong(Strong::create(value, global));
+                }
             }
             JsRef::Strong(_) => {}
             JsRef::Finalized => {
@@ -188,12 +185,14 @@ impl JsRef {
         match self {
             JsRef::Weak(_) => {}
             JsRef::Strong(strong) => {
-                let value = strong.try_swap().unwrap_or(JSValue::UNDEFINED);
-                value.ensure_still_alive();
-                // The old `Strong` is dropped by the assignment below; the
-                // `strong` borrow ends at its last use above, permitting
-                // reassignment of `*self`.
-                *self = JsRef::Weak(value);
+                // Register the weak handle while the `Strong` still roots the
+                // referent, so there is no window in which the value is
+                // unrooted; the old `Strong` is dropped by the assignment.
+                let weak = match strong.get() {
+                    Some(value) => Weak::create_passive(value),
+                    None => Weak::default(),
+                };
+                *self = JsRef::Weak(weak);
             }
             JsRef::Finalized => {}
         }
@@ -201,7 +200,7 @@ impl JsRef {
 
     pub fn is_empty(&self) -> bool {
         match self {
-            JsRef::Weak(weak) => weak.is_empty_or_undefined_or_null(),
+            JsRef::Weak(weak) => weak.get().is_none(),
             JsRef::Strong(strong) => !strong.has(),
             JsRef::Finalized => true,
         }
@@ -209,7 +208,7 @@ impl JsRef {
 
     pub fn is_not_empty(&self) -> bool {
         match self {
-            JsRef::Weak(weak) => !weak.is_empty_or_undefined_or_null(),
+            JsRef::Weak(weak) => weak.get().is_some(),
             JsRef::Strong(strong) => strong.has(),
             JsRef::Finalized => false,
         }
@@ -229,9 +228,9 @@ impl JsRef {
 
     pub fn update(&mut self, global: &JSGlobalObject, value: JSValue) {
         match self {
-            JsRef::Weak(weak) => {
+            JsRef::Weak(_) => {
                 debug_assert!(!value.is_empty_or_undefined_or_null());
-                *weak = value;
+                *self = JsRef::Weak(Weak::create_passive(value));
             }
             JsRef::Strong(strong) => {
                 if strong.get() != Some(value) {

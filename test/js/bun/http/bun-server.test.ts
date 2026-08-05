@@ -596,6 +596,148 @@ test("should be able to await server.stop()", async () => {
   expect(async () => await fetch(server.url)).toThrow();
 });
 
+// Lifecycle canary for the JsRef weak-reference primitive, exercised through
+// Bun.serve's dispatch trampolines: after a graceful stop() downgrades the
+// server wrapper to a weak ref, an idle keep-alive socket keeps answering
+// requests while the wrapper is alive, and once GC collects the wrapper every
+// subsequent request must be refused (503 or close). A request must never be
+// dispatched through the dead wrapper: on a build where the weak read does
+// not go dead at reap time this surfaces as a 200 arriving after the first
+// refusal, or as heap-verification crashes (Heap::addToRememberedSet
+// "isMarked(cell)" asserts, Integrity::auditCell segfaults) taking the child
+// down. Each round parks a request in flight while an async full collection
+// runs, so a dispatch races every reap the way a real straggler would.
+//
+// No Bun.gc(true): a synchronous full GC sweeps synchronously, which
+// finalizes the wrapper in the same call and leaves nothing racing. The
+// retain-then-release churn grows old space so the non-synchronous
+// collections escalate to full (eden cannot collect the promoted wrapper).
+test("requests after GC collects the stopped server's wrapper are refused, never dispatched", async () => {
+  const childSrc = String.raw`
+      const net = require("net");
+      const tick = () => new Promise(r => setImmediate(r));
+      const fail = msg => {
+        console.log(JSON.stringify({ error: msg }));
+        process.exit(0);
+      };
+
+      // Keep the server binding confined to this scope so stale stack slots
+      // don't pin the wrapper once GC is asked to collect it.
+      const c = await (async () => {
+        let srv = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          idleTimeout: 0,
+          fetch() {
+            return new Response("ok");
+          },
+        });
+        const sock = net.connect(srv.port, "127.0.0.1");
+        sock.setNoDelay(true);
+        sock.on("error", () => {});
+        await new Promise((res, rej) => {
+          sock.on("connect", res);
+          sock.on("error", rej);
+        });
+        let first = "";
+        const onData = d => (first += d);
+        sock.on("data", onData);
+        sock.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+        const dl = Date.now() + 15000;
+        while (!first.includes("\r\n\r\nok") && Date.now() < dl) await tick();
+        if (!first.includes("\r\n\r\nok")) fail("no-first-response");
+        sock.off("data", onData);
+        // Closes the listener; with no in-flight requests or websockets the
+        // wrapper is downgraded to a weak ref while the idle keep-alive
+        // socket stays open. The drain promise is not awaited; its own
+        // semantics are not under test here.
+        srv.stop(false);
+        await tick();
+        srv = null;
+        return sock;
+      })();
+
+      // Wire-order response parser: n200/n503 count responses, and a 200
+      // parsed after the first 503 is the late-dispatch signal.
+      let buf = "";
+      let n200 = 0;
+      let n503 = 0;
+      let late200 = false;
+      let closed = false;
+      c.on("close", () => (closed = true));
+      c.on("data", d => {
+        buf += d;
+        while (true) {
+          const i200 = buf.indexOf(" 200 OK\r\n");
+          const i503 = buf.indexOf(" 503 Service Unavailable\r\n");
+          if (i200 !== -1 && (i503 === -1 || i200 < i503)) {
+            const end = buf.indexOf("\r\n\r\nok", i200);
+            if (end === -1) return; // wait for the body
+            n200++;
+            if (n503 > 0) late200 = true;
+            buf = buf.slice(end + 6);
+            continue;
+          }
+          if (i503 !== -1) {
+            const end = buf.indexOf("\r\n\r\n", i503);
+            if (end === -1) return; // wait for the header end
+            n503++;
+            buf = buf.slice(end + 4);
+            continue;
+          }
+          return;
+        }
+      });
+
+      let retained = [];
+      for (let round = 0; round < 150 && !closed; round++) {
+        // Park a request in flight before provoking a collection, so its
+        // dispatch races the reap the way a loop-delivered straggler would.
+        c.write("GET /r" + round + " HTTP/1.1\r\nHost: x\r\n\r\n");
+        for (let i = 0; i < 2000; i++) retained.push({ i, f: () => i, pad: new Array(4).fill(i) });
+        if (retained.length > 20000) retained = [];
+        Bun.gc(false);
+        await tick();
+      }
+      // Drain any trailing response/close.
+      const dl = Date.now() + 3000;
+      while (!closed && Date.now() < dl) await tick();
+      console.log(JSON.stringify({ n200over0: n200 > 0, n503, closed, late200 }));
+      process.exit(0);
+    `;
+
+  const results = [];
+  for (let i = 0; i < 3; i++) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", childSrc],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let parsed = null;
+    try {
+      parsed = JSON.parse(stdout.trim());
+    } catch {}
+    results.push({
+      late200: parsed ? parsed.late200 : "unparsed: " + stdout.trim(),
+      served: parsed ? parsed.n200over0 : false,
+      died: parsed ? parsed.closed || parsed.n503 > 0 : false,
+      stderr: exitCode === 0 ? "" : stderr.slice(-500),
+      exitCode,
+    });
+    const last = results[results.length - 1];
+    if (last.exitCode !== 0 || last.late200 !== false) break;
+  }
+
+  expect(results.map(r => ({ late200: r.late200, served: r.served, stderr: r.stderr, exitCode: r.exitCode }))).toEqual(
+    Array.from({ length: results.length }, () => ({ late200: false, served: true, stderr: "", exitCode: 0 })),
+  );
+  // GC reaching the wrapper is scheduling-dependent per child; at least one
+  // child must drive the server to death for the run to prove anything.
+  expect(results.some(r => r.died)).toBe(true);
+}, 120_000);
+
 test("should be able to await server.stop(true) with keep alive", async () => {
   const { promise, resolve } = Promise.withResolvers();
   const ready = Promise.withResolvers();

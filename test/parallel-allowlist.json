@@ -9,7 +9,7 @@
     "stats": {
       "dirs": 285,
       "files": 1692,
-      "excluded": 217
+      "excluded": 218
     }
   },
   "dirs": [
@@ -353,6 +353,7 @@
     "internal/linear-fifo.test.ts",
     "js/bun/archive.test.ts",
     "js/bun/globals.test.js",
+    "js/bun/internal-module-dev-reload.test.ts",
     "js/bun/cron/cron-parse.test.ts",
     "js/bun/cron/in-process-cron.test.ts",
     "js/bun/crypto/wpt-webcrypto.generateKey.test.ts",

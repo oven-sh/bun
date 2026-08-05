@@ -323,10 +323,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useAsyncStackTrace() = true;
             JSC::Options::useExplicitResourceManagement() = true;
             JSC::Options::useImportDefer() = true;
-            // Upstream enabled Temporal by default; keep it off in Bun until
-            // the remaining integration work lands. BUN_JSC_useTemporal=1
-            // re-enables it for opt-in testing.
-            JSC::Options::useTemporal() = false;
+            JSC::Options::useTemporal() = true;
             // Upstream enabled Wasm Memory64 by default (0d0080ea539d); keep
             // it off in Bun while upstream stabilises it.
             // BUN_JSC_useWasmMemory64=1 re-enables it for opt-in testing.

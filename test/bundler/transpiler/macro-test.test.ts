@@ -133,6 +133,53 @@ test("ireturnapromise", async () => {
   expect(await ireturnapromise()).toEqual("aaa");
 });
 
+// A macro that throws synchronously must surface the user's error message, not
+// "cannot coerce Exception (JSType(0)) to Bun's AST". Async rejections already did; sync throws
+// should report identically.
+describe("macro that throws reports the user's error message", () => {
+  const throwMacros = `
+export function syncThrow() { throw new Error("this is the real reason the build broke"); }
+export async function asyncThrow() { throw new Error("this is the real reason the build broke"); }
+export function syncThrowString() { throw "this is the real reason the build broke"; }
+`;
+
+  test.concurrent.each([
+    ["sync throw via bun build", "build", "syncThrow"],
+    ["async throw via bun build", "build", "asyncThrow"],
+    ["sync throw of non-Error via bun build", "build", "syncThrowString"],
+    ["sync throw via bun run", "run", "syncThrow"],
+  ])("%s", async (_, cmd, fn) => {
+    using dir = tempDir("macro-throw", {
+      "throw.ts": throwMacros,
+      "index.ts": `import { ${fn} } from "./throw.ts" with { type: "macro" };\nconsole.log(${fn}());\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), cmd, "index.ts"],
+      env: {
+        ...bunEnv,
+        // detect_leaks=0 (last wins) for `bun build` only: printing the macro's stack trace
+        // caches an Arc<ParsedSourceMap> on the bundler-worker macro VM, which `bun build`
+        // never tears down on the failure-exit path; LSan would abort with 134 on the ASAN
+        // lane. `bun run` uses the main-thread VM and keeps leak detection.
+        ASAN_OPTIONS:
+          cmd === "build" ? [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") : bunEnv.ASAN_OPTIONS,
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Debug builds emit a "[macro] call <fn>" line to stdout; ignore stdout here and assert on
+    // stderr, which carries the printed exception and the bundler log entries.
+    expect({ stdout, stderr, exitCode }).toMatchObject({
+      stderr: expect.stringContaining("this is the real reason the build broke"),
+      exitCode: 1,
+    });
+    expect(stderr).not.toContain("cannot coerce");
+    expect(stderr).toContain("macro threw exception");
+  });
+});
+
 // A numeric key >= 100000 (JSC's MIN_SPARSE_ARRAY_INDEX) makes the property put inside
 // JSC__JSValue__putToPropertyKey take a path that can throw, so the binding must check for
 // an exception. BUN_JSC_validateExceptionChecks=1 aborts the child if the check is missing.

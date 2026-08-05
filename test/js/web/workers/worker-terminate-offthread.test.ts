@@ -59,6 +59,14 @@ describe.skipIf(!isASAN)("worker teardown with off-thread jobs in flight does no
     "Bun.zstdCompress (AnyTaskJob)": `
       const big = buf();
       lanes(2, () => Bun.zstdCompress(big));`,
+    // High-entropy input is the slow shape at brotli's default q11: one
+    // metablock compresses inside a single multi-second native call, so
+    // teardown lands mid-call instead of between cheap blocks.
+    "zlib.brotliCompress q11 high-entropy (NativeBrotli)": `
+      const zlib = require("node:zlib");
+      const rnd = Buffer.alloc(128 << 10);
+      for (let i = 0; i < rnd.length; i += 4) rnd.writeUInt32LE(Math.imul(i | 1, 2654435761) >>> 0, i);
+      lanes(2, () => new Promise((res, rej) => zlib.brotliCompress(rnd, e => e ? rej(e) : res())));`,
     "Bun.Glob.scan (ConcurrentPromiseTask)": `
       lanes(2, async () => {
         const g = new Bun.Glob("**/*");

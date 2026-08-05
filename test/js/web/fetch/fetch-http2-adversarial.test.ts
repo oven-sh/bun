@@ -352,7 +352,7 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
           );
         },
       },
-      async url => {
+      async (url, state) => {
         await using proc = spawnFetch(`
           const r = await fetch(${JSON.stringify(url)}, {
             protocol: "http2",
@@ -366,6 +366,68 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
         // stderr first: on a crash it carries the panic/ASAN report.
         expect(stderr).toBe("");
         expect(stdout.trim()).toBe('{"status":200,"body":""}');
+        expect(exitCode).toBe(0);
+        // The stream was still open from the server's side, so completing the
+        // response must abandon it with RST_STREAM(CANCEL) or the server is
+        // left holding it half-open against MAX_CONCURRENT_STREAMS. The RST is
+        // flushed at delivery time, before the child exits; poll for the
+        // server to have parsed it.
+        const deadline = Date.now() + 5_000;
+        while (state.rst.length === 0 && Date.now() < deadline) {
+          await Bun.sleep(10);
+        }
+        expect(state.rst).toEqual([{ id: 1, code: 8 }]);
+      },
+    );
+  });
+
+  // 9b. Same zero-length-but-HasBody headers with DATA coalesced into the same
+  //     TLS record: the stray byte contradicts content-length: 0, so the body
+  //     must fail with a Content-Length mismatch (RFC 9113 §8.1.1) rather
+  //     than crash or surface the byte. The head was already valid when the
+  //     mismatch is detected, so fetch() resolves and the error lands on the
+  //     body, mirroring the mid-body mismatch paths.
+  test("content-length: 0 with coalesced DATA is a Content-Length mismatch", async () => {
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          // One write so HEADERS and DATA land in the same parseFrames pass.
+          socket.write(
+            Buffer.concat([
+              frame(
+                1,
+                0x4,
+                id,
+                Buffer.concat([
+                  hpackStatus200,
+                  hpackLit("content-length", "0"),
+                  hpackLit("content-type", "text/event-stream"),
+                ]),
+              ),
+              frame(0, 0, id, Buffer.from("x")),
+            ]),
+          );
+        },
+      },
+      async url => {
+        await using proc = spawnFetch(`
+          const out = await fetch(${JSON.stringify(url)}, {
+            protocol: "http2",
+            signal: AbortSignal.timeout(8000),
+            tls: { rejectUnauthorized: false },
+          }).then(
+            r =>
+              r.text().then(
+                body => ({ status: r.status, body }),
+                e => ({ status: r.status, bodyErr: e.code || e.name }),
+              ),
+            e => ({ err: e.code || e.name }),
+          );
+          console.log(JSON.stringify(out));
+        `);
+        const { stdout, stderr, exitCode } = await collect(proc);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({ status: 200, bodyErr: "HTTP2ContentLengthMismatch" });
         expect(exitCode).toBe(0);
       },
     );

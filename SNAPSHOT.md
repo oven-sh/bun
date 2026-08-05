@@ -65,6 +65,10 @@ Attribution commands (write the word into `~/code/tmp/ccmem/cmd.<pid>`; needs `B
 
 With LLInt+DFG only, borrowed bytecode and generational GC on (the current script defaults): restored idle at prompt **~34–36 MB** (image ~245 MB); after one turn ~100; after 4 turns ~112, ~106 after GC; CPU for restore+4 turns ~1.2 s. (Earlier all-tiers/gen-GC-off config: 40–45 idle, ~150 after 4 turns.) Booted normally: 215–230 idle (168 with LLInt+DFG only).
 
+## Where the memory is after two turns (restored CC, current build)
+
+~97–103 MB total after 2 trivial turns + full GC (+reclean → ~96). Of that: image pages dirtied **~34 MB** (cells 6 MB, malloc payload 28 MB; ~18 MB of it is "nearly identical" pages with ≤64 B changed — top remaining writers: 32-byte malloc nodes (Vector buffer regrowth / counters inside imaged objects), `Structure::m_transitionWatchpointSet` state (+104) and `m_previousOrRareData` materialization (+64), packed counters in 160/384/1024-byte payloads); the rest is fresh memory: new MarkedBlocks **12–15 MB at only ~30% occupancy** (every directory gets fresh 16 KB blocks and each keeps a few survivors — `empty=0` after GC, so nothing is releasable; not image-specific), new UnlinkedCodeBlocks ~5 MB real (instructions/ExpressionInfo are borrowed), linked CodeBlocks/metadata, and app data. Use `drive.ts --bare --stderr-file f --cmd gc,reclean,dirtymap,newcells,ucbcensus` and read `report.<pid>.txt`.
+
 ## Startup
 
 Time to interactive prompt (pty, `ttfp.ts`): normal boot ~505 ms / 0.52 s CPU; restored from image **~100–110 ms / 0.10 s CPU** — including the ASLR re-exec, mapping the image, the ~16 MB data-segment copy, restore handlers and repaint.

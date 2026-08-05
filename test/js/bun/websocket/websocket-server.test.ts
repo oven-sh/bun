@@ -1759,6 +1759,57 @@ describe.concurrent("publish() return value reflects subscriber backpressure", (
   });
 });
 
+it.concurrent("server.publish() throws on null/undefined message like ws.send()/ws.publish()", async () => {
+  const opened = Promise.withResolvers<ServerWebSocket<unknown>>();
+  const gotOk = Promise.withResolvers<void>();
+  const received: string[] = [];
+  await using server = serve({
+    port: 0,
+    fetch(req, server) {
+      if (server.upgrade(req)) return;
+      return new Response("no", { status: 400 });
+    },
+    websocket: {
+      open(ws) {
+        ws.subscribe("t");
+        opened.resolve(ws);
+      },
+      message() {},
+    },
+  });
+
+  const client = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+  const fail = (e: Event) => {
+    const err = new Error(`client ${e.type} before ok`);
+    opened.reject(err);
+    gotOk.reject(err);
+  };
+  client.onerror = fail;
+  client.onclose = fail;
+  client.onmessage = e => {
+    received.push(String(e.data));
+    if (e.data === "ok") gotOk.resolve();
+  };
+  try {
+    const ws = await opened.promise;
+    for (const value of [null, undefined] as const) {
+      // @ts-expect-error
+      expect(() => server.publish("t", value)).toThrow("publish requires a non-empty message");
+      // @ts-expect-error
+      expect(() => ws.publish("t", value)).toThrow("publish requires a non-empty message");
+      // @ts-expect-error
+      expect(() => ws.send(value)).toThrow("send requires a non-empty message");
+    }
+    // Nothing should have been broadcast. Round-trip a sentinel to flush.
+    expect(server.publish("t", "ok")).toBeGreaterThan(0);
+    await gotOk.promise;
+    expect(received).toEqual(["ok"]);
+  } finally {
+    client.onerror = client.onclose = null;
+    client.close();
+  }
+});
+
 // https://github.com/oven-sh/bun/issues/34158
 it.each(["server", "client"] as const)(
   "server.stop() promise resolves after the last websocket closes (%s-initiated close)",

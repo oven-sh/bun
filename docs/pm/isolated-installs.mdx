@@ -90,7 +90,7 @@ node_modules/
 
 ### Resolution algorithm
 
-1. **Central store** — every package is installed once per *(package, resolved peer set)* in `node_modules/.bun/`
+1. **Central store** — every package is installed once per _(package, resolved peer set)_ in `node_modules/.bun/`
 2. **Symlinks** — the project's `node_modules`, each workspace's `node_modules`, and each store entry's `node_modules` contain relative symlinks to the store entries they depend on
 3. **Peer resolution** — each distinct resolved peer dependency set gets its own store entry, keyed by a hash suffix
 4. **Deduplication** — packages with identical resolutions and peer dependency sets are shared
@@ -111,7 +111,7 @@ The layout of `node_modules/.bun` is a stable, documented format. External tools
 
 ### Store entries
 
-Bun creates one directory in the store per *(package, resolved peer set)* pair:
+Bun creates one directory in the store per _(package, resolved peer set)_ pair:
 
 ```bash store entry path icon="folder"
 node_modules/.bun/<entry>/node_modules/<name>
@@ -121,14 +121,14 @@ node_modules/.bun/<entry>/node_modules/<name>
 
 `<entry>` is `<name>@<resolution>`, followed by a [peer-set suffix](#the-peer-set-suffix) when the package has resolved peer dependencies. In both the name and the resolution, the characters `/`, `\`, `:` and `#` are replaced with `+`:
 
-| Dependency source | Resolution text | Example entry name |
-| ----------------------- | ----------------------------------------- | ------------------------------------ |
-| npm registry | the resolved version | `is-number@7.0.0`, `@types+react@18.2.0` |
-| folder (`file:` directory) | `file+` + the path | `local-pkg@file+vendor+local-pkg` |
-| local tarball | the tarball path | `bar@.+bar-0.0.2.tgz` |
-| remote tarball | the tarball URL | `bar@https+++example.com+bar-0.0.2.tgz` |
-| Git | `git+` + the repository + `+` + the commit | `pkg@git+https+++github.com+user+repo.git+<commit>` |
-| GitHub | `github+` + owner + `+` + repo + `+` + the commit | `pkg@github+user+repo+<commit>` |
+| Dependency source          | Resolution text                                   | Example entry name                                  |
+| -------------------------- | ------------------------------------------------- | --------------------------------------------------- |
+| npm registry               | the resolved version                              | `is-number@7.0.0`, `@types+react@18.2.0`            |
+| folder (`file:` directory) | `file+` + the path                                | `local-pkg@file+vendor+local-pkg`                   |
+| local tarball              | the tarball path                                  | `bar@.+bar-0.0.2.tgz`                               |
+| remote tarball             | the tarball URL                                   | `bar@https+++example.com+bar-0.0.2.tgz`             |
+| Git                        | `git+` + the repository + `+` + the commit        | `pkg@git+https+++github.com+user+repo.git+<commit>` |
+| GitHub                     | `github+` + owner + `+` + repo + `+` + the commit | `pkg@github+user+repo+<commit>`                     |
 
 The root package and workspace packages never get store directories: dependents link directly to the project or workspace directory instead.
 
@@ -198,7 +198,7 @@ Workspace packages are not linked into the root `node_modules` unless the root p
 
 ### The fallback directory
 
-`node_modules/.bun/node_modules` contains one symlink per package *name*, pointing at the first store entry installed under that name. This directory sits on the resolution path of every package inside the store (between the entry's own `node_modules` and the project's), so it serves as a last-resort lookup for packages that require dependencies they did not declare. The [`install.hoistPattern`](/runtime/bunfig#install-hoistpattern) setting controls which names land here, and [`install.publicHoistPattern`](/runtime/bunfig#install-publichoistpattern) additionally links matching names into the project's `node_modules`.
+`node_modules/.bun/node_modules` contains one symlink per package _name_, pointing at the first store entry installed under that name. This directory sits on the resolution path of every package inside the store (between the entry's own `node_modules` and the project's), so it serves as a last-resort lookup for packages that require dependencies they did not declare. The [`install.hoistPattern`](/runtime/bunfig#install-hoistpattern) setting controls which names land here, and [`install.publicHoistPattern`](/runtime/bunfig#install-publichoistpattern) additionally links matching names into the project's `node_modules`.
 
 ### Scripts and the global store
 

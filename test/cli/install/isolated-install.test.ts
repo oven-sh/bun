@@ -2514,13 +2514,12 @@ describe("store layout contract", () => {
     // Inner layout: the package's own files live at
     // `<entry>/node_modules/<real name>` (scoped packages keep the `@scope/`
     // directory level).
+    expect(await file(join(bun, "bar@.+bar-0.0.2.tgz", "node_modules", "bar", "package.json")).json()).toMatchObject({
+      name: "bar",
+      version: "0.0.2",
+    });
     expect(
-      await file(join(bun, "bar@.+bar-0.0.2.tgz", "node_modules", "bar", "package.json")).json(),
-    ).toMatchObject({ name: "bar", version: "0.0.2" });
-    expect(
-      await file(
-        join(bun, "@types+is-number@1.0.0", "node_modules", "@types", "is-number", "package.json"),
-      ).json(),
+      await file(join(bun, "@types+is-number@1.0.0", "node_modules", "@types", "is-number", "package.json")).json(),
     ).toMatchObject({ name: "@types/is-number", version: "1.0.0" });
 
     // Each resolved dependency (peers included) is a relative symlink next to
@@ -2529,9 +2528,7 @@ describe("store layout contract", () => {
     const peerEntry = join(bun, "2-peer-deps-c@1.0.0+eadc6a10a694605e", "node_modules");
     expect(await readdirSorted(peerEntry)).toEqual(["2-peer-deps-c", "a-dep", "no-deps"]);
     expect(readlinkSync(join(peerEntry, "a-dep"))).toBe(join("..", "..", "a-dep@1.0.10", "node_modules", "a-dep"));
-    expect(readlinkSync(join(peerEntry, "no-deps"))).toBe(
-      join("..", "..", "no-deps@1.0.0", "node_modules", "no-deps"),
-    );
+    expect(readlinkSync(join(peerEntry, "no-deps"))).toBe(join("..", "..", "no-deps@1.0.0", "node_modules", "no-deps"));
     expect(readlinkSync(join(bun, "two-range-deps@1.0.0", "node_modules", "no-deps"))).toBe(
       join("..", "..", "no-deps@1.0.0", "node_modules", "no-deps"),
     );

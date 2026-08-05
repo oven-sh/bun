@@ -2109,21 +2109,6 @@ impl<'a> Resolver<'a> {
             return ResultUnion::NotFound;
         };
 
-        // Re-append the separator the join stripped so "." resolves like "./".
-        let abs_path: &[u8] = if Self::import_path_names_directory(import_path)
-            && !strings::ends_with_char(abs_path, SEP)
-        {
-            let len = abs_path.len();
-            let buf = bufs!(relative_abs_path);
-            if len >= buf.len() {
-                return ResultUnion::NotFound;
-            }
-            buf[len] = SEP;
-            &buf[..=len]
-        } else {
-            abs_path
-        };
-
         if self.opts.external.abs_paths.count() > 0
             && self.opts.external.abs_paths.contains(abs_path)
         {
@@ -2220,6 +2205,23 @@ impl<'a> Resolver<'a> {
         if strings::path_contains_node_modules_folder(abs_path) {
             self.extension_order = self.opts.extension_order.kind(kind, true);
         }
+
+        // Re-append the separator the join stripped so "." resolves like "./".
+        let abs_path: &[u8] = if Self::import_path_names_directory(import_path)
+            && !strings::ends_with_char(abs_path, SEP)
+        {
+            let len = abs_path.len();
+            let buf = bufs!(relative_abs_path);
+            if len >= buf.len() {
+                self.extension_order = prev_extension_order;
+                return ResultUnion::NotFound;
+            }
+            buf[len] = SEP;
+            &buf[..=len]
+        } else {
+            abs_path
+        };
+
         let mut res = MatchResult::default();
         let ret = if self
             .load_as_file_or_directory(abs_path, kind, &mut res)

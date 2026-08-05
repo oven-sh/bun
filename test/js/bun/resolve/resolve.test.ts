@@ -1201,4 +1201,21 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     expect(stdout).toBe("sibling\n");
     expect(exitCode).toBe(0);
   });
+
+  it('"." marked external via an absolute --external path stays external', async () => {
+    using dir = tempDir("resolve-dot-external", {
+      ...conflictFixture,
+      "lib/run.ts": `import { fromIndex } from "."; console.log(fromIndex);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "lib/run.ts", "--external", join(String(dir), "lib")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain('from "."');
+    expect(exitCode).toBe(0);
+  });
 });

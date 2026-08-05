@@ -10,6 +10,9 @@ on:
 env:
   BUN_VERSION: "1.3.14"
 
+permissions:
+  contents: read
+
 jobs:
   lint-js:
     name: "Lint JavaScript"

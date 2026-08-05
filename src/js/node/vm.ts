@@ -32,7 +32,9 @@ const ArrayPrototypeForEach = Array.prototype.forEach;
 const ArrayPrototypeIndexOf = Array.prototype.indexOf;
 
 const kPerContextModuleId = Symbol("kPerContextModuleId");
-const kNative = Symbol("kNative");
+// Created in NodeVM.cpp so the dynamic import hook's return value can be
+// recognized as a Module from native code too.
+const kNative = vm.kNativeModule;
 const kContext = Symbol("kContext");
 const kLink = Symbol("kLink");
 const kDependencySpecifiers = Symbol("kDependencySpecifiers");
@@ -46,7 +48,6 @@ const {
   createContext: createContextNative,
   isContext,
   compileFunction,
-  isModuleNamespaceObject,
   kLinked,
   kEvaluated,
   kErrored,
@@ -225,7 +226,7 @@ class Module {
         options.cachedData,
         options.initializeImportMeta,
         this,
-        options.importModuleDynamically ? importModuleDynamicallyWrap(options.importModuleDynamically) : undefined,
+        options.importModuleDynamically,
       );
     } else {
       $assert(syntheticEvaluationSteps);
@@ -615,25 +616,6 @@ const constants = {
 
 function isModule(object) {
   return typeof object === "object" && object !== null && ObjectPrototypeHasOwnProperty.$call(object, kNative);
-}
-
-function importModuleDynamicallyWrap(importModuleDynamically) {
-  const importModuleDynamicallyWrapper = async (specifier, referrer, attributes, phase) => {
-    // JSC has no source-phase imports, so every dynamic import is an
-    // evaluation-phase request (Node passes the phase name as 4th argument).
-    const m: any = await importModuleDynamically.$call(this, specifier, referrer, attributes, phase ?? "evaluation");
-    if (isModuleNamespaceObject(m)) {
-      return m;
-    }
-    if (!isModule(m)) {
-      throw $ERR_VM_MODULE_NOT_MODULE();
-    }
-    if (m.status === "errored") {
-      throw m.error;
-    }
-    return m.namespace;
-  };
-  return importModuleDynamicallyWrapper;
 }
 
 function getConstructorOf(obj) {

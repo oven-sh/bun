@@ -265,6 +265,7 @@ extern "C" void Bun__imageMaybeRestore()
 }
 extern "C" void Bun__imageSetBuilding(bool);
 extern "C" void mi_prof_reinit_lock(void);
+extern "C" void mi_os_hint_floor(void*) noexcept;
 extern "C" bool mi_prof_lock_is_free(void);
 extern "C" void Bun__requestSnapshot(JSC::VM*, const char* path);
 static void imageDump(JSC::VM& vm, const char* path);
@@ -1633,6 +1634,10 @@ static void imageRestoreAndRun(const char* path)
     ImageRegion* regionsBuf = (ImageRegion*)mmap(nullptr, (hdr.nregions * sizeof(ImageRegion) + 16383) & ~16383ull, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0); // not heap, not __DATA: both get overlaid below
     pread(fd, regionsBuf, hdr.nregions * sizeof(ImageRegion), sizeof(ImageHeader));
     std::span<ImageRegion> regions(regionsBuf, hdr.nregions);
+    { // this process's own (pre-overlay) allocator must not place anything where the image goes: push mimalloc's hint pointer above the image
+        uint64_t top = 0; for (auto& r : regions) if (r.addr >= 0x20000000000ull && r.addr < 0x300000000000ull) top = std::max<uint64_t>(top, r.addr + r.len);
+        if (top) mi_os_hint_floor((void*)(top + (1ull << 30)));
+    }
     size_t mapped = 0, copied = 0;
     struct DataSeg { uint64_t* dst; const uint64_t* src; size_t words; }; DataSeg dataSegs[16]; size_t nDataSegs = 0; // no heap here: the allocator's state is being overlaid
 #if OS(LINUX)

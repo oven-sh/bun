@@ -129,9 +129,17 @@ bool _mi_os_commit(mi_subproc_t* subproc, void* addr, size_t size, bool* is_zero
 #define MI_HINT_AREA  ((uintptr_t)4 << 40)  // upto (2+4) 6TiB  (since before win8 there is "only" 8TiB available to processes)
 #define MI_HINT_MAX   ((uintptr_t)30 << 40) // wrap after 30TiB (area after 32TiB is used for huge OS pages)
 
+static mi_decl_cache_align _Atomic(uintptr_t) aligned_base; // = 0  (hint bump pointer; file scope so mi_os_hint_floor can move it)
+
+// Heap image restore: make sure every hinted OS allocation from now on lands at or above `floor` (the image occupies the area below).
+void mi_os_hint_floor(void* floor) mi_attr_noexcept {
+  uintptr_t f = _mi_align_up((uintptr_t)floor, MI_HINT_ALIGN);
+  uintptr_t cur = mi_atomic_load_acquire(&aligned_base);
+  while (cur < f && !mi_atomic_cas_weak_acq_rel(&aligned_base, &cur, f)) { }
+}
+
 void* _mi_os_get_aligned_hint(size_t try_alignment, size_t size)
 {
-  static mi_decl_cache_align _Atomic(uintptr_t) aligned_base; // = 0
 
   // todo: perhaps only do alignment hints if THP is enabled?
   static int deterministic_all = -1;

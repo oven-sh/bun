@@ -63,6 +63,7 @@ itBundled("zod/ImpureArgumentBailsOut", {
   files: {
     "/entry.ts": /* ts */ `
       import { z } from "zod";
+      import { LIMIT } from "./limits.ts";
       function limit() { return 2; }
       // A call expression as a check argument is not provably pure, so this
       // schema must be left untransformed.
@@ -81,12 +82,18 @@ itBundled("zod/ImpureArgumentBailsOut", {
       let mut = 2;
       const L = z.string().min(mut);
       console.log(L.safeParse("ab").success);
+      // Imports are live bindings; they bail too.
+      const I = z.string().min(LIMIT);
+      console.log(I.safeParse("ab").success);
       // A pure sibling still transforms.
       const T = z.string().min(2);
       console.log(T.safeParse("abc").success);
     `,
+    "/limits.ts": /* ts */ `
+      export const LIMIT = 2;
+    `,
   },
-  run: { stdout: "false true\ntrue\ntrue\ntrue\ntrue\ntrue" },
+  run: { stdout: "false true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue" },
   onAfterBundle(api) {
     const code = api.readFile("/out.js");
     expect(code).toContain("min(limit())");

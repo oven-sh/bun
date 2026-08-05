@@ -503,12 +503,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             | js_ast::ExprData::EArrow(_)
             | js_ast::ExprData::EFunction(_)
             | js_ast::ExprData::EMissing(_) => true,
-            // Reassignable bindings (let/var/params/globals) could change between the eager refs capture and the thunk's re-evaluation, so only immutable ones qualify.
+            // Reassignable bindings could change between the eager refs capture and the thunk's re-evaluation, so only same-file consts qualify; imports are live bindings whose exporter-side constness is invisible here.
             js_ast::ExprData::EIdentifier(id) => matches!(
                 self.symbols[id.ref_.inner_index() as usize].kind,
-                js_ast::symbol::Kind::Constant | js_ast::symbol::Kind::Import
+                js_ast::symbol::Kind::Constant
             ),
-            js_ast::ExprData::EImportIdentifier(_) => true,
+            js_ast::ExprData::EImportIdentifier(_) => false,
             // Operators on pure operands count as pure: a side-effecting valueOf/toString could observe the re-run, but zod applies the same operators to the same values while parsing.
             js_ast::ExprData::EUnary(u) => {
                 matches!(

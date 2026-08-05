@@ -3,6 +3,7 @@
 // BUN_FEATURE_FLAG_EXPERIMENTAL_ZOD, and prints a JSON report. The test
 // asserts the reports are identical with the transform on and off.
 import { z } from "zod";
+import { importedLimit, bumpImportedLimit } from "./mutable-export.ts";
 
 const LIMIT = 3;
 const RE = /^a+$/;
@@ -215,8 +216,12 @@ const SCHEMAS: Record<string, any> = {
   described: z.string().describe("a described string"),
   metaSchema: z.number().meta({ title: "count" }),
   mutableRefBails: z.string().min(mutableLimit),
+  // Imports are live bindings: the exporter reassigns after construction, so
+  // this must stay untransformed or a materialized fallback would see 2.
+  importedMutableBails: z.string().min(importedLimit),
 };
 mutableLimit = 99;
+bumpImportedLimit();
 
 const protoKeyInput = JSON.parse('{"__proto__": {"polluted": 1}, "a": "s"}');
 const nullProtoRecord = Object.assign(Object.create(null), { k: 1 });

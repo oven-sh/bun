@@ -222,15 +222,6 @@ ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, GetClient
     return clientSpace;
 }
 
-// template<typename T, UseCustomHeapCellType useCustomHeapCellType, typename GetClient, typename SetClient, typename GetServer, typename SetServer>
-// ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, GetClient getClient, SetClient setClient, GetServer getServer, SetServer setServer, JSC::HeapCellType& (*getCustomHeapCellType)(JSHeapData&) = nullptr)
-// {
-//     static NeverDestroyed<JSC::IsoSubspacePerVM> perVM([](JSC::Heap& heap) {
-//         return ISO_SUBSPACE_PARAMETERS(heap.destructibleObjectHeapCellType, T);
-//     });
-//     return &perVM.get().clientIsoSubspaceforVM(vm);
-// }
-
 static JSVMClientData* clientData(JSC::VM& vm)
 {
     return downcast<JSVMClientData>(vm.clientData);

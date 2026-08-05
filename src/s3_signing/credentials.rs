@@ -96,7 +96,7 @@ use bun_core::Mutex;
 /// sha256(region, service, secret))`. The lock owns the data — the mutex
 /// wraps both `cache` and `date`.
 #[derive(Default)]
-pub struct AWSSignatureCache(Mutex<AWSSignatureCacheInner>);
+struct AWSSignatureCache(Mutex<AWSSignatureCacheInner>);
 
 #[derive(Default)]
 struct AWSSignatureCacheInner {

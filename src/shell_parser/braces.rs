@@ -176,7 +176,7 @@ pub struct ShellCharIter<const E: StringEncoding> {
 
 /// Surface trait so callers can name `<ShellCharIter<E> as CharIter>::InputChar` /
 /// `::CodepointType` without inherent associated types.
-pub trait CharIter: Sized {
+trait CharIter: Sized {
     type CodepointType: Copy;
     type InputChar: Copy;
     fn init(bytes: &[u8]) -> Self;

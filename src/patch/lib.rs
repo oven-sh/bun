@@ -31,7 +31,7 @@ const WHITESPACE: &[u8] = b" \t\n\r";
 // original patch file text. The port generally avoids struct lifetimes, but
 // this parser's whole output is borrowed; raw `*const [u8]` everywhere would
 // be worse.
-pub enum PatchFilePart<'a> {
+enum PatchFilePart<'a> {
     FilePatch(Box<FilePatch<'a>>),
     FileDeletion(Box<FileDeletion<'a>>),
     FileCreation(Box<FileCreation<'a>>),
@@ -514,7 +514,7 @@ impl<'a> FileDeets<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
-pub struct PatchMutationPart<'a> {
+struct PatchMutationPart<'a> {
     pub(crate) ty: PartType,
     pub(crate) lines: Vec<&'a [u8]>,
     /// This technically can only be on the last part of a hunk
@@ -532,13 +532,13 @@ pub enum PartType {
 }
 
 #[derive(Default)]
-pub struct Hunk<'a> {
+struct Hunk<'a> {
     pub(crate) header: Header,
     pub(crate) parts: Vec<PatchMutationPart<'a>>,
 }
 
 #[derive(Copy, Clone)]
-pub struct HeaderRange {
+struct HeaderRange {
     pub(crate) start: u32,
     pub(crate) len: u32,
 }
@@ -593,7 +593,7 @@ impl<'a> Hunk<'a> {
 
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum FileMode {
+enum FileMode {
     NonExecutable = 0o644,
     Executable = 0o755,
 }
@@ -616,34 +616,34 @@ impl FileMode {
 // FileRename / FileModeChange / FilePatch / FileDeletion / FileCreation
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct FileRename<'a> {
+struct FileRename<'a> {
     pub(crate) from_path: &'a [u8],
     pub(crate) to_path: &'a [u8],
 }
 // Does not allocate — no Drop needed.
 
-pub struct FileModeChange<'a> {
+struct FileModeChange<'a> {
     pub(crate) path: &'a [u8],
     pub(crate) old_mode: FileMode,
     pub(crate) new_mode: FileMode,
 }
 // Does not allocate — no Drop needed.
 
-pub struct FilePatch<'a> {
+struct FilePatch<'a> {
     pub(crate) path: &'a [u8],
     pub(crate) hunks: Vec<Hunk<'a>>,
     pub(crate) before_hash: Option<&'a [u8]>,
     pub(crate) after_hash: Option<&'a [u8]>,
 }
 
-pub struct FileDeletion<'a> {
+struct FileDeletion<'a> {
     pub(crate) path: &'a [u8],
     pub(crate) mode: FileMode,
     pub(crate) hunk: Option<Box<Hunk<'a>>>,
     pub(crate) hash: Option<&'a [u8]>,
 }
 
-pub struct FileCreation<'a> {
+struct FileCreation<'a> {
     pub(crate) path: &'a [u8],
     pub(crate) mode: FileMode,
     pub(crate) hunk: Option<Box<Hunk<'a>>>,

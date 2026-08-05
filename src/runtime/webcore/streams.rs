@@ -23,7 +23,7 @@ bun_core::declare_scope!(NetworkSinkLog, visible);
 
 /// `bun.ObjectPool(bun.Vec<u8>, ...)::Node` — pooled buffer node type used by
 /// `HTTPServerWritable.pooled_buffer`.
-pub type ByteListPoolNode = bun_collections::pool::Node<Vec<u8>>;
+type ByteListPoolNode = bun_collections::pool::Node<Vec<u8>>;
 
 // NetworkSink stores a borrowed `*MultiPartUpload`. Now that `webcore::s3` is
 // wired, alias the module to the real type so `bun_s3::MultiPartUpload` resolves
@@ -442,7 +442,7 @@ pub struct WritableHandler {
     pub(crate) handler: WritableHandlerFn,
 }
 
-pub type WritableHandlerFn = fn(ctx: *mut c_void, result: Writable);
+type WritableHandlerFn = fn(ctx: *mut c_void, result: Writable);
 
 impl WritablePending {
     pub(crate) fn run(&mut self) {
@@ -634,7 +634,7 @@ pub struct PendingHandler {
     pub(crate) handler: PendingHandlerFn,
 }
 
-pub type PendingHandlerFn = fn(ctx: *mut c_void, result: StreamResult);
+type PendingHandlerFn = fn(ctx: *mut c_void, result: StreamResult);
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -831,7 +831,7 @@ pub(crate) mod controller_abi {
 /// Static-dispatch signal set for a [`SourceHandle`] pointee. The match arms
 /// dispatch via [`BackRef`] deref and call these; defaults are no-ops so
 /// implementors override only the signals they actually handle.
-pub trait UpstreamSource {
+trait UpstreamSource {
     #[inline]
     fn on_ready(&self) {}
     #[inline]
@@ -1008,7 +1008,7 @@ impl SourceHandle {
 // Selecting the response type from the const generics would require an
 // associated-type trait keyed on them. The pointer is kept opaque at the
 // type level; all dispatch happens at runtime through `any_res()` / `uws::AnyResponse`.
-pub type UwsResponse<const SSL: bool, const HTTP3: bool> = c_void;
+type UwsResponse<const SSL: bool, const HTTP3: bool> = c_void;
 
 pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub(crate) res: Option<*mut UwsResponse<SSL, HTTP3>>,

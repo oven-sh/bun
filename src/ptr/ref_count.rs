@@ -669,7 +669,7 @@ pub fn destroy_box_with<T>(this: *mut T, before: impl FnOnce(&T)) {
 /// a stub.
 #[cfg(debug_assertions)]
 #[doc(hidden)]
-pub struct NoopDebugData;
+struct NoopDebugData;
 
 #[cfg(debug_assertions)]
 impl DebugDataOps for NoopDebugData {

@@ -192,7 +192,7 @@ impl fmt::Display for Header {
 const _: () = assert!(core::mem::size_of::<Header>() == core::mem::size_of::<c::phr_header>());
 const _: () = assert!(core::mem::align_of::<Header>() == core::mem::align_of::<c::phr_header>());
 
-pub struct HeaderCurlFormatter<'a> {
+struct HeaderCurlFormatter<'a> {
     header: &'a Header,
 }
 

@@ -15,10 +15,10 @@ import path from "path";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
-import { getJS2NativeCPP, getJS2NativeRust } from "./generate-js2native";
+import { getJS2NativeCPP, getJS2NativeRust, getJS2NativeSignature } from "./generate-js2native";
 import { cap, checkAscii, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
-import { define } from "./replacements";
+import { define, getNumericReplacementsSignature } from "./replacements";
 
 const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";
@@ -243,6 +243,25 @@ if (out.exitCode !== 0) {
 
 mark("Bundle modules");
 
+// In debug builds the files written to JS_DIR are re-read from disk at runtime
+// (BUN_DYNAMIC_JS_LOAD_PATH) so src/js edits apply without relinking. Those
+// files bake in codegen-assigned numeric IDs — `$lazy` native-call IDs,
+// internal module registry indices, error-code IDs, js_classes IDs — that must
+// match the dispatch tables compiled into the binary. Stamp each file with a
+// hash of all of those ID spaces; InternalModuleRegistry.cpp refuses files
+// whose stamp doesn't match the one its build was generated with (a rebuild in
+// flight, or an aborted one, would otherwise dispatch to the wrong native
+// code). Module preprocessing has already registered every `$lazy` call a
+// module file can contain, so the signature is complete at this point, and the
+// hash doesn't cover file contents, so editing JS never invalidates it.
+const generation = new Bun.CryptoHasher("sha256")
+  .update(JSON.stringify([moduleList, nativeStartIndex]))
+  .update(getJS2NativeSignature())
+  .update(getNumericReplacementsSignature())
+  .digest("hex")
+  .slice(0, 16);
+const generationStamp = `// @bun-internal-module-generation=${generation}\n`;
+
 const outputs = new Map();
 
 for (const entrypoint of bundledEntryPoints) {
@@ -281,7 +300,10 @@ for (const entrypoint of bundledEntryPoints) {
 
   const outputPath = path.join(JS_DIR, file_path);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-  fs.writeFileSync(outputPath, captured);
+  // The stamp is appended only to the on-disk copy (the embedded blob always
+  // matches the binary) and goes at the end so line numbers stay identical to
+  // the embedded sources. Its absence also marks a partially-written file.
+  fs.writeFileSync(outputPath, captured + generationStamp);
   outputs.set(file_path.replace(".js", ""), captured);
 }
 
@@ -379,6 +401,7 @@ writeIfNotChanged(
   path.join(CODEGEN_DIR, "InternalModuleRegistry+numberOfModules.h"),
   `#define BUN_INTERNAL_MODULE_COUNT ${moduleList.length}
 #define BUN_NATIVE_MODULE_START_INDEX ${nativeStartIndex}
+#define BUN_INTERNAL_MODULE_GENERATION "${generation}"
 `,
 );
 

@@ -57,9 +57,7 @@ describe.skipIf(!hasDynamicJS)("builtin JS hot-reload generation guard", () => {
     const original = fs.readFileSync(osJsPath);
     try {
       const marker = "BUN_DEV_RELOAD_MARKER_1b2d";
-      const edited = original
-        .toString("latin1")
-        .replace('"use strict";', `"use strict";console.error("${marker}");`);
+      const edited = original.toString("latin1").replace('"use strict";', `"use strict";console.error("${marker}");`);
       expect(edited).not.toBe(original.toString("latin1"));
       fs.writeFileSync(osJsPath, edited, "latin1");
 

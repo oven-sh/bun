@@ -1603,7 +1603,26 @@ impl<'a> PackageInstall<'a> {
 
     fn install_with_hardlink(&mut self, dest_dir: &Dir) -> crate::Result<InstallResult> {
         let mut state = InstallDirState::default();
-        let res = self.init_install_dir(&mut state, dest_dir, Method::Hardlink);
+        let mut res = self.init_install_dir(&mut state, dest_dir, Method::Hardlink);
+        // A peer installing the same package can rename the destination dir
+        // aside between our mkdir and open (uninstall-before-install);
+        // re-init rather than failing the package.
+        #[cfg(not(windows))]
+        for _ in 0..4 {
+            match &res {
+                InstallResult::Failure(f)
+                    if f.step == Step::OpeningDestDir
+                        && matches!(
+                            f.err,
+                            crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                                | crate::Error::FileNotFound
+                        ) => {}
+                _ => break,
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            state = InstallDirState::default();
+            res = self.init_install_dir(&mut state, dest_dir, Method::Hardlink);
+        }
         if res.is_fail() {
             return Ok(res);
         }
@@ -1695,9 +1714,11 @@ impl<'a> PackageInstall<'a> {
                             // EEXIST (one already linked this file; same
                             // inode is success) and ENOENT (destination dir
                             // renamed aside by uninstall-before-install).
-                            // Fix up and retry immediately; no sleeps on the
-                            // install thread.
-                            const MAX_RETRIES: u32 = 8;
+                            // Fix up and retry: first immediately (the
+                            // single-process EEXIST case must not slow
+                            // down), then with backoff to outlast a peer
+                            // interfering more than once.
+                            const MAX_RETRIES: u32 = 6;
                             let mut retries: u32 = 0;
                             loop {
                                 let err = match sys::linkat(
@@ -1754,6 +1775,11 @@ impl<'a> PackageInstall<'a> {
                                     return Err(map_linkat_err(err));
                                 }
                                 retries += 1;
+                                if retries >= 3 {
+                                    std::thread::sleep(std::time::Duration::from_millis(
+                                        10u64 << (retries - 3),
+                                    ));
+                                }
                             }
 
                             real_file_count += 1;

@@ -163,7 +163,9 @@ describe("concurrent installs into the same destination", () => {
         }),
       );
       for (const { stdout, stderr, exitCode } of results) {
-        expect(stderr).not.toContain("EBUSY");
+        // "<errno>: failed <step> for package <name>"; matching the whole
+        // phrase (not just EBUSY) makes a failure print the error lines.
+        expect(stderr).not.toContain(": failed ");
         expect(stdout).not.toContain("Failed to install");
         expect(exitCode).toBe(0);
       }

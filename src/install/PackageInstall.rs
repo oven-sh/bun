@@ -1745,7 +1745,10 @@ impl<'a> PackageInstall<'a> {
                                         }
                                         let _ = sys::unlinkat(&*destination_dir, entry.path);
                                     }
-                                    sys::E::ENOENT => {
+                                    // EINVAL: macOS reports it instead of
+                                    // ENOENT for a dirfd whose directory was
+                                    // unlinked.
+                                    sys::E::ENOENT | sys::E::EINVAL => {
                                         // The held fd may be an unlinked dir
                                         // (peer renamed it aside and deleted
                                         // it); re-open by path.

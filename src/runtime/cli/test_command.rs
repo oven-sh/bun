@@ -3273,6 +3273,10 @@ impl TestCommand {
             // raw-ptr escape so the closure does not hold a borrowck lock on
             // it for the loop body.
             scopeguard::defer! { unsafe { (*bun_test_root_ptr).exit_file(); } }
+            let global = vm.global();
+            scopeguard::defer! {
+                crate::test_runner::timers::fake_timers::reset_between_files(global);
+            }
 
             // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
             // and writes only `current_file` — disjoint fields. Fresh raw-ptr

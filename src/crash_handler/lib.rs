@@ -3344,8 +3344,7 @@ mod draft {
 
     // `Option<SourceLocation>` owns its file name as `Box<[u8]>` so Drop handles it — no explicit deinit.
 
-    // D130: deduped — canonical def lives in bun_core (T0). Aliased under the
-    // old name so internal use-sites keep compiling.
+    // D130: deduped — canonical def lives in bun_core (T0).
     use bun_core::DumpStackTraceOptions as WriteStackTraceLimits;
 
     /// Clone of `debug.writeStackTrace`, but can be configured to stop at either a

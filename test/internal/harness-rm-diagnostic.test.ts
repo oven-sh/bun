@@ -87,6 +87,30 @@ test.skipIf(!isWindows)("temp dir removal failures name the likely process hold 
   expect(fs.existsSync(held)).toBe(false);
 });
 
+test.skipIf(!isWindows)("temp dir removal failures name the test process's own cwd hold on Windows", () => {
+  const dir = tempDir("rm-diagnostic-cwd", { "a.txt": "x" });
+  const held = String(dir);
+  const original = process.cwd();
+  try {
+    process.chdir(held);
+    let error: NodeJS.ErrnoException | undefined;
+    try {
+      dir[Symbol.dispose]();
+    } catch (thrown) {
+      error = thrown as NodeJS.ErrnoException;
+    }
+    expect(error).toBeDefined();
+    expect(["EBUSY", "EPERM"]).toContain(error!.code);
+    expect(error!.message).toContain("This test process's own working directory");
+    expect(error!.message).not.toContain(DIAGNOSTIC);
+  } finally {
+    process.chdir(original);
+  }
+  // chdir is synchronous in this process, so disposal succeeds immediately.
+  dir[Symbol.dispose]();
+  expect(fs.existsSync(held)).toBe(false);
+});
+
 test("non-matching removal errors pass through unchanged", () => {
   // A path with a NUL byte fails validation before any syscall, on every
   // platform, with no `code` matching the diagnostic guard: the error must

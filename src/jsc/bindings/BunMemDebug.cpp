@@ -20,6 +20,8 @@
 #include <JavaScriptCore/FunctionExecutable.h>
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/JSString.h>
+#include <JavaScriptCore/StructureInlines.h>
+#include <JavaScriptCore/ButterflyInlines.h>
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSFunctionInlines.h>
 #include <JavaScriptCore/SourceProvider.h>
@@ -1017,6 +1019,63 @@ static void dumpNewCells(JSC::VM& vm)
     for (size_t i = 0; i < std::min<size_t>(rows.size(), 30); i++) fprintf(stderr, "%s\n", rows[i].second.c_str());
 }
 
+
+// "mutated": which imaged JS objects did the app write to since restore? Aggregated by class + shape (first own property names), so the app authors get a concrete list.
+static void dumpMutatedImageObjects(JSC::VM& vm)
+{
+    JSC::JSLockHolder lock(vm);
+    if (s_snapFd < 0 || s_runs.empty()) { fprintf(stderr, "[mutated] no image\n"); return; }
+    size_t pg = getpagesize();
+    auto fileBytesAt = [&](uintptr_t a, void* out, size_t n) -> bool {
+        auto r = std::upper_bound(s_runs.begin(), s_runs.end(), a, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
+        if (r == s_runs.begin()) return false; --r; if (a + n > r->start + r->len) return false;
+        return pread(s_snapFd, out, n, r->fileOff + (a - r->start)) == (ssize_t)n;
+    };
+    struct Agg { size_t objects = 0, headerChanged = 0, butterflyPtrChanged = 0, inlineChanged = 0, butterflyContentsChanged = 0; };
+    std::map<std::string, Agg> byShape; size_t scanned = 0, changed = 0;
+    std::vector<uint8_t> orig(4096), origBf(4096);
+    JSC::HeapIterationScope scope(vm.heap);
+    vm.heap.objectSpace().forEachLiveCell(scope, [&](JSC::HeapCell* heapCell, JSC::HeapCell::Kind kind) {
+        if (!isJSCellKind(kind)) return IterationStatus::Continue;
+        bool immortal = heapCell->isPreciseAllocation() ? heapCell->preciseAllocation().isImmortal() : heapCell->markedBlock().isImmortal();
+        if (!immortal) return IterationStatus::Continue;
+        JSC::JSCell* cell = static_cast<JSC::JSCell*>(heapCell);
+        JSC::JSObject* object = dynamicDowncast<JSC::JSObject>(cell);
+        if (!object) return IterationStatus::Continue;
+        size_t sz = std::min<size_t>(heapCell->cellSize(), orig.size());
+        // quick page-level filter: skip cells on clean pages
+        std::vector<int> disp(1); mach_vm_size_t cnt = 1;
+#if OS(DARWIN)
+        if (mach_vm_page_range_query(mach_task_self(), (uintptr_t)cell & ~(pg - 1), pg, (mach_vm_address_t)disp.data(), &cnt) == KERN_SUCCESS && !(disp[0] & 0x8 /* dirty */)) { scanned++; }
+#endif
+        if (!fileBytesAt((uintptr_t)cell, orig.data(), sz)) return IterationStatus::Continue;
+        scanned++;
+        bool header = memcmp(orig.data(), cell, 8) != 0; // structureID/indexing/type/flags/cellState
+        uint64_t oldBf; memcpy(&oldBf, orig.data() + 8, 8); bool bfPtr = oldBf != *(uint64_t*)((uint8_t*)cell + 8);
+        bool inl = sz > 16 && memcmp(orig.data() + 16, (uint8_t*)cell + 16, sz - 16) != 0;
+        bool bfContents = false;
+        if (JSC::Butterfly* bf = object->butterfly(); bf && !bfPtr) { // same butterfly: did its out-of-line slots / elements change?
+            JSC::Structure* st = object->structure();
+            size_t pre = st->outOfLineCapacity() * sizeof(JSC::EncodedJSValue) + (JSC::hasIndexedProperties(object->indexingType()) ? sizeof(JSC::IndexingHeader) : 0);
+            size_t post = JSC::hasIndexedProperties(object->indexingType()) ? std::min<size_t>(bf->vectorLength(), 256) * sizeof(JSC::EncodedJSValue) : 0;
+            uintptr_t base = (uintptr_t)bf - pre; size_t n = std::min(pre + post, origBf.size());
+            if (fileBytesAt(base, origBf.data(), n)) bfContents = memcmp(origBf.data(), (void*)base, n) != 0;
+        }
+        if (!(header || bfPtr || inl || bfContents)) return IterationStatus::Continue;
+        changed++;
+        std::string shape(cell->className().characters()); shape += " {";
+        { int k = 0; JSC::Structure* st = object->structure(); st->forEachProperty(vm, [&](const JSC::PropertyTableEntry& e) { if (k < 5) { if (k) shape += ","; auto* u = e.key(); shape += u ? std::string((const char*)u->span8().data(), u->is8Bit() ? std::min<size_t>(u->length(), 24) : 0) : "?"; } k++; return true; }); if (k > 5) shape += ",+" + std::to_string(k - 5); }
+        shape += "}";
+        auto& a = byShape[shape]; a.objects++; a.headerChanged += header; a.butterflyPtrChanged += bfPtr; a.inlineChanged += inl; a.butterflyContentsChanged += bfContents;
+        return IterationStatus::Continue;
+    });
+    std::vector<std::pair<size_t, std::string>> rows;
+    for (auto& [k, a] : byShape) { char line[400]; snprintf(line, sizeof line, "  %6zu  hdr=%-5zu bfptr=%-5zu inline=%-5zu bfdata=%-5zu  %s", a.objects, a.headerChanged, a.butterflyPtrChanged, a.inlineChanged, a.butterflyContentsChanged, k.c_str()); rows.push_back({ a.objects, line }); }
+    std::sort(rows.begin(), rows.end(), std::greater<>());
+    fprintf(stderr, "[mutated] %zu imaged JS objects changed since restore (of %zu compared). By class {first properties}: count, what changed (cell header / butterfly pointer i.e. regrown / inline slots / butterfly contents)\n", changed, scanned);
+    for (size_t i = 0; i < std::min<size_t>(rows.size(), 60); i++) fprintf(stderr, "%s\n", rows[i].second.c_str());
+}
+
 static void recleanFrozenPages(JSC::VM& vm);
 extern "C" void Bun__imageRecleanPages(JSC::VM* vm) { if (s_snapFd >= 0) recleanFrozenPages(*vm); }
 // Re-clean: any frozen page that is dirty but byte-identical to the snapshot gets remapped from the file again.
@@ -1616,6 +1675,7 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
         else if (!strncmp(buf, "newcells", 8)) req = 10;
         else if (!strncmp(buf, "newpayload", 10)) req = 11;
         else if (!strncmp(buf, "ucbcensus", 9)) req = 12;
+        else if (!strncmp(buf, "mutated", 7)) req = 13;
         else if (!strncmp(buf, "shrink", 6)) req = 3;
         else if (!strncmp(buf, "gc", 2)) req = 2;
         else req = 1;
@@ -1644,6 +1704,7 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
     }
     if (req == 9) { imageTrapReport(); return; }
     if (req == 10) { dumpNewCells(*vm); return; }
+    if (req == 13) { dumpMutatedImageObjects(*vm); return; }
     if (req == 11) { dumpNewPayload(*vm); return; }
     if (req == 12) { dumpUCBCensus(*vm); return; }
     if (req == 8) {

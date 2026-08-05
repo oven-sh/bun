@@ -426,13 +426,15 @@ fn intern_package_json(
     ptr
 }
 
-/// One file the tsconfig merge read: absolute path + raw bytes. The reuse
-/// check re-reads exactly these files and compares bytes, so an unchanged
-/// extends chain skips the whole parse+merge.
+/// One file the tsconfig merge visited: absolute path + raw bytes (`None`
+/// when the file was unreadable, e.g. a missing `extends` parent). The reuse
+/// check re-reads exactly these files and compares, so an unchanged extends
+/// chain skips the whole parse+merge while a parent that appears, vanishes,
+/// or changes forces a re-merge.
 #[derive(Clone, PartialEq, Eq)]
 struct TsconfigChainLink {
     path: Box<[u8]>,
-    contents: Box<[u8]>,
+    contents: Option<Box<[u8]>>,
 }
 
 struct InternedTsconfig {
@@ -4126,9 +4128,14 @@ impl<'a> Resolver<'a> {
             guard.by_path.get(root_path)?.chain.clone()
         };
         for link in &chain {
-            let bytes = self.read_file_for_tsconfig_reuse(&link.path)?;
-            if !strings::eql(&bytes, &link.contents) {
-                return None;
+            match (
+                self.read_file_for_tsconfig_reuse(&link.path),
+                &link.contents,
+            ) {
+                // Still unreadable (e.g. the extends parent is still missing).
+                (None, None) => {}
+                (Some(bytes), Some(recorded)) if strings::eql(&bytes, recorded) => {}
+                _ => return None,
             }
         }
         // Re-check under the lock: another thread may have re-interned this
@@ -4165,13 +4172,14 @@ impl<'a> Resolver<'a> {
         })
     }
 
-    /// On success, also returns the raw file bytes so `dir_info_uncached` can
-    /// record the extends-chain contents that `intern_tsconfig` dedupes on.
+    /// On a successful read, also returns the raw file bytes (even when the
+    /// JSONC fails to parse) so `dir_info_uncached` can record the
+    /// extends-chain contents that `intern_tsconfig` dedupes on.
     pub(crate) fn parse_tsconfig(
         &mut self,
         file: &[u8],
         dirname_fd: FD,
-    ) -> crate::CrateResult<Option<(Box<TSConfigJSON>, Box<[u8]>)>> {
+    ) -> crate::CrateResult<(Option<Box<TSConfigJSON>>, Box<[u8]>)> {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
         let mut entry = self.caches.fs.read_file_with_allocator(
@@ -4219,7 +4227,7 @@ impl<'a> Resolver<'a> {
             match TSConfigJSON::parse(unsafe { &mut *self.log() }, &source, &mut self.caches.json)?
             {
                 Some(r) => r,
-                None => return Ok(None),
+                None => return Ok((None, Box::from(&source.contents[..]))),
             };
 
         if result.has_base_url() {
@@ -4251,7 +4259,7 @@ impl<'a> Resolver<'a> {
         // `heap::take`, the final one is interned into the DirInfo cache.
         // The copied-out bytes feed the caller's `TsconfigChainLink` record
         // (only real parses reach here, so the copy is off the reuse path).
-        Ok(Some((result, Box::from(&source.contents[..]))))
+        Ok((Some(result), Box::from(&source.contents[..])))
     }
 
     pub fn bin_dirs(&self) -> &[&'static [u8]] {
@@ -6661,13 +6669,13 @@ impl<'a> Resolver<'a> {
                             FD::ZERO
                         },
                     ) {
-                        Ok(v) => v.map(|(config, contents)| {
+                        Ok((config, contents)) => {
                             chain.push(TsconfigChainLink {
                                 path: Box::from(tsconfigpath),
-                                contents,
+                                contents: Some(contents),
                             });
-                            bun_core::heap::into_raw(config)
-                        }),
+                            config.map(bun_core::heap::into_raw)
+                        }
                         Err(err) => {
                             let pretty = tsconfigpath;
                             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
@@ -6724,14 +6732,22 @@ impl<'a> Resolver<'a> {
                             );
                             let parent_config_maybe: Option<*mut TSConfigJSON> =
                                 match self.parse_tsconfig(abs_path, FD::INVALID) {
-                                    Ok(v) => v.map(|(config, contents)| {
+                                    Ok((config, contents)) => {
                                         chain.push(TsconfigChainLink {
                                             path: Box::from(abs_path),
-                                            contents,
+                                            contents: Some(contents),
                                         });
-                                        bun_core::heap::into_raw(config)
-                                    }),
+                                        config.map(bun_core::heap::into_raw)
+                                    }
                                     Err(err) => {
+                                        // Recorded with `contents: None` so the
+                                        // reuse check re-merges once this parent
+                                        // becomes readable (e.g. it gets
+                                        // created after an unresolved extends).
+                                        chain.push(TsconfigChainLink {
+                                            path: Box::from(abs_path),
+                                            contents: None,
+                                        });
                                         let _ = self.log_mut().add_debug_fmt(
                                             None,
                                             bun_ast::Loc::EMPTY,

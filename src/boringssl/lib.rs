@@ -209,7 +209,7 @@ pub enum Wildcards {
 /// Options for [`match_hostname`]. Each defaults to the stricter setting so
 /// callers opt in explicitly.
 #[derive(Clone, Copy)]
-pub struct MatchOpts {
+struct MatchOpts {
     pub wildcards: Wildcards,
     /// A full-label `*` may span multiple host labels
     /// (OpenSSL `X509_CHECK_FLAG_MULTI_LABEL_WILDCARDS`).
@@ -222,7 +222,7 @@ pub struct MatchOpts {
 impl MatchOpts {
     /// Node.js lib/tls.js `check()` — the matcher behind `tls.connect`,
     /// `https`, and undici `fetch`.
-    pub const TLS_CHECK: Self = Self {
+    const TLS_CHECK: Self = Self {
         wildcards: Wildcards::Anywhere,
         multi_label_wildcards: false,
         strip_trailing_dot: true,
@@ -265,7 +265,7 @@ fn openssl_valid_pattern(pattern: &[u8]) -> bool {
 /// hostname matcher every native TLS client and `X509Certificate#checkHost`
 /// share; [`MatchOpts`] selects between Node.js lib/tls.js `check()` semantics
 /// and OpenSSL `X509_check_host` semantics where they differ.
-pub fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool {
+fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool {
     let (pattern, hostname) = if opts.strip_trailing_dot {
         (unfqdn(pattern), unfqdn(hostname))
     } else {

@@ -168,7 +168,7 @@ extern_crypto_job!(SignJob, "SignJob");
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Trait expressing the interface `CryptoJob` expects of `Ctx`.
-pub trait CryptoJobCtx: Sized {
+trait CryptoJobCtx: Sized {
     fn init(&mut self, global: &JSGlobalObject) -> JsResult<()>;
     /// The impl reads its own `result` field directly.
     fn run_task(&mut self);
@@ -178,7 +178,7 @@ pub trait CryptoJobCtx: Sized {
 
 /// Adapter binding a [`CryptoJobCtx`] + JS callback into an [`AnyTaskJobCtx`].
 /// `Drop` runs `inner.deinit()` then releases the callback handle.
-pub struct CallbackCtx<C: CryptoJobCtx> {
+struct CallbackCtx<C: CryptoJobCtx> {
     callback: StrongOptional,
     inner: C,
 }
@@ -233,7 +233,7 @@ pub mod random {
     // No `Clone`: `value` is JSC-protected in `init`/unprotected in `deinit`, and
     // `bytes` borrows into that ArrayBuffer. Cloning would alias the protect/unprotect
     // pair and the borrowed buffer. `CryptoJob::init` moves the ctx by value.
-    pub struct JobCtx {
+    struct JobCtx {
         pub value: JSValue,
         pub(crate) bytes: *mut u8,
         pub offset: u32,

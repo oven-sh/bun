@@ -773,13 +773,13 @@ pub mod lib {
     }
 
     // ── write-open callback surface (libarchive `archive_write_open2`) ─────
-    pub type archive_open_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
+    type archive_open_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
     pub type archive_read_callback =
         unsafe extern "C" fn(*mut Archive, *mut c_void, *mut *const c_void) -> la_ssize_t;
-    pub type archive_write_callback =
+    type archive_write_callback =
         unsafe extern "C" fn(*mut Archive, *mut c_void, *const c_void, usize) -> la_ssize_t;
-    pub type archive_close_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
-    pub type archive_free_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
+    type archive_close_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
+    type archive_free_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
 
     /// `a` is a live `archive_write_new()` handle. `client_data` is forwarded
     /// opaquely to the callbacks (never dereferenced here); its lifetime must

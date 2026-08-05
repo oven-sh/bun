@@ -1457,7 +1457,7 @@ pub struct StringHashMap<V, A: Allocator + HashbrownAllocator + Clone + Default 
 
 /// Public alias for the underlying `hashbrown` map so downstream signatures
 /// (and `Deref::Target`) don't repeat the four-argument spelling.
-pub type StringHashMapInner<V, A = DefaultAlloc> =
+type StringHashMapInner<V, A = DefaultAlloc> =
     hashbrown::HashMap<StringHashMapKey<A>, V, bun_wyhash::BuildHasher, A>;
 
 /// Key stored in `StringHashMap`. Either an owned heap copy (`Owned`, the

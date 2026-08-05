@@ -209,7 +209,7 @@ enum JobAction {
 // CronRegisterJob
 // ============================================================================
 
-pub struct CronRegisterJob {
+struct CronRegisterJob {
     promise: jsc::JSPromiseStrong,
     // LIFETIMES.tsv: JSC_BORROW → GlobalRef
     global: GlobalRef,
@@ -1054,7 +1054,7 @@ const ASCII_WHITESPACE: [u8; 6] = *b" \t\n\r\x0b\x0c";
 // CronRemoveJob
 // ============================================================================
 
-pub struct CronRemoveJob {
+struct CronRemoveJob {
     promise: jsc::JSPromiseStrong,
     // LIFETIMES.tsv: JSC_BORROW → GlobalRef
     global: GlobalRef,

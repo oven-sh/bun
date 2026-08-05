@@ -54,11 +54,4 @@ DOMWrapperWorld& normalWorld(JSC::VM& vm)
     return static_cast<JSVMClientData*>(clientData)->normalWorld();
 }
 
-// DOMWrapperWorld& mainThreadNormalWorld()
-// {
-//     ASSERT(isMainThread());
-//     // static DOMWrapperWorld& cachedNormalWorld = normalWorld(commonVM());
-//     return cachedNormalWorld;
-// }
-
 } // namespace WebCore

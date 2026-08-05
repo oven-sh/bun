@@ -334,21 +334,6 @@ JSC_DEFINE_CUSTOM_SETTER(setJSPerformance_onresourcetimingbufferfull, (JSGlobalO
     return IDLAttribute<JSPerformance>::set<setJSPerformance_onresourcetimingbufferfullSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
 
-// static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_nowBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSPerformance>::ClassParameter castedThis)
-// {
-//     auto& vm = JSC::getVM(lexicalGlobalObject);
-//     auto throwScope = DECLARE_THROW_SCOPE(vm);
-//     UNUSED_PARAM(throwScope);
-//     UNUSED_PARAM(callFrame);
-//     auto& impl = castedThis->wrapped();
-//     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.now())));
-// }
-
-// JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_now, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
-// {
-//     return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_nowBody>(*lexicalGlobalObject, *callFrame, "now");
-// }
-
 static inline EncodedJSValue jsPerformancePrototypeFunction_toJSONBody(JSGlobalObject* lexicalGlobalObject, CallFrame*, JSPerformance* castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -359,16 +344,9 @@ static inline EncodedJSValue jsPerformancePrototypeFunction_toJSONBody(JSGlobalO
     auto timeOriginValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.timeOrigin());
     RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "timeOrigin"_s), timeOriginValue);
-    // if ((castedThis->globalObject())->inherits<JSDOMWindowBase>()) {
-    //     auto navigationValue = toJS<IDLInterface<PerformanceNavigation>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.navigation());
-    //     RETURN_IF_EXCEPTION(throwScope, { });
-    //     result->putDirect(vm, Identifier::fromString(vm, "navigation"_s), navigationValue);
-    // }
-    // if ((castedThis->globalObject())->inherits<JSDOMWindowBase>()) {
     auto timingValue = toJS<IDLInterface<PerformanceTiming>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.timing());
     RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "timing"_s), timingValue);
-    // }
     return JSValue::encode(result);
 }
 

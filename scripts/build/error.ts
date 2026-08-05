@@ -51,15 +51,3 @@ export function assert(
   }
 }
 
-/**
- * Assert a value is defined (not undefined or null).
- */
-export function assertDefined<T>(
-  value: T | undefined | null,
-  message: string,
-  context?: { hint?: string; file?: string },
-): asserts value is T {
-  if (value === undefined || value === null) {
-    throw new BuildError(message, context);
-  }
-}

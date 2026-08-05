@@ -2198,7 +2198,7 @@ pub(crate) enum RedirectDirection {
 }
 
 #[derive(Clone, Copy)]
-pub struct BacktrackSnapshot<'bump, const ENCODING: StringEncoding> {
+struct BacktrackSnapshot<'bump, const ENCODING: StringEncoding> {
     chars: ShellCharIter<'bump, ENCODING>,
     j: u32,
     word_start: u32,

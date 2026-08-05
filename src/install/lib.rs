@@ -245,7 +245,7 @@ pub mod _bin_linking_shim;
 pub mod _bun_shim_impl;
 pub mod windows_shim {
     #[cfg(windows)]
-    pub use crate::_bin_linking_shim as bin_linking_shim;
+    use crate::_bin_linking_shim as bin_linking_shim;
     #[cfg(windows)]
     pub use crate::_bun_shim_impl as bun_shim_impl;
     #[cfg(windows)]

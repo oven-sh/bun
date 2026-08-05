@@ -197,13 +197,6 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     // InspectorInstrumentation::didCallFunction(&scriptExecutionContext);
 
     auto handleExceptionIfNeeded = [&](JSC::Exception* exception) -> bool {
-        // if (is<WorkerGlobalScope>(scriptExecutionContext)) {
-        //     auto* scriptController = downcast<WorkerGlobalScope>(scriptExecutionContext).script();
-        //     bool terminatorCausedException = (exception && vm.isTerminationException(exception));
-        //     if (terminatorCausedException || (scriptController && scriptController->isTerminatingExecution()))
-        //         scriptController->forbidExecution();
-        // }
-
         if (exception) {
             event.target()->uncaughtExceptionInEventHandler();
             reportException(lexicalGlobalObject, exception);

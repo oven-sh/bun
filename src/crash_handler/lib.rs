@@ -606,7 +606,7 @@ mod draft {
         /// Some of these are enabled in release builds, which may encourage users to
         /// attach the affected files to crash report. Others, which may have low crash
         /// rate or only crash due to assertion failures, are debug-only. See `Action`.
-        pub static CURRENT_ACTION: Cell<Option<Action>> = const { Cell::new(None) };
+        static CURRENT_ACTION: Cell<Option<Action>> = const { Cell::new(None) };
     }
 
     /// Prevents crash reports from being uploaded to any server. Reports will still be printed and
@@ -3347,7 +3347,7 @@ mod draft {
     // D130: deduped — canonical def lives in bun_core (T0). Re-export under the
     // old name so internal use-sites and any downstream
     // `bun_crash_handler::WriteStackTraceLimits` importers keep compiling.
-    pub use bun_core::DumpStackTraceOptions as WriteStackTraceLimits;
+    use bun_core::DumpStackTraceOptions as WriteStackTraceLimits;
 
     /// Clone of `debug.writeStackTrace`, but can be configured to stop at either a
     /// frame count, or when hitting jsc LLInt Additionally, the printing function

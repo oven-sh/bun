@@ -2478,7 +2478,7 @@ macro_rules! string_builder {
 /// Canonical def lives in
 /// `bun_semver::semver_string`; re-exported under the local name so generic
 /// bounds in this module (`append<T: StringBuilderType>`) are unchanged.
-pub use bun_semver::semver_string::BuilderStringType as StringBuilderType;
+use bun_semver::semver_string::BuilderStringType as StringBuilderType;
 
 impl<'a> StringBuilder<'a> {
     #[inline]

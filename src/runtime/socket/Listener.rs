@@ -1014,9 +1014,9 @@ impl Listener {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
-        if this.handlers.active_connections.get() == 0 {
-            this.this_value.with_mut(|r| r.downgrade());
-        }
+        // `this_value` stays strong: the wrapper roots the handlers a future
+        // accept dispatches into. `do_stop` / `mark_inactive` downgrade it
+        // once the listen socket is closed.
         Ok(JSValue::UNDEFINED)
     }
 

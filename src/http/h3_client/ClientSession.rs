@@ -307,7 +307,15 @@ impl ClientSession {
                 Ok(r) => r,
                 Err(e) => return self.fail(stream, e),
             };
-            if result == HeaderResult::Finished || (done && st.body_buffer.is_empty()) {
+            // `is_done()`: a Content-Length: 0 response can reach here as
+            // `HasBody` (e.g. a text/event-stream content-type), which would
+            // make the headerProgress update below terminal. A terminal
+            // progressUpdate frees the AsyncHTTP embedding `client`, so it
+            // must never run while the stream is still attached.
+            if result == HeaderResult::Finished
+                || (done && st.body_buffer.is_empty())
+                || client.state.is_done()
+            {
                 if client.state.flags.is_redirect_pending {
                     self.detach(stream);
                     // SAFETY: re-derive — detach() invalidated the prior Unique tag.

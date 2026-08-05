@@ -30,6 +30,7 @@ const server = Bun.serve({
 });
 
 const url = server.url.href;
+let ok = 0;
 
 async function once() {
   pulled = Promise.withResolvers();
@@ -37,8 +38,24 @@ async function once() {
   await pulled.promise;
   controller.end();
   const res = await resPromise;
-  await res.arrayBuffer();
+  if ((await res.text()) === "x") ok++;
 }
+
+// ASAN: run N requests and exit so LeakSanitizer reports the unfreed sinks
+// directly. No warmup, no RSS sampling; the caller diffs the SUMMARY bytes
+// between two iteration counts so fixed one-time leaks cancel out.
+if (process.env.SINK_LEAK_MODE === "lsan") {
+  const iterations = Number(process.env.SINK_LEAK_ITERATIONS);
+  for (let i = 0; i < iterations; i++) await once();
+  server.stop(true);
+  Bun.gc(true);
+  await Bun.sleep(0);
+  Bun.gc(true);
+  process.stdout.write(JSON.stringify({ ok, iterations }));
+  process.exit(0);
+}
+
+const iterations = 10000;
 
 // RSS, not currentCommit (which ratchets under hole purging, a discarded hole
 // stays "committed"); a leaked sink keeps its page resident, so RSS sees it.
@@ -52,8 +69,6 @@ async function settledRss() {
   }
   return min;
 }
-
-const iterations = 10000;
 
 async function round() {
   for (let i = 0; i < iterations; i++) {
@@ -83,4 +98,4 @@ for (let r = 0; r < 3; r++) {
 server.stop(true);
 
 const delta = [...deltas].sort((a, b) => a - b)[Math.floor(deltas.length / 2)];
-process.stdout.write(JSON.stringify({ delta, deltas, iterations }));
+process.stdout.write(JSON.stringify({ delta, deltas, iterations, ok }));

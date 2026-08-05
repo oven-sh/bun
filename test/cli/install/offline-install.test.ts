@@ -66,6 +66,22 @@ async function seed(fixture: Fixture, packageJson: object) {
   }
 }
 
+/** Seed until the registry manifest landed in the fixture's disk cache. The
+ * manifest cache write is fire-and-forget and can lose the race with process
+ * exit, so fixtures whose tests resolve offline from the cached manifest
+ * re-seed (deleting the lockfile to force another manifest fetch) until the
+ * `.npm` file exists. */
+async function seedWithManifest(fixture: Fixture, packageJson: object) {
+  for (let attempt = 0; ; attempt++) {
+    await seed(fixture, packageJson);
+    const entries = await readdir(join(fixture.packageDir, ".bun-cache")).catch(() => [] as string[]);
+    if (entries.some(entry => entry.endsWith(".npm"))) return;
+    if (attempt >= 9) throw new Error("manifest cache file never appeared while seeding");
+    await rm(join(fixture.packageDir, "bun.lock"), { force: true });
+    await rm(join(fixture.packageDir, "node_modules"), { recursive: true, force: true });
+  }
+}
+
 /** Copy a published tarball from verdaccio's storage into `<dir>/tarballs`
  * under the `<name>@<version>.tgz` layout `--tarball-dir` reads. */
 async function addTarball(fixture: Fixture, name: string, version: string, as: string = `${name}@${version}.tgz`) {
@@ -110,7 +126,7 @@ beforeAll(async () => {
     seed(tarballDirMissingFile, { name: "tarball-dir-missing", dependencies: deps }),
     seed(tarballDirBadIntegrity, { name: "tarball-dir-integrity", dependencies: deps }),
     seed(tarballDirOnline, { name: "tarball-dir-online", dependencies: deps }),
-    seed(tarballDirPrefetch, { name: "tarball-dir-prefetch", dependencies: { "no-deps": "^1.0.0" } }),
+    seedWithManifest(tarballDirPrefetch, { name: "tarball-dir-prefetch", dependencies: { "no-deps": "^1.0.0" } }),
     write(
       join(tarballDirPatched.packageDir, "patches", "no-deps@1.0.1.patch"),
       `diff --git a/patched.txt b/patched.txt
@@ -122,14 +138,14 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
 +hello world
 `,
     ).then(() =>
-      seed(tarballDirPatched, {
+      seedWithManifest(tarballDirPatched, {
         name: "tarball-dir-patched",
         dependencies: { "no-deps": "1.0.1" },
         patchedDependencies: { "no-deps@1.0.1": "patches/no-deps@1.0.1.patch" },
       }),
     ),
-    seed(manifestResolve, { name: "manifest-resolve", dependencies: { "no-deps": "^1.0.0" } }),
-    seed(minimumAge, { name: "minimum-age", dependencies: { "no-deps": "^1.0.0" } }),
+    seedWithManifest(manifestResolve, { name: "manifest-resolve", dependencies: { "no-deps": "^1.0.0" } }),
+    seedWithManifest(minimumAge, { name: "minimum-age", dependencies: { "no-deps": "^1.0.0" } }),
   ]);
 
   // Kill verdaccio so every request to it is refused. `registry.stop()` sends

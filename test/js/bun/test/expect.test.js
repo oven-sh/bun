@@ -4188,16 +4188,18 @@ describe("expect()", () => {
       expect(expect.arrayContaining([])).toEqual(["foo", "bar"]);
       expect(expect.arrayContaining(["foo"])).toEqual(["foo"]);
       expect(expect.arrayContaining(["foo"])).toEqual(["foo", "bar"]);
+      // Jest: an empty sample matches any received value, including non-arrays.
+      expect(expect.arrayContaining([])).toEqual(42);
+      expect(expect.arrayContaining([])).toEqual("jest");
+      expect(expect.arrayContaining([])).toEqual({});
+      expect(expect.arrayContaining([])).toEqual(null);
+      expect(expect.arrayContaining([])).toEqual(undefined);
+      expect(42).toEqual(expect.arrayContaining([]));
+      expect({ a: 5 }).toMatchObject({ a: expect.arrayContaining([]) });
     });
 
     test("ArrayContaining does not match", () => {
-      // we differ in jest on these cases: bun will fail matching non-array expected values, while jest doesn't
-      if (isBun) {
-        expect(expect.arrayContaining([])).not.toEqual(42);
-        expect(expect.arrayContaining([])).not.toEqual("jest");
-        expect(expect.arrayContaining([])).not.toEqual({});
-        expect(expect.arrayContaining(["foo"])).not.toEqual(42);
-      }
+      expect(expect.arrayContaining(["foo"])).not.toEqual(42);
       expect(expect.arrayContaining(["foo"])).not.toEqual("foo");
       expect(expect.arrayContaining(["foo"])).not.toEqual(["bar"]);
     });
@@ -4210,12 +4212,7 @@ describe("expect()", () => {
     });
 
     test("ArrayNotContaining matches", () => {
-      if (isBun) {
-        expect(expect.not.arrayContaining([])).toEqual(42);
-        expect(expect.not.arrayContaining([])).toEqual("jest");
-        expect(expect.not.arrayContaining([])).toEqual({});
-        expect(expect.not.arrayContaining(["foo"])).toEqual(42);
-      }
+      expect(expect.not.arrayContaining(["foo"])).toEqual(42);
       expect(expect.not.arrayContaining(["foo"])).toEqual("foo");
       expect(expect.not.arrayContaining(["foo"])).toEqual(["bar"]);
     });
@@ -4224,6 +4221,10 @@ describe("expect()", () => {
       expect(expect.not.arrayContaining([])).not.toEqual(["foo"]);
       expect(expect.not.arrayContaining(["foo"])).not.toEqual(["foo"]);
       expect(expect.not.arrayContaining(["foo"])).not.toEqual(["foo", "bar"]);
+      // Jest: an empty sample matches any received value, so the negated matcher never matches.
+      expect(expect.not.arrayContaining([])).not.toEqual(42);
+      expect(expect.not.arrayContaining([])).not.toEqual("jest");
+      expect(expect.not.arrayContaining([])).not.toEqual({});
     });
 
     test("ArrayNotContaining throws for non-arrays", () => {

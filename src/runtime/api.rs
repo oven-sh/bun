@@ -134,7 +134,6 @@ pub mod bun {
     pub use super::bun_ssl_context_cache as ssl_context_cache;
     pub use super::bun_subprocess as subprocess;
     pub use super::bun_x509 as x509;
-    pub use process::StdioKind as SubprocessStdioKind;
     pub use process::{
         Dup2, Exited, ExtraPipe, PidFdType, PidT, Poller, PosixSpawnOptions, PosixSpawnResult,
         PosixStdio, Process, ProcessExit, ProcessExitHandler, ProcessExitKind, Rusage,
@@ -155,17 +154,13 @@ pub mod bun {
     pub use terminal::Terminal;
 
     pub mod h2_frame_parser {
-        pub use crate::api::h2_frame_parser_body::ErrorCode;
         pub use crate::api::h2_frame_parser_body::H2FrameParser;
         // js2native thunks (`$rust(h2_frame_parser.rs, …)` in generated_js2native.rs).
-        pub use crate::api::h2_frame_parser_body::h2_frame_parser_constructor;
-        pub use crate::api::h2_frame_parser_body::js_assert_settings;
-        pub use crate::api::h2_frame_parser_body::js_get_packed_settings;
-        pub use crate::api::h2_frame_parser_body::js_get_unpacked_settings;
+        pub(crate) use crate::api::h2_frame_parser_body::h2_frame_parser_constructor;
+        pub(crate) use crate::api::h2_frame_parser_body::js_assert_settings;
     }
     pub use h2_frame_parser::H2FrameParser;
 }
-pub use bun::process::Process as SpawnProcess;
 
 pub use crate::image as Image;
 pub use crate::shell as Shell;
@@ -189,7 +184,6 @@ pub use crate::api::js_bundler::JSBundler;
 pub use crate::api::js_bundler::OutputKind;
 pub use crate::api::js_transpiler as JSTranspiler;
 pub use crate::api::json5_object as JSON5Object;
-pub use crate::api::jsonc_object as JSONCObject;
 pub use crate::api::markdown_object as MarkdownObject;
 pub use crate::api::native_promise_context as NativePromiseContext;
 pub use crate::api::toml_object as TOMLObject;
@@ -207,7 +201,6 @@ pub use bun_sql_jsc::mysql as MySQL;
 pub use bun_sql_jsc::postgres as Postgres;
 
 pub use crate::webview::chrome_process as ChromeProcess;
-pub use crate::webview::host_process as WebViewHostProcess;
 
 // ─── shared scaffold for Bun.{TOML,JSONC,JSON5,YAML}.parse ───────────────────
 //
@@ -218,7 +211,7 @@ pub use crate::webview::host_process as WebViewHostProcess;
 // and hands `(&arena, &mut log, &source)` to a per-format closure that does the
 // format-specific parse, error match (StackOverflow / OOM / SyntaxError vs
 // log.to_js), and tail conversion.
-pub(crate) fn with_text_format_source<R>(
+fn with_text_format_source<R>(
     global: &bun_jsc::JSGlobalObject,
     frame: &bun_jsc::CallFrame,
     path: &'static [u8],
@@ -296,7 +289,7 @@ fn estring_to_js(
     }
 }
 
-pub(crate) fn expr_to_js(
+fn expr_to_js(
     expr: bun_ast::Expr,
     global: &bun_jsc::JSGlobalObject,
 ) -> bun_jsc::JsResult<bun_jsc::JSValue> {

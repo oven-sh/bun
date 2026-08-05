@@ -46,6 +46,25 @@ class DuplexSide extends Duplex {
     this.#otherSide.on("end", callback);
     this.#otherSide.push(null);
   }
+
+  _destroy(err, callback) {
+    const otherSide = this.#otherSide;
+
+    if (otherSide !== null && !otherSide.destroyed) {
+      // nextTick so the current execution stack (an HTTP parser, say) is not
+      // torn down underneath itself.
+      process.nextTick(() => {
+        if (otherSide.destroyed) return;
+
+        // Destroy without the error: closes the peer so it cannot hang, while
+        // avoiding an "Unhandled error" crash on that side.
+        if (err) otherSide.destroy();
+        else otherSide.push(null);
+      });
+    }
+
+    callback(err);
+  }
 }
 
 function duplexPair(options) {

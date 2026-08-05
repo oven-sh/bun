@@ -24,6 +24,36 @@ test("doesn't throw", () => {
   expect(() => performance.markResourceTiming()).not.toThrow();
 });
 
+// Node coerces the name via `${name}` for mark/clearMarks/clearMeasures, so a
+// Symbol hits V8's ToString message. Verified against Node v26.3.0.
+test("Symbol name argument throws V8 wording", () => {
+  const msg = "Cannot convert a Symbol value to a string";
+  expect(() => performance.mark(Symbol())).toThrow(new TypeError(msg));
+  expect(() => performance.clearMarks(Symbol())).toThrow(new TypeError(msg));
+  expect(() => performance.clearMeasures(Symbol())).toThrow(new TypeError(msg));
+});
+
+// Node only looks at start/end to decide whether the options dict supplies
+// timing; a {detail}/{duration}-only dict falls through and the trailing
+// endMark is honoured. Verified against Node v26.3.0.
+test("measure(name, optionsWithoutStartOrEnd, endMark) honours the trailing endMark", () => {
+  performance.mark("end100", { startTime: 100 });
+  const e = performance.measure("x", { detail: "d" }, "end100");
+  expect({ detail: e.detail, startTime: e.startTime, duration: e.duration }).toEqual({
+    detail: "d",
+    startTime: 0,
+    duration: 100,
+  });
+  // duration in the dict is discarded when endMark is supplied.
+  const e2 = performance.measure("x2", { duration: 999 }, "end100");
+  expect({ startTime: e2.startTime, duration: e2.duration }).toEqual({ startTime: 0, duration: 100 });
+  // An empty dict + endMark still measures to the mark, not to now().
+  const e3 = performance.measure("x3", {}, "end100");
+  expect({ startTime: e3.startTime, duration: e3.duration }).toEqual({ startTime: 0, duration: 100 });
+  performance.clearMarks("end100");
+  performance.clearMeasures();
+});
+
 test("timerify entry shape", async () => {
   const { promise, resolve } = Promise.withResolvers();
   const observer = new PerformanceObserver(list => resolve(list.getEntries()[0]));

@@ -65,13 +65,17 @@ pub const HELP_CATCH_MEMORY_ISSUES: bool = env::ENABLE_ASAN || env::IS_DEBUG;
 ///
 /// However, in the simple case, where you do something like
 ///
-///     exports.foo = 123;
-///     exports.bar = 456;
+/// ```js
+/// exports.foo = 123;
+/// exports.bar = 456;
+/// ```
 ///
 /// We can unwrap it into
 ///
-///    export const foo = 123;
-///    export const bar = 456;
+/// ```js
+/// export const foo = 123;
+/// export const bar = 456;
+/// ```
 ///
 /// 2) You import a CommonJS module using CommonJS.
 ///
@@ -108,7 +112,7 @@ pub const WINDOWS_BUNX_FAST_PATH: bool = true;
 // TODO: fix Windows-only test failures in fetch-preconnect.test.ts
 pub const IS_FETCH_PRECONNECT_SUPPORTED: bool = env::IS_POSIX;
 
-pub(crate) const LIBDEFLATE_SUPPORTED: bool = env::IS_NATIVE;
+const LIBDEFLATE_SUPPORTED: bool = env::IS_NATIVE;
 
 // Mostly exists as a way to turn it off later, if necessary.
 pub fn is_libdeflate_enabled() -> bool {

@@ -1,6 +1,7 @@
 #include "quic.h"
 
 #include "internal/internal.h"
+#include "internal/fault_inject.h"
 #if defined(_WIN32) && !defined(WIN32)
 /* lsquic.h gates on WIN32 (not _WIN32) to pick <vc_compat.h> over <sys/uio.h>. */
 #define WIN32 1
@@ -236,8 +237,11 @@ static int us_quic_send_one(LIBUS_SOCKET_DESCRIPTOR fd, const struct lsquic_out_
     msg.msg_namelen = sa_len(spec->dest_sa);
     msg.msg_iov = spec->iov;
     msg.msg_iovlen = spec->iovlen;
-    ssize_t r;
-    do { r = sendmsg(fd, &msg, 0); } while (r < 0 && errno == EINTR);
+    ssize_t r = 0; int unused = 0;
+    if (!US_FAULT_CHECK(US_FAULT_SENDMSG, fd, r, unused)) {
+        do { r = sendmsg(fd, &msg, 0); } while (r < 0 && errno == EINTR);
+    }
+    (void) unused;
     return r < 0 ? -1 : 1;
 #endif
 }
@@ -269,9 +273,15 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
             k++;
         }
         int r;
-        do { r = sendmmsg(fd, mm, k, 0); } while (r < 0 && errno == EINTR);
-        if (r < 0) break;
-        sent += (unsigned) r;
+        {
+            ssize_t injected = 0; int unused = 0;
+            if (US_FAULT_CHECK(US_FAULT_SENDMSG, fd, injected, unused)) {
+                r = (int) injected;
+            } else {
+                do { r = sendmmsg(fd, mm, k, 0); } while (r < 0 && errno == EINTR);
+            }
+            (void) injected; (void) unused;
+        }
         /* sendmmsg(2) BUGS: on a short return the error code is lost and the
          * caller is expected to retry starting at the first failed message.
          * udp(7): an unconnected socket surfaces async ICMP from an earlier
@@ -279,13 +289,25 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
          * a packet to a live peer can fail mid-batch with an error that
          * belongs to a prior dead peer. So loop instead of breaking; r >= 1
          * here so `sent` advances and the retry's first message either
-         * consumes the stale error (returns -1, handled below) or succeeds. */
+         * consumes the stale error (returns -1, handled below) or succeeds.
+         * The r < 0 path gets one retry for the same reason: the failing
+         * read cleared sk_err, so the retry sends cleanly unless this is
+         * real backpressure. EAGAIN/ENOBUFS (send buffer full) stays a
+         * break — that's the backpressure lsquic's pause is for. */
+        if (r < 0 && !(errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS)) {
+            do { r = sendmmsg(fd, mm, k, 0); } while (r < 0 && errno == EINTR);
+        }
+        if (r < 0) break;
+        sent += (unsigned) r;
     }
 #else
     for (; sent < n; sent++) {
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
         if (!ls->udp) { errno = EBADF; break; }
-        if (us_quic_send_one(us_poll_fd((struct us_poll_t *) ls->udp), &specs[sent]) < 0) break;
+        if (us_quic_send_one(us_poll_fd((struct us_poll_t *) ls->udp), &specs[sent]) < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS) break;
+            if (us_quic_send_one(us_poll_fd((struct us_poll_t *) ls->udp), &specs[sent]) < 0) break;
+        }
     }
 #endif
 
@@ -495,6 +517,9 @@ static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn)
     ctx->loop->num_polls++;
 #endif
     ctx->conn_count++;
+    /* Arm the sweep-timer refcount so DateHeaderTimer runs for h3-only
+     * servers; the TCP path does this per-socket in context.c. */
+    us_internal_enable_sweep_timer(ctx->loop);
     qs->next = ctx->conns;
     ctx->conns = qs;
     if (ctx->on_open) ctx->on_open(qs);
@@ -516,6 +541,7 @@ static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
     ctx->loop->num_polls--;
 #endif
     ctx->conn_count--;
+    us_internal_disable_sweep_timer(ctx->loop);
     /* During graceful drain the UDP fd is the only thing left holding the
      * loop; release it when the last conn closes so the process can exit. */
     if (ctx->closing && ctx->conn_count == 0) {
@@ -1172,22 +1198,6 @@ us_quic_socket_context_t *us_create_quic_client_context(
     return ctx;
 }
 
-static int us_quic_resolve(const char *host, int port, struct sockaddr_storage *out) {
-    memset(out, 0, sizeof(*out));
-    struct sockaddr_in *v4 = (struct sockaddr_in *) out;
-    struct sockaddr_in6 *v6 = (struct sockaddr_in6 *) out;
-    if (inet_pton(AF_INET, host, &v4->sin_addr) == 1) {
-        v4->sin_family = AF_INET;
-        v4->sin_port = htons((unsigned short) port);
-        return 0;
-    }
-    if (inet_pton(AF_INET6, host, &v6->sin6_addr) == 1) {
-        v6->sin6_family = AF_INET6;
-        v6->sin6_port = htons((unsigned short) port);
-        return 0;
-    }
-    return -1;
-}
 
 /* One UDP endpoint for all client connections on this loop. lsquic
  * demultiplexes incoming datagrams by connection ID, so a single ephemeral
@@ -1334,8 +1344,7 @@ int us_quic_socket_context_connect(
     *out_pending = NULL;
 
     struct sockaddr_storage peer_ss;
-    /* IP literal — no DNS at all. */
-    if (us_quic_resolve(host, port, &peer_ss) == 0) {
+    if (Bun__parseIpAddress(host, (uint16_t) port, &peer_ss)) {
         *out_qs = us_quic_connect_addr(ctx, (struct sockaddr *) &peer_ss, sni,
             reject_unauthorized);
         return *out_qs ? 1 : -1;

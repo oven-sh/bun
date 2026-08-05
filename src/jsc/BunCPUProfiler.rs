@@ -5,7 +5,7 @@ use crate::VM;
 use bun_core::{OwnedString, String as BunString};
 #[cfg(windows)]
 use bun_paths::OSPathBuffer;
-use bun_paths::PathBuffer;
+use bun_paths::{AutoAbsPathChecked, PathBuffer};
 use bun_sys::{self, Errno, Fd, FdDirExt as _};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -102,8 +102,8 @@ fn write_profile_to_file(
     let profile_slice = profile_string.to_utf8();
     // (defer profile_slice.deinit() — handled by Drop on Utf8Slice)
 
-    // Determine the output path using AutoAbsPath
-    let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
+    // dir/name are unbounded CLI input, so use the length-checked variant.
+    let mut path_buf = AutoAbsPathChecked::init_top_level_dir();
     // (defer path_buf.deinit() — handled by Drop)
 
     build_output_path(&mut path_buf, config, is_md_format)?;
@@ -147,7 +147,7 @@ fn write_profile_to_file(
 }
 
 fn build_output_path(
-    path: &mut bun_paths::AutoAbsPath,
+    path: &mut AutoAbsPathChecked,
     config: &CPUProfilerConfig,
     is_md_format: bool,
 ) -> Result<(), ProfilerError> {
@@ -177,15 +177,12 @@ fn build_output_path(
         generate_default_filename(&mut filename_buf, is_md_format)?
     };
 
-    // Append directory if specified
     if !config.dir.is_empty() {
-        // AutoAbsPath uses CheckLength::ASSUME — Err arm is unreachable.
-        // See paths/Path.rs `options::Result` note.
-        path.join(&[config.dir]).expect("unreachable");
+        path.join(&[config.dir])
+            .map_err(|_| ProfilerError::FilenameTooLong)?;
     }
-
-    // Append filename
-    path.append(filename).expect("unreachable");
+    path.append(filename)
+        .map_err(|_| ProfilerError::FilenameTooLong)?;
 
     Ok(())
 }

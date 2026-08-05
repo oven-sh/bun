@@ -332,8 +332,8 @@ impl PatchTask {
                     // yields initialized bytes even when the active variant
                     // is not `npm` — possibly stale, never uninit. This arm
                     // is reachable for non-npm resolutions too (git/github/
-                    // tarball; see the TODO below), which then read garbage
-                    // version bytes into the task id, not UB.
+                    // tarball), which then read garbage version bytes into
+                    // the npm-shaped task id below, not UB.
                     let pkg_npm_version = unsafe {
                         manager.lockfile.packages.items_resolution()[pkg_id as usize]
                             .value
@@ -348,27 +348,43 @@ impl PatchTask {
                         .behavior
                         .is_required();
                     let pkg_again: Package = *manager.lockfile.packages.get(pkg_id as usize);
-                    let network_task: *mut crate::NetworkTask =
-                        package_manager::generate_network_task_for_tarball(
-                            manager,
-                            // TODO: not just npm package
-                            task_id,
-                            url,
-                            is_required,
-                            dep_id,
-                            &pkg_again,
-                            Some(name_and_version_hash),
-                            match pkg_resolution_tag {
-                                crate::resolution_real::Tag::Npm => {
-                                    Authorization::AllowAuthorization
-                                }
-                                _ => Authorization::NoAuthorization,
-                            },
-                        )?
-                        .unwrap_or_else(|| unreachable!());
-                    if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::Extract {
-                        manager.set_preinstall_state(pkg_meta_id, PreinstallState::Extracting);
-                        package_manager::enqueue_network_task(manager, network_task);
+                    match package_manager::generate_network_task_for_tarball(
+                        manager,
+                        task_id,
+                        url,
+                        is_required,
+                        dep_id,
+                        &pkg_again,
+                        Some(name_and_version_hash),
+                        match pkg_resolution_tag {
+                            crate::resolution_real::Tag::Npm => Authorization::AllowAuthorization,
+                            _ => Authorization::NoAuthorization,
+                        },
+                    ) {
+                        Ok(Some(network_task)) => {
+                            // reshaped for borrowck — end the pool-slot borrow
+                            // before `manager` is reborrowed below.
+                            let network_task: *mut crate::NetworkTask = network_task;
+                            if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::Extract
+                            {
+                                manager
+                                    .set_preinstall_state(pkg_meta_id, PreinstallState::Extracting);
+                                package_manager::enqueue_network_task(manager, network_task);
+                            }
+                        }
+                        // `--tarball-dir` scheduled a local read of the
+                        // tarball instead of a download.
+                        Ok(None) => {
+                            if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::Extract
+                            {
+                                manager
+                                    .set_preinstall_state(pkg_meta_id, PreinstallState::Extracting);
+                            }
+                        }
+                        // Already reported by `generate_network_task_for_tarball`;
+                        // the install fails with that error.
+                        Err(crate::network_task::ForTarballError::NetworkDisabled) => {}
+                        Err(err) => return Err(err.into()),
                     }
                 }
                 PreinstallState::ApplyPatch => {

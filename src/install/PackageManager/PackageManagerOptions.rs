@@ -27,6 +27,9 @@ pub struct Options {
 
     pub(crate) registries: Npm::registry::Map,
     pub(crate) cache_directory: &'static [u8],
+    /// Directory of `<name>@<version>.tgz` files to read npm tarballs from
+    /// before (or, with `--offline`, instead of) downloading them.
+    pub(crate) tarball_directory: &'static [u8],
     pub enable: Enable,
     pub do_: Do,
     pub positionals: &'static [&'static [u8]],
@@ -105,6 +108,7 @@ impl Default for Options {
             scope: Npm::registry::Scope::default(),
             registries: Npm::registry::Map::default(),
             cache_directory: b"",
+            tarball_directory: b"",
             enable: Enable::default(),
             do_: Do::default(),
             positionals: &[],
@@ -427,6 +431,14 @@ impl Options {
                 self.cache_directory = leak_static(cache_directory);
             }
 
+            if let Some(tarball_directory) = config.tarball_directory.as_deref() {
+                self.tarball_directory = leak_static(tarball_directory);
+            }
+
+            if config.offline.unwrap_or(false) {
+                self.enable.set(Enable::OFFLINE, true);
+            }
+
             if let Some(scoped) = &config.scoped {
                 for (name, registry_) in scoped.scopes.keys().iter().zip(scoped.scopes.values()) {
                     debug_assert_eq!(scoped.scopes.keys().len(), scoped.scopes.values().len());
@@ -659,6 +671,10 @@ impl Options {
             self.do_.set(Do::INSTALL_PACKAGES, check_bool == b"0");
         }
 
+        if let Some(check_bool) = env.get(b"BUN_CONFIG_OFFLINE") {
+            self.enable.set(Enable::OFFLINE, check_bool != b"0");
+        }
+
         if let Some(check_bool) = env.get(b"BUN_CONFIG_NO_VERIFY") {
             self.do_.set(Do::VERIFY_INTEGRITY, check_bool != b"0");
         }
@@ -695,6 +711,14 @@ impl Options {
 
             if let Some(cache_dir) = cli.cache_dir {
                 self.cache_directory = cache_dir;
+            }
+
+            if let Some(tarball_dir) = cli.tarball_dir {
+                self.tarball_directory = tarball_dir;
+            }
+
+            if cli.offline {
+                self.enable.set(Enable::OFFLINE, true);
             }
 
             if cli.exact {
@@ -951,7 +975,11 @@ bitflags::bitflags! {
         /// install. Off by default; set BUN_INSTALL_GLOBAL_STORE=1 or
         /// `install.globalStore = true` in bunfig to enable.
         const GLOBAL_VIRTUAL_STORE   = 1 << 9;
-        // _: u6 padding
+        /// `--offline` / `install.offline`: never touch the network. Cached
+        /// manifests are used regardless of staleness; a package whose bytes
+        /// are not available locally (cache or `--tarball-dir`) is an error.
+        const OFFLINE                = 1 << 10;
+        // _: u5 padding
     }
 }
 
@@ -1058,5 +1086,9 @@ impl Enable {
     #[inline]
     pub(crate) fn global_virtual_store(self) -> bool {
         self.contains(Enable::GLOBAL_VIRTUAL_STORE)
+    }
+    #[inline]
+    pub(crate) fn offline(self) -> bool {
+        self.contains(Enable::OFFLINE)
     }
 }

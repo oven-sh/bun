@@ -71,6 +71,12 @@ const SHARED_PARAMS: &[ParamType] = &[
     clap::param!("--dry-run                             Perform a dry run without making changes"),
     clap::param!("--frozen-lockfile                     Disallow changes to lockfile"),
     clap::param!(
+        "--offline                             Disallow network requests; fail if a package is not available locally"
+    ),
+    clap::param!(
+        "--tarball-dir <PATH>                  Read package tarballs from a directory of name@version.tgz files instead of downloading them"
+    ),
+    clap::param!(
         "-f, --force                           Always request the latest versions from the registry & reinstall all dependencies"
     ),
     clap::param!(
@@ -372,6 +378,8 @@ pub struct CommandLineArguments {
     pub(crate) yarn: bool,
     pub production: bool,
     pub(crate) frozen_lockfile: bool,
+    pub(crate) offline: bool,
+    pub(crate) tarball_dir: Option<&'static [u8]>,
     pub(crate) no_save: bool,
     pub(crate) dry_run: bool,
     pub(crate) force: bool,
@@ -455,6 +463,8 @@ impl Default for CommandLineArguments {
             yarn: false,
             production: false,
             frozen_lockfile: false,
+            offline: false,
+            tarball_dir: None,
             no_save: false,
             dry_run: false,
             force: false,
@@ -1027,6 +1037,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         cli.production = args.flag(b"--production") || args.flag(b"--prod");
         cli.frozen_lockfile = args.flag(b"--frozen-lockfile")
             || (!cli.positionals.is_empty() && cli.positionals[0] == b"ci");
+        cli.offline = args.flag(b"--offline");
         cli.no_progress = args.flag(b"--no-progress");
         cli.dry_run = args.flag(b"--dry-run");
         cli.global = args.flag(b"--global");
@@ -1065,6 +1076,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
 
         if let Some(cache_dir) = args.option(b"--cache-dir") {
             cli.cache_dir = Some(cache_dir);
+        }
+
+        if let Some(tarball_dir) = args.option(b"--tarball-dir") {
+            cli.tarball_dir = Some(tarball_dir);
         }
 
         if let Some(ca_file_name) = args.option(b"--cafile") {

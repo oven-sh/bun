@@ -523,6 +523,28 @@ When `true`, `bun install` does not update `bun.lock`. Default `false`. If `pack
 frozenLockfile = false
 ```
 
+### `install.offline`
+
+When `true`, `bun install` makes no network requests. Default `false`. Cached registry manifests are used regardless of their age, and a package that is not available locally (in the cache, or in [`install.tarballDir`](#install-tarballdir)) is an error instead of a download. Equivalent to `--offline` or `BUN_CONFIG_OFFLINE=1`.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+offline = true
+```
+
+Unlike [`install.prefer = "offline"`](#install-prefer), which only skips staleness checks for the runtime's auto-install, `install.offline` is a hard guarantee for `bun install`: anything that would require the network fails.
+
+### `install.tarballDir`
+
+A directory of package tarballs for `bun install` to read instead of downloading from the registry. Equivalent to `--tarball-dir`.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+tarballDir = "./vendor/tarballs"
+```
+
+The file for `<name>@<version>` is `<tarballDir>/<name>@<version>.tgz`, with scoped packages in a `@scope/` subdirectory (for example `vendor/tarballs/@types/react@18.2.42.tgz`). Tarballs are verified against the lockfile's integrity hashes. Combine with `install.offline` for installs from a checked-in or build-system-provided mirror; without it, packages missing from the directory are downloaded as usual.
+
 ### `install.dryRun`
 
 Whether `bun install` actually installs dependencies. Default `false`. When `true`, it's equivalent to passing `--dry-run` to all `bun install` commands.

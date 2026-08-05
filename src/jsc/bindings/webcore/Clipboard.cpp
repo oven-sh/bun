@@ -72,8 +72,7 @@ void Clipboard::readText(Ref<DeferredPromise>&& promise)
             promise->reject(ExceptionCode::NotAllowedError, failureMessage);
             return;
         }
-        // A clipboard holding no text reads as the empty string, per the spec.
-        // Other processes own these bytes, so they are not trusted to be UTF-8.
+        // An empty clipboard reads as "", and foreign bytes are not trusted UTF-8.
         String text = emptyString();
         if (!representations.empty())
             text = String::fromUTF8ReplacingInvalidSequences({ representations[0].bytes, representations[0].length });
@@ -92,10 +91,9 @@ void Clipboard::writeText(const String& data, Ref<DeferredPromise>&& promise)
         return;
     }
 
-    // Upstream's writeText() writes the pasteboard directly and an in-flight
-    // ItemWriter then fails its changeCount check in didSetAllData(). There is
-    // no changeCount here, so supersede explicitly or the earlier
-    // still-collecting write() lands after this one and overwrites it.
+    // Upstream supersedes implicitly via the pasteboard changeCount check;
+    // there is none here, so invalidate explicitly or the earlier
+    // still-collecting write() lands after this one.
     if (RefPtr previousItemWriter = std::exchange(m_activeItemWriter, nullptr))
         previousItemWriter->invalidate();
 
@@ -125,8 +123,7 @@ void Clipboard::read(Ref<DeferredPromise>&& promise)
             return;
         }
 
-        // Everything the platform had becomes one item, which is what a
-        // single-pasteboard runtime can honestly report.
+        // Everything the platform had becomes one item.
         Vector<RefPtr<ClipboardItem>> items;
         if (!representations.empty()) {
             ClipboardItemData data;
@@ -147,9 +144,8 @@ void Clipboard::read(Ref<DeferredPromise>&& promise)
 
 void Clipboard::write(const Vector<RefPtr<ClipboardItem>>& data, Ref<DeferredPromise>&& promise)
 {
-    // Supersede first (upstream constructs an ItemWriter unconditionally), so
-    // write([]) and a rejected multi-item write abort an in-flight write the
-    // same way writeText() and write([item]) do.
+    // Supersede before the early-outs so write([]) aborts an in-flight write
+    // the same way writeText() and write([item]) do.
     if (RefPtr previousItemWriter = std::exchange(m_activeItemWriter, nullptr))
         previousItemWriter->invalidate();
 
@@ -159,9 +155,8 @@ void Clipboard::write(const Vector<RefPtr<ClipboardItem>>& data, Ref<DeferredPro
         return;
     }
 
-    // Every engine today writes a single item, and Bun's backends own one
-    // pasteboard transaction, so more than one is rejected rather than
-    // silently collapsed.
+    // One pasteboard transaction per write; reject rather than silently
+    // collapse to data[0].
     if (data.size() > 1) {
         promise->reject(ExceptionCode::NotAllowedError, "Writing multiple ClipboardItems is not supported."_s);
         return;
@@ -212,9 +207,8 @@ void Clipboard::ItemWriter::write(const Vector<RefPtr<ClipboardItem>>& items)
 
     for (size_t index = 0; index < items.size(); ++index) {
         Ref { *items[index] }->collectDataForWriting(*clipboard, [this, protectedThis = Ref { *this }, index](std::optional<ClipboardItemData> data, JSC::JSValue failureReason) mutable {
-            // A representation that failed rejects the write immediately with
-            // its own reason. Nothing has reached the clipboard yet, and any
-            // later completion sees the promise already gone.
+            // A failed representation rejects with its own reason; later
+            // completions see the promise already gone.
             if (!data) {
                 protectedThis->rejectWithValue(failureReason);
                 return;
@@ -224,16 +218,13 @@ void Clipboard::ItemWriter::write(const Vector<RefPtr<ClipboardItem>>& items)
             if (!--m_pendingItemCount)
                 protectedThis->didSetAllData();
         });
-        // A data source that completed synchronously may already have failed
-        // the write and released our items; arming the remaining collects
-        // would leave their completions with no owner to discharge them.
+        // A synchronous failure released our items; stop arming collects.
         if (!m_promise)
             break;
     }
 
-    // Only for a list that never entered the loop. Keying this on
-    // m_pendingItemCount would fire a second time whenever every item
-    // completed synchronously — which is what a platform-sourced item does.
+    // Not keyed on m_pendingItemCount: all-synchronous completion would fire
+    // didSetAllData a second time.
     if (items.isEmpty())
         didSetAllData();
 }
@@ -264,15 +255,13 @@ void Clipboard::ItemWriter::didSetAllData()
     ClipboardItemData representations;
     Vector<size_t> pendingReadIndices;
     for (auto& itemData : dataToWrite) {
-        // Failures already rejected in the collect completion; a missing entry
-        // here means the writer was invalidated underneath us.
+        // A missing entry means the writer was invalidated underneath us.
         if (!itemData) {
             reject(ExceptionCode::NotAllowedError, "A ClipboardItem representation could not be read."_s);
             return;
         }
         for (auto& representation : *itemData) {
-            // The platform transaction snapshots memory; a Blob whose bytes are
-            // not resident (Bun.file, S3) is read in first.
+            // Non-resident bytes (Bun.file, S3) are read in first.
             if (clipboardBlobNeedsToReadFile(representation.value.get()))
                 pendingReadIndices.append(representations.size());
             representations.append(representation);
@@ -314,8 +303,7 @@ void Clipboard::ItemWriter::didReadBlobForWrite(size_t index, std::span<const ui
         return;
     }
 
-    // Snapshot the bytes (the span dies with this call) under the
-    // representation's key, which is the type the platform write uses.
+    // The span dies with this call; snapshot under the representation's key.
     m_representationsToWrite[index].value = createClipboardBlob(globalObject, bytes, m_representationsToWrite[index].key, MimeNormalization::Exact);
     ASSERT(m_pendingBlobReads);
     if (!--m_pendingBlobReads)
@@ -342,8 +330,8 @@ void Clipboard::ItemWriter::didFinishPlatformWrite(const String& failureMessage)
 {
     RefPtr promise = std::exchange(m_promise, nullptr);
     RefPtr clipboard = m_clipboard.get();
-    // Detach before settling/dispatching: a `copy` listener may synchronously start another
-    // write over the same items, and this writer must not retire that new write's collect.
+    // Detach first: a `copy` listener may synchronously start another write
+    // over the same items, whose collect this writer must not retire.
     detachFromClipboard();
     if (!promise)
         return;
@@ -380,15 +368,13 @@ void Clipboard::ItemWriter::invalidate()
 {
     if (RefPtr promise = std::exchange(m_promise, nullptr))
         promise->reject(ExceptionCode::AbortError);
-    // releaseItems re-enters detachFromClipboard via the collect completion;
-    // null m_clipboard first so that path cannot ref a mid-destruction
-    // Clipboard when ~Clipboard drives invalidate.
+    // Null m_clipboard first: releaseItems re-enters detachFromClipboard,
+    // which must not ref a Clipboard mid-destruction.
     m_clipboard = nullptr;
     releaseItems();
 }
 
-// Retires outstanding collects (whose completions hold a Ref back here) and drops the items.
-// Retiring re-enters detachFromClipboard, so iterate over a taken local copy.
+// Retiring a collect re-enters detachFromClipboard, so iterate a taken copy.
 void Clipboard::ItemWriter::releaseItems()
 {
     auto items = std::exchange(m_items, {});
@@ -398,14 +384,13 @@ void Clipboard::ItemWriter::releaseItems()
     }
 }
 
-// Clears the clipboard's pointer back to this writer. The callers all hold a
-// reference of their own, so dropping the clipboard's does not destroy `this`
-// underneath them.
+// Callers hold their own reference, so dropping the clipboard's back-pointer
+// cannot destroy `this` underneath them.
 void Clipboard::ItemWriter::detachFromClipboard()
 {
     releaseItems();
-    // Drop staged Blobs; an in-flight read's completion bails on the nulled
-    // promise before indexing into this.
+    // An in-flight read's completion bails on the nulled promise before
+    // indexing into this.
     m_representationsToWrite = {};
     RefPtr clipboard = m_clipboard.get();
     if (clipboard && clipboard->m_activeItemWriter.get() == this)

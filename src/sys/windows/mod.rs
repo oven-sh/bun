@@ -92,6 +92,40 @@ pub mod kernel32 {
     }
 }
 
+/// Win32 clipboard (user32) plus the movable global memory it exchanges
+/// (kernel32). https://learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard
+pub mod clipboard {
+    use super::{BOOL, DWORD, HANDLE, LPVOID, UINT};
+
+    pub const CF_UNICODETEXT: UINT = 13;
+    pub const GMEM_MOVEABLE: UINT = 0x0002;
+    pub const GMEM_ZEROINIT: UINT = 0x0040;
+
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        // safe: by-value args; failure is FALSE/NULL + GetLastError, no UB.
+        pub safe fn OpenClipboard(hWndNewOwner: HANDLE) -> BOOL;
+        pub safe fn CloseClipboard() -> BOOL;
+        pub safe fn EmptyClipboard() -> BOOL;
+        pub safe fn GetClipboardData(uFormat: UINT) -> HANDLE;
+        /// On success the system owns `hMem`.
+        pub fn SetClipboardData(uFormat: UINT, hMem: HANDLE) -> HANDLE;
+        pub fn RegisterClipboardFormatA(lpszFormat: *const core::ffi::c_char) -> UINT;
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        // safe: by-value args; failure is NULL, no UB.
+        pub safe fn GlobalAlloc(uFlags: UINT, dwBytes: usize) -> HANDLE;
+        pub fn GlobalFree(hMem: HANDLE) -> HANDLE;
+        pub fn GlobalLock(hMem: HANDLE) -> LPVOID;
+        pub fn GlobalUnlock(hMem: HANDLE) -> BOOL;
+        pub fn GlobalSize(hMem: HANDLE) -> usize;
+        // safe: by-value duration; cannot fault.
+        pub safe fn Sleep(dwMilliseconds: DWORD);
+    }
+}
+
 pub use bun_windows_sys::BOOL;
 pub use bun_windows_sys::BOOLEAN;
 pub use bun_windows_sys::CHAR;

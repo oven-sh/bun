@@ -94,10 +94,9 @@ JSC::JSValue clipboardBlobToJS(JSC::JSGlobalObject* globalObject, Blob& blob, co
     auto* impl = blob.impl();
     if (!impl)
         return JSC::jsNull();
-    // getType() resolves "a new Blob" per spec. A dupe shares the backing store
-    // and its File-specific name, so build from bytes when they are resident.
-    // A Bun-specific file-/network-backed Blob has none and falls back to a
-    // dupe with the File flag cleared so it reads as a Blob, not a File.
+    // A dupe shares the backing store and its File-specific name, so build
+    // from bytes when resident; a file-/network-backed Blob falls back to a
+    // dupe with the File flag cleared.
     if (!Blob__implNeedsToReadFile(impl)) {
         auto declared = clipboardBlobContentType(blob);
         Bun::UTF8View mime(declared);
@@ -109,8 +108,7 @@ JSC::JSValue clipboardBlobToJS(JSC::JSGlobalObject* globalObject, Blob& blob, co
     }
     auto* dupe = static_cast<BlobImpl*>(Blob__dupe(impl));
     Blob__implClearFile(dupe);
-    // The resident mismatch path re-wraps under the representation key; stamp
-    // the lazy dupe with it too so both report the type that was asked for.
+    // Like the resident re-wrap path, report the type that was asked for.
     if (!clipboardBlobTypeMatches(clipboardBlobContentType(blob), type)) {
         Bun::UTF8View requested(type);
         auto requestedBytes = requested.bytes();

@@ -62,21 +62,19 @@ Vector<String> ClipboardItemBindingsDataSource::types() const
     });
 }
 
-// Turns one settled representation into a Blob of `type`, or null if the WebIDL coercion
-// threw. `outError` carries the thrown value so getType() can reject with it.
+// One settled representation -> Blob of `type`; `outError` carries the thrown
+// coercion value so the caller can reject with it.
 static RefPtr<Blob> blobFromResolvedValue(JSC::JSGlobalObject& globalObject, JSC::JSValue value, const String& type, JSC::JSValue& outError, bool& outTerminated)
 {
     outError = {};
     outTerminated = false;
 
     auto& vm = globalObject.vm();
-    // This runs from a promise reaction, so it is the top of its own call: a
-    // coercion failure becomes a rejection here rather than propagating into
-    // JSC's microtask drain.
+    // Runs from a promise reaction, the top of its own call.
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     RefPtr blob = ClipboardItem::blobFromSettledValue(&globalObject, value, type);
     if (catchScope.exception()) [[unlikely]] {
-        // A termination has to keep unwinding rather than become a rejection.
+        // A termination keeps unwinding rather than becoming a rejection.
         if (vm.hasPendingTerminationException()) {
             outTerminated = true;
             return nullptr;
@@ -99,14 +97,12 @@ void ClipboardItemBindingsDataSource::getType(const String& type, Ref<DeferredPr
         return;
     }
 
-    // Strong-ref the item so m_itemPromises outlives the async gap. This closes a
-    // guardedObjects cycle for a never-settling representation (bounded per-call leak)
-    // in exchange for not rejecting a temporary item mid-getType() with InvalidStateError.
+    // Strong-ref the item so m_itemPromises outlives the async gap (a
+    // never-settling representation pins it: bounded per-call cost).
     m_itemPromises[matchIndex].value->whenSettled([this, protectedItem = Ref { m_item.get() }, matchIndex, promise = WTF::move(promise), type]() mutable {
         Ref itemPromise = m_itemPromises[matchIndex].value;
         if (itemPromise->status() != DOMPromise::Status::Fulfilled) {
-            // Forward the caller's own rejection reason, as the write path does
-            // with the same failure, rather than flattening it to an AbortError.
+            // Forward the caller's own rejection reason, like the write path.
             if (JSC::JSValue reason = itemPromise->result())
                 promise->reject(reason);
             else
@@ -137,9 +133,8 @@ void ClipboardItemBindingsDataSource::getType(const String& type, Ref<DeferredPr
     });
 }
 
-// `Promise.all(promises)`. The representations are values the caller supplied,
-// so resolving them through the realm's own Promise.all grants nothing the
-// caller does not already have.
+// `Promise.all(promises)` through the realm's own constructor; the values are
+// caller-supplied, so this grants nothing the caller does not have.
 static JSC::JSPromise* promiseAll(JSC::JSGlobalObject& globalObject, JSC::JSArray* promises)
 {
     auto& vm = globalObject.vm();
@@ -167,8 +162,8 @@ static JSC::JSPromise* promiseAll(JSC::JSGlobalObject& globalObject, JSC::JSArra
 
 void ClipboardItemBindingsDataSource::collectDataForWriting(Clipboard&, CollectCompletionHandler&& completion)
 {
-    // The same item can be written twice concurrently; the earlier write has
-    // already been invalidated, so retire its collect before taking this one.
+    // The same item can be written twice concurrently; retire the superseded
+    // collect before taking this one.
     if (m_completionHandler)
         invokeCompletionHandler(std::nullopt);
     m_allTypesSettled = nullptr;
@@ -205,14 +200,12 @@ void ClipboardItemBindingsDataSource::collectDataForWriting(Clipboard&, CollectC
     }
 
     auto generation = m_collectGeneration;
-    // One reaction for the whole item: everything is settled before anything is
-    // converted, so no state has to be carried between reactions.
     auto* allPromise = promiseAll(*globalObject, promises);
     if (catchScope.exception()) [[unlikely]]
         catchScope.clearException();
-    // promiseAll() calls the realm's Promise.all, which can run user JS that
-    // re-enters this collect via write([sameItem]); that path already retired
-    // this generation's completion, so bail without touching the newer one's.
+    // Promise.all can run user JS that re-enters this collect via
+    // write([sameItem]); that path already retired this generation's
+    // completion, so bail without touching the newer one's.
     if (generation != m_collectGeneration)
         return;
     if (!allPromise) {
@@ -220,9 +213,9 @@ void ClipboardItemBindingsDataSource::collectDataForWriting(Clipboard&, CollectC
         return;
     }
 
-    // A WeakPtr back-edge: a strong Ref here would close a native<->GC cycle
+    // WeakPtr back-edge: a strong Ref would close a native<->GC cycle
     // (guardedObjects roots the aggregate, whose reaction would own the item)
-    // that never-settling user data would make uncollectable.
+    // that never-settling user data makes uncollectable.
     m_allTypesSettled = DOMPromise::create(*globalObject, *allPromise);
     m_allTypesSettled->whenSettled([this, weakItem = WeakPtr { m_item.get() }, generation] {
         RefPtr protectedItem = weakItem.get();
@@ -230,8 +223,8 @@ void ClipboardItemBindingsDataSource::collectDataForWriting(Clipboard&, CollectC
             return;
         didSettleAllTypes();
     });
-    // whenSettled only throws for termination, in which case no reaction was
-    // registered and nothing else will discharge the handler.
+    // whenSettled throws only for termination: no reaction was registered and
+    // nothing else will discharge the handler.
     if (catchScope.exception()) [[unlikely]] {
         catchScope.clearException();
         invokeCompletionHandler(std::nullopt);
@@ -240,8 +233,7 @@ void ClipboardItemBindingsDataSource::collectDataForWriting(Clipboard&, CollectC
 
 void ClipboardItemBindingsDataSource::cancelCollect()
 {
-    // Bump the generation first so the in-flight reaction, if it ever runs,
-    // recognises itself as superseded and does not settle anything.
+    // Bump first so an in-flight reaction sees itself superseded.
     ++m_collectGeneration;
     m_allTypesSettled = nullptr;
     invokeCompletionHandler(std::nullopt);
@@ -249,9 +241,8 @@ void ClipboardItemBindingsDataSource::cancelCollect()
 
 void ClipboardItemBindingsDataSource::didSettleAllTypes()
 {
-    // Take ownership up front: toWTFString/.get() below run user JS, which can
-    // re-enter collectDataForWriting and swap m_completionHandler. Firing the
-    // local keeps this generation's handler paired with this generation's data.
+    // Take ownership up front: the conversions below run user JS that can
+    // re-enter collectDataForWriting and swap m_completionHandler.
     auto completionHandler = std::exchange(m_completionHandler, {});
     auto invoke = [&](std::optional<ClipboardItemData>&& data, JSC::JSValue reason = {}) {
         if (completionHandler)
@@ -264,9 +255,7 @@ void ClipboardItemBindingsDataSource::didSettleAllTypes()
         return;
     }
     if (allTypesSettled->status() != DOMPromise::Status::Fulfilled) {
-        // One representation rejected, so the item as a whole has no data. The
-        // aggregate carries that representation's own reason, which is what
-        // write() should reject with.
+        // The aggregate carries the rejecting representation's own reason.
         invoke(std::nullopt, allTypesSettled->result());
         return;
     }
@@ -280,13 +269,13 @@ void ClipboardItemBindingsDataSource::didSettleAllTypes()
     auto& vm = globalObject->vm();
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    // Promise.all resolves with the representations in order. Copy them into a
-    // MarkedArgumentBuffer so every element stays rooted while it is converted.
+    // Copy the resolved values into a MarkedArgumentBuffer so each stays
+    // rooted while it is converted.
     JSC::MarkedArgumentBuffer resolvedValues;
     resolvedValues.ensureCapacity(m_itemPromises.size());
     JSC::JSValue resolved = allTypesSettled->result();
-    // Promise.all is a replaceable realm property; anything but an array of the expected
-    // length means the representations were not collected — fail rather than write it.
+    // Promise.all is a replaceable realm property; anything but an array of
+    // the expected length means the representations were not collected.
     auto* resolvedArray = dynamicDowncast<JSC::JSArray>(resolved);
     if (!resolvedArray || resolvedArray->length() < m_itemPromises.size()) {
         invoke(std::nullopt);
@@ -306,8 +295,6 @@ void ClipboardItemBindingsDataSource::didSettleAllTypes()
         return;
     }
 
-    // Now everything is in hand: convert each one to the refcounted Blob the
-    // platform transaction will read from.
     ClipboardItemData data;
     data.reserveInitialCapacity(m_itemPromises.size());
     for (unsigned index = 0; index < m_itemPromises.size(); ++index) {
@@ -319,8 +306,7 @@ void ClipboardItemBindingsDataSource::didSettleAllTypes()
             return;
         }
         // A representation that could not become a Blob fails the whole item,
-        // so a partial write never reaches the clipboard. `error` is the
-        // exception its WebIDL coercion threw, if any.
+        // so a partial write never reaches the clipboard.
         if (!blob) {
             invoke(std::nullopt, error);
             return;

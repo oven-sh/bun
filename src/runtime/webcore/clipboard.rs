@@ -7,17 +7,14 @@ use core::ptr;
 
 use bun_jsc::{AnyTaskJob, AnyTaskJobCtx, JSGlobalObject};
 
-/// Opaque `WebCore::ClipboardRequest*` carried across the thread hop. The job owns the
-/// leaked +1 and hands it back exactly once: `then()` via `requestComplete`, or `Drop`
-/// via `requestAbandon` when the VM shut down before `then()` could run.
+/// Opaque `WebCore::ClipboardRequest*` (a leaked +1), handed back exactly once:
+/// `then()` via `requestComplete`, or `Drop` via `requestAbandon` on VM shutdown.
 struct RequestHandle(*mut c_void);
 
-// SAFETY: the pointer is never dereferenced off the JS thread — `run` does not
-// touch it, and `then` only passes it back to C++, which runs on the JS thread.
+// SAFETY: never dereferenced off the JS thread; `then` only passes it back to C++.
 unsafe impl Send for RequestHandle {}
 
-/// Mirrors `WebCore::ClipboardRepresentation`. All pointers borrow for the
-/// duration of the call.
+/// Mirrors `WebCore::ClipboardRepresentation`; pointers borrow for the call.
 #[repr(C)]
 pub struct Representation {
     ty: *const u8,
@@ -41,22 +38,15 @@ unsafe extern "C" {
     fn Bun__Clipboard__requestAbandon(request: *mut c_void);
 }
 
-/// Serializes our own work-pool jobs so concurrent clipboard calls cannot
-/// race `OpenClipboard` (Windows) or interleave `NSPasteboard` operations.
-/// Other processes can still mutate the clipboard at any time.
+/// Serializes our own jobs; other processes can still race the clipboard.
 static CLIPBOARD_LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
 
-/// What this build's backend can put on / take off the OS clipboard. The C++
-/// layer (`ClipboardItem.supports`, `write()` validation) asks through
-/// `Bun__Clipboard__supportsType`, so this is the single source of truth.
+/// Single source of truth for `ClipboardItem.supports` / `write()` validation.
 const SUPPORTED: &[Mime] = &[Mime::TextPlain, Mime::TextHtml, Mime::ImagePng];
 
-/// The POSIX one-shot helpers (`wl-copy`, `xclip`) own a single
-/// representation per invocation; the in-process backends write them all.
+/// The POSIX one-shot helpers own a single representation per invocation.
 const WRITES_SINGLE_REPRESENTATION: bool = cfg!(not(any(target_os = "macos", windows)));
 
-/// A clipboard representation this backend can map onto the platform
-/// clipboard.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mime {
     TextPlain,
@@ -83,20 +73,15 @@ impl Mime {
     }
 }
 
-/// What `run` executes off the JS thread; inputs are plain owned bytes
-/// snapshotted on the JS thread so no JS value ever crosses the hop.
+/// What `run` executes off the JS thread; owned bytes only, no JS values.
 enum Op {
-    /// Read `text/plain` only.
     ReadText,
-    /// Read every supported representation.
     Read,
     Write(Vec<(Mime, Vec<u8>)>),
 }
 
-/// Filled by `run` on the work pool; `then` only hands it back to WebCore.
 enum Outcome {
-    /// What the platform produced. Empty means the clipboard held nothing this
-    /// backend recognizes, which is not an error.
+    /// Empty means the clipboard held nothing this backend recognizes.
     Representations(Vec<(Mime, Vec<u8>)>),
     Failed(Unavailable),
 }
@@ -109,9 +94,8 @@ pub(crate) struct ClipboardCtx {
 
 impl Drop for ClipboardCtx {
     fn drop(&mut self) {
-        // `then()` (and `schedule`'s sync-failure path) take the handle; a
-        // still-present one means the job was dropped on the VM-shutdown
-        // early-out, so balance the leaked ref here.
+        // A still-present handle means the job was dropped before `then()`
+        // (VM shutdown); balance the leaked ref.
         if let Some(request) = self.request.take() {
             // SAFETY: `request.0` is the live leaked reference C++ handed over.
             unsafe { Bun__Clipboard__requestAbandon(request.0) };
@@ -128,16 +112,12 @@ impl AnyTaskJobCtx for ClipboardCtx {
                 Ok(None) => Outcome::Representations(Vec::new()),
                 Err(unavailable) => Outcome::Failed(unavailable),
             },
-            // One job (and one lock acquisition) per `read()`, so our own
-            // concurrent calls never interleave; other processes can still
-            // change the clipboard between the per-type probes.
             Op::Read => {
                 let mut present: Vec<(Mime, Vec<u8>)> = Vec::new();
                 let mut readable = false;
                 let mut unavailable = Unavailable::Platform;
                 for mime in SUPPORTED {
-                    // A representation whose only helper is missing is merely
-                    // absent; the whole read fails only when every one is.
+                    // The whole read fails only when every type does.
                     match platform::read_type(*mime) {
                         Ok(Some(bytes)) => {
                             readable = true;
@@ -197,7 +177,6 @@ impl AnyTaskJobCtx for ClipboardCtx {
     }
 }
 
-/// Rejects the request with the actionable reason the platform gave.
 fn complete_with_failure(global: &JSGlobalObject, request: *mut c_void, unavailable: Unavailable) {
     let message = unavailable.message();
     // SAFETY: JS thread, live global, and `message` is a 'static literal.
@@ -213,9 +192,8 @@ fn complete_with_failure(global: &JSGlobalObject, request: *mut c_void, unavaila
     };
 }
 
-/// Schedules the op on the work pool. `create_and_schedule` consumes `ctx` on
-/// every path, so a failure (which cannot happen here: the default `init` is
-/// infallible) would already have balanced the request via `Drop`.
+/// `create_and_schedule` consumes `ctx` on every path, so a failure has
+/// already balanced the request via `Drop`.
 fn schedule(global: &JSGlobalObject, op: Op, request: *mut c_void) {
     let ctx = ClipboardCtx {
         op,
@@ -299,34 +277,29 @@ pub unsafe extern "C" fn Bun__Clipboard__scheduleWrite(
         let entries = unsafe { core::slice::from_raw_parts(representations, count) };
         for entry in entries {
             // SAFETY: same.
-            let ty = unsafe { copy_bytes(entry.ty, entry.ty_len) };
+            let (ty, bytes) =
+                unsafe { (copy_bytes(entry.ty, entry.ty_len), copy_bytes(entry.bytes, entry.len)) };
             let Some(mime) = Mime::from_bytes(&ty) else {
-                // WebCore validates support before collecting, so this cannot
-                // normally happen; reject rather than write a partial item.
+                // Unreachable when WebCore validated support; reject rather
+                // than write a partial item.
                 complete_with_failure(global, request, Unavailable::Platform);
                 return;
             };
-            // SAFETY: same.
-            items.push((mime, unsafe { copy_bytes(entry.bytes, entry.len) }));
+            items.push((mime, bytes));
         }
     }
     schedule(global, Op::Write(items), request);
 }
 
-/// Why the platform clipboard is unreachable; each variant carries the
-/// actionable message its `NotAllowedError` rejects with. The display and
-/// helper variants only exist on the helper-program platforms.
+/// Why the platform clipboard is unreachable; carries the message the
+/// `NotAllowedError` rejects with.
 #[derive(Clone, Copy)]
 enum Unavailable {
-    /// The platform clipboard service failed.
     Platform,
-    /// Neither `$WAYLAND_DISPLAY` nor `$DISPLAY` is set.
     #[cfg(not(any(target_os = "macos", windows)))]
     NoDisplay,
-    /// A display exists, but no helper program is installed.
     #[cfg(not(any(target_os = "macos", windows)))]
     NoHelper,
-    /// Every installed helper failed, hung, or crashed.
     #[cfg(not(any(target_os = "macos", windows)))]
     HelperFailed,
 }
@@ -351,9 +324,7 @@ impl Unavailable {
     }
 }
 
-// ─── macOS ──────────────────────────────────────────────────────────────────
-// NSPasteboard via `image_coregraphics_shim.cpp`. Reading is two calls:
-// one returns size + a retained NSData handle, the second copies + releases it.
+// ─── macOS: NSPasteboard via `image_coregraphics_shim.cpp` ──────────────────
 #[cfg(target_os = "macos")]
 mod platform {
     use core::ffi::{CStr, c_char, c_void};
@@ -377,8 +348,6 @@ mod platform {
         ) -> i32;
     }
 
-    /// The pasteboard server promotes the legacy flavours of each of these
-    /// (and converts other image containers to `public.png`) on demand.
     fn uti(mime: Mime) -> &'static CStr {
         match mime {
             Mime::TextPlain => c"public.utf8-plain-text",
@@ -398,10 +367,7 @@ mod platform {
             return Err(Unavailable::Platform);
         }
         if data.is_null() {
-            debug_assert_eq!(
-                len, 0,
-                "a null handle always reports an empty representation"
-            );
+            debug_assert_eq!(len, 0);
             return Ok(None);
         }
         let mut buf = vec![0u8; len];
@@ -414,8 +380,7 @@ mod platform {
     }
 
     pub(super) fn write_types(items: &[(Mime, &[u8])]) -> Result<(), Unavailable> {
-        // Never `clearContents` with nothing to set; the JS-facing layer
-        // already treats an empty item list as a no-op.
+        // Never `clearContents` with nothing to set.
         if items.is_empty() {
             return Ok(());
         }
@@ -446,41 +411,23 @@ mod platform {
 }
 
 // ─── Windows ────────────────────────────────────────────────────────────────
-// Raw Win32: `CF_UNICODETEXT` for text, "HTML Format" (CF_HTML) with its offset
-// envelope for HTML, and the registered "PNG" / "image/png" formats for PNG.
+// `CF_UNICODETEXT` for text, "HTML Format" (CF_HTML) for HTML, and the
+// registered "PNG" / "image/png" formats for PNG. Raw externs live in
+// `bun_sys::windows::clipboard`; the guards below are the only unsafe users.
 #[cfg(windows)]
 mod platform {
-    use core::ffi::{CStr, c_int, c_uint, c_void};
+    use core::ffi::{CStr, c_uint, c_void};
     use core::ptr;
+
+    use bun_sys::windows::clipboard::{
+        self as win32, CF_UNICODETEXT, GMEM_MOVEABLE, GMEM_ZEROINIT,
+    };
 
     use super::{Mime, Unavailable};
 
-    #[link(name = "user32")]
-    unsafe extern "system" {
-        fn OpenClipboard(hwnd: *mut c_void) -> c_int;
-        fn CloseClipboard() -> c_int;
-        fn EmptyClipboard() -> c_int;
-        fn GetClipboardData(format: c_uint) -> *mut c_void;
-        fn SetClipboardData(format: c_uint, mem: *mut c_void) -> *mut c_void;
-        fn RegisterClipboardFormatA(name: *const core::ffi::c_char) -> c_uint;
-    }
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn GlobalAlloc(flags: c_uint, bytes: usize) -> *mut c_void;
-        fn GlobalFree(mem: *mut c_void) -> *mut c_void;
-        fn GlobalLock(mem: *mut c_void) -> *mut c_void;
-        fn GlobalUnlock(mem: *mut c_void) -> c_int;
-        fn GlobalSize(mem: *mut c_void) -> usize;
-        fn Sleep(milliseconds: c_uint);
-    }
-
-    const CF_UNICODETEXT: c_uint = 13;
-    const GMEM_MOVEABLE: c_uint = 0x0002;
-    const GMEM_ZEROINIT: c_uint = 0x0040;
-
     fn register(name: &CStr) -> Option<c_uint> {
         // SAFETY: a static NUL-terminated name; registering twice is fine.
-        match unsafe { RegisterClipboardFormatA(name.as_ptr()) } {
+        match unsafe { win32::RegisterClipboardFormatA(name.as_ptr()) } {
             0 => None,
             id => Some(id),
         }
@@ -553,53 +500,90 @@ mod platform {
         Some(payload[start..end].to_vec())
     }
 
-    /// `OpenClipboard` is system-wide exclusive, so a single attempt fails
-    /// spuriously whenever any other process (a clipboard manager, RDP) holds
-    /// it; retry briefly like arboard / Chromium / .NET do.
-    fn open_clipboard_retrying() -> bool {
-        for attempt in 0..5u32 {
-            // SAFETY: a null hwnd is documented as valid.
-            if unsafe { OpenClipboard(ptr::null_mut()) } != 0 {
-                return true;
+    /// Exclusive clipboard access; a single `OpenClipboard` fails spuriously
+    /// while any other process holds it, so retry briefly.
+    struct ClipboardGuard;
+
+    impl ClipboardGuard {
+        fn open() -> Option<ClipboardGuard> {
+            for attempt in 0..5u32 {
+                if win32::OpenClipboard(ptr::null_mut()) != 0 {
+                    return Some(ClipboardGuard);
+                }
+                win32::Sleep(5 * (attempt + 1));
             }
-            // SAFETY: no preconditions.
-            unsafe { Sleep(5 * (attempt + 1)) };
+            None
         }
-        false
+
+        /// Null ⇔ format absent.
+        fn get(&self, format: c_uint) -> *mut c_void {
+            win32::GetClipboardData(format)
+        }
+
+        fn empty(&self) -> bool {
+            win32::EmptyClipboard() != 0
+        }
+
+        /// On success the system owns `h`.
+        fn set(&self, format: c_uint, h: *mut c_void) -> bool {
+            // SAFETY: the clipboard is open and `h` is an unlocked HGLOBAL.
+            unsafe { !win32::SetClipboardData(format, h).is_null() }
+        }
     }
 
-    /// Copies a locked HGLOBAL: `text` trims at the first NUL and converts
-    /// from UTF-16; binary payloads keep `GlobalSize`'s length, which can
-    /// over-report by allocation slack (Win32 has no exact-length channel).
-    fn copy_global(h: *mut c_void, text: bool) -> Result<Vec<u8>, Unavailable> {
-        // SAFETY: `h` is owned by the clipboard for as long as it stays open;
-        // we only read it before `CloseClipboard`.
-        let p = unsafe { GlobalLock(h) };
-        if p.is_null() {
-            return Err(Unavailable::Platform);
+    impl Drop for ClipboardGuard {
+        fn drop(&mut self) {
+            let _ = win32::CloseClipboard();
         }
-        scopeguard::defer! {
-            // SAFETY: balances the successful `GlobalLock` above.
-            let _ = unsafe { GlobalUnlock(h) };
-        }
-        // SAFETY: the allocation stays locked for every read below.
-        let total = unsafe { GlobalSize(h) };
-        if text {
-            // The payload is written by other processes — never trust it past
-            // the first NUL, and never trust a NUL to exist at all.
-            let wide_ptr = p as *const u16;
-            let cap = total / 2;
-            let mut n = 0usize;
-            // SAFETY: `wide_ptr .. wide_ptr+cap` lies inside the allocation.
-            while n < cap && unsafe { *wide_ptr.add(n) } != 0 {
-                n += 1;
+    }
+
+    /// Locked view of an HGLOBAL the open clipboard owns.
+    struct LockedGlobal<'clipboard> {
+        h: *mut c_void,
+        p: *mut c_void,
+        _clipboard: &'clipboard ClipboardGuard,
+    }
+
+    impl<'clipboard> LockedGlobal<'clipboard> {
+        fn new(clipboard: &'clipboard ClipboardGuard, h: *mut c_void) -> Option<Self> {
+            // SAFETY: `h` is owned by the clipboard, which stays open for 'clipboard.
+            let p = unsafe { win32::GlobalLock(h) };
+            if p.is_null() {
+                return None;
             }
-            // SAFETY: `n <= cap`, and the allocation stays locked.
-            let wide = unsafe { core::slice::from_raw_parts(wide_ptr, n) };
-            return Ok(String::from_utf16_lossy(wide).into_bytes());
+            Some(LockedGlobal { h, p, _clipboard: clipboard })
         }
-        // SAFETY: `total` bytes of the locked allocation are readable.
-        Ok(unsafe { core::slice::from_raw_parts(p.cast::<u8>(), total) }.to_vec())
+
+        /// `GlobalSize` can over-report by allocation slack; Win32 has no
+        /// exact-length channel.
+        fn bytes(&self) -> &[u8] {
+            // SAFETY: the allocation stays locked while `self` lives.
+            unsafe { core::slice::from_raw_parts(self.p.cast::<u8>(), win32::GlobalSize(self.h)) }
+        }
+    }
+
+    impl Drop for LockedGlobal<'_> {
+        fn drop(&mut self) {
+            // SAFETY: balances the successful `GlobalLock`.
+            let _ = unsafe { win32::GlobalUnlock(self.h) };
+        }
+    }
+
+    /// Other processes wrote the payload: trim text at the first NUL without
+    /// trusting one to exist.
+    fn copy_global(locked: &LockedGlobal, text: bool) -> Vec<u8> {
+        let bytes = locked.bytes();
+        if text {
+            let wide: Vec<u16> = bytes
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| u16::from_le_bytes(*pair))
+                .take_while(|&unit| unit != 0)
+                .collect();
+            return String::from_utf16_lossy(&wide).into_bytes();
+        }
+        bytes.to_vec()
     }
 
     pub(super) fn read_type(mime: Mime) -> Result<Option<Vec<u8>>, Unavailable> {
@@ -607,26 +591,19 @@ mod platform {
         if formats.iter().all(Option::is_none) {
             return Ok(None);
         }
-        if !open_clipboard_retrying() {
-            return Err(Unavailable::Platform);
-        }
-        scopeguard::defer! {
-            // SAFETY: the clipboard is open on this thread.
-            let _ = unsafe { CloseClipboard() };
-        }
+        let clipboard = ClipboardGuard::open().ok_or(Unavailable::Platform)?;
         for format in formats.into_iter().flatten() {
-            // SAFETY: the clipboard is open. A null handle ⇔ format absent.
-            let h = unsafe { GetClipboardData(format) };
+            let h = clipboard.get(format);
             if h.is_null() {
                 continue;
             }
-            let bytes = copy_global(h, mime == Mime::TextPlain)?;
+            let locked = LockedGlobal::new(&clipboard, h).ok_or(Unavailable::Platform)?;
+            let bytes = copy_global(&locked, mime == Mime::TextPlain);
+            drop(locked);
             if mime != Mime::TextHtml {
                 return Ok(Some(bytes));
             }
-            // "HTML Format" payloads are NUL-padded UTF-8 with an offset
-            // header; an envelope we cannot parse is not a usable
-            // representation, so it reads as absent.
+            // CF_HTML is NUL-padded UTF-8; an unparsable envelope reads as absent.
             let end = bytes
                 .iter()
                 .position(|&byte| byte == 0)
@@ -636,8 +613,8 @@ mod platform {
         Ok(None)
     }
 
-    /// Replaces every bare `\n` with `\r\n`, per the spec's writeText note for
-    /// Windows; `CF_UNICODETEXT` consumers expect CRLF line endings.
+    /// Bare `\n` becomes `\r\n`, per the spec's writeText note for Windows:
+    /// https://w3c.github.io/clipboard-apis/#dom-clipboard-writetext
     fn normalize_to_crlf(bytes: &[u8]) -> Vec<u8> {
         let mut out = Vec::with_capacity(bytes.len() + 16);
         let mut prev = 0u8;
@@ -651,9 +628,8 @@ mod platform {
         out
     }
 
-    /// Build a `GMEM_MOVEABLE` HGLOBAL holding `bytes` (as NUL-terminated
-    /// UTF-16 for text, in the `CF_HTML` envelope for HTML). Returns null on
-    /// allocation failure.
+    /// `GMEM_MOVEABLE` HGLOBAL holding `bytes` (NUL-terminated UTF-16 for
+    /// text, the `CF_HTML` envelope for HTML); null on allocation failure.
     fn make_global(mime: Mime, bytes: &[u8]) -> *mut c_void {
         let wide;
         let enveloped;
@@ -666,15 +642,12 @@ mod platform {
                 } else {
                     bytes
                 };
-                // `fail_if_invalid = false` replaces ill-formed sequences and
-                // `sentinel` appends the NUL that `CF_UNICODETEXT` requires.
+                // Replaces ill-formed sequences; the sentinel appends the NUL
+                // `CF_UNICODETEXT` requires.
                 match bun_core::strings::to_utf16_alloc_for_real(text, false, true) {
                     Ok(w) => {
                         wide = w;
-                        // SAFETY: a `&[u16]`'s bytes reinterpreted as `&[u8]`.
-                        unsafe {
-                            core::slice::from_raw_parts(wide.as_ptr().cast::<u8>(), wide.len() * 2)
-                        }
+                        bytemuck::cast_slice::<u16, u8>(&wide)
                     }
                     Err(_) => return ptr::null_mut(),
                 }
@@ -685,24 +658,22 @@ mod platform {
             }
             Mime::ImagePng => bytes,
         };
-        // `GlobalAlloc(_, 0)` returns a discarded object whose `GlobalLock` fails, so
-        // allocate >=1 byte; zeroed so no uninitialized slack reaches the clipboard.
-        // SAFETY: `SetClipboardData` requires a `GMEM_MOVEABLE` HGLOBAL.
-        let h = unsafe { GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, payload.len().max(1)) };
+        // `GlobalAlloc(_, 0)` returns a discarded object whose lock fails, so
+        // allocate >= 1 zeroed byte.
+        let h = win32::GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, payload.len().max(1));
         if h.is_null() {
             return ptr::null_mut();
         }
-        // SAFETY: `h` is a live, unlocked HGLOBAL of at least `payload.len()` bytes.
-        let dst = unsafe { GlobalLock(h) };
-        if dst.is_null() {
-            // SAFETY: the clipboard never saw `h`, so it is still ours.
-            unsafe { GlobalFree(h) };
-            return ptr::null_mut();
-        }
-        // SAFETY: `dst` points at `payload.len()` writable bytes.
+        // SAFETY: lock + copy + unlock stay within the fresh allocation, which
+        // is freed on failure and otherwise returned unlocked.
         unsafe {
+            let dst = win32::GlobalLock(h);
+            if dst.is_null() {
+                win32::GlobalFree(h);
+                return ptr::null_mut();
+            }
             ptr::copy_nonoverlapping(payload.as_ptr(), dst.cast::<u8>(), payload.len());
-            GlobalUnlock(h);
+            win32::GlobalUnlock(h);
         }
         h
     }
@@ -711,9 +682,8 @@ mod platform {
         if items.is_empty() {
             return Ok(());
         }
-        // Fully prepare every replacement HGLOBAL before touching the
-        // clipboard: `EmptyClipboard` destroys the previous contents, so
-        // nothing fallible may sit between it and the `SetClipboardData`s.
+        // Prepare every HGLOBAL first: `EmptyClipboard` destroys the previous
+        // contents, so nothing fallible may follow it.
         let mut prepared: Vec<(c_uint, *mut c_void)> = Vec::with_capacity(items.len());
         for (mime, bytes) in items {
             let Some(format) = write_format(*mime) else {
@@ -727,25 +697,17 @@ mod platform {
             }
             prepared.push((format, h));
         }
-        if !open_clipboard_retrying() {
+        let Some(clipboard) = ClipboardGuard::open() else {
             free_all(&prepared);
             return Err(Unavailable::Platform);
-        }
-        scopeguard::defer! {
-            // SAFETY: the clipboard is open on this thread.
-            let _ = unsafe { CloseClipboard() };
-        }
-        // SAFETY: the clipboard is open.
-        if unsafe { EmptyClipboard() } == 0 {
+        };
+        if !clipboard.empty() {
             free_all(&prepared);
             return Err(Unavailable::Platform);
         }
         for (index, (format, h)) in prepared.iter().enumerate() {
-            // On success the system owns `h`; freeing it would be a double-free.
-            // SAFETY: the clipboard is open and emptied, and `h` is unlocked.
-            if unsafe { SetClipboardData(*format, *h) }.is_null() {
-                // SAFETY: the clipboard rejected this handle and never saw the
-                // rest, so they are all still ours.
+            if !clipboard.set(*format, *h) {
+                // The clipboard rejected this handle and never saw the rest.
                 free_all(&prepared[index..]);
                 return Err(Unavailable::Platform);
             }
@@ -756,7 +718,7 @@ mod platform {
     fn free_all(handles: &[(c_uint, *mut c_void)]) {
         for (_, h) in handles {
             // SAFETY: every handle here was never accepted by the clipboard.
-            unsafe { GlobalFree(*h) };
+            unsafe { win32::GlobalFree(*h) };
         }
     }
 }
@@ -788,14 +750,13 @@ mod platform {
         has_display(env_var::DISPLAY::get())
     }
 
-    /// One helper invocation, classified. The `/bin/sh` watchdog wrapper
-    /// reports a missing helper as exit 127/126 and a hung one as 124; no
-    /// clipboard helper uses those for a real answer.
+    /// One helper invocation, classified by the watchdog's exit codes
+    /// (127/126 missing, 124 hung); no helper uses those for a real answer.
     enum HelperRun {
         NotInstalled,
         TimedOut,
         Succeeded(Vec<u8>),
-        /// The helper ran and exited non-zero on its own ("nothing to paste").
+        /// `clean`: the helper itself exited non-zero ("nothing to paste").
         Failed {
             clean: bool,
         },
@@ -822,16 +783,16 @@ mod platform {
         }
     }
 
-    /// Reads and writes walk the same candidate list until one exits 0, so
-    /// both always reach the same clipboard.
+    /// Reads and writes walk the same candidate list, so both reach the same
+    /// clipboard.
     fn candidates(write: bool, mime: Mime) -> Vec<Vec<Box<[u8]>>> {
         let text = mime == Mime::TextPlain;
         let mime_arg = mime.as_str();
         let mut list: Vec<Vec<Box<[u8]>>> = Vec::new();
         let arg = |s: &str| -> Box<[u8]> { Box::from(s.as_bytes()) };
         if wayland() {
-            // `--type text` matches any text flavour but never dumps binary,
-            // and `--no-newline` stops wl-paste appending one never copied.
+            // `--type text` matches any text flavour but never dumps binary;
+            // `--no-newline` stops wl-paste appending one never copied.
             list.push(if write {
                 vec![
                     arg("wl-copy"),
@@ -870,8 +831,7 @@ mod platform {
         list
     }
 
-    /// POSIX single-quoting: every byte is literal inside `'…'` except `'`,
-    /// which becomes `'\''`.
+    /// POSIX single-quoting: literal inside `'…'` except `'` -> `'\''`.
     fn shell_quote_into(command: &mut Vec<u8>, word: &[u8]) {
         command.push(b'\'');
         for &byte in word {
@@ -902,9 +862,8 @@ mod platform {
             command.extend_from_slice(b" < ");
             shell_quote_into(&mut command, path);
         }
-        // The watchdog group is fully redirected (so neither it nor its
-        // `sleep` holds the helper's captured stdout open); its TERM trap is
-        // installed before `sleep` starts and exits, so nothing outlives it.
+        // The watchdog group is fully redirected so nothing holds the helper's
+        // captured stdout open, and its TERM trap means nothing outlives it.
         command.extend_from_slice(
             b" & c=$!; { trap 'kill \"$sp\" 2>/dev/null; exit 0' TERM; sleep 10 & sp=$!; wait \"$sp\"; kill \"$c\" 2>/dev/null; } >/dev/null 2>&1 & w=$!; wait \"$c\"; s=$?; kill \"$w\" 2>/dev/null; [ \"$s\" -ge 128 ] && s=124; exit \"$s\"",
         );
@@ -926,8 +885,7 @@ mod platform {
             stdout: stdio(capture_stdout),
             stderr: spawn_sync::SyncStdio::Ignore,
             envp: None,
-            // This runs on the work pool; arming the process-wide signal
-            // forwarder from here would race the main thread's handlers and pid.
+            // Work-pool caller: must not arm the process-wide signal forwarder.
             forward_signals: false,
             ..Default::default()
         })
@@ -947,16 +905,15 @@ mod platform {
                 continue; // `/bin/sh` unavailable
             };
             match classify(result) {
-                // Some helper/target pairs exit 0 with empty stdout for an
-                // absent type; only `text/plain` is ever deliberately empty.
+                // Helpers exit 0 with empty stdout for an absent type; only
+                // `text/plain` is ever deliberately empty.
                 HelperRun::Succeeded(stdout) if stdout.is_empty() && mime != Mime::TextPlain => {
                     return Ok(None);
                 }
                 HelperRun::Succeeded(stdout) => return Ok(Some(stdout)),
                 HelperRun::NotInstalled => {}
                 HelperRun::TimedOut | HelperRun::Failed { clean: false } => ran += 1,
-                // The helpers use one exit code for "nothing is copied" and
-                // for real failures, so a clean non-zero exit is "no data".
+                // A clean non-zero exit is "nothing is copied".
                 HelperRun::Failed { clean: true } => {
                     ran += 1;
                     clean_failures += 1;
@@ -973,8 +930,7 @@ mod platform {
     }
 
     pub(super) fn write_types(items: &[(Mime, &[u8])]) -> Result<(), Unavailable> {
-        // The C++ layer rejects multi-representation items on the helper
-        // platforms (the one-shot helpers can only own one).
+        // The C++ layer rejects multi-representation items on helper platforms.
         debug_assert!(items.len() <= 1);
         let Some((mime, bytes)) = items.first() else {
             return Ok(());
@@ -983,9 +939,8 @@ mod platform {
             return Err(Unavailable::NoDisplay);
         }
         let list = candidates(true, *mime);
-        // The sync spawner cannot feed stdin, so the payload is staged in a
-        // private (0600, O_EXCL) temp file that `sh` redirects into the
-        // helper and that is unlinked immediately after.
+        // The sync spawner cannot feed stdin: stage the payload in a private
+        // (0600, O_EXCL) temp file that `sh` redirects into the helper.
         let Some(temp_path) = write_temp_file(bytes) else {
             return Err(Unavailable::Platform);
         };
@@ -1015,8 +970,7 @@ mod platform {
         }
     }
 
-    /// Stages the payload in `$TMPDIR` under a per-call name; `O_EXCL`
-    /// refuses pre-planted files/symlinks at the (predictable) path.
+    /// `O_EXCL` refuses pre-planted files/symlinks at the predictable path.
     fn write_temp_file(bytes: &[u8]) -> Option<Vec<u8>> {
         static COUNTER: AtomicU32 = AtomicU32::new(0);
         let dir = env_var::TMPDIR::get()

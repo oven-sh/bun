@@ -6060,9 +6060,7 @@ pub(crate) extern "C" fn Blob__getSize(value: JSValue) -> usize {
     unsafe { (*blob).shared_view().len() }
 }
 
-// The clipboard collects representations as refcounted `WebCore::Blob`s rather
-// than JS values, so it needs these same accessors against the impl. See
-// `src/jsc/bindings/webcore/ClipboardBlob.h`.
+// Impl-level accessors for `src/jsc/bindings/webcore/ClipboardBlob.h`.
 
 /// Borrows the Blob's resident bytes; empty when it has none.
 /// # Safety
@@ -6085,15 +6083,14 @@ pub unsafe extern "C" fn Blob__implGetSpan(
     }
 }
 
-/// Whether reading this Blob would have to touch a file or the network, in
-/// which case `shared_view()` is empty and callers must not treat it as data.
+/// Whether reading this Blob would have to touch a file or the network.
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__implNeedsToReadFile(blob: &Blob) -> bool {
     blob.needs_to_read_file() || blob.is_s3()
 }
 
-/// Invoked on the JS thread exactly once; `err`/`err_len` are null/0 on success
-/// and carry a UTF-8 message on failure. The byte span does not outlive the call.
+/// Invoked on the JS thread exactly once; `err` is null on success. Neither
+/// span outlives the call.
 type BlobReadBytesCallback = unsafe extern "C" fn(
     ctx: *mut c_void,
     ptr: *const u8,
@@ -6149,10 +6146,8 @@ impl ReadBytesHandler for ClipboardBlobReadHandler {
     }
 }
 
-/// Reads the Blob's bytes — file, S3, or in-memory — and delivers them to
-/// `callback` on the JS thread exactly once (synchronously when the bytes are
-/// resident). The clipboard write path pulls non-resident representations
-/// (`Bun.file`, S3) into memory with this before its platform transaction.
+/// Reads the Blob's bytes (file, S3, or in-memory) and delivers them to
+/// `callback` on the JS thread exactly once, synchronously when resident.
 /// # Safety
 /// `callback` must be callable on the JS thread with `ctx` until it runs.
 #[unsafe(no_mangle)]
@@ -6178,15 +6173,15 @@ pub unsafe extern "C" fn Blob__implReadBytes(
 }
 
 /// Clears the File-specific fields so a dupe of a File surfaces as a plain
-/// Blob. The clipboard's getType() resolves "a new Blob" per spec.
+/// Blob; getType() resolves "a new Blob" per
+/// https://w3c.github.io/clipboard-apis/#dom-clipboarditem-gettype
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__implClearFile(blob: &mut Blob) {
     blob.is_jsdom_file.set(false);
     blob.name.set(BunString::dead());
 }
 
-/// Sets the Blob's content type verbatim. The clipboard stamps a lazily-read
-/// dupe with its representation key when the source declared something else.
+/// Sets the Blob's content type verbatim.
 /// # Safety
 /// `[mime, mime+len)` must be readable.
 #[unsafe(no_mangle)]

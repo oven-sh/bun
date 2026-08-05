@@ -1,0 +1,62 @@
+# Heap-image ("snapshot") experiment — how to build, run, measure
+
+Branch `claude/lowmem-cc` in three worktrees: `~/code/bun-lowmem` (this), `~/code/WebKit-lowmem`, and Claude Code `~/code/claude-cli-internal` branch `claude/lowmem-snapshot`. macOS arm64 only. Everything below assumes those paths.
+
+## What it does
+
+Run an app to its idle state once, freeze the JS heap + allocator state into an image file, and let a fresh process `mmap` that image and continue in the event loop instead of booting. Untouched image pages stay clean/file-backed (0 footprint); only what the session touches becomes dirty. Claude Code booted normally idles at ~215–230 MB; restored from an image it idles at ~40–45 MB and can run turns.
+
+## Build
+
+```sh
+# Bun (uses the WebKit worktree; macOS system malloc routed through mimalloc so libc++/BoringSSL/ICU state is in the image)
+cd ~/code/bun-lowmem
+BUN_MIMALLOC_OVERRIDE_DARWIN=1 BUN_WEBKIT_PATH=~/code/WebKit-lowmem bun run build:release:local   # -> build/release-local/bun-profile
+
+# Claude Code compiled with that bun
+cd ~/code/claude-cli-internal   # branch claude/lowmem-snapshot
+BUN_BUILD_BIN=~/code/bun-lowmem/build/release-local/bun-profile ./scripts/native/build-ant-native.sh --force --local --out-dir build-img
+# -> build-img/@anthropic-ai/claude-cli-native-darwin-arm64/cli
+
+# ASLR-off launcher (image and binary must be at the same addresses)
+cc -o ~/code/tmp/noaslr/noaslr ~/code/tmp/noaslr/noaslr.c
+```
+
+An image is only valid for the exact binary that produced it (`__DATA` layout). Rebuild bun => rebuild CC => rebuild the image.
+
+## Make an image (the app snapshots itself)
+
+```sh
+cd ~/code/tmp/ccmem
+./appdump.sh <cli> /tmp/cc-app.img          # runs CC under noaslr with CLAUDE_CODE_SNAPSHOT_OUT; CC calls Bun.unsafe.snapshot() after the REPL settles
+```
+
+Env the scripts set for both build and restore: `MIMALLOC_DETERMINISTIC_HINT=1 BUN_IMAGE_JIT_ADDR=0x3c0000000 BUN_JSC_useConcurrentGC=0 BUN_JSC_useConcurrentJIT=0 BUN_JSC_useGenerationalGC=0`. JSC options must be identical on both sides (they live in the image).
+
+Runtime contract (`src/bun_core/image.rs`, `run_command.rs`, `BunMemDebug.cpp`):
+- `Bun.unsafe.snapshot(path, { cancelTimers })` throws an uncatchable termination; the outermost `EventLoop::tick` then waits until the process is quiet (no async tasks / HTTP in flight / pool work / armed timers — refuses with a list otherwise, `BUN_SNAPSHOT_QUIET_TIMEOUT`), stops pool workers + mimalloc scavenger, drops all compiled code, freezes the heap (`Heap::freezeCurrentHeapAsImmortalImage`), writes the image, exits.
+- `fetch()` to the network rejects while building (`Bun.unsafe.snapshotState().building`).
+- Restore: `BUN_IMAGE_IN=<img>`; the process gets `process.on('restore')` before its first tick; `Bun.unsafe.snapshotState().epoch` > 0; `Bun.unsafe.recleanImagePages()` re-cleans transiently dirtied image pages (also runs automatically 2 s after restore).
+
+## Run / measure a restored process
+
+```sh
+cd ~/code/tmp/ccmem
+bun drive.ts <cli> --img /tmp/cc-app.img --type 'say only the word pong' --enter --wait '⏺' --secs 120   # real pty, prints footprint at prompt / after turn, exit code+signal
+./abrestore.sh <cli> /tmp/cc-app.img label      # tmux: idle 15s/45s + light typing
+./turnmeasure.sh <cli> /tmp/cc-app.img label    # tmux: one turn + GC + reclean
+```
+
+Attribution commands (write the word into `~/code/tmp/ccmem/cmd.<pid>`; needs `BUN_MEMDEBUG=~/code/tmp/ccmem`, and the loop must wake — send a keypress):
+`dirtymap` (dirty image pages by cell class / malloc size class, + `changed-owners.<pid>.tsv` when built+run with `MIMALLOC_PROF_SAMPLE_RATE`), `reclean` (remap byte-identical dirty pages; prints nearly-identical writes by class+offset), `newcells` (cells allocated after the image, by class), `newpayload` (live sampled post-restore malloc with stacks -> `newowners.ts`), `ucbcensus` (UnlinkedCodeBlock/CodeBlock bytes by component), `trapreport` (with `BUN_IMAGE_TRAP=cells`: first writer of each image cell page -> `trapsym.ts`), `gc`, `shrink`, `dump` (mimalloc snapshot for `bin/mi-heapview`).
+
+## Numbers (Aug 4–5 2026, M-series, this stack)
+
+restored idle at prompt ~40–45 MB (image ~260 MB); after typing + slash menu ~52–57; after one model turn ~105–120, ~87–100 after GC+reclean. Booted normally: 215–230 idle.
+
+## Known gotchas
+
+- `static`/`call_once`/function-local statics and env reads cached at boot carry the *build* process's values.
+- Anything holding an OS handle needs a restore path: done for TTY fds, log files (reopened O_APPEND), kqueue/mach ports, uWS loop TLS, mimalloc TLS/scavenger/profiler lock, WTF::Thread, HTTP thread + fs thread pool (epoch-aware Once), ICU break iterators (VM::imageEpoch). Not done: JSC AutomaticThreads (run with concurrent GC/JIT off), FSEvents, DNS-SD connection, sockets in general (they're refused during build instead).
+- Image is per-binary and needs ASLR off for the main binary (fixed addresses); generational GC currently off in the experiment.
+- The WebKit worktree may have staged-but-uncommitted changes if commit signing was unavailable.

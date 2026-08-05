@@ -54,6 +54,10 @@ Attribution commands (write the word into `~/code/tmp/ccmem/cmd.<pid>`; needs `B
 
 With LLInt+DFG only, borrowed bytecode and generational GC on (the current script defaults): restored idle at prompt **~34–36 MB** (image ~245 MB); after one turn ~100; after 4 turns ~112, ~106 after GC; CPU for restore+4 turns ~1.2 s. (Earlier all-tiers/gen-GC-off config: 40–45 idle, ~150 after 4 turns.) Booted normally: 215–230 idle (168 with LLInt+DFG only).
 
+## Image size
+
+~243 MB file, of which roughly 100–140 MB is ever touched in a session (rest stays unmapped-clean). Compresses to **30 MB with zstd -3 (0.1 s)** / 24 MB with -19, so ship compressed and inflate once to a cache file.
+
 ## Per-turn growth (not image-specific)
 
 Restored or not, footprint grows ~10–25 MB per trivial turn over the first turns (4 "pong" turns: 122 → 152 MB). Live JS cells grow only ~1.3 MB/turn; the growth is JSC tiering artifacts in malloc (baseline JIT `JITData`/IC stubs/`JIT::link`, DFG/FTL OSR-exit vectors, MetadataTables) as each turn executes more not-yet-compiled code. Measured over restore + 4 turns: `BUN_JSC_useBaselineJIT=0 BUN_JSC_useFTLJIT=0` (LLInt → DFG only) → idle 37 vs 44 MB, after 4 turns **114 vs 150 MB**, CPU 1.67 s vs 1.94 s. FTL off alone or higher DFG thresholds don't help.

@@ -707,25 +707,30 @@ pub fn install_with_manager(
         && !matches!(load_result, lockfile::LoadResult::NotFound)
     {
         'frozen_lockfile: {
-            if load_result.loaded_from_text_lockfile() {
-                if bun_core::handle_oom(Lockfile::eql(
-                    &manager.lockfile,
-                    &lockfile_before_clean,
-                    packages_len_before_install,
-                )) {
-                    break 'frozen_lockfile;
-                }
-            } else {
-                if !(manager
-                    .lockfile
-                    .has_meta_hash_changed(
-                        PackageManager::verbose_install()
-                            || manager.options.do_.print_meta_hash_string(),
+            // `eql`/`has_meta_hash_changed` compare only the resolved package
+            // set, not per-workspace dependency edges; `had_any_diffs` catches
+            // package.json drift that leaves the hoisted tree unchanged.
+            if !had_any_diffs {
+                if load_result.loaded_from_text_lockfile() {
+                    if bun_core::handle_oom(Lockfile::eql(
+                        &manager.lockfile,
+                        &lockfile_before_clean,
                         packages_len_before_install,
-                    )
-                    .unwrap_or(false))
-                {
-                    break 'frozen_lockfile;
+                    )) {
+                        break 'frozen_lockfile;
+                    }
+                } else {
+                    if !(manager
+                        .lockfile
+                        .has_meta_hash_changed(
+                            PackageManager::verbose_install()
+                                || manager.options.do_.print_meta_hash_string(),
+                            packages_len_before_install,
+                        )
+                        .unwrap_or(false))
+                    {
+                        break 'frozen_lockfile;
+                    }
                 }
             }
 

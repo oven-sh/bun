@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import punycode from "node:punycode";
 import url from "node:url";
 
 const pairs = [
@@ -98,4 +99,54 @@ describe("url.domainToUnicode", () => {
       expect(url.domainToASCII(input)).toEqual(expected);
     });
   }
+});
+
+// UTS #46 ToASCII runs with VerifyDnsLength=false so host length must not reject.
+// These cases cover ICU's ENCODE_MAX_CODE_UNITS (1000 UTF-16 units per label)
+// and the former fixed 2048-unit output buffer.
+describe("url.domainToASCII/domainToUnicode with long internationalised hosts", () => {
+  const a = n => Buffer.alloc(n, "a").toString();
+
+  const longLabelCases = [
+    ["label just past ICU's 1000-unit cap", "\u00fc" + a(1000)],
+    ["1500-unit label", "\u00fc" + a(1499)],
+    ["long label followed by ASCII labels", "\u00fc" + a(1200) + ".example.com"],
+    ["long label with supplementary-plane code point", "\u{1F600}" + a(1100)],
+    ["long label of only BMP non-ASCII", "\u03b1\u03b2\u03b3\u03b4".repeat(300)],
+    ["several long labels with output over 2048 units", `${"\u00fc" + a(1000)}.`.repeat(3) + "com"],
+  ];
+  for (const [name, input] of longLabelCases) {
+    test(`ToASCII encodes a ${name}`, () => {
+      const got = url.domainToASCII(input);
+      // Reference: the pure-JS RFC 3492 encoder in node:punycode has no length
+      // cap. UTS #46 mapping for these inputs reduces to NFC + lowercasing.
+      const mapped = input.normalize("NFC").toLowerCase();
+      expect(got).toBe(punycode.toASCII(mapped));
+      expect(got.startsWith("xn--")).toBe(true);
+      expect(url.domainToUnicode(got)).toBe(mapped);
+    });
+  }
+
+  test("ToASCII handles output longer than 2048 units (many labels)", () => {
+    const oneLabel = "\u00fc" + a(250);
+    const oneAce = punycode.toASCII(oneLabel);
+    const input = (oneLabel + ".").repeat(9) + "com";
+    const got = url.domainToASCII(input);
+    expect(got).toBe((oneAce + ".").repeat(9) + "com");
+    expect(got.length).toBe(2334);
+    expect(url.domainToUnicode(got)).toBe(input);
+  });
+
+  test("ToUnicode handles output longer than 2048 units", () => {
+    const oneLabel = "\u00fc" + a(250);
+    const oneAce = punycode.toASCII(oneLabel);
+    const input = (oneAce + ".").repeat(9) + "com";
+    const got = url.domainToUnicode(input);
+    expect(got).toBe((oneLabel + ".").repeat(9) + "com");
+    expect(url.domainToASCII(got)).toBe(input);
+  });
+
+  test("ToASCII still rejects disallowed code points in a long label", () => {
+    expect(url.domainToASCII("\u0378" + a(1100))).toBe("");
+  });
 });

@@ -1060,9 +1060,10 @@ static void dumpMutatedImageObjects(JSC::VM& vm)
         if (!object) return IterationStatus::Continue;
         size_t sz = std::min<size_t>(heapCell->cellSize(), orig.size());
         // quick page-level filter: skip cells on clean pages
-        std::vector<int> disp(1); mach_vm_size_t cnt = 1;
 #if OS(DARWIN)
-        if (mach_vm_page_range_query(mach_task_self(), (uintptr_t)cell & ~(pg - 1), pg, (mach_vm_address_t)disp.data(), &cnt) == KERN_SUCCESS && !(disp[0] & 0x8 /* dirty */)) { scanned++; }
+        { std::vector<int> disp(1); mach_vm_size_t cnt = 1; if (mach_vm_page_range_query(mach_task_self(), (uintptr_t)cell & ~(pg - 1), pg, (mach_vm_address_t)disp.data(), &cnt) == KERN_SUCCESS && !(disp[0] & 0x8 /* dirty */)) { scanned++; } }
+#else
+        (void)pg;
 #endif
         if (!fileBytesAt((uintptr_t)cell, orig.data(), sz)) return IterationStatus::Continue;
         scanned++;

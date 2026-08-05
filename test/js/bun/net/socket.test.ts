@@ -3341,6 +3341,8 @@ it("an unref'd Bun.listen() with no other references keeps accepting across GC",
   // on_open into a swept cell (SIGABRT / type confusion) or, once the
   // finalizer had closed the socket, got ECONNREFUSED. unref() must only
   // release the event-loop hold; the wrapper stays reachable until stop().
+  // Raw TCP instead of fetch: the server replies and ends without reading the
+  // request, and on Windows closing with the request unread RSTs the exchange.
   const src = `
     const churnSink = [];
     function churn() {
@@ -3352,7 +3354,7 @@ it("an unref'd Bun.listen() with no other references keeps accepting across GC",
     function makeUnreffedListener() {
       const l = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: {
         open(s) {
-          s.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok");
+          s.write("ok");
           s.end();
         },
         data() {},
@@ -3361,6 +3363,16 @@ it("an unref'd Bun.listen() with no other references keeps accepting across GC",
       const port = l.port;
       l.unref();
       return port;
+    }
+    async function roundTrip(port) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      let received = "";
+      await Bun.connect({ hostname: "127.0.0.1", port, socket: {
+        data(s, d) { received += d; },
+        close() { resolve(received); },
+        error(s, e) { reject(e); },
+      }});
+      return promise;
     }
     const ports = [];
     for (let round = 0; round < 4; round++) {
@@ -3371,8 +3383,8 @@ it("an unref'd Bun.listen() with no other references keeps accepting across GC",
       await Bun.sleep(1);
       Bun.gc(true);
       for (const port of ports) {
-        const text = await fetch("http://127.0.0.1:" + port + "/").then(r => r.text());
-        if (text !== "ok") throw new Error("listener " + port + " replied " + JSON.stringify(text));
+        const got = await roundTrip(port);
+        if (got !== "ok") throw new Error("listener " + port + " replied " + JSON.stringify(got));
       }
     }
     console.log("served " + ports.length + " listeners");

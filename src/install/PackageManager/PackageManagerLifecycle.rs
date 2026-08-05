@@ -4,7 +4,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
-use bun_collections::ArrayHashMap;
+use bun_collections::StringArrayHashMap;
 use bun_core::fmt::PathSep;
 use bun_core::{Output, ZBox, fmt as bun_fmt, handle_oom};
 use bun_core::{ZStr, strings};
@@ -24,9 +24,7 @@ use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::Command;
 use crate::resolution_real::Tag as ResolutionTag;
 use bun_install::lockfile::{self, Lockfile, Package};
-use bun_install::{
-    PackageID, PackageManager, PreinstallState, TruncatedPackageNameHash, invalid_package_id,
-};
+use bun_install::{PackageID, PackageManager, PreinstallState, invalid_package_id};
 
 #[derive(Default)]
 pub struct LifecycleScriptTimeLog {
@@ -450,9 +448,9 @@ impl PackageManager {
 
     pub(crate) fn find_trusted_dependencies_from_update_requests(
         &mut self,
-    ) -> ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>> {
+    ) -> StringArrayHashMap<()> {
         // find all deps originating from --trust packages from cli
-        let mut set: ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>> = ArrayHashMap::default();
+        let mut set: StringArrayHashMap<()> = StringArrayHashMap::default();
         if self.options.do_.trust_dependencies_from_args() && self.lockfile.packages.len() > 0 {
             let root_id = self
                 .root_package_id
@@ -470,14 +468,13 @@ impl PackageManager {
                         }
 
                         let entry = handle_oom(
-                            set.get_or_put(root_dep.name_hash as TruncatedPackageNameHash),
-                        );
-                        if !entry.found_existing {
-                            *entry.value_ptr = Box::from(
+                            set.get_or_put(
                                 root_dep
                                     .name
                                     .slice(self.lockfile.buffers.string_bytes.as_slice()),
-                            );
+                            ),
+                        );
+                        if !entry.found_existing {
                             let dependency_slice =
                                 self.lockfile.packages.items_dependencies()[package_id as usize];
                             add_dependencies_to_set(&mut set, &self.lockfile, dependency_slice);
@@ -494,7 +491,7 @@ impl PackageManager {
 }
 
 fn add_dependencies_to_set(
-    names: &mut ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>>,
+    names: &mut StringArrayHashMap<()>,
     lockfile: &Lockfile,
     dependencies_slice: lockfile::DependencySlice,
 ) {
@@ -509,9 +506,9 @@ fn add_dependencies_to_set(
         }
 
         let dep = &lockfile.buffers.dependencies[dep_id as usize];
-        let entry = handle_oom(names.get_or_put(dep.name_hash as TruncatedPackageNameHash));
+        let entry =
+            handle_oom(names.get_or_put(dep.name.slice(lockfile.buffers.string_bytes.as_slice())));
         if !entry.found_existing {
-            *entry.value_ptr = Box::from(dep.name.slice(lockfile.buffers.string_bytes.as_slice()));
             let dependency_slice = lockfile.packages.items_dependencies()[package_id as usize];
             add_dependencies_to_set(names, lockfile, dependency_slice);
         }

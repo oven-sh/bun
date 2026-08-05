@@ -2015,12 +2015,22 @@ cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
     if (opts.globalStore !== undefined) {
       bunfig += `globalStore = ${opts.globalStore}\n`;
     }
-    if (opts.publicHoistPattern) {
+    if (opts.publicHoistPattern !== undefined) {
       if (typeof opts.publicHoistPattern === "string") {
-        bunfig += `publicHoistPattern = "${opts.publicHoistPattern}"`;
+        bunfig += `publicHoistPattern = ${JSON.stringify(opts.publicHoistPattern)}\n`;
       } else {
-        bunfig += `publicHoistPattern = [${opts.publicHoistPattern.map(p => `"${p}"`).join(", ")}]`;
+        bunfig += `publicHoistPattern = [${opts.publicHoistPattern.map(p => JSON.stringify(p)).join(", ")}]\n`;
       }
+    }
+    if (opts.hoistPattern !== undefined) {
+      if (typeof opts.hoistPattern === "string") {
+        bunfig += `hoistPattern = ${JSON.stringify(opts.hoistPattern)}\n`;
+      } else {
+        bunfig += `hoistPattern = [${opts.hoistPattern.map(p => JSON.stringify(p)).join(", ")}]\n`;
+      }
+    }
+    if (opts.hoist !== undefined) {
+      bunfig += `hoist = ${opts.hoist}\n`;
     }
     await write(join(dir, "bunfig.toml"), bunfig);
   }
@@ -2032,6 +2042,8 @@ type BunfigOpts = {
   linker?: "isolated" | "hoisted";
   globalStore?: boolean;
   publicHoistPattern?: string | string[];
+  hoistPattern?: string | string[];
+  hoist?: boolean;
 };
 
 export async function readdirSorted(path: string): Promise<string[]> {

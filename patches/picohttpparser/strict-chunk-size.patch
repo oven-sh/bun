@@ -1,0 +1,15 @@
+--- a/picohttpparser.c
++++ b/picohttpparser.c
+@@ -557,6 +557,12 @@
+                         ret = -1;
+                         goto Exit;
+                     }
++                    /* chunk-size is 1*HEXDIG followed by chunk-ext (";") or CRLF; reject anything
++                     * else so tokens like "0x5" are not misread as the last chunk */
++                    if (buf[src] != ';' && buf[src] != '\015' && buf[src] != '\012') {
++                        ret = -1;
++                        goto Exit;
++                    }
+                     break;
+                 }
+                 if (decoder->_hex_count == sizeof(size_t) * 2) {

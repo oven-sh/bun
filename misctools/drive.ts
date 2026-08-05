@@ -25,7 +25,8 @@ const proc = Bun.spawn([...pre, ...(has("--noaslr-launcher") ? [`${process.env.H
 const cputime = () => { try { const r = Bun.spawnSync(["ps", "-o", "time=", "-p", String(proc.pid)]); return r.stdout.toString().trim(); } catch { return "?"; } };
 const footprint = () => { try { const r = Bun.spawnSync(["vmmap", "--summary", String(proc.pid)]); const m = /Physical footprint:\s+(\S+)/.exec(r.stdout.toString()); return m ? m[1] : "?"; } catch { return "?"; } };
 const strip = (s: string) => s.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "").replace(/\x1b\][^\x07]*\x07/g, "");
-const waitFor = async (re: RegExp, ms: number) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (re.test(strip(buf))) return true; if (proc.exitCode !== null || proc.signalCode) return false; await Bun.sleep(200); } return false; };
+let afterTyped = 0;
+const waitFor = async (re: RegExp, ms: number) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (re.test(strip(buf).slice(afterTyped))) return true; if (proc.exitCode !== null || proc.signalCode) return false; await Bun.sleep(200); } return false; };
 const t0 = Date.now();
 const stamp = () => ((Date.now() - t0) / 1000).toFixed(1) + "s";
 console.log(`[drive] pid=${proc.pid} img=${img ?? "-"}`);
@@ -39,7 +40,7 @@ else {
   const text = opt("--type");
   if (text) {
     proc.terminal!.write(text); await Bun.sleep(1500);
-    if (has("--enter")) { proc.terminal!.write("\r"); }
+    if (has("--enter")) { proc.terminal!.write("\r"); await Bun.sleep(500); afterTyped = strip(buf).length; }
     const w = opt("--wait");
     if (w) { const ok = await waitFor(new RegExp(w), secs * 1000); console.log(`[drive] ${stamp()} waited for ${w}: ${ok} footprint=${footprint()}`); }
     await Bun.sleep(8000);

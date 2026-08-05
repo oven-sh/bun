@@ -1,8 +1,22 @@
-// ECMA-402 Intl coverage. Doubles as the regression net for the per-item zstd
-// repack of ICU's display-name trees (curr/ lang/ region/ unit/ zone/): every
-// non-en case in DisplayNames / NumberFormat(unit|currencyDisplay:"name") /
-// DateTimeFormat(timeZoneName) reads a zstd-decompressed item, while Collator /
-// Segmenter / default DateTimeFormat / default NumberFormat / normalize stay raw.
+// ECMA-402 Intl coverage. Doubles as the regression net for oven-sh/WebKit's
+// per-item zstd repack of ICU common data (icu/compress-data.ts): every non-en
+// case in DisplayNames / NumberFormat(unit|currencyDisplay:"name") /
+// DateTimeFormat(timeZoneName) reads a zstd-decompressed item at runtime
+// (bun_icu_decompress.cpp).
+//
+// What is NOT compressed is a deliberate, measured, per-item policy — it lives
+// in oven-sh/WebKit's icu/keep-raw.txt and this suite mirrors it. Kept raw so
+// they can never cost a first-use decompress: the Unicode tries (*.icu, *.nrm
+// → JSC init, String.normalize, URL IDNA), each tree's shared pool.res and
+// every root-level bundle (root.res, supplementalData, zoneinfo64, … → the
+// first Intl call of any kind), the root collation (coll/root.res, ucadata.icu
+// → the first localeCompare), the >100 KB CJK collation tailorings (coll/zh,
+// ko, ja), the brkitr/*.dict break dictionaries (cjdict alone is 2 MB), en*,
+// and every *.brk break RULE. So the CJK Collator cases and every Segmenter
+// case below exercise RAW items today, while the small-locale Collator cases
+// (de, fr, ru, ar, th, ...) exercise COMPRESSED tailorings. Either way, if
+// keep-raw.txt ever changes, the output is already pinned to the
+// uncompressed ground truth.
 //
 // Snapshots are the ground truth: they capture uncompressed-ICU output. If a
 // decompressed item is wrong, the snapshot diff shows exactly which locale/tree.
@@ -107,7 +121,10 @@ describe("Intl.DateTimeFormat", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Collator — coll/* raw (incl. CJK tailorings)
+// Collator — small per-locale tailorings are compressed; coll/root.res,
+// coll/ucadata.icu (every Collator inherits the root collation → the first
+// localeCompare) and the >100 KB zh/ko/ja tailorings are kept raw on purpose
+// (see keep-raw.txt). These cases pin the tailored orderings either way.
 // ---------------------------------------------------------------------------
 
 describe("Intl.Collator", () => {
@@ -121,8 +138,16 @@ describe("Intl.Collator", () => {
     expect(["波", "次", "阿"].sort(new Intl.Collator("zh", { collation: "pinyin" }).compare)).toMatchSnapshot();
   });
 
+  snapshotIf("zh stroke (a second tailoring in coll/zh.res)", () => {
+    expect(["一", "丁", "中", "九"].sort(new Intl.Collator("zh", { collation: "stroke" }).compare)).toMatchSnapshot();
+  });
+
   snapshotIf("ko", () => {
     expect(["하", "가", "나"].sort(new Intl.Collator("ko").compare)).toMatchSnapshot();
+  });
+
+  snapshotIf("ja (coll/ja.res)", () => {
+    expect(["ば", "は", "ぱ", "バ", "ハ", "ー"].sort(new Intl.Collator("ja").compare)).toMatchSnapshot();
   });
 
   snapshotIf("de phonebook vs standard", () => {
@@ -141,7 +166,11 @@ describe("Intl.Collator", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Segmenter — brkitr/* raw (incl. cjdict)
+// Segmenter — the brkitr/*.dict word dictionaries (cjdict is the single
+// largest item in ICU, 2 MB) and the brkitr/*.brk rules are BOTH kept raw on
+// purpose (see keep-raw.txt): rules load on every Segmenter, dictionaries on
+// the first input containing that script. These cases pin every dictionary's
+// segmentation so a future change to either is caught.
 // ---------------------------------------------------------------------------
 
 describe("Intl.Segmenter", () => {
@@ -158,6 +187,27 @@ describe("Intl.Segmenter", () => {
       zh: seg("zh", "word", "中文分词测试"),
       ja: seg("ja", "word", "今日はいい天気"),
       th: seg("th", "word", "สวัสดีครับ"),
+    }).toMatchSnapshot();
+  });
+
+  snapshotIf("word — km/lo/my (the khmer/lao/burmese dictionaries)", () => {
+    // Word-breaking these scripts is what loads brkitr/{khmer,lao,burmese}dict
+    // (kept raw today; see keep-raw.txt). cjdict/thaidict are covered above.
+    // These snapshots pin each dictionary's output either way.
+    expect({
+      km: seg("km", "word", "ភាសាខ្មែរគឺជាភាសាផ្លូវការ"),
+      lo: seg("lo", "word", "ພາສາລາວເປັນພາສາທາງການ"),
+      my: seg("my", "word", "မြန်မာဘာသာစကားဖြစ်သည်"),
+    }).toMatchSnapshot();
+  });
+
+  snapshotIf("word isWordLike across dictionary scripts", () => {
+    const wordLike = (loc: string, s: string) =>
+      [...new Intl.Segmenter(loc, { granularity: "word" }).segment(s)].filter(x => x.isWordLike).map(x => x.segment);
+    expect({
+      zh: wordLike("zh", "中华人民共和国位于亚洲"),
+      ja: wordLike("ja", "吾輩は猫である"),
+      th: wordLike("th", "ภาษาไทยไม่มีการเว้นวรรค"),
     }).toMatchSnapshot();
   });
 });
@@ -239,13 +289,17 @@ describe("Intl.getCanonicalLocales", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Exhaustive sweep — load EVERY compressed item.
+// Exhaustive sweep — load EVERY compressed item, and the kept-raw neighbors.
 //
 // icu-locales.txt is the full set of locales present in ICU's display-name
 // trees (extracted from the package at build time). Iterating each × the five
-// tree-touching APIs forces every region/ lang/ curr/ unit/ zone/ item through
-// the decompress hook. A corrupt item surfaces as a throw or empty string;
-// "everything fell back to root" surfaces as low distinct-value count.
+// tree-touching APIs forces every per-locale region/ lang/ curr/ unit/ zone/
+// item through the decompress hook (each tree's shared pool.res is kept raw
+// per keep-raw.txt but loads on the same path). The coll/ sweep loads every
+// collation tailoring: the small per-locale ones are compressed, while
+// keep-raw.txt keeps the root collation and the >100 KB zh/ko/ja raw. A
+// corrupt item surfaces as a throw or empty string; "everything fell back to
+// root" surfaces as a low distinct-value count.
 //
 // Regenerate the fixture when WEBKIT_VERSION bumps ICU:
 //   icupkg -l icudt<NN>l.dat | grep -E '^(curr|lang|region|unit|zone)/' \
@@ -298,6 +352,53 @@ describe("exhaustive locale sweep (every compressed item)", () => {
       expect(seen.size).toBeGreaterThan(50);
     });
   }
+
+  // The coll/ and brkitr/ sweeps below assert that SPECIFIC ICU DATA ITEMS in
+  // Bun's bundled archive behave (the collation tailorings and the break
+  // dictionaries). That only means anything against the bundled ICU the rest
+  // of the snapshots were generated from: macOS uses Apple's system libicucore
+  // and Windows bundles a different ICU, both of which are free to ship a
+  // different subset (Apple's may omit break dictionaries entirely). So they
+  // share the snapshot gate even though they aren't snapshot tests.
+
+  // coll/<loc>.res: load every locale's collation tailoring. No per-locale
+  // assertion can catch a corrupt tailoring: a single deterministic Collator
+  // is self-consistent even over garbage data, and on a bad bundle ICU falls
+  // back to the root collation rather than throwing. The invariant that CAN
+  // fail is the aggregate: root fallback makes every locale produce the SAME
+  // order, so a meaningful number of them must still DIFFER (sv/da sort å
+  // after z, cs has the "ch" digraph, zh/ja/ko tailor CJK, ...). The orders
+  // themselves are pinned by the de/zh/ko/ja snapshots above.
+  snapshotIf(`coll/ — ${locales.length} locales, valid tailored sort`, () => {
+    const probe = ["ch", "c", "h", "i", "å", "ä", "ö", "z", "a", "ñ", "n", "ー", "あ", "ア", "가", "하", "中", "一"];
+    const orders = new Set<string>();
+    for (const loc of locales) {
+      // "|" never appears in a probe element, so distinct orderings cannot
+      // collide (the probe holds both "ch" and the separate "c" / "h").
+      orders.add(probe.toSorted(new Intl.Collator(loc).compare).join("|"));
+    }
+    expect(orders.size).toBeGreaterThan(10);
+  });
+
+  // brkitr/<lang>.dict: one non-trivial word segmentation per dictionary.
+  // Each must produce several multi-character word-like segments — a broken
+  // dictionary degrades to per-character breaks, which this catches without
+  // being CLDR-version-sensitive.
+  snapshotIf("brkitr/ — every break dictionary yields real words", () => {
+    const texts: Record<string, string> = {
+      zh: "中华人民共和国位于亚洲东部面积约九百六十万平方公里",
+      ja: "日本語の形態素解析は辞書を使います吾輩は猫である",
+      th: "ภาษาไทยไม่มีการเว้นวรรคระหว่างคำจึงต้องใช้พจนานุกรม",
+      km: "ភាសាខ្មែរគឺជាភាសាផ្លូវការរបស់ប្រទេសកម្ពុជា",
+      lo: "ພາສາລາວເປັນພາສາທາງການຂອງປະເທດລາວ",
+      my: "မြန်မာဘာသာစကားသည်မြန်မာနိုင်ငံ၏ရုံးသုံးဘာသာစကားဖြစ်သည်",
+    };
+    for (const [loc, text] of Object.entries(texts)) {
+      const words = [...new Intl.Segmenter(loc, { granularity: "word" }).segment(text)].filter(s => s.isWordLike);
+      expect(words.length).toBeGreaterThan(3);
+      expect(Math.max(...words.map(w => w.segment.length))).toBeGreaterThan(1);
+    }
+  });
 
   test("repeat calls return identical results (cache consistency)", () => {
     for (const loc of ["ko", "ru", "zh-Hant", "yo", "ar-EG"]) {

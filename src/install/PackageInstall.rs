@@ -1626,12 +1626,24 @@ impl<'a> PackageInstall<'a> {
         #[cfg(not(windows))]
         type WinOffset = ();
 
+        #[cfg(windows)]
+        type PosixDirRef<'b> = ();
+        #[cfg(not(windows))]
+        type PosixDirRef<'b> = &'b Dir;
+        #[cfg(windows)]
+        type PosixZStrRef<'b> = ();
+        #[cfg(not(windows))]
+        type PosixZStrRef<'b> = &'b ZStr;
+
         // Two overlapping slices into the same buffer (`head` is the whole
         // buffer, `to_copy_into` is its tail) would be two live aliasing
         // `&mut [u16]`, which is UB — pass head buffer + tail offset and
-        // reslice inside.
+        // reslice inside. `destbase`/`destpath` (posix) let the loop re-open
+        // `destination_dir` after a concurrent install renames it away.
         fn copy(
-            destination_dir: &Dir,
+            destbase: PosixDirRef<'_>,
+            destpath: PosixZStrRef<'_>,
+            destination_dir: &mut Dir,
             walker: &mut Walker,
             to_copy_into1_offset: WinOffset,
             head1: WinSlice<'_>,
@@ -1642,7 +1654,7 @@ impl<'a> PackageInstall<'a> {
             #[cfg(not(windows))]
             let _ = (to_copy_into1_offset, head1, to_copy_into2_offset, head2);
             #[cfg(windows)]
-            let _ = destination_dir;
+            let _ = (destination_dir, destbase, destpath);
             #[cfg(windows)]
             let queue = HardLinkWindowsInstallTask::init_queue();
             // on Windows, tasks already pushed to `queue` are running on
@@ -1670,7 +1682,7 @@ impl<'a> PackageInstall<'a> {
                     match entry.kind {
                         EntryKind::Directory => {
                             let _ = bun_sys::MakePath::make_path::<OSPathChar>(
-                                destination_dir,
+                                &*destination_dir,
                                 entry.path.as_bytes(),
                             );
                         }
@@ -1688,24 +1700,83 @@ impl<'a> PackageInstall<'a> {
                                 }
                             }
 
-                            if let Err(err) = sys::linkat(
-                                entry.dir,
-                                entry.basename,
-                                destination_dir.fd(),
-                                entry.path,
-                            ) {
-                                if err.get_errno() == sys::E::EEXIST {
-                                    let _ = sys::unlinkat(destination_dir, entry.path);
-                                    sys::linkat(
-                                        entry.dir,
-                                        entry.basename,
-                                        destination_dir.fd(),
-                                        entry.path,
-                                    )
-                                    .map_err(map_linkat_err)?;
-                                } else {
+                            // Concurrent bun processes installing the same
+                            // package from a shared cache (e.g. parallel
+                            // `bun x <tool>` runs share one bunx install dir)
+                            // race on every file here: a peer that already
+                            // linked this file surfaces as EEXIST, and a peer
+                            // starting its own install of the package renames
+                            // the destination dir away
+                            // (uninstall-before-install), which surfaces as
+                            // ENOENT. A dest that already is the same inode
+                            // counts as success; the rest retries right after
+                            // the fix-up (unlink the stale file, recreate the
+                            // dir). No sleeps: this loop runs on the install
+                            // thread, and the fix-up needs no waiting — each
+                            // peer renames the destination at most once per
+                            // package, so the retries are bounded in practice
+                            // too. The Windows hardlink task does the same
+                            // dance on the worker pool.
+                            const MAX_RETRIES: u32 = 8;
+                            let mut retries: u32 = 0;
+                            loop {
+                                let err = match sys::linkat(
+                                    entry.dir,
+                                    entry.basename,
+                                    destination_dir.fd(),
+                                    entry.path,
+                                ) {
+                                    Ok(()) => break,
+                                    Err(err) => err,
+                                };
+                                match err.get_errno() {
+                                    sys::E::EEXIST => {
+                                        if let (Ok(src), Ok(dest)) = (
+                                            sys::fstatat(entry.dir, entry.basename),
+                                            sys::fstatat(&*destination_dir, entry.path),
+                                        ) {
+                                            if src.st_dev == dest.st_dev
+                                                && src.st_ino == dest.st_ino
+                                            {
+                                                break;
+                                            }
+                                        }
+                                        let _ = sys::unlinkat(&*destination_dir, entry.path);
+                                    }
+                                    sys::E::ENOENT => {
+                                        // `destination_dir` may point at a
+                                        // directory a peer renamed away and
+                                        // deleted; nothing can be created
+                                        // inside an unlinked directory, so
+                                        // re-open the destination path fresh
+                                        // before retrying.
+                                        if let Ok(reopened) = destbase.make_open_path(
+                                            destpath.as_bytes(),
+                                            OpenDirOptions {
+                                                iterate: true,
+                                                ..Default::default()
+                                            },
+                                        ) {
+                                            *destination_dir = reopened;
+                                        }
+                                        let entry_dirname = bun_paths::resolve_path::dirname::<
+                                            bun_paths::platform::Auto,
+                                        >(
+                                            entry.path.as_bytes()
+                                        );
+                                        if !entry_dirname.is_empty() {
+                                            let _ = bun_sys::MakePath::make_path::<OSPathChar>(
+                                                &*destination_dir,
+                                                entry_dirname,
+                                            );
+                                        }
+                                    }
+                                    _ => return Err(map_linkat_err(err)),
+                                }
+                                if retries == MAX_RETRIES {
                                     return Err(map_linkat_err(err));
                                 }
+                                retries += 1;
                             }
 
                             real_file_count += 1;
@@ -1771,7 +1842,9 @@ impl<'a> PackageInstall<'a> {
 
         #[cfg(windows)]
         let result = copy(
-            &state.subdir,
+            (),
+            (),
+            &mut state.subdir,
             state.walker.as_mut().unwrap(),
             state.to_copy_buf_off,
             &mut state.buf[..],
@@ -1780,7 +1853,9 @@ impl<'a> PackageInstall<'a> {
         );
         #[cfg(not(windows))]
         let result = copy(
-            &state.subdir,
+            dest_dir,
+            self.destination_dir_subpath,
+            &mut state.subdir,
             state.walker.as_mut().unwrap(),
             (),
             (),

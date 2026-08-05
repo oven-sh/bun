@@ -28,7 +28,7 @@
 const { URL, URLSearchParams } = globalThis;
 const [domainToASCII, domainToUnicode] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
 const { urlToHttpOptions } = require("internal/url");
-const { validateString } = require("internal/validators");
+const { validateString, validateObject } = require("internal/validators");
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
 function Url() {
@@ -465,8 +465,8 @@ function getHostname(self, rest, hostname: string, url) {
 }
 
 // format a parsed object into a url string
-declare function urlFormat(urlObject: string | URL | Url): string;
-function urlFormat(urlObject: unknown) {
+declare function urlFormat(urlObject: string | URL | Url, options?: object): string;
+function urlFormat(urlObject: unknown, options?: unknown) {
   /*
    * ensure it's an object, and not a string url.
    * If it's an obj, this is a no-op.
@@ -478,12 +478,124 @@ function urlFormat(urlObject: unknown) {
     // NOTE: $isObject returns true for functions
   } else if (typeof urlObject !== "object" || urlObject === null) {
     throw $ERR_INVALID_ARG_TYPE("urlObject", ["Object", "string"], urlObject);
+  } else if (urlObject instanceof URL) {
+    let fragment = true;
+    let unicode = false;
+    let search = true;
+    let auth = true;
+
+    if (options) {
+      validateObject(options, "options");
+
+      const { fragment: fragmentOption, unicode: unicodeOption, search: searchOption, auth: authOption } = options;
+      if (fragmentOption != null) {
+        fragment = Boolean(fragmentOption);
+      }
+      if (unicodeOption != null) {
+        unicode = Boolean(unicodeOption);
+      }
+      if (searchOption != null) {
+        search = Boolean(searchOption);
+      }
+      if (authOption != null) {
+        auth = Boolean(authOption);
+      }
+    }
+
+    return formatWHATWG(urlObject, auth, fragment, search, unicode);
   }
 
   if (!(urlObject instanceof Url)) {
     return Url.prototype.format.$call(urlObject);
   }
   return urlObject.format();
+}
+
+function formatWHATWG(urlObject: URL, auth: boolean, fragment: boolean, search: boolean, unicode: boolean) {
+  const href = urlObject.href;
+  const protocol = urlObject.protocol;
+  const pathname = urlObject.pathname;
+
+  let ret = protocol;
+
+  // A URL has an authority component if its serialization has "//" directly
+  // after the scheme. Special-scheme URLs (http, https, ws, wss, ftp, file)
+  // always do; non-special URLs may or may not.
+  if (
+    href.length > protocol.length + 1 &&
+    href.$charCodeAt(protocol.length) === Char.FORWARD_SLASH &&
+    href.$charCodeAt(protocol.length + 1) === Char.FORWARD_SLASH
+  ) {
+    ret += "//";
+
+    const username = urlObject.username;
+    const password = urlObject.password;
+    if (auth && (username || password)) {
+      ret += username;
+      if (password) ret += ":" + password;
+      ret += "@";
+    }
+
+    ret += unicode ? hostnameToUnicode(urlObject.hostname) : urlObject.hostname;
+
+    const port = urlObject.port;
+    if (port) ret += ":" + port;
+  } else if (
+    pathname.length > 1 &&
+    pathname.$charCodeAt(0) === Char.FORWARD_SLASH &&
+    pathname.$charCodeAt(1) === Char.FORWARD_SLASH
+  ) {
+    // https://url.spec.whatwg.org/#url-serializing step 3: when the host is
+    // null and the first path segment is empty, emit "/." so the result does
+    // not re-parse as having an authority.
+    ret += "/.";
+  }
+
+  ret += pathname;
+
+  // The .search and .hash getters collapse "absent" and "empty" to the same
+  // value (""). "?" and "#" only appear in the serialized href as the query
+  // and fragment delimiters, so scan the href to recover the empty case.
+  const hashIdx = href.indexOf("#");
+  if (search) {
+    let s = urlObject.search;
+    if (!s) {
+      const qIdx = href.indexOf("?");
+      if (qIdx !== -1 && (hashIdx === -1 || qIdx < hashIdx)) s = "?";
+    }
+    ret += s;
+  }
+  if (fragment) {
+    ret += urlObject.hash || (hashIdx !== -1 ? "#" : "");
+  }
+
+  return ret;
+}
+
+function hostnameToUnicode(hostname: string) {
+  // Only labels that literally start with "xn--" are decoded; others keep
+  // their original bytes and case (opaque hosts for non-special schemes are
+  // not lowercased by the parser). domainToUnicode is UTS#46 and case-folds,
+  // so a mixed-case "xn--" label in an opaque host can differ from Node's
+  // serializer (raw per-label punycode); it matches Node's own
+  // url.domainToUnicode instead.
+  if (!hostname || hostname.$charCodeAt(0) === Char.LEFT_SQUARE_BRACKET || hostname.indexOf("xn--") === -1) {
+    return hostname;
+  }
+  const labels = hostname.split(".");
+  for (let i = 0; i < labels.length; i++) {
+    const label = labels[i];
+    if (
+      label.length >= 4 &&
+      label.$charCodeAt(0) === 120 /* x */ &&
+      label.$charCodeAt(1) === 110 /* n */ &&
+      label.$charCodeAt(2) === 45 /* - */ &&
+      label.$charCodeAt(3) === 45 /* - */
+    ) {
+      labels[i] = domainToUnicode(label);
+    }
+  }
+  return labels.join(".");
 }
 
 Url.prototype.format = function format() {

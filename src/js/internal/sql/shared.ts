@@ -843,7 +843,8 @@ function closeNT(onClose: (err: Error) => void, err: Error | null) {
  * Resolves the password (which may be a function and/or a promise) and calls
  * the driver's native createConnection with the normalized pool options.
  * Extra trailing arguments past `useUnnamedPreparedStatements` (MySQL's
- * `allowPublicKeyRetrieval`) are ignored by drivers that don't take them.
+ * `allowPublicKeyRetrieval`, `multipleStatements`) are ignored by drivers
+ * that don't take them.
  */
 async function createPooledConnectionHandle<ConnectionHandle>(
   nativeCreateConnection: (...args: any[]) => ConnectionHandle,
@@ -865,6 +866,7 @@ async function createPooledConnectionHandle<ConnectionHandle>(
     prepare = true,
     path,
     allowPublicKeyRetrieval = false,
+    multipleStatements = false,
   } = options;
 
   let password: Bun.MaybePromise<string> | string | undefined | (() => Bun.MaybePromise<string>) = options.password;
@@ -899,6 +901,7 @@ async function createPooledConnectionHandle<ConnectionHandle>(
       maxLifetime,
       !prepare,
       !!allowPublicKeyRetrieval,
+      !!multipleStatements,
     );
   } catch (e) {
     // defer so the callback never runs while the adapter is still filling
@@ -2059,6 +2062,7 @@ function parseOptions(
     tls,
     prepare,
     allowPublicKeyRetrieval: options.allowPublicKeyRetrieval === true,
+    multipleStatements: options.multipleStatements === true,
     bigint,
     sslMode,
     query,

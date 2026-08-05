@@ -43,6 +43,7 @@ describeWithContainer(
         await using sql = new SQL({
           url: getUrl(),
           max: 1,
+          multipleStatements: true,
         });
 
         await sql`DROP USER IF EXISTS caching@'%';`.simple();
@@ -78,7 +79,7 @@ describeWithContainer(
     // client's scramble; any prior successful full auth is what warms the server cache.
     test("caching_sha2_password fast auth (warm server-side auth cache)", async () => {
       {
-        await using admin = new SQL({ url: getUrl(), max: 1 });
+        await using admin = new SQL({ url: getUrl(), max: 1, multipleStatements: true });
         await admin`DROP USER IF EXISTS fastauth@'%';`.simple();
         await admin`CREATE USER fastauth@'%' IDENTIFIED WITH caching_sha2_password BY 'bunbun';
               GRANT ALL PRIVILEGES ON bun_sql_test.* TO fastauth@'%';`.simple();

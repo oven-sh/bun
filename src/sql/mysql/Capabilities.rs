@@ -104,7 +104,11 @@ impl Capabilities {
         Self::from_int(self.to_int() & other.to_int())
     }
 
-    pub fn get_default_capabilities(ssl: bool, has_db_name: bool) -> Capabilities {
+    pub fn get_default_capabilities(
+        ssl: bool,
+        has_db_name: bool,
+        multiple_statements: bool,
+    ) -> Capabilities {
         Capabilities {
             CLIENT_PROTOCOL_41: true,
             CLIENT_PLUGIN_AUTH: true,
@@ -112,7 +116,9 @@ impl Capabilities {
             CLIENT_CONNECT_WITH_DB: has_db_name,
             CLIENT_DEPRECATE_EOF: true,
             CLIENT_SSL: ssl,
-            CLIENT_MULTI_STATEMENTS: true,
+            // Opt-in (`multipleStatements`): off by default so COM_QUERY injection can't stack queries.
+            CLIENT_MULTI_STATEMENTS: multiple_statements,
+            // Always on so stored procedures can return multiple result sets.
             CLIENT_MULTI_RESULTS: true,
             ..Default::default()
         }

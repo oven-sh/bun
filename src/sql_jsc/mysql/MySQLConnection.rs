@@ -88,6 +88,7 @@ pub struct MySQLConnection {
     tls_status: TLSStatus,
     ssl_mode: SSLMode,
     allow_public_key_retrieval: bool,
+    multiple_statements: bool,
     flags: ConnectionFlags,
 }
 
@@ -121,6 +122,7 @@ impl Default for MySQLConnection {
             tls_status: TLSStatus::None,
             ssl_mode: SSLMode::Disable,
             allow_public_key_retrieval: false,
+            multiple_statements: false,
             flags: ConnectionFlags::default(),
         }
     }
@@ -141,6 +143,7 @@ impl MySQLConnection {
         secure: Option<*mut SslCtx>,
         ssl_mode: SSLMode,
         allow_public_key_retrieval: bool,
+        multiple_statements: bool,
     ) -> Self {
         Self {
             database,
@@ -155,6 +158,7 @@ impl MySQLConnection {
             secure,
             ssl_mode,
             allow_public_key_retrieval,
+            multiple_statements,
             tls_status: if ssl_mode != SSLMode::Disable {
                 TLSStatus::Pending
             } else {
@@ -645,6 +649,7 @@ impl MySQLConnection {
         self.capabilities = Capabilities::get_default_capabilities(
             self.ssl_mode != SSLMode::Disable,
             !self.database.is_empty(),
+            self.multiple_statements,
         )
         .intersect(handshake.capability_flags);
 

@@ -631,6 +631,10 @@ const sql = new SQL({
   //   cert: "path/to/cert.pem",
   // },
 
+  // Allow semicolon-separated statements in sql.unsafe() / .simple().
+  // Off by default so a string injection cannot escalate to stacked queries.
+  multipleStatements: false,
+
   // Callbacks
   onconnect: client => {
     console.log("Connected to MySQL");
@@ -1227,10 +1231,13 @@ const [users, orders, products] = await Promise.all([
 
 #### Multiple Result Sets
 
-MySQL can return multiple result sets from multi-statement queries:
+MySQL can return multiple result sets from multi-statement queries. Because stacked queries amplify the impact of SQL injection, `CLIENT_MULTI_STATEMENTS` is not advertised by default; opt in per connection with `multipleStatements: true` (the same option name `mysql2` uses):
 
 ```ts
-const mysql = new SQL("mysql://user:pass@localhost/mydb");
+const mysql = new SQL({
+  url: "mysql://user:pass@localhost/mydb",
+  multipleStatements: true,
+});
 
 // Multi-statement queries with simple() method
 const multiResults = await mysql`
@@ -1238,6 +1245,8 @@ const multiResults = await mysql`
   SELECT * FROM orders WHERE user_id = 1;
 `.simple();
 ```
+
+Stored procedures that return multiple result sets work regardless of this option: `CLIENT_MULTI_RESULTS` stays enabled.
 
 #### Character Sets & Collations
 

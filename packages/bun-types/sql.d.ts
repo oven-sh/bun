@@ -389,6 +389,18 @@ declare module "bun" {
        * @default false
        */
       allowPublicKeyRetrieval?: boolean | undefined;
+
+      /**
+       * MySQL only. Advertise `CLIENT_MULTI_STATEMENTS` in the handshake so a
+       * single `sql.unsafe()` / `.simple()` string may contain multiple
+       * semicolon-separated statements. Disabled by default as defence in
+       * depth: with it off, a string injection that reaches the text protocol
+       * cannot escalate to stacked queries. `CLIENT_MULTI_RESULTS` remains
+       * enabled regardless, so stored procedures that return multiple result
+       * sets keep working.
+       * @default false
+       */
+      multipleStatements?: boolean | undefined;
     }
 
     /**

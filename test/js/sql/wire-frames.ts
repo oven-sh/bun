@@ -277,9 +277,12 @@ export async function pgMinimalReadyServer(): Promise<{ port: number; server: ne
 // ---------------------------------------------------------------------------
 
 // Capability flags — page_protocol_basic_capability_flags.html (subset used by the mocks).
+export const MYSQL_CLIENT_CONNECT_WITH_DB = 1 << 3;
 export const MYSQL_CLIENT_PROTOCOL_41 = 1 << 9;
 export const MYSQL_CLIENT_SSL = 1 << 11;
 export const MYSQL_CLIENT_SECURE_CONNECTION = 1 << 15;
+export const MYSQL_CLIENT_MULTI_STATEMENTS = 1 << 16;
+export const MYSQL_CLIENT_MULTI_RESULTS = 1 << 17;
 export const MYSQL_CLIENT_PLUGIN_AUTH = 1 << 19;
 export const MYSQL_CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = 1 << 21;
 export const MYSQL_CLIENT_DEPRECATE_EOF = 1 << 24;

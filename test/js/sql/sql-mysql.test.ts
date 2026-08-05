@@ -1013,7 +1013,7 @@ if (isDockerEnabled()) {
         });
 
         test("simple query with multiple statements", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
+          await using sql = new SQL({ ...getOptions(), max: 1, multipleStatements: true });
           const result = await sql`select 1 as x;select 2 as x`.simple();
           expect(result).toBeDefined();
           expect(result.length).toEqual(2);
@@ -1022,12 +1022,25 @@ if (isDockerEnabled()) {
         });
 
         test("simple query using unsafe with multiple statements", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
+          await using sql = new SQL({ ...getOptions(), max: 1, multipleStatements: true });
           const result = await sql.unsafe("select 1 as x;select 2 as x");
           expect(result).toBeDefined();
           expect(result.length).toEqual(2);
           expect(result[0][0].x).toEqual(1);
           expect(result[1][0].x).toEqual(2);
+        });
+
+        test("multiple statements are rejected by default", async () => {
+          // CLIENT_MULTI_STATEMENTS is not advertised unless multipleStatements: true,
+          // so the server parses the whole string as one statement and reports a
+          // syntax error at the semicolon.
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          const err = await sql.unsafe("select 1 as x;select 2 as x").then(
+            () => null,
+            e => e,
+          );
+          expect(err).not.toBeNull();
+          expect(err.errno).toBe(1064); // ER_PARSE_ERROR
         });
 
         test("only allows one statement", async () => {

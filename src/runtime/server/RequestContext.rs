@@ -4419,7 +4419,7 @@ where
             return false;
         };
 
-        if resp.has_responded() {
+        if resp.has_responded() || self.flags.has_written_status() {
             return false;
         }
 

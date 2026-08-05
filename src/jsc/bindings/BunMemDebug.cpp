@@ -1278,6 +1278,31 @@ static uint64_t platformBuildId() // FNV-1a over the start of .text + its extent
 }
 #endif
 
+
+// Loaded system libraries as (base, end, nameHash): image words pointing into them are recorded at dump and rebased at restore.
+struct PlatformLib { uint64_t base, end, nameHash; };
+static uint64_t fnv1a(const char* p) { uint64_t h = 1469598103934665603ull; for (; *p; p++) { h ^= (uint8_t)*p; h *= 1099511628211ull; } return h; }
+#if OS(LINUX)
+#include <link.h>
+static std::vector<PlatformLib> platformSystemLibs()
+{
+    std::vector<PlatformLib> libs;
+    dl_iterate_phdr([](struct dl_phdr_info* info, size_t, void* arg) -> int {
+        auto* libs = static_cast<std::vector<PlatformLib>*>(arg);
+        const char* name = info->dlpi_name; if (!name || !*name) return 0; // main executable: fixed (non-PIE)
+        uint64_t lo = UINT64_MAX, hi = 0;
+        for (int i = 0; i < info->dlpi_phnum; i++) if (info->dlpi_phdr[i].p_type == PT_LOAD) { uint64_t a = info->dlpi_addr + info->dlpi_phdr[i].p_vaddr; lo = std::min(lo, a); hi = std::max(hi, a + info->dlpi_phdr[i].p_memsz); }
+        if (hi > lo) { const char* slash = strrchr(name, '/'); libs->push_back({ lo, hi, fnv1a(slash ? slash + 1 : name) }); }
+        return 0;
+    }, &libs);
+    return libs;
+}
+#else
+static std::vector<PlatformLib> platformSystemLibs() { return { }; } // Darwin: dyld shared cache handled by the libsBase guard for now
+#endif
+struct ImageFixup { uint64_t addr; uint64_t lib; };
+struct ImageFixupHeader { char magic[8]; uint64_t nlibs; uint64_t nfixups; }; // then PlatformLib[nlibs] (base/end/nameHash as recorded), ImageFixup[nfixups]
+
 struct ImageHeader { char magic[8]; uint64_t textBase; uint64_t vm; uint64_t globalObject; uint64_t mainThread; uint64_t nregions; uint64_t reserved[8]; uint64_t libsBase; uint64_t spare[7]; }; // 176 bytes; region table follows
 struct ImageRegion { uint64_t addr; uint64_t len; uint64_t fileOff; uint64_t kind; }; // kind: 0 heap(anon), 1 __DATA segment
 
@@ -1522,6 +1547,22 @@ static void imageDump(JSC::VM& vm, const char* path)
         if (pwrite(fd, (void*)r.addr, used, r.fileOff) != (ssize_t)used) { fprintf(stderr, "[image] pwrite failed for %llx+%llx errno %d\n", r.addr, (unsigned long long)used, errno); }
         total += used;
     }
+    { // extern-library fixups: words in the image that point into a loaded system library get rebased at restore (lets libraries slide)
+        std::vector<PlatformLib> libs = platformSystemLibs();
+        std::vector<ImageFixup> fixups;
+        if (!libs.empty()) {
+            uint64_t minB = UINT64_MAX, maxE = 0; for (auto& l : libs) { minB = std::min(minB, l.base); maxE = std::max(maxE, l.end); }
+            for (auto& r : out) {
+                unsigned k = r.kind & 0xff; if (k == 2 || k == 3 || k == 4) continue;
+                const uint64_t* w = (const uint64_t*)r.addr; size_t n = r.len / 8;
+                for (size_t i = 0; i < n; i++) { uint64_t v = w[i]; if (v < minB || v >= maxE) continue; for (size_t li = 0; li < libs.size(); li++) if (v >= libs[li].base && v < libs[li].end) { fixups.push_back({ r.addr + i * 8, li }); break; } }
+            }
+        }
+        ImageFixupHeader fh {}; memcpy(fh.magic, "BUNFIX0", 8); fh.nlibs = libs.size(); fh.nfixups = fixups.size();
+        size_t fixOff = (fileOff + 4095) & ~4095ull; hdr.spare[1] = fixOff;
+        pwrite(fd, &fh, sizeof fh, fixOff); pwrite(fd, libs.data(), libs.size() * sizeof(PlatformLib), fixOff + sizeof fh); pwrite(fd, fixups.data(), fixups.size() * sizeof(ImageFixup), fixOff + sizeof fh + libs.size() * sizeof(PlatformLib));
+        if (getenv("BUN_IMAGE_VERBOSE") || !fixups.empty()) fprintf(stderr, "[image] %zu extern-library fixups across %zu libraries\n", fixups.size(), libs.size());
+    }
     pwrite(fd, &hdr, sizeof hdr, 0);
     pwrite(fd, out.data(), out.size() * sizeof(ImageRegion), tableOff);
     close(fd);
@@ -1541,7 +1582,16 @@ static void imageRestoreAndRun(const char* path)
     if (memcmp(hdr.magic, "BUNIMG2", 8) || hdr.spare[0] != platformBuildId()) { fprintf(stderr, "[image] %s was not produced by this build of the executable; booting normally\n", path); close(fd); return; }
     if (hdr.textBase != platformTextBase()) { fprintf(stderr, "[image] ASLR slide differs (image text %llx vs ours %llx); booting normally\n", (unsigned long long)hdr.textBase, (unsigned long long)platformTextBase()); close(fd); return; }
     if (false) { fprintf(stderr, "[image] %s was produced by a different build of this executable; booting normally\n", path); close(fd); return; }
-    if (hdr.libsBase && hdr.libsBase != platformLibsBase()) { fprintf(stderr, "[image] %s was built against system libraries at %llx, now at %llx (reboot / OS update); booting normally\n", path, (unsigned long long)hdr.libsBase, (unsigned long long)platformLibsBase()); close(fd); return; }
+    bool haveFixups = false; std::vector<int64_t> libDelta; std::vector<ImageFixup> fixups;
+    if (hdr.spare[1]) { // extern-library fixup table: resolve each recorded library in this process by name hash
+        ImageFixupHeader fh; if (pread(fd, &fh, sizeof fh, hdr.spare[1]) == (ssize_t)sizeof fh && !memcmp(fh.magic, "BUNFIX0", 8) && fh.nlibs < 4096 && fh.nfixups < (1u << 24)) {
+            std::vector<PlatformLib> recorded(fh.nlibs); pread(fd, recorded.data(), fh.nlibs * sizeof(PlatformLib), hdr.spare[1] + sizeof fh);
+            fixups.resize(fh.nfixups); pread(fd, fixups.data(), fh.nfixups * sizeof(ImageFixup), hdr.spare[1] + sizeof fh + fh.nlibs * sizeof(PlatformLib));
+            std::vector<PlatformLib> now = platformSystemLibs(); libDelta.assign(fh.nlibs, 0); haveFixups = true;
+            for (size_t i = 0; i < recorded.size(); i++) { bool found = false; for (auto& l : now) if (l.nameHash == recorded[i].nameHash && (l.end - l.base) == (recorded[i].end - recorded[i].base)) { libDelta[i] = (int64_t)l.base - (int64_t)recorded[i].base; found = true; break; } if (!found) { bool used = false; for (auto& f : fixups) if (f.lib == i) { used = true; break; } if (used) { haveFixups = false; fprintf(stderr, "[image] a system library the image points into changed (size/name); booting normally\n"); close(fd); return; } } }
+        }
+    }
+    if (!haveFixups && hdr.libsBase && hdr.libsBase != platformLibsBase()) { fprintf(stderr, "[image] %s was built against system libraries at %llx, now at %llx (reboot / OS update); booting normally\n", path, (unsigned long long)hdr.libsBase, (unsigned long long)platformLibsBase()); close(fd); return; }
     mi_scavenger_stop(); // this process's scavenger thread must not touch allocator state while/after we overlay it
     // No heap use from here until the overlay is done: with malloc routed to mimalloc, this process's heap sits at the same VA as the image's.
     if (hdr.nregions > 8192) { fprintf(stderr, "[image] too many regions\n"); _exit(2); }
@@ -1635,6 +1685,7 @@ static void imageRestoreAndRun(const char* path)
 #endif
     // pthread TLS keys created by the build process (WTF::ThreadSpecific etc.) must exist here too, or setspecific silently fails; burn keys up to the image's high-water mark.
     if (hdr.reserved[1]) { for (int i = 0; i < 1024; i++) { pthread_key_t k = 0; if (pthread_key_create(&k, nullptr)) break; if ((uint64_t)k + 1 >= hdr.reserved[1]) break; } }
+    if (haveFixups && !fixups.empty()) { size_t applied = 0; for (auto& f : fixups) if (f.lib < libDelta.size() && libDelta[f.lib]) { *(uint64_t*)f.addr += libDelta[f.lib]; applied++; } if (verbose || applied) fprintf(stderr, "[image] rebased %zu/%zu extern-library pointers\n", applied, fixups.size()); }
     fprintf(stderr, "[image] restored %zu regions: %.1fMB mapped clean, %.1fMB __DATA copied\n", regions.size(), mapped / 1048576.0, copied / 1048576.0);
     // From here on all globals/heap are the build process's. Adopt the image's main Thread object for this OS thread.
     WTF::Thread* mainThread = (WTF::Thread*)hdr.mainThread;

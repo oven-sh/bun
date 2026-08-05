@@ -234,6 +234,13 @@ function normalizeHtml(html: string): string {
   return output.trim();
 }
 
+const FRONTMATTER_DEVIATIONS = new Map([
+  // An empty front-matter block, not two thematic breaks.
+  ["---\n---", ""],
+  // The first `---\nFoo\n---` is front matter, not hr + setext heading.
+  ["---\nFoo\n---\nBar\n---\nBaz", "<h2>Bar</h2>\n<p>Baz</p>\n"],
+]);
+
 const specFiles = [
   { name: "CommonMark", file: "spec.txt" },
   { name: "GFM Tables", file: "spec-tables.txt" },
@@ -258,11 +265,11 @@ for (const { name, file } of specFiles) {
   describe(name, () => {
     for (let i = 0; i < examples.length; i++) {
       const ex = examples[i];
-      // The one intentional deviation from the spec: with the default
-      // `frontmatter: true`, `---\n---` at the very start of a document is
-      // an empty front-matter block (rendering to nothing), not two
-      // thematic breaks. md-frontmatter.test.ts covers both readings.
-      const expected = ex.markdown === "---\n---" ? "" : ex.expected;
+      // The intentional deviations from the spec: with the default
+      // `frontmatter: true`, a structurally valid front-matter block at the
+      // very start of a document is skipped. Exactly two examples are
+      // affected; both readings are pinned in md-frontmatter.test.ts.
+      const expected = FRONTMATTER_DEVIATIONS.get(ex.markdown) ?? ex.expected;
       test(`example ${i + 1} (line ${ex.line}): ${ex.section}`, () => {
         const actual = renderMarkdown(ex.markdown, ex.flags.length > 0 ? ex.flags : undefined);
         expect(normalizeHtml(actual)).toBe(normalizeHtml(expected));

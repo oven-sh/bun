@@ -56,11 +56,21 @@ describe("Bun.markdown.frontmatter", () => {
     expect(frontmatter(mismatched)).toEqual({ data: null, content: mismatched });
   });
 
-  test("scalar and sequence yaml are not front matter", () => {
-    const scalar = "---\nFoo\n---\nBar\n";
-    expect(frontmatter(scalar)).toEqual({ data: null, content: scalar });
-    const seq = "---\n- a\n- b\n---\nbody";
-    expect(frontmatter(seq)).toEqual({ data: null, content: seq });
+  test("scalar and sequence metadata throws (must be a mapping)", () => {
+    expect(() => frontmatter("---\nFoo\n---\nBar\n")).toThrow("YAML front matter must be a mapping");
+    expect(() => frontmatter("---\n- a\n- b\n---\nbody")).toThrow("YAML front matter must be a mapping");
+    // The likelier typo: a missing colon parses as a valid YAML scalar.
+    expect(() => frontmatter("---\ntitle Hello\n---\nbody")).toThrow("YAML front matter must be a mapping");
+  });
+
+  test("a blank first inner line is not front matter", () => {
+    const doc = "---\n\ntitle: x\n---\nbody";
+    expect(frontmatter(doc)).toEqual({ data: null, content: doc });
+  });
+
+  test("yaml's `...` document-end marker does not close the block", () => {
+    const doc = "---\ntitle: x\n...\nbody";
+    expect(frontmatter(doc)).toEqual({ data: null, content: doc });
   });
 
   test("four markers are a thematic break, not a fence", () => {
@@ -154,12 +164,22 @@ describe("renderers skip front matter by default", () => {
     );
   });
 
-  test("metadata that does not parse renders as markdown", () => {
-    expect(html("---\ntitle: [broken\n---\nbody\n")).toBe("<hr />\n<h2>title: [broken</h2>\n<p>body</p>\n");
+  test("unparseable metadata is still skipped (detection is structural)", () => {
+    expect(html("---\ntitle: [broken\n---\nbody\n")).toBe("<p>body</p>\n");
+    expect(html("---\ntitle: [broken\n---\nbody\n", { frontmatter: false })).toBe(
+      "<hr />\n<h2>title: [broken</h2>\n<p>body</p>\n",
+    );
   });
 
-  test("scalar yaml keeps the CommonMark reading (hr + setext headings)", () => {
-    expect(html("---\nFoo\n---\nBar\n---\nBaz")).toBe("<hr />\n<h2>Foo</h2>\n<h2>Bar</h2>\n<p>Baz</p>\n");
+  test("a scalar block is skipped; frontmatter: false restores the spec reading", () => {
+    expect(html("---\nFoo\n---\nBar\n---\nBaz")).toBe("<h2>Bar</h2>\n<p>Baz</p>\n");
+    expect(html("---\nFoo\n---\nBar\n---\nBaz", { frontmatter: false })).toBe(
+      "<hr />\n<h2>Foo</h2>\n<h2>Bar</h2>\n<p>Baz</p>\n",
+    );
+  });
+
+  test("a blank first inner line renders as markdown", () => {
+    expect(html("---\n\nFoo\n---\n")).toBe("<hr />\n<h2>Foo</h2>\n");
   });
 
   test("empty block is skipped; frontmatter: false restores two thematic breaks", () => {

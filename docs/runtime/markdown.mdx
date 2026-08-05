@@ -116,7 +116,9 @@ title: Hello
 // "<h1>Heading</h1>\n"
 ```
 
-A block only counts as front matter when it would parse: the fences must be closed, and the metadata must be a mapping (or empty). Anything else renders as plain CommonMark, so `---\nFoo\n---` is still a thematic break followed by a setext heading. The one CommonMark reading this changes is an empty block: `---\n---` at the very start of a document is treated as empty front matter and renders to nothing, instead of two thematic breaks. Pass `frontmatter: false` to disable the skip entirely:
+Detection is purely structural, the same rule other Markdown engines use: the opening fence must sit at the very start of the input (a UTF-8 BOM is allowed), the first line inside the block must not be blank, and a matching closing fence — exactly three markers — must start a later line. The metadata is never parsed to decide, so a block with a YAML typo is still skipped. YAML's `...` document-end marker is not accepted as a closer, and `----` is a thematic break, not a fence.
+
+Because the rule is structural, two CommonMark readings change under the default: `---\n---` at the very start of a document is an empty front-matter block rendering to nothing (instead of two thematic breaks), and a document like `---\nFoo\n---` has its first block skipped (instead of a thematic break plus a setext heading). Pass `frontmatter: false` to restore the plain CommonMark reading:
 
 ```ts
 Bun.markdown.html("---\ntitle: Hello\n---\n", { frontmatter: false });
@@ -135,11 +137,11 @@ content; // the document after the block
 
 The fence picks the parser: `---` is YAML and `+++` is TOML. JSON front matter between `---` fences works too, since JSON is valid YAML. `data` distinguishes the three possible shapes:
 
-- an **object** when the block parses as a mapping
+- an **object** when the block has metadata
 - **`{}`** when the block is empty (`---\n---`)
-- **`null`** when the input has no front-matter block — including a `---` block whose content is a scalar or sequence, which stays part of `content`
+- **`null`** when the input has no front-matter block, in which case `content` is the input unchanged
 
-Invalid YAML or TOML inside the fences throws a `SyntaxError` (a typo in your metadata should be loud).
+Metadata that fails to parse throws a `SyntaxError`, and so does metadata that parses to something other than a mapping: `---\ntitle Hello\n---` (a missing colon) is a valid YAML scalar, and "YAML front matter must be a mapping" beats silently dropping the block. Error positions point into the document you passed, not the metadata slice.
 
 ```ts
 Bun.markdown.frontmatter("+++\ntitle = 'Hello'\n+++\nbody");

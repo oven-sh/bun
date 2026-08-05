@@ -39,6 +39,8 @@ pub struct Options {
     pub(crate) tag_filter: bool,
     pub heading_ids: bool,
     pub autolink_headings: bool,
+    /// Skip a leading front-matter block (see [`crate::frontmatter`]).
+    pub frontmatter: bool,
 }
 
 impl Default for Options {
@@ -63,6 +65,7 @@ impl Default for Options {
             tag_filter: false,
             heading_ids: false,
             autolink_headings: false,
+            frontmatter: true,
         }
     }
 }
@@ -89,6 +92,7 @@ impl Options {
         tag_filter: false,
         heading_ids: false,
         autolink_headings: false,
+        frontmatter: false,
     };
 
     pub const TERMINAL: Self = Self {
@@ -101,8 +105,21 @@ impl Options {
         wiki_links: true,
         underline: true,
         latex_math: true,
+        frontmatter: true,
         ..Self::NONE
     };
+
+    /// The input with a leading front-matter block removed when
+    /// `frontmatter` is enabled. [`render_with_renderer`] callers apply this
+    /// before building a renderer that captures the source text, so block
+    /// offsets handed to the renderer match its copy of the input.
+    pub fn strip_frontmatter<'a>(&self, text: &'a [u8]) -> &'a [u8] {
+        if self.frontmatter {
+            crate::frontmatter::strip(text)
+        } else {
+            text
+        }
+    }
 
     pub(crate) fn to_flags(self) -> Flags {
         Flags {
@@ -183,6 +200,7 @@ impl Options {
         ("autolink_headings", "autolinkHeadings", |o, v| {
             o.autolink_headings = v
         }),
+        ("frontmatter", "frontmatter", |o, v| o.frontmatter = v),
     ];
 }
 
@@ -194,10 +212,15 @@ pub fn render_to_html_with_options(
     text: &[u8],
     options: Options,
 ) -> Result<Box<[u8]>, parser::ParserError> {
+    let text = options.strip_frontmatter(text);
     parser::render_to_html(text, options.to_flags(), options.to_render_options())
 }
 
 /// Parse and render using a custom renderer implementation.
+///
+/// Does not apply `Options::frontmatter`: the renderer was built from the
+/// caller's copy of the text, so the caller strips via
+/// [`Options::strip_frontmatter`] before constructing it.
 pub fn render_with_renderer<'a>(
     text: &'a [u8],
     options: Options,
@@ -213,6 +236,7 @@ pub fn render_with_renderer<'a>(
 
 pub use crate::types;
 
+pub use crate::frontmatter;
 pub use crate::helpers;
 
 pub use crate::ansi_renderer as ansi;

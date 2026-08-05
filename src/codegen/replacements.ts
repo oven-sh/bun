@@ -40,6 +40,26 @@ for (let id = 0; id < jsclasses.length; id++) {
   });
 }
 
+/**
+ * Stable description of the numeric ID spaces the replacement rules above bake
+ * into builtin JS: `$makeErrorWithCode(<error_i>, ...)` (ErrorCode.ts order,
+ * including extra constructors) and `$inherits(<id>, ...)` (js_classes order).
+ * Part of the generation stamp bundle-modules.ts writes into each
+ * hot-reloadable JS file.
+ */
+export function getNumericReplacementsSignature(): string {
+  const errorCtors: string[] = [];
+  for (let i = 0; i < NodeErrors.length; i++) {
+    const [code, _constructor, _name, ...other_constructors] = NodeErrors[i];
+    errorCtors.push(code as string);
+    for (const con of other_constructors) {
+      if (con == null) continue;
+      errorCtors.push(`${code}_${con.name}`);
+    }
+  }
+  return JSON.stringify({ errorCtors, classes: jsclasses.map(c => c[0]) });
+}
+
 // These rules are run on the entire file, including within strings.
 export const globalReplacements: ReplacementRule[] = [
   {

@@ -17,11 +17,7 @@ async function runFixture(file: string, zodTransform: boolean): Promise<string> 
     cwd: fixtureDir,
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
   return stdout;
@@ -30,10 +26,7 @@ async function runFixture(file: string, zodTransform: boolean): Promise<string> 
 test.concurrent(
   "differential: transform on and off produce identical results",
   async () => {
-    const [on, off] = await Promise.all([
-      runFixture("diff-fixture.ts", true),
-      runFixture("diff-fixture.ts", false),
-    ]);
+    const [on, off] = await Promise.all([runFixture("diff-fixture.ts", true), runFixture("diff-fixture.ts", false)]);
     const onReport = JSON.parse(on);
     const offReport = JSON.parse(off);
     // Compare schema-by-schema so a mismatch names the schema and input.

@@ -413,9 +413,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return None;
         }
         let key = match &call.args.slice()[0].data {
-            js_ast::ExprData::EArrow(arrow) => {
-                core::ptr::from_ref::<E::Arrow>(&**arrow) as usize
-            }
+            js_ast::ExprData::EArrow(arrow) => core::ptr::from_ref::<E::Arrow>(&**arrow) as usize,
             _ => return None,
         };
         if self.zod.wrapped.contains_key(&key) {
@@ -635,9 +633,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .iter()
                         .all(|part| self.zod_is_pure_value(part.value))
             }
-            js_ast::ExprData::EArray(arr) => {
-                arr.items.slice().iter().all(|item| self.zod_is_pure_value(*item))
-            }
+            js_ast::ExprData::EArray(arr) => arr
+                .items
+                .slice()
+                .iter()
+                .all(|item| self.zod_is_pure_value(*item)),
             js_ast::ExprData::EObject(obj) => obj.properties.slice().iter().all(|prop| {
                 prop.kind == G::PropertyKind::Normal
                     && !prop.flags.contains(Flags::Property::IsComputed)
@@ -765,8 +765,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         Extracted::Ir(Ir::Enum { values })
                     }
-                    js_ast::ExprData::EIdentifier(_)
-                    | js_ast::ExprData::EImportIdentifier(_) => {
+                    js_ast::ExprData::EIdentifier(_) | js_ast::ExprData::EImportIdentifier(_) => {
                         // Array of strings by const reference; TS enum objects
                         // also land here and are handled at runtime (the
                         // helper falls back to delegation for non-arrays).
@@ -913,12 +912,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    fn zod_wrap_ctor(
-        &mut self,
-        kind: WrapKind,
-        args: &[Expr],
-        refs: &mut Vec<Expr>,
-    ) -> Extracted {
+    fn zod_wrap_ctor(&mut self, kind: WrapKind, args: &[Expr], refs: &mut Vec<Expr>) -> Extracted {
         match args.first() {
             Some(inner) => match self.zod_extract(*inner, refs, false) {
                 Extracted::Ir(ir) => Extracted::Ir(Ir::Wrap {
@@ -1013,7 +1007,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .properties
             .slice()
             .iter()
-            .map(|p| (p.key, p.value, p.kind, p.flags.contains(Flags::Property::IsComputed)))
+            .map(|p| {
+                (
+                    p.key,
+                    p.value,
+                    p.kind,
+                    p.flags.contains(Flags::Property::IsComputed),
+                )
+            })
             .collect();
         let mut out: Vec<(String, Ir)> = Vec::with_capacity(props.len());
         for (key, value, kind, is_computed) in props {
@@ -1039,11 +1040,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }))
     }
 
-    fn zod_extract_schema_array(
-        &mut self,
-        expr: Expr,
-        refs: &mut Vec<Expr>,
-    ) -> Option<Extracted> {
+    fn zod_extract_schema_array(&mut self, expr: Expr, refs: &mut Vec<Expr>) -> Option<Extracted> {
         let items: Vec<Expr> = match &expr.data {
             js_ast::ExprData::EArray(arr) => arr.items.slice().to_vec(),
             _ => return None,
@@ -1225,14 +1222,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return self.zod_opaque_or_bail(args);
                     };
                     return match self.zod_extract_shape(*arg, refs) {
-                        Some(Extracted::Ir(Ir::Object {
-                            props: added, ..
-                        })) => {
+                        Some(Extracted::Ir(Ir::Object { props: added, .. })) => {
                             let mut merged = props;
                             for (key, ir) in added {
-                                if let Some(existing) =
-                                    merged.iter_mut().find(|(k, _)| *k == key)
-                                {
+                                if let Some(existing) = merged.iter_mut().find(|(k, _)| *k == key) {
                                     existing.1 = ir;
                                 } else {
                                     merged.push((key, ir));
@@ -1426,8 +1419,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         };
                         Some(ZCheck::Regex { source, flags })
                     }
-                    js_ast::ExprData::EIdentifier(_)
-                    | js_ast::ExprData::EImportIdentifier(_) => {
+                    js_ast::ExprData::EIdentifier(_) | js_ast::ExprData::EImportIdentifier(_) => {
                         let idx = refs.len() as u32;
                         refs.push(*arg);
                         Some(ZCheck::RegexRef(idx))
@@ -1522,15 +1514,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     checks,
                 })
             }
-            Ir::Array { el, mut checks } => {
-                match check {
-                    ZCheck::MinLen(_) | ZCheck::MaxLen(_) | ZCheck::LenEq(_) => {
-                        checks.push(check);
-                        Extracted::Ir(Ir::Array { el, checks })
-                    }
-                    _ => self.zod_opaque_or_bail(args),
+            Ir::Array { el, mut checks } => match check {
+                ZCheck::MinLen(_) | ZCheck::MaxLen(_) | ZCheck::LenEq(_) => {
+                    checks.push(check);
+                    Extracted::Ir(Ir::Array { el, checks })
                 }
-            }
+                _ => self.zod_opaque_or_bail(args),
+            },
             // Checks on wrappers/objects (e.g. `.min` on something we folded
             // differently) are out of model.
             _ => self.zod_opaque_or_bail(args),
@@ -1547,7 +1537,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .properties
             .slice()
             .iter()
-            .map(|p| (p.key, p.value, p.kind, p.flags.contains(Flags::Property::IsComputed)))
+            .map(|p| {
+                (
+                    p.key,
+                    p.value,
+                    p.kind,
+                    p.flags.contains(Flags::Property::IsComputed),
+                )
+            })
             .collect();
         let mut keys: Vec<String> = Vec::with_capacity(props.len());
         for (key, value, kind, is_computed) in props {
@@ -1571,7 +1568,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match &expr.data {
             js_ast::ExprData::EString(_) => true,
             js_ast::ExprData::EObject(obj) => obj.properties.slice().iter().all(|prop| {
-                if prop.kind != G::PropertyKind::Normal || prop.flags.contains(Flags::Property::IsComputed) {
+                if prop.kind != G::PropertyKind::Normal
+                    || prop.flags.contains(Flags::Property::IsComputed)
+                {
                     return false;
                 }
                 let Some(key) = prop.key else { return false };
@@ -1675,8 +1674,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ir: Ir,
         refs: Vec<Expr>,
     ) -> Expr {
-        let body = G::FnBody::init_return_expr(self.arena, original)
-            .expect("zod thunk body allocation");
+        let body =
+            G::FnBody::init_return_expr(self.arena, original).expect("zod thunk body allocation");
         let thunk = self.new_expr(
             E::Arrow {
                 args: js_ast::StoreSlice::EMPTY,
@@ -1827,9 +1826,7 @@ impl Ir {
             Ir::Object { props, .. } => props.iter().any(|(k, ir)| {
                 k == disc
                     && match ir {
-                        Ir::Lit { values } => {
-                            values.iter().all(|v| !matches!(v, LitVal::Ref(_)))
-                        }
+                        Ir::Lit { values } => values.iter().all(|v| !matches!(v, LitVal::Ref(_))),
                         Ir::Enum { .. } => true,
                         _ => false,
                     }

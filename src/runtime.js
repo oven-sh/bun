@@ -470,10 +470,7 @@ export var __zod = (thunk, ir, refs) => {
     safeParseAsync: async (data, params) => __zodRun(state, wrapper, data, params, 3),
   };
   wrapper[__zodStateSymbol] = state;
-  Object.setPrototypeOf(
-    wrapper,
-    new Proxy({ s: state, w: wrapper }, __zodGetProtoHandler()),
-  );
+  Object.setPrototypeOf(wrapper, new Proxy({ s: state, w: wrapper }, __zodGetProtoHandler()));
   return wrapper;
 };
 
@@ -678,8 +675,7 @@ function __zodCompileChecks(kind, checks) {
         break;
       case "mof":
         if (kind === "num") {
-          fn = (spec => (v, refs) =>
-            __zodFloatSafeRemainder(v, __zodNum(spec, refs)) === 0 ? v : __zodFail)(c[1]);
+          fn = (spec => (v, refs) => (__zodFloatSafeRemainder(v, __zodNum(spec, refs)) === 0 ? v : __zodFail))(c[1]);
         }
         break;
       case "int":
@@ -885,8 +881,7 @@ function __zodCompile(n) {
       return (v, refs) => {
         var innerOptIn = optInnerOptIn;
         if (innerOptIn === null) {
-          innerOptIn =
-            optInnerNode.k === "ref" ? __zodRefOpt(refs[optInnerNode.r], false) : false;
+          innerOptIn = optInnerNode.k === "ref" ? __zodRefOpt(refs[optInnerNode.r], false) : false;
         }
         if (innerOptIn) {
           // Mirrors $ZodOptional + handleOptionalResult: run the inner type

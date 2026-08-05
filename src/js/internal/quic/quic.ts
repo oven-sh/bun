@@ -4421,7 +4421,8 @@ class QuicEndpoint {
     debug("destroying the endpoint");
     const inner = this.#inner;
     if (error !== undefined) inner.pendingError ??= error;
-    const closeOptions = errorToCloseOptions(error);
+    // session.destroy() with no options is silent; {} emits a NO_ERROR CONNECTION_CLOSE.
+    const closeOptions = errorToCloseOptions(error) ?? kEmptyObject;
     // Node's Endpoint::Send drops packets in the closing state.
     const alreadyClosing = this.#isClosedOrClosing;
     for (const session of inner.sessions) {

@@ -7,10 +7,51 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "JavaScriptCore/PropertyNameArray.h"
+#include "JavaScriptCore/IdentifierInlines.h"
 
 namespace Bun {
 
 using namespace JSC;
+
+// Mirrors Node's internal getOwnNonIndexProperties(): own string keys (excluding array
+// indices) in insertion order followed by own symbols, optionally filtered to enumerable.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionGetOwnNonIndexProperties, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue value = callFrame->argument(0);
+    if (!value.isObject()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSValue::encode(constructEmptyArray(globalObject, nullptr, 0)));
+    JSObject* object = asObject(value);
+
+    // inspect.js passes ALL_PROPERTIES (0) or ONLY_ENUMERABLE (2).
+    int32_t filter = callFrame->argument(1).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    DontEnumPropertiesMode mode = (filter & 2) ? DontEnumPropertiesMode::Exclude : DontEnumPropertiesMode::Include;
+
+    PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    object->getOwnNonIndexPropertyNames(globalObject, properties, mode);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    size_t size = properties.size();
+    JSArray* keys = constructEmptyArray(globalObject, nullptr, size);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    unsigned index = 0;
+    for (const auto& identifier : properties) {
+        if (identifier.isSymbol()) {
+            ASSERT(!identifier.isPrivateName());
+            keys->putDirectIndex(globalObject, index++, Symbol::create(vm, static_cast<SymbolImpl&>(*identifier.impl())));
+        } else {
+            keys->putDirectIndex(globalObject, index++, jsOwnedString(vm, identifier.string()));
+        }
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    return JSValue::encode(keys);
+}
 
 Structure* createUtilInspectOptionsStructure(VM& vm, JSC::JSGlobalObject* globalObject)
 {

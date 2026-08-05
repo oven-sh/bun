@@ -596,10 +596,18 @@ describe.if(isLinux)("crash while the thread limit is exhausted", () => {
     const crashHandlerTestHooks = require("bun:internal-for-testing").crash_handler;
     Bun.gc(false);
     Bun.gc(true);
+    // The crash below is deliberate; don't leave a core dump behind for CI's
+    // core collector to flag (the internal-for-testing crash hooks do the
+    // same via suppress_core_dumps_if_necessary).
+    const RLIMIT_CORE = 4;
+    if (libc.symbols.setrlimit(RLIMIT_CORE, new BigUint64Array([0n, 0n])) !== 0) {
+      console.error("SETUP_FAILED: setrlimit core");
+      process.exit(42);
+    }
     const RLIMIT_NPROC = 6;
     const limit = new BigUint64Array([1n, 1n]);
     if (libc.symbols.setrlimit(RLIMIT_NPROC, limit) !== 0) {
-      console.error("SETUP_FAILED: setrlimit");
+      console.error("SETUP_FAILED: setrlimit nproc");
       process.exit(42);
     }
     // RLIMIT_NPROC is only enforced for non-root users.

@@ -2080,6 +2080,9 @@ impl BlobExt for Blob {
     }
 
     fn get_name_string(&self) -> Option<BunString> {
+        if self.name_cleared.get() {
+            return None;
+        }
         if self.name.get().tag() != bun_core::Tag::Dead {
             return Some(self.name.get());
         }
@@ -2104,6 +2107,7 @@ impl BlobExt for Blob {
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<()> {
+        self.name_cleared.set(false);
         // by default we don't have a name so lets allow it to be set undefined
         if value.is_empty_or_undefined_or_null() {
             self.name.set(BunString::dead());
@@ -3334,6 +3338,7 @@ impl BlobExt for Blob {
                                     global_this: Cell::new(blob.global_this.get()),
                                     last_modified: Cell::new(blob.last_modified.get()),
                                     name: blob.name.clone(),
+                                    name_cleared: Cell::new(blob.name_cleared.get()),
                                 };
                                 return Ok(_blob);
                             } else {
@@ -6178,6 +6183,9 @@ pub unsafe extern "C" fn Blob__implReadBytes(
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__implClearFile(blob: &mut Blob) {
     blob.is_jsdom_file.set(false);
+    // `name_cleared`, not just a dead name: `Dead` falls back to the shared
+    // store's name.
+    blob.name_cleared.set(true);
     blob.name.set(BunString::dead());
 }
 

@@ -140,6 +140,8 @@ pub struct Blob {
     pub last_modified: Cell<f64>,
     /// Only used by `<input type="file">` / `File` (issue #10178).
     pub name: bun_core::OwnedStringCell,
+    /// `Blob__implClearFile`: suppresses the store-derived name fallback.
+    pub name_cleared: Cell<bool>,
 }
 
 // SAFETY: `Blob` holds a raw `global_this` pointer which defaults to
@@ -166,6 +168,7 @@ impl Default for Blob {
             global_this: Cell::new(core::ptr::null()),
             last_modified: Cell::new(0.0),
             name: bun_core::OwnedStringCell::new(bun_core::String::dead()),
+            name_cleared: Cell::new(false),
         }
     }
 }
@@ -378,6 +381,7 @@ impl Blob {
             global_this: Cell::new(self.global_this.get()),
             last_modified: Cell::new(self.last_modified.get()),
             name: self.name.clone(),
+            name_cleared: Cell::new(self.name_cleared.get()),
         }
     }
 

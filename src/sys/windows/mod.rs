@@ -108,6 +108,8 @@ pub mod clipboard {
         pub safe fn CloseClipboard() -> BOOL;
         pub safe fn EmptyClipboard() -> BOOL;
         pub safe fn GetClipboardData(uFormat: UINT) -> HANDLE;
+        pub safe fn IsClipboardFormatAvailable(uFormat: UINT) -> BOOL;
+        pub safe fn GetClipboardSequenceNumber() -> DWORD;
         /// On success the system owns `hMem`.
         pub fn SetClipboardData(uFormat: UINT, hMem: HANDLE) -> HANDLE;
         pub fn RegisterClipboardFormatA(lpszFormat: *const core::ffi::c_char) -> UINT;

@@ -149,7 +149,8 @@ void Clipboard::write(const Vector<RefPtr<ClipboardItem>>& data, Ref<DeferredPro
     if (RefPtr previousItemWriter = std::exchange(m_activeItemWriter, nullptr))
         previousItemWriter->invalidate();
 
-    // Writing nothing succeeds without touching the platform clipboard.
+    // Per spec (and Chrome), an empty list resolves without touching the
+    // clipboard; it does not clear it.
     if (data.isEmpty()) {
         promise->resolve();
         return;

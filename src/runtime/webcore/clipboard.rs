@@ -1,11 +1,13 @@
 //! Native `navigator.clipboard` platform I/O (https://w3c.github.io/clipboard-apis/).
 //! WebCore (`src/jsc/bindings/webcore/Clipboard.cpp`) owns every promise/JS value; this
-//! side runs bytes + an opaque `ClipboardRequest*` on the work pool and hands it back once.
+//! side runs bytes + an opaque `ClipboardRequest*` on a dedicated serial thread and hands
+//! it back once.
 
 use core::ffi::c_void;
 use core::ptr;
 
 use bun_jsc::{AnyTaskJob, AnyTaskJobCtx, JSGlobalObject};
+use bun_threading::WorkPoolTask;
 
 /// Opaque `WebCore::ClipboardRequest*` (a leaked +1), handed back exactly
 /// once: `complete`/`fail` on the JS thread, or `Drop` (abandon) on VM
@@ -106,8 +108,33 @@ unsafe extern "C" {
     fn Bun__Clipboard__requestIsCancelled(request: *mut c_void) -> bool;
 }
 
-/// Serializes our own jobs; other processes can still race the clipboard.
-static CLIPBOARD_LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
+/// An `AnyTaskJob`'s intrusive task crossing to the clipboard thread.
+#[derive(Clone, Copy)]
+struct QueuedTask(*mut WorkPoolTask);
+// SAFETY: same hand-off `WorkPool::schedule` performs; the callback is the
+// only consumer.
+unsafe impl Send for QueuedTask {}
+
+/// One FIFO thread runs every platform job, so ops commit in schedule order
+/// and a blocking backend never occupies the shared work pool.
+fn serial_queue() -> &'static bun_threading::Channel<QueuedTask> {
+    static QUEUE: std::sync::OnceLock<bun_threading::Channel<QueuedTask>> =
+        std::sync::OnceLock::new();
+    static THREAD: std::sync::Once = std::sync::Once::new();
+    let queue = QUEUE.get_or_init(bun_threading::Channel::init_dynamic);
+    THREAD.call_once(|| {
+        std::thread::Builder::new()
+            .name("Bun Clipboard".into())
+            .spawn(move || {
+                while let Ok(QueuedTask(task)) = queue.read_item() {
+                    // SAFETY: consumes the task exactly once, like a pool worker.
+                    unsafe { ((*task).callback)(task) };
+                }
+            })
+            .expect("failed to spawn the clipboard thread");
+    });
+    queue
+}
 
 /// Single source of truth for `ClipboardItem.supports` / `write()` validation.
 const SUPPORTED: &[Mime] = &[Mime::TextPlain, Mime::TextHtml, Mime::ImagePng];
@@ -163,7 +190,6 @@ pub(crate) struct ClipboardCtx {
 
 impl AnyTaskJobCtx for ClipboardCtx {
     fn run(&mut self, _global: *mut JSGlobalObject) {
-        let _guard = CLIPBOARD_LOCK.lock_guard();
         self.outcome = Some(match &self.op {
             Op::ReadText => match platform::read_type(Mime::TextPlain) {
                 Ok(Some(bytes)) => Outcome::Representations(vec![(Mime::TextPlain, bytes)]),
@@ -176,9 +202,8 @@ impl AnyTaskJobCtx for ClipboardCtx {
             },
             Op::Write(items) => {
                 // A superseded write is cancelled on the JS thread; honoring it
-                // here, under the lock, keeps its AbortError honest (the write
-                // never reaches the OS). `then()` still runs; the settled
-                // promise ignores it.
+                // here keeps its AbortError honest (the write never reaches
+                // the OS). `then()` still runs; the settled promise ignores it.
                 if self
                     .request
                     .as_ref()
@@ -207,15 +232,24 @@ impl AnyTaskJobCtx for ClipboardCtx {
     }
 }
 
-/// `create_and_schedule` consumes `ctx` on every path, so a failure has
-/// already balanced the request via `RequestHandle`'s Drop.
+/// `create` consumes `ctx` on every path, so a failure has already balanced
+/// the request via `RequestHandle`'s Drop.
 fn schedule(global: &JSGlobalObject, op: Op, request: RequestHandle) {
     let ctx = ClipboardCtx {
         op,
         outcome: None,
         request: Some(request),
     };
-    let _ = AnyTaskJob::create_and_schedule(global, ctx);
+    let Ok(job) = AnyTaskJob::create(global, ctx) else {
+        return;
+    };
+    // SAFETY: `job` is a freshly-created live pointer, scheduled exactly once.
+    unsafe {
+        AnyTaskJob::schedule_with(job, |task| {
+            // Fails only on OOM; the queue is never closed.
+            bun_core::handle_oom(serial_queue().write_item(QueuedTask(task)));
+        });
+    }
 }
 
 /// # Safety
@@ -320,8 +354,12 @@ pub unsafe extern "C" fn Bun__Clipboard__scheduleWrite(
 #[derive(Clone, Copy)]
 enum Unavailable {
     Platform,
+    #[cfg(target_os = "macos")]
+    Changing,
     #[cfg(not(any(target_os = "macos", windows)))]
     NoDisplay,
+    #[cfg(not(any(target_os = "macos", windows)))]
+    MultipleRepresentations,
     #[cfg(not(any(target_os = "macos", windows)))]
     NoHelper,
     #[cfg(not(any(target_os = "macos", windows)))]
@@ -332,6 +370,12 @@ impl Unavailable {
     fn message(self) -> &'static [u8] {
         match self {
             Unavailable::Platform => b"The system clipboard is not available.",
+            #[cfg(target_os = "macos")]
+            Unavailable::Changing => b"The system clipboard changed while it was being read.",
+            #[cfg(not(any(target_os = "macos", windows)))]
+            Unavailable::MultipleRepresentations => {
+                b"Writing more than one representation per item is not supported on this platform."
+            }
             #[cfg(not(any(target_os = "macos", windows)))]
             Unavailable::NoDisplay => {
                 b"The clipboard requires a Wayland or X11 display, but neither $WAYLAND_DISPLAY nor $DISPLAY is set."
@@ -406,7 +450,7 @@ mod platform {
     }
 
     /// NSPasteboard has no lock, so re-read once if another process bumped
-    /// `changeCount` mid-loop; one item must not mix two clipboard states.
+    /// `changeCount` mid-loop; still changing on the retry fails the read.
     pub(super) fn read_all(types: &[Mime]) -> Result<Vec<(Mime, Vec<u8>)>, Unavailable> {
         let mut attempt = 0;
         loop {
@@ -427,9 +471,12 @@ mod platform {
             if !readable {
                 return Err(unavailable);
             }
-            attempt += 1;
-            if attempt == 2 || clipboard_change_count() == generation {
+            if clipboard_change_count() == generation {
                 return Ok(present);
+            }
+            attempt += 1;
+            if attempt == 4 {
+                return Err(Unavailable::Changing);
             }
         }
     }
@@ -1018,8 +1065,11 @@ mod platform {
     }
 
     pub(super) fn write_types(items: &[(Mime, &[u8])]) -> Result<(), Unavailable> {
-        // The C++ layer rejects multi-representation items on helper platforms.
-        debug_assert!(items.len() <= 1);
+        // Rejected upstream (`clipboardWritesSingleRepresentation`); never
+        // silently write a subset.
+        if items.len() > 1 {
+            return Err(Unavailable::MultipleRepresentations);
+        }
         let Some((mime, bytes)) = items.first() else {
             return Ok(());
         };

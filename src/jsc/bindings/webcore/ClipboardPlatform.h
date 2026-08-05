@@ -46,9 +46,9 @@ public:
             completion(globalObject, representations, failureMessage);
     }
 
-    // A superseded writer's AbortError must not be a lie: the work-pool job
-    // checks this under its lock before the platform transaction, so a
-    // cancelled write never reaches the OS clipboard.
+    // A superseded writer's AbortError must not be a lie: the clipboard-thread
+    // job checks this before the platform transaction, so a cancelled write
+    // never reaches the OS clipboard.
     void cancel() { m_cancelled.store(true, std::memory_order_relaxed); }
     bool isCancelled() const { return m_cancelled.load(std::memory_order_relaxed); }
 

@@ -122,7 +122,7 @@ private:
         ClipboardItemData m_representationsToWrite;
         unsigned m_pendingBlobReads { 0 };
         // The scheduled platform write, so invalidate() can cancel it before
-        // the work-pool job commits it to the OS.
+        // the clipboard-thread job commits it to the OS.
         RefPtr<ClipboardRequest> m_platformWriteRequest;
     };
 

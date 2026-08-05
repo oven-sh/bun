@@ -470,6 +470,37 @@ describe("read / write", () => {
     await expectDOMException(first, "AbortError");
   });
 
+  // Platform jobs run on one FIFO thread: the last call wins and both
+  // promises resolve, as in Chrome.
+  test("un-awaited writeText() calls land in call order", async () => {
+    if (savedClipboard === null) {
+      const first = navigator.clipboard.writeText("stale");
+      const second = navigator.clipboard.writeText("fresh");
+      await expectDOMException(first, "NotAllowedError");
+      await expectDOMException(second, "NotAllowedError");
+      return;
+    }
+    for (let i = 0; i < 5; i++) {
+      const first = navigator.clipboard.writeText(`stale-${i}`);
+      const second = navigator.clipboard.writeText(`fresh-${i}`);
+      await Promise.all([first, second]);
+      expect(await navigator.clipboard.readText()).toBe(`fresh-${i}`);
+    }
+  });
+
+  // Per spec (and Chrome), write([]) resolves without touching (or clearing)
+  // the clipboard.
+  test("write([]) resolves and leaves the clipboard contents alone", async () => {
+    if (savedClipboard === null) {
+      // Nothing is ever written, so this resolves even with no clipboard.
+      await navigator.clipboard.write([]);
+      return;
+    }
+    await navigator.clipboard.writeText("kept");
+    await navigator.clipboard.write([]);
+    expect(await navigator.clipboard.readText()).toBe("kept");
+  });
+
   // write([]) resolves without reaching the OS, but it is still a write() call
   // and must abort an in-flight write() rather than letting it land later.
   test("write([]) supersedes an in-flight write()", async () => {
@@ -479,11 +510,14 @@ describe("read / write", () => {
     await expectDOMException(first, "AbortError");
   });
 
-  // An aborted write whose platform job was already queued must be cancelled
-  // there too; the work pool is not FIFO, so without the cancel the "aborted"
-  // write can land after (and overwrite) the one that superseded it.
+  // An aborted write's queued platform job must be cancelled too, or the
+  // "aborted" write still reaches the OS.
   test("a superseded write never lands after its successor", async () => {
-    if (savedClipboard === null) return; // no reachable clipboard
+    if (savedClipboard === null) {
+      await expectDOMException(navigator.clipboard.writeText("A"), "NotAllowedError");
+      await expectDOMException(navigator.clipboard.read(), "NotAllowedError");
+      return;
+    }
     for (let i = 0; i < 10; i++) {
       // A platform-sourced item collects synchronously, so the platform write
       // is already queued when writeText() supersedes it.
@@ -558,8 +592,13 @@ describe("read / write", () => {
     };
     navigator.clipboard.addEventListener("copy", onCopy);
     try {
-      await navigator.clipboard.write([item]).catch(() => {});
-      if (!nested) return; // no clipboard on this machine: no copy event fired
+      const outer = navigator.clipboard.write([item]);
+      await outer.catch(() => {});
+      if (!nested) {
+        // No copy event ⇔ no reachable clipboard: the write must have rejected.
+        await expectDOMException(outer, "NotAllowedError");
+        return;
+      }
       const outcome = await nested.then(
         () => "settled",
         (e: Error) => e.name,

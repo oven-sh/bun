@@ -227,10 +227,8 @@ pub(crate) mod install {
 /// `.bunx` shim encoder consumed by
 /// `bin::Linker` (Windows only at runtime, but the encoder types are
 /// referenced unconditionally so the module must exist on all targets).
-// `#[path]` inside an inline `mod {}` resolves relative to the
-// synthetic `windows_shim/` directory, which doesn't exist on disk. Hoist the
-// file-backed module to crate level with an absolute-ish path and import it
-// inside the inline mod.
+// Crate-level because `#[path]` inside an inline `mod {}` resolves against a
+// synthetic `windows_shim/` directory that doesn't exist on disk.
 #[cfg(windows)]
 #[path = "windows-shim/BinLinkingShim.rs"]
 pub mod _bin_linking_shim;

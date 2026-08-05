@@ -2080,10 +2080,7 @@ impl<'a> Resolver<'a> {
     }
 
     /// Whether an import specifier explicitly names a directory: a trailing
-    /// separator, `.`, `..`, or a path ending in `/.` or `/..`. The join does
-    /// not always keep that information (dot segments normalize away, and on
-    /// Windows only a trailing `\` survives), so callers re-append the
-    /// separator themselves.
+    /// separator, `.`, `..`, or a path ending in `/.` or `/..`.
     fn import_path_names_directory(import_path: &[u8]) -> bool {
         let Some(&last) = import_path.last() else {
             return false;

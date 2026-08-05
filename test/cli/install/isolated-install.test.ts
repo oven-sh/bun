@@ -1651,7 +1651,13 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
   using packageDir = tempDir("transitive-peer-test-", {});
   const packageJson = join(String(packageDir), "package.json");
   const cacheDir = join(String(packageDir), ".bun-cache");
-  const bunfig = `[install]\ncache = "${cacheDir.replaceAll("\\", "\\\\")}"\nregistry = "http://localhost:${server.port}/"\nlinker = "isolated"\n`;
+  const bunfig = Bun.TOML.stringify({
+    install: {
+      cache: cacheDir,
+      registry: `http://localhost:${server.port}/`,
+      linker: "isolated",
+    },
+  });
   await write(join(String(packageDir), "bunfig.toml"), bunfig);
 
   await write(
@@ -2072,7 +2078,14 @@ describe("global virtual store", () => {
     const sharedCache = join(a.packageDir, ".bun-cache");
     await write(
       join(b.packageDir, "bunfig.toml"),
-      `[install]\ncache = "${sharedCache.replaceAll("\\", "\\\\")}"\nregistry = "${registry.registryUrl()}"\nlinker = "isolated"\nglobalStore = true\n`,
+      Bun.TOML.stringify({
+        install: {
+          cache: sharedCache,
+          registry: registry.registryUrl(),
+          linker: "isolated",
+          globalStore: true,
+        },
+      }),
     );
 
     for (const { packageJson } of [a, b]) {

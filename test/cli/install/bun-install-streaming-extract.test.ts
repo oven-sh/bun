@@ -240,7 +240,7 @@ describe("streaming tarball extraction", () => {
         version: "1.0.0",
         dependencies: { "stream-pkg": "1.0.0" },
       }),
-      "bunfig.toml": `[install]\nregistry = "${registry}"\n`,
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry } }),
     });
 
     const { stderr, exitCode } = await runInstall(String(dir), env);
@@ -326,7 +326,7 @@ describe("streaming tarball extraction", () => {
           version: "1.0.0",
           dependencies: { "stream-pkg": "1.0.0" },
         }),
-        "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${port}/"\n`,
+        "bunfig.toml": Bun.TOML.stringify({ install: { registry: `http://127.0.0.1:${port}/` } }),
       });
 
       const { stderr, exitCode } = await runInstall(String(dir));
@@ -361,7 +361,7 @@ describe("streaming tarball extraction", () => {
         version: "1.0.0",
         dependencies: { "stream-pkg": "1.0.0" },
       }),
-      "bunfig.toml": `[install]\nregistry = "${registry}"\n`,
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry } }),
     });
 
     const { stderr, exitCode } = await runInstall(String(dir));
@@ -392,7 +392,7 @@ describe("streaming tarball extraction", () => {
         version: "1.0.0",
         dependencies: { "stream-pkg": "1.0.0" },
       }),
-      "bunfig.toml": `[install]\nregistry = "${registry}"\n`,
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry } }),
     });
 
     const { stderr, exitCode } = await runInstall(String(dir), {
@@ -427,7 +427,7 @@ describe("streaming tarball extraction", () => {
         version: "1.0.0",
         dependencies: { "stream-pkg": "1.0.0" },
       }),
-      "bunfig.toml": `[install]\nregistry = "${registry}"\n`,
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry } }),
     });
 
     const { stderr, exitCode } = await runInstall(String(dir));
@@ -499,7 +499,7 @@ describe("streaming tarball extraction", () => {
 
     using dir = tempDir("streaming-extract-threshold", {
       "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "stream-pkg": "1.0.0" } }),
-      "bunfig.toml": `[install]\nregistry = "${server.url}"\n`,
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: String(server.url) } }),
     });
     const tmp = join(String(dir), "bun-tmp");
     const cache = join(String(dir), "bun-cache");

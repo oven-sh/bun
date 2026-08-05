@@ -1265,6 +1265,7 @@ static void imageRestoreAndRun(const char* path)
             uintptr_t lo = UINTPTR_MAX, hi = 0;
             for (auto& r : regions) if ((r.kind & 0xff) == 0 && (r.kind >> 8) == 240) { lo = std::min<uintptr_t>(lo, r.addr); hi = std::max<uintptr_t>(hi, r.addr + r.len); }
             if (const char* m = getenv("BUN_IMAGE_IMMORTAL_MODE")) WTF::g_imageImmortalMode = atoi(m);
+            if (const char* r = getenv("BUN_IMAGE_IMMORTAL_RANGE")) { unsigned long long a = 0, b = 0; if (sscanf(r, "%llx-%llx", &a, &b) == 2) { lo = a; hi = b; } } // bisect aid
             if (hi > lo && !getenv("BUN_IMAGE_NO_IMMORTAL_REFCOUNTS")) { WTF::g_imageImmortalRangeLo = lo; WTF::g_imageImmortalRangeSpan = hi - lo; if (verbose) fprintf(stderr, "[image] immortal refcount range %lx..%lx\n", (unsigned long)lo, (unsigned long)hi); }
         }
         if (hdr.reserved[0]) mi_theap_freeze((mi_theap_t*)hdr.reserved[0]);

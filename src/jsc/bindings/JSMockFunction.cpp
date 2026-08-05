@@ -987,17 +987,19 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstruct, (JSGlobalObject * lexicalGloba
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Like [[Construct]] on an ordinary function: create `this` from
-    // newTarget.prototype, run the implementation with it, and return the
-    // implementation's result only if it is an object.
-    JSObject* prototype = nullptr;
+    // newTarget.prototype (falling back to newTarget's realm's Object.prototype),
+    // run the implementation with it, and return the implementation's result
+    // only if it is an object.
+    JSObject* thisObject = nullptr;
     if (JSObject* newTarget = callframe->newTarget().getObject()) {
-        JSValue prototypeValue = newTarget->get(lexicalGlobalObject, vm.propertyNames->prototype);
+        JSGlobalObject* functionGlobalObject = JSC::getFunctionRealm(lexicalGlobalObject, newTarget);
         RETURN_IF_EXCEPTION(scope, {});
-        prototype = prototypeValue.getObject();
+        Structure* structure = JSC::InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, functionGlobalObject->objectStructureForObjectConstructor());
+        RETURN_IF_EXCEPTION(scope, {});
+        thisObject = JSC::constructEmptyObject(vm, structure);
+    } else {
+        thisObject = JSC::constructEmptyObject(lexicalGlobalObject);
     }
-    JSObject* thisObject = prototype
-        ? JSC::constructEmptyObject(lexicalGlobalObject, prototype)
-        : JSC::constructEmptyObject(lexicalGlobalObject);
 
     JSValue result = JSValue::decode(jsMockFunctionCallImpl(lexicalGlobalObject, callframe, thisObject));
     RETURN_IF_EXCEPTION(scope, {});

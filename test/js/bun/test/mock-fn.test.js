@@ -4,6 +4,7 @@
  *  `bunx vitest test/js/bun/test/mock-fn.test.js`
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/mock-fn.test.js`
  */
+import vm from "node:vm";
 import test_interop from "./test-interop.js";
 var { isBun, describe, test, it, expect, jest, vi, mock, spyOn } = await test_interop();
 
@@ -1120,6 +1121,25 @@ describe("constructing a mock", () => {
     const fn = jest.fn(function () {});
     const instance = Reflect.construct(fn, [], Other);
     expect(Object.getPrototypeOf(instance)).toBe(Other.prototype);
+  });
+
+  test("falls back to Object.prototype when new.target has a primitive prototype", () => {
+    function Other() {}
+    Other.prototype = 1;
+    const fn = jest.fn(function () {});
+    const instance = Reflect.construct(fn, [], Other);
+    expect(Object.getPrototypeOf(instance)).toBe(Object.prototype);
+  });
+
+  test("uses new.target's realm for the fallback prototype", () => {
+    const context = vm.createContext({});
+    const OtherRealm = vm.runInContext("(function Other() {})", context);
+    OtherRealm.prototype = 1;
+    const otherObjectPrototype = vm.runInContext("Object.prototype", context);
+    expect(otherObjectPrototype).not.toBe(Object.prototype);
+    const fn = jest.fn(function () {});
+    const instance = Reflect.construct(fn, [], OtherRealm);
+    expect(Object.getPrototypeOf(instance)).toBe(otherObjectPrototype);
   });
 
   test("passes the instance to the implementation as this", () => {

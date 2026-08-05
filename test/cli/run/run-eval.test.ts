@@ -243,6 +243,17 @@ describe.concurrent("-e builtin module globals", () => {
     expect(stdout).toBe("5 7 9 function\n");
     expect(exitCode).toBe(0);
   });
+
+  test("assignment through an inheriting object shadows on the receiver", async () => {
+    const { stdout, stderr, exitCode } = await runEval(
+      "const obj = Object.create(globalThis); obj.zlib = 5;" +
+        'const r = {}; Reflect.set(globalThis, "util", 6, r);' +
+        'console.log(Object.hasOwn(obj, "zlib"), obj.zlib, typeof globalThis.zlib, Object.hasOwn(r, "util"), r.util, typeof globalThis.util);',
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("true 5 object true 6 object\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {

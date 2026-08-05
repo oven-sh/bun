@@ -6,6 +6,7 @@
 #include "JSCommonJSModule.h"
 
 #include <JavaScriptCore/JSBoundFunction.h>
+#include <JavaScriptCore/JSGlobalProxyInlines.h>
 #include <JavaScriptCore/PropertySlot.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSMap.h>
@@ -74,14 +75,18 @@ FOREACH_EXPOSED_BUILTIN_IMR(DECL_GETTER)
 
 } // namespace ExposeNodeModuleGlobalGetters
 
-// Writing to one of these globals replaces the lazy accessor with a plain data
-// property, the same reification a null-setter CustomValue property gets from
-// JSObject::putInlineSlow.
-JSC_DEFINE_CUSTOM_SETTER(exposedNodeModuleGlobalSetter, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
+// Assignment puts a plain data property on the receiver (the old null-setter
+// CustomValue behavior): writes through `globalThis` replace the lazy
+// accessor, writes through an inheriting object shadow it.
+JSC_DEFINE_CUSTOM_SETTER(exposedNodeModuleGlobalSetter, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
 {
-    Zig::GlobalObject* thisObject = defaultGlobalObject(lexicalGlobalObject);
-    JSC::VM& vm = thisObject->vm();
-    thisObject->putDirect(vm, propertyName, JSC::JSValue::decode(encodedValue), 0);
+    JSC::JSValue decodedThis = JSC::JSValue::decode(thisValue);
+    if (auto* proxy = dynamicDowncast<JSC::JSGlobalProxy>(decodedThis))
+        decodedThis = proxy->target();
+    JSC::JSObject* thisObject = decodedThis.getObject();
+    if (!thisObject)
+        return false;
+    thisObject->putDirect(JSC::getVM(lexicalGlobalObject), propertyName, JSC::JSValue::decode(encodedValue), 0);
     return true;
 }
 
@@ -89,12 +94,10 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::Global
 {
 
     auto& vm = JSC::getVM(globalObject);
-    // CustomAccessor, not CustomValue: [[GetOwnProperty]] on a CustomValue
-    // property computes its value, so GlobalDeclarationInstantiation's
-    // hasRestrictedGlobalProperty check for a top-level `const zlib = ...` in
-    // `bun -e` would load node:zlib before the first statement runs (visibly
-    // wrong for load-order-sensitive code like buffer.kMaxLength patching).
-    // An accessor's descriptor is built without invoking the getter.
+    // CustomAccessor, not CustomValue: JSC computes a CustomValue during
+    // [[GetOwnProperty]], so the global-declaration shadow check for a
+    // top-level `const zlib = ...` would load node:zlib before the script's
+    // first statement. An accessor's descriptor never invokes the getter.
 #define PUT_CUSTOM_GETTER_SETTER(id, field) \
     globalObject->putDirectCustomAccessor( \
         vm, \

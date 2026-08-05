@@ -898,8 +898,8 @@ static void recleanFrozenPages(JSC::VM& vm)
     std::vector<int> disp;
     size_t dirty = 0, identical = 0, remapped = 0, cellIdentical = 0, payloadIdentical = 0, nearly = 0;
     struct NB { size_t n = 0; std::vector<std::string> ex; }; std::map<std::string, NB> nearlyBy;
-    struct BI { std::string name; size_t cellSize; }; std::map<uintptr_t, BI> blocks;
-    vm.heap.objectSpace().forEachBlock([&](JSC::MarkedBlock::Handle* h) { blocks[(uintptr_t)&h->block()] = { std::string(h->subspace()->name()), h->cellSize() }; });
+    struct BI { std::string name; size_t cellSize; uintptr_t start; }; std::map<uintptr_t, BI> blocks;
+    vm.heap.objectSpace().forEachBlock([&](JSC::MarkedBlock::Handle* h) { blocks[(uintptr_t)&h->block()] = { std::string(h->subspace()->name()), h->cellSize(), (uintptr_t)h->start() }; });
     auto t0 = std::chrono::steady_clock::now();
     for (auto& run : s_runs) {
         size_t n = run.len / pg;
@@ -921,12 +921,12 @@ static void recleanFrozenPages(JSC::VM& vm)
                     // attribute: page class + (for cells) offset within cell of each changed word, with before>after
                     std::string cls; size_t cellSz = 0; uintptr_t blockBase = 0;
                     auto bit = blocks.upper_bound(a);
-                    if (bit != blocks.begin()) { --bit; if (a < bit->first + JSC::MarkedBlock::blockSize) { cls = bit->second.name; cellSz = bit->second.cellSize; blockBase = bit->first; } }
+                    if (bit != blocks.begin()) { --bit; if (a < bit->first + JSC::MarkedBlock::blockSize) { cls = bit->second.name; cellSz = bit->second.cellSize; blockBase = bit->second.start; } }
                     if (cls.empty()) { auto sc = s_pageSizeClass.find(a); cls = sc == s_pageSizeClass.end() ? "<payload ?>" : "<payload sz" + std::to_string(sc->second) + ">"; }
                     for (size_t off = 0; off < pg; off += 8) {
                         if (!memcmp((uint8_t*)a + off, orig.data() + off, 8)) continue;
                         uint64_t before, after; memcpy(&before, orig.data() + off, 8); memcpy(&after, (uint8_t*)a + off, 8);
-                        size_t inCell = cellSz ? ((a + off - blockBase) % cellSz) : (off % 64);
+                        size_t inCell = cellSz && a + off >= blockBase ? ((a + off - blockBase) % cellSz) : (off % 64);
                         char key[160]; snprintf(key, sizeof key, "%s +%zu", cls.c_str(), inCell);
                         auto& e = nearlyBy[key]; e.n++; if (e.ex.size() < 3) { char ex[48]; snprintf(ex, sizeof ex, "%llx>%llx", (unsigned long long)before, (unsigned long long)after); e.ex.push_back(ex); }
                     }

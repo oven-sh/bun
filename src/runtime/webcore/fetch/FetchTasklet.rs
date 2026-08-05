@@ -861,7 +861,17 @@ impl FetchTasklet {
                         self.drop_backpressure_if_unobserved(&readable, &bytes);
                     } else {
                         readable.value.ensure_still_alive();
-                        response.detach_readable_stream(&global_this);
+                        if self.response.get().is_some() {
+                            // Wrapper verified alive by the weak read: safe to
+                            // clear its cached-stream slot too.
+                            response.detach_readable_stream(&global_this);
+                        } else if let BodyValue::Locked(locked) = response.get_body_value() {
+                            // Dead wrapper: writing ZERO into its slot would
+                            // run a write barrier on an unmarked cell. Its
+                            // finalizer clears the slot; only release the
+                            // native ref here.
+                            let _ = core::mem::take(&mut locked.readable);
+                        }
                         bytes.on_data(Self::temporary_chunk(chunk, true))?;
                     }
 

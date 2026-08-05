@@ -1920,11 +1920,8 @@ pub(crate) fn install_isolated_packages(
         break 'is_new_bun_modules true;
     };
 
-    // A previous install with hoisting enabled left the fallback directory
-    // behind; remove it so undeclared imports stop resolving through it.
-    // A failure other than the tree already being gone (`delete_tree` treats
-    // that as success) means the requested layout cannot be produced, so fail
-    // like the mkdir calls above.
+    // Remove the fallback a previous install with hoisting on left behind.
+    // `delete_tree` succeeds on a missing tree, so any error here is real.
     if !manager.options.hoist && !is_new_bun_modules {
         use bun_sys::FdExt as _;
         if let Err(err) =

@@ -2009,6 +2009,8 @@ export class VerdaccioRegistry {
           linker: opts.linker,
           globalStore: opts.globalStore,
           publicHoistPattern: opts.publicHoistPattern,
+          hoistPattern: opts.hoistPattern,
+          hoist: opts.hoist,
         },
       }),
     );
@@ -2021,6 +2023,8 @@ type BunfigOpts = {
   linker?: "isolated" | "hoisted";
   globalStore?: boolean;
   publicHoistPattern?: string | string[];
+  hoistPattern?: string | string[];
+  hoist?: boolean;
 };
 
 export async function readdirSorted(path: string): Promise<string[]> {
@@ -2118,10 +2122,10 @@ export function exampleSite(protocol: "https" | "http" = "https") {
     ca: protocol === "https" ? tls.cert : undefined,
     server,
     stop() {
-      return server.stop();
+      return server.stop(true);
     },
     async [Symbol.asyncDispose]() {
-      await server.stop();
+      await server.stop(true);
     },
   };
 }

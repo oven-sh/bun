@@ -1114,12 +1114,9 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 }
 
                                 if this.options.enable.offline() {
-                                    // No usable cached manifest (offline mode
-                                    // already treats any cached manifest as
+                                    // Offline treats any cached manifest as
                                     // fresh, so reaching this point means the
-                                    // manifest is absent). Report instead of
-                                    // fetching, mirroring the non-retryable
-                                    // manifest failure handling in `run_tasks`.
+                                    // manifest is absent: report, don't fetch.
                                     if run_tasks::is_network_task_required(this, task_id) {
                                         bun_ast::add_error_pretty!(
                                             this.log_mut(),
@@ -1394,10 +1391,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     enqueue_network_task(this, nt);
                 }
                 Ok(None) => {}
-                // `--offline` with the tarball missing from the cache: already
-                // reported by `generate_network_task_for_tarball`; resolution
-                // of this dependency stays pending and the install fails with
-                // that error.
+                // Already reported by `generate_network_task_for_tarball`;
+                // the install fails with that error.
                 Err(crate::network_task::ForTarballError::NetworkDisabled) => {}
                 Err(err) => return Err(err.into()),
             }
@@ -1621,9 +1616,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             crate::network_task::Authorization::NoAuthorization,
                         ) {
                             Ok(task) => task.map(std::ptr::from_mut::<NetworkTask>),
-                            // `--offline`: already reported by
-                            // `generate_network_task_for_tarball`; the install
-                            // fails with that error.
+                            // Already reported by `generate_network_task_for_tarball`;
+                            // the install fails with that error.
                             Err(crate::network_task::ForTarballError::NetworkDisabled) => None,
                             Err(err) => return Err(err.into()),
                         };
@@ -1964,17 +1958,13 @@ fn enqueue_local_tarball(
 }
 
 /// Enqueue a threadpool task that reads `<tarball_dir>/<name>@<version>.tgz`
-/// and extracts it into the package's npm cache folder, replacing the registry
-/// download when `--tarball-dir` is set. The lockfile integrity is verified
-/// against the file's bytes exactly like a downloaded tarball, and the task
-/// completes through the same `Extract`/`LocalTarball` path (same `task_id`),
-/// so waiting installers and patch application behave identically.
+/// into the package's npm cache folder in place of the registry download:
+/// same integrity verification, same completion path and `task_id`, so
+/// waiting installers and patch application behave identically.
 ///
-/// With `require_exists` (online mode) the file is stat'd first and `None` is
-/// returned when it is absent, so the caller can fall back to the network.
-/// Offline, a missing file becomes the task's read error, which names the
-/// exact path. `None` is also returned when the joined path does not fit in a
-/// `PathBuffer`. `apply_patch_task` is only consumed when a task is returned.
+/// Returns `None` (and leaves `apply_patch_task` for the network task) when
+/// the joined path overflows, or when `require_exists` and the file is absent
+/// so the caller can fall back to the network.
 pub(crate) fn enqueue_npm_tarball_from_tarball_dir(
     this: &mut PackageManager,
     task_id: Task::Id,
@@ -2260,9 +2250,8 @@ fn get_or_put_resolved_package_with_find_result(
         // Do we need to download the tarball?
         install::PreinstallState::Extract => 'extract: {
             // Skip tarball download when prefetch_resolved_tarballs is disabled
-            // (e.g., --lockfile-only). Also skip under `--offline`: the install
-            // phase re-checks the cache and either reads from `--tarball-dir`
-            // or reports the package as unavailable, with full context.
+            // (e.g., --lockfile-only) or under `--offline` (the install phase
+            // re-checks the cache and reports misses with full context).
             if !this
                 .options
                 .do_

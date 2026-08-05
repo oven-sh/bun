@@ -738,9 +738,7 @@ pub enum ForTarballError {
     #[error("TarballFailedToDownload")]
     AlreadyFailed,
     /// `--offline` blocked the download and the package had no local source.
-    /// The precise error was already logged by
-    /// `generate_network_task_for_tarball`; callers advance their bookkeeping
-    /// like `AlreadyFailed`.
+    /// Logged by `generate_network_task_for_tarball`; handled like `AlreadyFailed`.
     #[error("NetworkDisabled")]
     NetworkDisabled,
 }

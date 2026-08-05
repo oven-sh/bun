@@ -407,12 +407,10 @@ impl<'a> Task<'a> {
                     let url = req.url.slice();
                     let mut attempt: u8 = 1;
 
-                    // A clone task is only enqueued when the extracted package
-                    // is missing from the cache, and even a cached bare repo
-                    // would be `git fetch`ed — so under `--offline` fail the
-                    // task instead of spawning git. Failing (rather than
-                    // skipping the enqueue) keeps every waiting installer
-                    // entry draining through the normal completion path.
+                    // Any clone task means the network (even a cached bare
+                    // repo gets a `git fetch`). Failing the task, rather than
+                    // never enqueueing it, keeps waiting installer entries
+                    // draining through the normal completion path.
                     if req.network_disabled {
                         this.log.add_error_fmt(
                             None,

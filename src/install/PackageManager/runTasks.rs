@@ -1803,10 +1803,9 @@ pub fn generate_network_task_for_tarball<'a>(
 
     let offline = this.options.enable.offline();
 
-    // `--tarball-dir` supplies npm tarball bytes from a local directory:
-    // unconditionally under `--offline` (a missing file becomes the task's
-    // read error, naming the path), and whenever the file exists otherwise
-    // (falling back to the network when it does not).
+    // `--tarball-dir`: unconditionally under `--offline` (a missing file
+    // becomes the task's read error, naming the path), otherwise only when
+    // the file exists (network fallback when it does not).
     if package.resolution.tag == crate::resolution::Tag::Npm
         && !this.options.tarball_directory.is_empty()
     {

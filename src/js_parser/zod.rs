@@ -1611,25 +1611,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn zod_number_value(&self, expr: Expr) -> Option<f64> {
-        match &expr.data {
-            js_ast::ExprData::ENumber(n) => Some(n.value()),
+        let n = match &expr.data {
+            js_ast::ExprData::ENumber(n) => n.value(),
             js_ast::ExprData::EUnary(u) if u.op == OpCode::UnNeg => match &u.value.data {
-                js_ast::ExprData::ENumber(n) => Some(-n.value()),
-                _ => None,
+                js_ast::ExprData::ENumber(n) => -n.value(),
+                _ => return None,
             },
-            _ => None,
-        }
+            _ => return None,
+        };
+        // Non-finite values (1e400, NaN) have no IR JSON representation; format_f64 asserts finiteness.
+        n.is_finite().then_some(n)
     }
 
     fn zod_literal_value(&mut self, expr: Expr, refs: &mut Vec<Expr>) -> Option<LitVal> {
         match &expr.data {
             js_ast::ExprData::EString(_) => Some(LitVal::Str(self.zod_string_value(expr)?)),
             js_ast::ExprData::ENumber(_) | js_ast::ExprData::EUnary(_) => {
-                let n = self.zod_number_value(expr)?;
-                if n.is_nan() || n.is_infinite() {
-                    return None;
-                }
-                Some(LitVal::Num(n))
+                Some(LitVal::Num(self.zod_number_value(expr)?))
             }
             js_ast::ExprData::EBoolean(b) => Some(LitVal::Bool(b.value)),
             js_ast::ExprData::ENull(_) => Some(LitVal::Null),
@@ -1656,11 +1654,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 Some(out)
             }
             js_ast::ExprData::ENumber(_) | js_ast::ExprData::EUnary(_) => {
-                let n = self.zod_number_value(expr)?;
-                if n.is_nan() || n.is_infinite() {
-                    return None;
-                }
-                Some(format_f64(n))
+                Some(format_f64(self.zod_number_value(expr)?))
             }
             js_ast::ExprData::EBoolean(b) => {
                 Some(if b.value { "true" } else { "false" }.to_string())

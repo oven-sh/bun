@@ -2109,13 +2109,9 @@ impl<'a> Resolver<'a> {
             return ResultUnion::NotFound;
         };
 
-        // "." and ".." (and specifiers ending in "/." or "/..") explicitly name
-        // a directory, but joining normalizes the dot segments away, leaving a
-        // path whose basename can collide with a sibling file (importing "."
-        // from `lib/run.ts` must load `lib/index.ts`, never a sibling
-        // `lib.ts`). Re-append the trailing separator that "./" keeps through
-        // the join so these resolve as directories, matching Node's
-        // `trailingSlashRegex` handling in `Module._findPath`.
+        // The join normalizes "."/".." segments away; re-append the separator
+        // so these resolve like "./" (directory index, never a sibling file),
+        // matching Node's trailingSlashRegex in Module._findPath.
         let abs_path: &[u8] = if Self::import_path_names_directory(import_path)
             && !strings::ends_with_char(abs_path, SEP)
         {

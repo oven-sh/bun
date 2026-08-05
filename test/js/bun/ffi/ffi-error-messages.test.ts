@@ -1,6 +1,6 @@
 import { dlopen, linkSymbols } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { isMusl } from "harness";
+import { bunEnv, bunExe, isMusl } from "harness";
 
 describe("FFI error messages", () => {
   test("dlopen shows library name when library cannot be opened", () => {
@@ -18,6 +18,44 @@ describe("FFI error messages", () => {
       expect(err.message).toContain("libnonexistent12345.so");
       expect(err.message).toMatch(/Failed to open library/i);
     }
+  });
+
+  // dlopen falls back to FileSystem::abs() when the direct open fails; abs()
+  // writes into a thread-local buffer that was 4096 bytes on every platform.
+  // A library path longer than that used to abort with
+  //   panic: range end index 5003 out of range for slice of length 4095
+  // instead of reporting the ordinary dlopen error. The "relative" row joins
+  // against cwd, so the overflow point is roughly MAX_PATH_BYTES - cwd.len().
+  test.concurrent.each([
+    ["absolute", 5000],
+    ["absolute", 100_000],
+    ["relative", 4090],
+    ["relative", 100_000],
+  ] as const)("dlopen with a %s %d-byte library path reports an error instead of aborting", async (kind, len) => {
+    const prefix = kind === "relative" ? "" : process.platform === "win32" ? "C:\\" : "/";
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { dlopen } = require("bun:ffi");` +
+          `const name = ${JSON.stringify(prefix)} + Buffer.alloc(${len}, "a").toString() + ".so";` +
+          `try { dlopen(name, { f: { args: [], returns: "void" } }); }` +
+          `catch (e) { const m = String(e.message);` +
+          `  console.log("CAUGHT", e.code || e.name, m.slice(0, 30), "|", m.slice(-25)); }`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: expect.stringMatching(/^CAUGHT ERR_DLOPEN_FAILED Failed to open library/),
+      stderr: "",
+    });
+    // 100k exceeds every platform's MAX_PATH_BYTES: the fallback is skipped
+    // and the reported reason is the ENAMETOOLONG from DynLib::open, not a
+    // stale dlerror()/GetLastError() ("unknown error" / "error code 0").
+    if (len === 100_000) expect(stdout).toContain("file name too long");
+    expect(exitCode).toBe(0);
   });
 
   test("dlopen shows which symbol is missing when symbol not found", () => {

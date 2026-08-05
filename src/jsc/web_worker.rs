@@ -1198,6 +1198,15 @@ impl WebWorker {
         // Atomics.waitAsync settles. dispatchOnline re-calls it as a no-op.
         WebWorker__entrySettled(vm.global());
 
+        // Terminated during entry evaluation: the rejection IS the
+        // TerminationException, still pending on the VM. uncaught_exception
+        // would re-enter JS with it (process 'uncaughtException' emit) and trip
+        // assertNoException; node does not report a terminate() as uncaught.
+        if self.has_requested_terminate() {
+            self.flush_logs(vm);
+            return self.shutdown();
+        }
+
         // SAFETY: `promise` is a live JSC heap cell.
         unsafe {
             let status = (*promise).status();

@@ -1560,9 +1560,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(value) = self.this_value.get().try_get() {
             return value;
         }
-        if matches!(self.this_value.get(), JsRef::Finalized) {
-            // The JS wrapper was already garbage-collected. Creating a new one
-            // here would result in a second `finalize` (and double-deref) later.
+        if self.this_value.get().is_dead() {
+            // The JS wrapper was garbage-collected (possibly reaped but not
+            // yet swept). Creating a new one here would result in a second
+            // `finalize` (and double-deref) later.
             return JSValue::UNDEFINED;
         }
         let value = self.to_js(global);

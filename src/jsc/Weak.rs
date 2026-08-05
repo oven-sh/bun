@@ -131,6 +131,13 @@ impl<T> Weak<T> {
         Some(result)
     }
 
+    /// True when a handle was registered, whether or not the referent is
+    /// still alive. Distinguishes a reaped handle (`is_registered()` with
+    /// `get() == None`) from a default/empty one.
+    pub fn is_registered(&self) -> bool {
+        self.r#ref.is_some()
+    }
+
     pub fn clear(&mut self) {
         let Some(r#ref) = self.r#ref else {
             return;

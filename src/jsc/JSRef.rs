@@ -112,7 +112,7 @@ const _: PhantomData<*const ()> = PhantomData;
 
 impl JsRef {
     pub fn init_weak(value: JSValue) -> Self {
-        debug_assert!(!value.is_empty_or_undefined_or_null());
+        debug_assert!(value.is_object());
         JsRef::Weak(Weak::create_passive(value))
     }
 
@@ -142,7 +142,7 @@ impl JsRef {
     }
 
     pub fn set_weak(&mut self, value: JSValue) {
-        debug_assert!(!value.is_empty_or_undefined_or_null());
+        debug_assert!(value.is_object());
         if matches!(self, JsRef::Finalized) {
             return;
         }
@@ -212,6 +212,19 @@ impl JsRef {
         matches!(self, JsRef::Strong(_))
     }
 
+    /// True when a wrapper was held here and can no longer be used: either GC
+    /// reaped it (the weak handle is registered but reads dead, before the
+    /// sweep has run `finalize()`) or `finalize()` already ran. Create-if-
+    /// missing callers must check this before minting a fresh wrapper over
+    /// the same native object, which would double-run its finalizer.
+    pub fn is_dead(&self) -> bool {
+        match self {
+            JsRef::Weak(weak) => weak.is_registered() && weak.get().is_none(),
+            JsRef::Strong(_) => false,
+            JsRef::Finalized => true,
+        }
+    }
+
     pub fn finalize(&mut self) {
         // Overwriting `*self` drops the prior variant (releasing the `Strong`
         // block slot via its `Drop`), so no explicit deinit step is needed.
@@ -222,7 +235,7 @@ impl JsRef {
     pub fn update(&mut self, global: &JSGlobalObject, value: JSValue) {
         match self {
             JsRef::Weak(_) => {
-                debug_assert!(!value.is_empty_or_undefined_or_null());
+                debug_assert!(value.is_object());
                 *self = JsRef::Weak(Weak::create_passive(value));
             }
             JsRef::Strong(strong) => {

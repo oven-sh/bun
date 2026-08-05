@@ -690,7 +690,7 @@ test("requests after GC collects the stopped server's wrapper are refused, never
       });
 
       let retained = [];
-      for (let round = 0; round < 150 && !closed; round++) {
+      for (let round = 0; round < 300 && !closed; round++) {
         // Park a request in flight before provoking a collection, so its
         // dispatch races the reap the way a loop-delivered straggler would.
         c.write("GET /r" + round + " HTTP/1.1\r\nHost: x\r\n\r\n");

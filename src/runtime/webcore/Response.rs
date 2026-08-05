@@ -1217,9 +1217,8 @@ impl Response {
         }));
 
         // SAFETY: `response` is freshly boxed and uniquely owned here.
+        // `to_js` seeds `js_ref` itself.
         let js_value = unsafe { (*response).to_js(global_this) };
-        // SAFETY: `to_js` does not free the payload; still uniquely owned.
-        unsafe { (*response).js_ref.set(RawJsRef::init(js_value)) };
         Ok(js_value)
     }
 

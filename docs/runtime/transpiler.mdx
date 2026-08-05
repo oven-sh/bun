@@ -15,7 +15,7 @@ const transpiler = new Bun.Transpiler({
 
 ## `.transformSync()`
 
-Transpile code synchronously with the `.transformSync()` method. Modules are not resolved and the code is not executed. The result is a string of vanilla JavaScript code.
+Transpile code synchronously with the `.transformSync()` method. Modules are not resolved and the code is not executed. The result is a string of vanilla JavaScript code, unless the transpiler was constructed with `sourcemap: "external"` or `"linked"`, in which case it is a `{ code, map }` object — see [Source maps](#source-maps).
 
 <CodeGroup>
 ```ts transpile.ts icon="/icons/typescript.svg" 
@@ -62,7 +62,7 @@ transpiler.transformSync("<div>hi!</div>", "tsx");
 
 ## `.transform()`
 
-The `transform()` method is an async version of `.transformSync()` that returns a `Promise<string>`.
+The `transform()` method is an async version of `.transformSync()` that returns a `Promise<string>` (or a `Promise<{ code, map }>` when `sourcemap` is `"external"` or `"linked"` — see [Source maps](#source-maps)).
 
 ```js
 const transpiler = new Bun.Transpiler({ loader: "jsx" });
@@ -83,6 +83,28 @@ The `.transform()` method runs the transpiler in Bun's worker threadpool, so run
 If your code uses a macro, it may spawn a new copy of Bun's JavaScript runtime environment in that new thread.
 
 </Accordion>
+
+---
+
+## Source maps
+
+Pass the `sourcemap` option to emit a v3 source map alongside the transpiled code. The modes mirror [`Bun.build`](/bundler#sourcemap):
+
+- `"none"` / `false` (default) — no source map; `transformSync` / `transform` return a plain `string`.
+- `"inline"` / `true` — a base64-encoded map is appended to the returned code as a `//# sourceMappingURL=data:application/json;base64,…` footer. Still returns a `string`.
+- `"external"` — returns `{ code, map }`. `map` is the v3 source map as JSON text; the code has no `sourceMappingURL` footer.
+- `"linked"` — returns `{ code, map }`. The code also carries a `//# sourceMappingURL=<name>.map` comment so you can write a sibling `.map` file.
+
+```ts
+const transpiler = new Bun.Transpiler({ loader: "ts", sourcemap: "external" });
+
+const { code, map } = transpiler.transformSync(`
+interface Props { title: string }
+const x: number = 1;
+`);
+
+const parsed = JSON.parse(map); // { version: 3, sources: [...], mappings: "..." }
+```
 
 ## `.scan()`
 
@@ -226,6 +248,12 @@ interface TranspilerOptions {
   // Typically improves performance and decreases bundle size
   // Default: false
   inline?: boolean,
+
+  // Emit a v3 source map alongside the transpiled code
+  // "external" and "linked" change the return type of
+  // transform/transformSync to { code, map }
+  // Default: "none"
+  sourcemap?: "none" | "inline" | "external" | "linked" | boolean,
 }
 
 // Map import paths to macros
@@ -243,8 +271,10 @@ interface MacroMap {
 class Bun.Transpiler {
   constructor(options: TranspilerOptions)
 
-  transform(code: string, loader?: Loader): Promise<string>
-  transformSync(code: string, loader?: Loader): string
+  // Returns { code: string, map: string } instead of a string when the
+  // transpiler was constructed with sourcemap: "external" or "linked"
+  transform(code: string, loader?: Loader): Promise<string | { code: string, map: string }>
+  transformSync(code: string, loader?: Loader): string | { code: string, map: string }
 
   scan(code: string): {exports: string[], imports: Import}
   scanImports(code: string): Import[]

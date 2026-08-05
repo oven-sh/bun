@@ -37,6 +37,16 @@ describeWithContainer(
         varbin: Buffer.from([0, 255]),
         blob_col: Buffer.from("blob"),
       },
+      // Empty/NULL edges: an empty string must stay a string, a zero-length
+      // buffer must stay a Buffer, and NULL must decode as null.
+      {
+        id: "3",
+        code: "",
+        content: null,
+        bin: null,
+        varbin: Buffer.alloc(0),
+        blob_col: null,
+      },
     ];
 
     beforeAll(async () => {
@@ -69,24 +79,18 @@ describeWithContainer(
       await sql.close();
     });
 
+    function decodedType(value: unknown): string {
+      return value === null ? "null" : Buffer.isBuffer(value) ? "Buffer" : typeof value;
+    }
+
+    function typeMap(row: Record<string, unknown>) {
+      return Object.fromEntries(Object.entries(row).map(([key, value]) => [key, decodedType(value)]));
+    }
+
     function expectDecodedRows(result: Record<string, unknown>[]) {
       // The _bin collation columns must decode as strings; only the
       // binary-pseudo-charset columns may come back as Buffer.
-      const shape = {
-        id: "string",
-        code: "string",
-        content: "string",
-        bin: "Buffer",
-        varbin: "Buffer",
-        blob_col: "Buffer",
-      };
-      expect(
-        result.map(row =>
-          Object.fromEntries(
-            Object.entries(row).map(([key, value]) => [key, Buffer.isBuffer(value) ? "Buffer" : typeof value]),
-          ),
-        ),
-      ).toEqual([shape, shape]);
+      expect(result.map(typeMap)).toEqual(rows.map(typeMap));
       expect(result).toEqual(rows);
     }
 

@@ -265,6 +265,10 @@ mod identifiers {
     }
 }
 
+pub fn is_pure_global_identifier(name: &[u8]) -> bool {
+    lookup_pure_global_identifier(name).is_some()
+}
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum PureGlobalIdentifierValue {
     NaN,

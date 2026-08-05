@@ -585,12 +585,10 @@ impl ExtractTarball {
                                 let _ = sys::close(dir_to_move);
 
                                 // An existing destination is a complete entry
-                                // from a concurrent `bun install` (entries only
-                                // appear via atomic rename): keep it, since
-                                // replacing it deletes files another process
-                                // may be copying out of the cache. Only an
-                                // incomplete entry (no package.json, e.g. a
-                                // crashed copy) is replaced.
+                                // from a concurrent install (entries only
+                                // appear via atomic rename): keep it rather
+                                // than deleting files a peer is copying out of
+                                // the cache. Incomplete leftovers are replaced.
                                 let mut folder_name_z_buf = PathBuffer::uninit();
                                 folder_name_z_buf[0..folder_name.len()]
                                     .copy_from_slice(folder_name);
@@ -620,12 +618,9 @@ impl ExtractTarball {
                                 }
 
                                 if retries < MAX_RETRIES {
-                                    // We tried to move the folder over
-                                    // but it didn't work!
-                                    // so instead of just simply deleting the folder
-                                    // we rename it back into the temp dir
-                                    // and then delete that temp dir
-                                    // The goal is to make it more difficult for an application to reach this folder
+                                    // Replace it: rename it into the temp dir
+                                    // first (harder for an application to
+                                    // reach mid-delete), then delete it there.
                                     let mut tempdest_buf = PathBuffer::uninit();
                                     tempdest_buf[0..tmpname.len()]
                                         .copy_from_slice(tmpname.as_bytes());

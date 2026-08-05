@@ -625,16 +625,10 @@ impl HardLinkWindowsInstallTask {
         let dest_len = dest.len() - 1;
         debug_assert_eq!(dest[dest_len], 0);
 
-        // Concurrent bun processes installing the same package from a shared
-        // cache (e.g. parallel `bun x <tool>` runs share one bunx install dir)
-        // race on every file here: a peer briefly holding the file open
-        // surfaces as an EBUSY-class sharing violation, and a peer starting
-        // its own install of the package renames the destination dir away
-        // (uninstall-before-install), which surfaces as ENOENT between our
-        // mkdir and link. Both are transient, so retry with backoff,
-        // mirroring the cache-move retries in extract_tarball. Each process
-        // renames the destination at most once per package, so the storm is
-        // bounded and the last installer's links land in the final dir.
+        // Peers installing the same package cause transient EBUSY (file
+        // briefly held open) and ENOENT (destination dir renamed aside by
+        // uninstall-before-install); retry with the same backoff
+        // extract_tarball uses for cache moves.
         const MAX_RETRIES: u32 = 4;
         let mut retries: u32 = 0;
         loop {
@@ -655,11 +649,9 @@ impl HardLinkWindowsInstallTask {
         }
     }
 
-    /// One attempt at materializing `dest` as a hard link of `src` (falling
-    /// back to a copy). `None` on success, including when `dest` already is
-    /// the same file object as `src` — a concurrent install of the same
-    /// package landed the identical link first, which must not be treated as
-    /// a conflict to delete and recreate.
+    /// One attempt at materializing `dest` as a hard link of `src`, falling
+    /// back to a copy. A `dest` that already is the same file object as `src`
+    /// (a peer linked it first) is success, not a conflict.
     fn link_or_copy(
         src: &[u16],
         dest: &mut [u16],
@@ -699,9 +691,8 @@ impl HardLinkWindowsInstallTask {
             return None;
         }
 
-        // The DeleteFileW above can fail while a peer holds the file open, in
-        // which case `dest` may still be the link we want; CopyFileW onto it
-        // would copy the file over itself and fail with a sharing violation.
+        // If the DeleteFileW above failed, dest may still be the link we
+        // want; CopyFileW onto it would copy the file over itself and fail.
         if windows::same_file_w(dest.as_ptr(), src.as_ptr()) {
             return None;
         }
@@ -1638,8 +1629,8 @@ impl<'a> PackageInstall<'a> {
         // Two overlapping slices into the same buffer (`head` is the whole
         // buffer, `to_copy_into` is its tail) would be two live aliasing
         // `&mut [u16]`, which is UB — pass head buffer + tail offset and
-        // reslice inside. `destbase`/`destpath` (posix) let the loop re-open
-        // `destination_dir` after a concurrent install renames it away.
+        // reslice inside. `destbase`/`destpath` (posix) re-open
+        // `destination_dir` if a peer renames it away.
         fn copy(
             destbase: PosixDirRef<'_>,
             destpath: PosixZStrRef<'_>,
@@ -1700,23 +1691,12 @@ impl<'a> PackageInstall<'a> {
                                 }
                             }
 
-                            // Concurrent bun processes installing the same
-                            // package from a shared cache (e.g. parallel
-                            // `bun x <tool>` runs share one bunx install dir)
-                            // race on every file here: a peer that already
-                            // linked this file surfaces as EEXIST, and a peer
-                            // starting its own install of the package renames
-                            // the destination dir away
-                            // (uninstall-before-install), which surfaces as
-                            // ENOENT. A dest that already is the same inode
-                            // counts as success; the rest retries right after
-                            // the fix-up (unlink the stale file, recreate the
-                            // dir). No sleeps: this loop runs on the install
-                            // thread, and the fix-up needs no waiting — each
-                            // peer renames the destination at most once per
-                            // package, so the retries are bounded in practice
-                            // too. The Windows hardlink task does the same
-                            // dance on the worker pool.
+                            // Peers installing the same package cause
+                            // EEXIST (one already linked this file; same
+                            // inode is success) and ENOENT (destination dir
+                            // renamed aside by uninstall-before-install).
+                            // Fix up and retry immediately; no sleeps on the
+                            // install thread.
                             const MAX_RETRIES: u32 = 8;
                             let mut retries: u32 = 0;
                             loop {
@@ -1744,12 +1724,9 @@ impl<'a> PackageInstall<'a> {
                                         let _ = sys::unlinkat(&*destination_dir, entry.path);
                                     }
                                     sys::E::ENOENT => {
-                                        // `destination_dir` may point at a
-                                        // directory a peer renamed away and
-                                        // deleted; nothing can be created
-                                        // inside an unlinked directory, so
-                                        // re-open the destination path fresh
-                                        // before retrying.
+                                        // The held fd may be an unlinked dir
+                                        // (peer renamed it aside and deleted
+                                        // it); re-open by path.
                                         if let Ok(reopened) = destbase.make_open_path(
                                             destpath.as_bytes(),
                                             OpenDirOptions {

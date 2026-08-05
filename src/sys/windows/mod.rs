@@ -552,10 +552,9 @@ pub fn CreateHardLinkW(
 
 pub use bun_windows_sys::externs::CopyFileW;
 
-/// `(volume serial, file index)` identifying the file object behind `path`,
-/// or `None` if it can't be opened or queried. The open requests no access
-/// bits, so it is exempt from share-mode arbitration and succeeds even while
-/// another process holds the file open exclusively.
+/// `(volume serial, file index)` of the file object behind `path`, or `None`
+/// if it can't be opened or queried. Attribute-only open (0 access bits):
+/// exempt from share-mode arbitration, works on exclusively-held files.
 fn file_object_id_w(path: LPCWSTR) -> Option<(DWORD, DWORD, DWORD)> {
     // SAFETY: FFI — `path` is a NUL-terminated wide string (caller contract);
     // `FILE_FLAG_BACKUP_SEMANTICS` permits directories, harmless on files.
@@ -588,8 +587,7 @@ fn file_object_id_w(path: LPCWSTR) -> Option<(DWORD, DWORD, DWORD)> {
 }
 
 /// Whether `a` and `b` name the same file object (e.g. hard links to one
-/// file): same volume serial number and file index. `false` when either path
-/// can't be opened or queried.
+/// file). `false` when either path can't be opened or queried.
 pub fn same_file_w(a: LPCWSTR, b: LPCWSTR) -> bool {
     match (file_object_id_w(a), file_object_id_w(b)) {
         (Some(id_a), Some(id_b)) => id_a == id_b,

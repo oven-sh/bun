@@ -147,10 +147,18 @@ pub trait AnyRefCounted: Sized {
     /// `this` must point to a live `Self`.
     unsafe fn rc_assert_no_refs(this: *const Self);
 
-    #[cfg(debug_assertions)]
+    /// Debug-build ref-tracking hook for [`RefPtr`]; no-op by default. Declared
+    /// unconditionally (with [`DebugDataOps`]) so derive-macro output type-checks
+    /// when a deriving crate and `bun_ptr` disagree on `cfg(debug_assertions)`,
+    /// as under `cargo test --release --doc`.
+    ///
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn rc_debug_data(this: *mut Self) -> *mut dyn DebugDataOps;
+    #[inline]
+    unsafe fn rc_debug_data(this: *mut Self) -> *mut dyn DebugDataOps {
+        let _ = this;
+        noop_debug_data()
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -370,10 +378,18 @@ impl<T: RefCounted> AnyRefCounted for T {
         // SAFETY: caller contract — `this` points to a live T
         unsafe { (*T::get_ref_count(this.cast_mut())).assert_no_refs() }
     }
-    #[cfg(debug_assertions)]
+    #[inline]
     unsafe fn rc_debug_data(this: *mut Self) -> *mut dyn DebugDataOps {
-        // SAFETY: caller contract — `this` points to a live T
-        unsafe { &raw mut (*T::get_ref_count(this)).debug }
+        let _ = this;
+        #[cfg(debug_assertions)]
+        {
+            // SAFETY: caller contract — `this` points to a live T
+            unsafe { &raw mut (*T::get_ref_count(this)).debug }
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            noop_debug_data()
+        }
     }
 }
 
@@ -516,11 +532,17 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
     /// Type-erased accessor for the embedded debug tracker. Exposed (rather
     /// than the private `debug` field) so `#[derive(ThreadSafeRefCounted)]`
     /// can emit [`AnyRefCounted::rc_debug_data`] from outside this crate.
-    #[cfg(debug_assertions)]
     #[doc(hidden)]
     #[inline]
     pub fn debug_data_ptr(&mut self) -> *mut dyn DebugDataOps {
-        &raw mut self.debug
+        #[cfg(debug_assertions)]
+        {
+            &raw mut self.debug
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            noop_debug_data()
+        }
     }
 
     // `getRefCount` / `is_ref_count` / `ref_count_options` — see
@@ -667,11 +689,9 @@ pub fn destroy_box_with<T>(this: *mut T, before: impl FnOnce(&T)) {
 /// No-op [`DebugDataOps`] for [`CellRefCounted`] types — they carry no
 /// `DebugData` field, so [`RefPtr`]'s acquire/release tracking degrades to
 /// a stub.
-#[cfg(debug_assertions)]
 #[doc(hidden)]
 struct NoopDebugData;
 
-#[cfg(debug_assertions)]
 impl DebugDataOps for NoopDebugData {
     fn assert_valid_dyn(&self) {}
     fn acquire(&mut self, _return_address: usize) -> TrackedRefId {
@@ -680,14 +700,8 @@ impl DebugDataOps for NoopDebugData {
     fn release(&mut self, _id: TrackedRefId, _return_address: usize) {}
 }
 
-#[cfg(debug_assertions)]
 #[doc(hidden)]
 pub fn noop_debug_data() -> *mut dyn DebugDataOps {
-    // Per-call leaked stub — `RefPtr` only calls `acquire`/`release` on it,
-    // both of which are no-ops, so a shared static would also be sound; but
-    // `*mut dyn` from a `static mut` is unergonomic. Debug-only.
-    // SAFETY: NonNull::dangling is fine here? No — `RefPtr` derefs it.
-    // Use a thread-local static to avoid per-ref allocation.
     thread_local! {
         static NOOP: core::cell::UnsafeCell<NoopDebugData> =
             const { core::cell::UnsafeCell::new(NoopDebugData) };
@@ -1023,7 +1037,6 @@ struct TrackedRef;
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct TrackedRefId(u32);
 
-#[cfg(debug_assertions)]
 impl TrackedRefId {
     #[inline]
     const fn new(n: u32) -> Self {
@@ -1040,7 +1053,6 @@ struct TrackedDeref;
 
 /// Dyn-safe surface of `DebugData<Count>` so `RefPtr<T>` can interact with it
 /// without knowing whether `Count` is `Cell<u32>` or `AtomicU32`.
-#[cfg(debug_assertions)]
 pub trait DebugDataOps {
     fn assert_valid_dyn(&self);
     fn acquire(&mut self, return_address: usize) -> TrackedRefId;

@@ -368,11 +368,6 @@ pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
                     0,
                 );
             }
-            #[cfg(debug_assertions)]
-            #[inline]
-            unsafe fn rc_debug_data(_this: *mut Self) -> *mut dyn ::bun_ptr::ref_count::DebugDataOps {
-                ::bun_ptr::ref_count::noop_debug_data()
-            }
         }
         // Inherent forwarders so callers don't need the trait in scope.
         impl #impl_g #name #ty_g #where_g {
@@ -471,7 +466,6 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
                         .assert_no_refs()
                 }
             }
-            #[cfg(debug_assertions)]
             #[inline]
             unsafe fn rc_debug_data(this: *mut Self) -> *mut dyn ::bun_ptr::ref_count::DebugDataOps {
                 // SAFETY: caller contract — `this` points to a live Self.

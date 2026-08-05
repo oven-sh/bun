@@ -78,3 +78,14 @@ jobs:
         env:
           BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
         run: bun run rust:clippy
+
+      - name: cargo test --release --doc
+        # Guards against cfg(debug_assertions) skew between the ref-count
+        # derive macros and bun_ptr: rustdoc compiles the crate-under-test
+        # with debug_assertions on even under --release, while deps are built
+        # release. bun_ptr's doctest on the derive re-exports is the minimal
+        # reproducer (fails with E0407/E0405 if the derive emits cfg-gated
+        # items).
+        env:
+          BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
+        run: bun run rust:doctest-release

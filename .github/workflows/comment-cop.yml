@@ -25,6 +25,7 @@ jobs:
       cancel-in-progress: true
     steps:
       - name: Scan diff for added multi-line comments
+        id: scan
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
@@ -140,21 +141,12 @@ jobs:
               if (!t.isResolved && !presentKeys.has(key)) toResolve.push(t.id);
             }
 
-            // Auto-resolve threads whose flagged block is gone from the current diff.
-            if (toResolve.length > 0) {
-              const mut = `
-                mutation($id: ID!) {
-                  resolveReviewThread(input: { threadId: $id }) { thread { id } }
-                }`;
-              for (const id of toResolve) {
-                try {
-                  await github.graphql(mut, { id });
-                } catch (e) {
-                  core.warning(`resolveReviewThread failed for ${id}: ${e.message}`);
-                }
-              }
-              core.info(`Resolved ${toResolve.length} stale comment-cop thread(s).`);
-            }
+            // Threads whose flagged block is gone from the current diff are
+            // resolved by the next step, which authenticates with a PAT: the
+            // Actions GITHUB_TOKEN cannot call the resolveReviewThread mutation
+            // ("Resource not accessible by integration") even with
+            // pull-requests: write.
+            core.setOutput('stale-threads', toResolve.join(' '));
 
             // Post new line comments for groups not already flagged.
             const fresh = groups.filter(g => !seenKeys.has(keyFor(g)));
@@ -189,3 +181,28 @@ jobs:
               }
             }
             core.info(`Posted ${posted} review comment(s).`);
+
+      - name: Resolve stale threads
+        if: steps.scan.outputs.stale-threads
+        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          STALE_THREADS: ${{ steps.scan.outputs.stale-threads }}
+        with:
+          github-token: ${{ secrets.ROBOBUN_TOKEN }}
+          script: |
+            const ids = process.env.STALE_THREADS.split(' ').filter(Boolean);
+            const mut = `
+              mutation($id: ID!) {
+                resolveReviewThread(input: { threadId: $id }) { thread { id } }
+              }`;
+            let resolved = 0;
+            for (const id of ids) {
+              try {
+                await github.graphql(mut, { id });
+                resolved++;
+              } catch (e) {
+                core.warning(`resolveReviewThread failed for ${id}: ${e.message}`);
+              }
+            }
+            core.info(`Resolved ${resolved} of ${ids.length} stale comment-cop thread(s).`);

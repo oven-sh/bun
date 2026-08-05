@@ -13,6 +13,7 @@ use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
+use std::borrow::Cow;
 
 use crate::api::socket::{TCPSocket, TLSSocket};
 use crate::node::{Encoding, StringOrBuffer};
@@ -3135,6 +3136,43 @@ impl H2FrameParser {
 
     fn has_backpressure(&self) -> bool {
         self.write_buffer.get().len_u32() > 0 || self.has_nonnative_backpressure.get()
+    }
+
+    /// Whether a write to this session's transport synchronously runs user JS: a JS-backed
+    /// socket's onWrite is the user's Duplex, and a socket upgraded from a JS Duplex
+    /// (`tls.connect({ socket })`) writes its records through that Duplex.
+    fn transport_write_runs_js(&self) -> bool {
+        match self.native_socket.get() {
+            BunSocket::None => true,
+            BunSocket::Tls(s) | BunSocket::TlsWriteonly(s) => matches!(
+                s.get().socket.get().socket,
+                bun_uws::InternalSocket::UpgradedDuplex(_)
+            ),
+            BunSocket::Tcp(s) | BunSocket::TcpWriteonly(s) => matches!(
+                s.get().socket.get().socket,
+                bun_uws::InternalSocket::UpgradedDuplex(_)
+            ),
+        }
+    }
+
+    /// A payload borrowed from a JS ArrayBuffer has to be copied before a send whenever JS
+    /// can run before the send has consumed it, because that JS can `transfer()` or
+    /// `resize()` the buffer: under this session's own transport writes, or when taking the
+    /// cork slot first flushes another such session's corked bytes through its transport.
+    fn stable_payload<'a>(&self, bytes: &'a [u8]) -> Cow<'a, [u8]> {
+        let foreign_cork_runs_js = || match CORKED_H2.with(|c| c.get()) {
+            Some(other) if !std::ptr::eq(other, self.as_ctx_ptr()) => {
+                CORK_OFFSET.with(|c| c.get()) > 0
+                    // SAFETY: CORKED_H2 holds a ref()'d parser until that parser's uncork().
+                    && unsafe { (*other).transport_write_runs_js() }
+            }
+            _ => false,
+        };
+        if !bytes.is_empty() && (self.transport_write_runs_js() || foreign_cork_runs_js()) {
+            Cow::Owned(bytes.to_vec())
+        } else {
+            Cow::Borrowed(bytes)
+        }
     }
 
     fn uncork(&self) -> usize {
@@ -8077,9 +8115,10 @@ impl H2FrameParser {
             }
         };
 
+        let payload = this.stable_payload(buffer.slice());
         let (settled_state, callback_deferred) = this.send_data(
             &mut stream,
-            buffer.slice(),
+            &payload,
             close,
             callback_arg,
             true,

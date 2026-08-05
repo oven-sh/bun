@@ -267,10 +267,12 @@ describe("Bun.serve websocket options", () => {
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
     ws.onopen = () => ws.send(Buffer.alloc(100, "x").toString());
     ws.onmessage = e => resolve(e.data as string);
+    ws.onerror = () => reject(new Error("websocket errored before echo"));
     ws.onclose = e => reject(new Error(`closed before echo: code ${e.code}`));
     try {
       expect(await promise).toBe("echo:100");
     } finally {
+      ws.onerror = null;
       ws.onclose = null;
       ws.close();
       server.stop(true);
@@ -280,7 +282,7 @@ describe("Bun.serve websocket options", () => {
   test("backpressureLimit above 2^32 clamps instead of wrapping to a tiny limit", async () => {
     // 2^32 + 1 used to truncate to 1 byte, so once a send left anything
     // buffered, the next send was dropped (returned 0).
-    const { promise, resolve } = Promise.withResolvers<number[]>();
+    const { promise, resolve, reject } = Promise.withResolvers<number[]>();
     using server = serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -305,12 +307,16 @@ describe("Bun.serve websocket options", () => {
     });
 
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+    ws.onerror = () => reject(new Error("websocket errored before open"));
+    ws.onclose = e => reject(new Error(`closed before open: code ${e.code}`));
     try {
       const results = await promise;
       // 0 means dropped for exceeding backpressureLimit; a ~4 GiB limit must
       // never drop 24 MB of queued sends (-1 backpressure and >0 sent are fine).
       expect(results.filter(r => r === 0)).toEqual([]);
     } finally {
+      ws.onerror = null;
+      ws.onclose = null;
       ws.close();
       server.stop(true);
     }

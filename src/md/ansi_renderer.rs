@@ -110,7 +110,7 @@ impl RendererImpl for ImageUrlCollector {
 
 // Drop is automatic for `Vec<Box<[u8]>>`.
 
-pub struct AnsiRenderer<'a> {
+struct AnsiRenderer<'a> {
     pub(crate) out: OutputBuffer,
     src_text: &'a [u8],
     theme: Theme<'a>,

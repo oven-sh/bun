@@ -144,16 +144,6 @@ DOMHighResTimeStamp Event::timeStampForBindings(ScriptExecutionContext& context)
 {
     // TODO:
     return 0.0;
-    // Performance* performance = nullptr;
-    // if (is<WorkerGlobalScope>(context))
-    //     performance = &downcast<WorkerGlobalScope>(context).performance();
-    // else if (auto* window = downcast<Document>(context).domWindow())
-    //     performance = &window->performance();
-
-    // if (!performance)
-    //     return 0;
-
-    // return std::max(performance->relativeTimeFromTimeOriginInReducedResolution(m_createTime), 0.);
 }
 
 void Event::resetBeforeDispatch()

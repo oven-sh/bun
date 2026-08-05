@@ -35,7 +35,7 @@ export interface Flag {
   when?: (cfg: Config) => boolean;
   /** Restrict to one language. Omitted = both C and C++. */
   lang?: "c" | "cxx";
-  /** What this flag does. Used by `--explain-flags`. */
+  /** What this flag does. */
   desc: string;
 }
 
@@ -1836,41 +1836,4 @@ export function extraFlagsFor(cfg: Config, srcRelPath: string): string[] {
     return resolveFlagValue(o.extraFlags, cfg);
   }
   return [];
-}
-
-/**
- * Produce a human-readable explanation of all active flags for `--explain-flags`.
- * Grouped by flag type, shows each flag alongside its description.
- */
-export function explainFlags(cfg: Config): string {
-  const lines: string[] = [];
-
-  const explainTable = (title: string, flags: Flag[]) => {
-    const active = flags.filter(f => !f.when || f.when(cfg));
-    if (active.length === 0) return;
-    lines.push(`\n─── ${title} ───`);
-    for (const f of active) {
-      const vals = resolveFlagValue(f.flag, cfg);
-      const langSuffix = f.lang ? ` [${f.lang}]` : "";
-      lines.push(`  ${vals.join(" ")}${langSuffix}`);
-      lines.push(`    ${f.desc}`);
-    }
-  };
-
-  explainTable("Global compiler flags (bun + deps)", globalFlags);
-  explainTable("Bun-only compiler flags", bunOnlyFlags);
-  explainTable("Defines", defines);
-  explainTable("Linker flags", linkerFlags);
-  explainTable("Strip flags", stripFlags);
-
-  const overrides = fileOverrides.filter(o => !o.when || o.when(cfg));
-  if (overrides.length > 0) {
-    lines.push("\n─── Per-file overrides ───");
-    for (const o of overrides) {
-      lines.push(`  ${o.file}: ${resolveFlagValue(o.extraFlags, cfg).join(" ")}`);
-      lines.push(`    ${o.desc}`);
-    }
-  }
-
-  return lines.join("\n");
 }

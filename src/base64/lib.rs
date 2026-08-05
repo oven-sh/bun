@@ -189,7 +189,7 @@ pub const fn url_safe_encode_len(source: &[u8]) -> usize {
 // base64-alphabet bit-packing with zero sourcemap-specific deps; bun_sourcemap
 // re-exports this for its own consumers.
 // ──────────────────────────────────────────────────────────────────────────
-pub use vlq::{VLQ, VLQResult};
+pub use vlq::VLQ;
 
 /// Variable-length quantity encoding, limited to i32 as per source map spec.
 /// https://en.wikipedia.org/wiki/Variable-length_quantity

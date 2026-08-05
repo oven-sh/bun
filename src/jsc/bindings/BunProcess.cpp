@@ -1186,12 +1186,6 @@ static void loadSignalNumberMap()
     });
 }
 
-bool isSignalName(WTF::String input)
-{
-    loadSignalNumberMap();
-    return signalNameToNumberMap->contains(input);
-}
-
 extern "C" void Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalObject)
 {
     Process* process = globalObject->processObject();

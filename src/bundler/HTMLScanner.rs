@@ -165,7 +165,7 @@ impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
 pub(crate) struct HTMLProcessor<T, const VISIT_DOCUMENT_TAGS: bool>(PhantomData<T>);
 
 #[derive(Clone, Copy)]
-pub struct TagHandler {
+struct TagHandler {
     /// CSS selector to match elements
     pub(crate) selector: &'static str,
     /// The attribute to extract the URL from

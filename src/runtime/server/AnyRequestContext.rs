@@ -184,6 +184,10 @@ impl AnyRequestContext {
         dispatch!(self, None, |_T, ctx| ctx.get_remote_socket_info())
     }
 
+    pub(crate) fn write_informational(self, data: &[u8]) -> bool {
+        dispatch!(self, false, |_T, ctx| ctx.write_informational(data))
+    }
+
     pub(crate) fn detach_request(self) {
         dispatch!(self, (), |_T, ctx| {
             ctx.req.set(None);

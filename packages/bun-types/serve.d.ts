@@ -1101,6 +1101,29 @@ declare module "bun" {
     subscriberCount(topic: string): number;
 
     /**
+     * Sends an HTTP 103 Early Hints response before the final response.
+     *
+     * Returns `false` when the request has already completed, the transport
+     * does not support informational responses, or `headers` is empty.
+     *
+     * @example
+     * ```js
+     * Bun.serve({
+     *   fetch(request, server) {
+     *     server.writeEarlyHints(request, {
+     *       Link: "</app.css>; rel=preload; as=style",
+     *     });
+     *
+     *     return new Response("<html>...</html>", {
+     *       headers: { "Content-Type": "text/html" },
+     *     });
+     *   },
+     * });
+     * ```
+     */
+    writeEarlyHints(request: Request, headers: HeadersInit): boolean;
+
+    /**
      * Returns the client IP address and port of the given Request. If the request was closed or is a unix socket, returns null.
      *
      * @example

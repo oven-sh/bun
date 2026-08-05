@@ -4414,6 +4414,25 @@ where
         })
     }
 
+    pub(crate) fn write_informational(&self, data: &[u8]) -> bool {
+        let Some(resp) = self.resp.get() else {
+            return false;
+        };
+
+        if resp.has_responded() {
+            return false;
+        }
+
+        // HTTP/3 has a distinct header-frame implementation. It does not yet
+        // support informational responses, so report that no hints were sent.
+        if matches!(resp, uws::AnyResponse::H3(_)) {
+            return false;
+        }
+
+        resp.write_informational(data);
+        true
+    }
+
     pub(crate) fn set_timeout(&self, seconds: c_uint) -> bool {
         if let Some(resp) = self.resp.get() {
             // SAFETY: FFI handle

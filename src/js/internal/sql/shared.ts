@@ -152,6 +152,23 @@ function normalizeSSLMode(value: string): SSLMode {
   );
 }
 
+// close({ timeout }) takes seconds but arms its deadline timer in
+// milliseconds, and setTimeout clamps delays above 2 ** 31 - 1 ms to 1 ms, so
+// the upper bound must hold for the millisecond product.
+const MAX_CLOSE_TIMEOUT = (2 ** 31 - 1) / 1000;
+
+function validateCloseTimeout(timeout: number): number {
+  timeout = Number(timeout);
+  if (timeout > MAX_CLOSE_TIMEOUT || timeout < 0 || timeout !== timeout) {
+    throw $ERR_INVALID_ARG_VALUE(
+      "options.timeout",
+      timeout,
+      `must be a non-negative number no greater than ${MAX_CLOSE_TIMEOUT} seconds`,
+    );
+  }
+  return timeout;
+}
+
 export type { SQLHelper };
 class SQLHelper<T> {
   public readonly value: T;
@@ -1237,10 +1254,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
     let timeout = options?.timeout;
     if (timeout) {
-      timeout = Number(timeout);
-      if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
-        throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
-      }
+      timeout = validateCloseTimeout(timeout);
 
       this.closed = true;
       if (timeout === 0 || !this.hasPendingQueries()) {
@@ -2146,6 +2160,7 @@ export default {
   SQLHelper,
   buildDefinedColumnsAndQuery,
   normalizeSSLMode,
+  validateCloseTimeout,
   SQLResultArray,
   SQLArrayParameter,
   getHelperCommandFromDetect,

@@ -162,6 +162,7 @@ impl HttpThread {
                 secure: None,
                 active_h2_sessions: Vec::new(),
                 pending_h2_connects: Vec::new(),
+                session_cache: crate::session_cache::SessionCache::new(),
             },
             https_context: NewHttpContext::<true> {
                 ref_count: Cell::new(1),
@@ -170,6 +171,7 @@ impl HttpThread {
                 secure: None,
                 active_h2_sessions: Vec::new(),
                 pending_h2_connects: Vec::new(),
+                session_cache: crate::session_cache::SessionCache::new(),
             },
             lazy_https_init: None,
             queued_tasks: Queue::new(),
@@ -530,6 +532,7 @@ impl HttpThread {
                     secure: None,
                     active_h2_sessions: Vec::new(),
                     pending_h2_connects: Vec::new(),
+                    session_cache: crate::session_cache::SessionCache::new(),
                 }));
                 if let Err(err) = custom_context.init_with_client_config(client) {
                     // `init_with_client_config` fails before `group.init()` runs.

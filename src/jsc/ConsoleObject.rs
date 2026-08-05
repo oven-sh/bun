@@ -5707,10 +5707,31 @@ pub mod formatter {
             }
             self.print_as::<ENABLE_ANSI_COLORS>(result.tag.tag(), writer, value, result.cell)
         }
+
+        /// Format a single value into `writer`, propagating a JS exception
+        /// thrown while inspecting it (e.g. a throwing `[inspect.custom]`).
+        /// Use this instead of the `Display` adapter ([`ZigFormatter`]) when a
+        /// `JsResult` caller needs the error: `Display` can only report
+        /// `fmt::Error`, which panics inside `io::Write::write_fmt` when the
+        /// sink itself did not fail.
+        pub fn format_value<const ENABLE_ANSI_COLORS: bool>(
+            &mut self,
+            value: JSValue,
+            writer: &mut dyn bun_io::Write,
+        ) -> JsResult<()> {
+            self.stack_check.update();
+            let one = [value];
+            self.remaining_values = bun_ptr::RawSlice::new(&one);
+            let global = self.global_this;
+            let result = Tag::get(value, global)
+                .and_then(|tag| self.format::<ENABLE_ANSI_COLORS>(tag, writer, value, global));
+            self.remaining_values = bun_ptr::RawSlice::EMPTY;
+            result
+        }
     }
 
     /// Abstracts over `{d}` vs `{f}` and `n`-suffix for `write_typed_array`.
-    pub trait TypedArrayElement: Copy {
+    trait TypedArrayElement: Copy {
         const IS_BIGINT: bool;
         type Display: core::fmt::Display;
         fn display(self) -> Self::Display;

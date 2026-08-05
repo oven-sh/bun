@@ -322,20 +322,31 @@ describe("Channel", () => {
   });
 
   // test-diagnostics-channel-memory-leak.js
-  test("references are not leaked", () => {
+  test("references are not leaked", async () => {
     function noop() {}
 
-    const heapUsedBefore = process.memoryUsage().heapUsed;
-    for (let i = 0; i < 1000; i++) {
+    const total = 1000;
+    const refs: WeakRef<Channel>[] = [];
+    for (let i = 0; i < total; i++) {
       const name = `channel7-${i}`;
       subscribe(name, noop);
       unsubscribe(name, noop);
+      refs.push(new WeakRef(channel(name)));
     }
 
-    gc(true);
-    const heapUsedAfter = process.memoryUsage().heapUsed;
+    // Once its last subscriber is gone, the registry holds a channel weakly. Constructing a
+    // WeakRef keeps its target alive for the rest of the job, so yield before each collection.
+    let alive = refs.length;
+    for (let i = 0; i < 20 && alive > 0; i++) {
+      await new Promise(resolve => setImmediate(resolve));
+      gc(true);
+      alive = refs.filter(ref => ref.deref() !== undefined).length;
+    }
 
-    expect(heapUsedBefore).toBeGreaterThanOrEqual(heapUsedAfter);
+    // Conservative stack scanning pins whichever channels still have a pointer in a live
+    // stack slot or register, so this asserts they are collectable, not collected. Retaining
+    // a reference the way this test guards against would leave every one of them alive.
+    expect(alive).toBeLessThan(total / 10);
   });
 });
 

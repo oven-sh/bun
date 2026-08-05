@@ -772,6 +772,118 @@ describe.concurrent(() => {
     expect(process.memoryUsage.rss()).toEqual(expect.any(Number));
   });
 
+  it("process.memoryUsage() keeps heapUsed <= heapTotal while off-heap memory grows", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const CHUNK = 4 << 20;
+        const COUNT = 40;
+        const buffers = [];
+        let violations = 0;
+        let worstRatio = 0;
+        let minHeapUsed = Infinity;
+        for (let i = 0; i < COUNT; i++) {
+          buffers.push(new ArrayBuffer(CHUNK));
+          const sample = process.memoryUsage();
+          if (sample.heapUsed > sample.heapTotal) violations++;
+          worstRatio = Math.max(worstRatio, sample.heapUsed / sample.heapTotal);
+          minHeapUsed = Math.min(minHeapUsed, sample.heapUsed);
+        }
+        const withBuffers = process.memoryUsage();
+
+        Bun.gc(true);
+        const heapUsedBefore = process.memoryUsage().heapUsed;
+        const objects = [];
+        for (let i = 0; i < 200_000; i++) objects.push({ i, next: null });
+        Bun.gc(true);
+        const withObjects = process.memoryUsage();
+
+        console.log(JSON.stringify({
+          violations,
+          worstRatio,
+          minHeapUsed,
+          allocated: CHUNK * COUNT,
+          withBuffers,
+          heapGrowth: withObjects.heapUsed - heapUsedBefore,
+          withObjectsHeapUsed: withObjects.heapUsed,
+          withObjectsHeapTotal: withObjects.heapTotal,
+          alive: buffers.length + objects.length,
+        }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(`exited with ${exitCode}\n${stderr}`);
+    const result = JSON.parse(stdout);
+
+    // heapUsed is a subset of heapTotal, at every sample. ArrayBuffer backing stores
+    // are off-heap, so they must not land in heapUsed.
+    expect(result.violations).toBe(0);
+    expect(result.worstRatio).toBeLessThanOrEqual(1);
+    expect(result.withBuffers.heapUsed).toBeLessThanOrEqual(result.withBuffers.heapTotal);
+    expect(result.withObjectsHeapUsed).toBeLessThanOrEqual(result.withObjectsHeapTotal);
+
+    // ...they are reported in arrayBuffers, which node documents as part of external.
+    expect(result.withBuffers.arrayBuffers).toBeGreaterThanOrEqual(result.allocated);
+    expect(result.withBuffers.external).toBeGreaterThanOrEqual(result.withBuffers.arrayBuffers);
+
+    // ...but heapUsed still tracks JS object allocation, and never reads as an empty heap.
+    // A collection is typically already marking by the first sample, which is exactly where
+    // a too-eager "skip the walk while marking" guard reports zero.
+    expect(result.minHeapUsed).toBeGreaterThan(0);
+    expect(result.heapGrowth).toBeGreaterThan(2 * 1024 * 1024);
+    expect(exitCode).toBe(0);
+  });
+
+  it("process.memoryUsage() keeps heapUsed <= heapTotal after the heap shrinks", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        // Big backing stores: freeing these shrinks capacity through sweepPreciseAllocations().
+        let live = [];
+        for (let i = 0; i < 60; i++) live.push(new Array(60_000).fill(i));
+        Bun.gc(true);
+        const grown = process.memoryUsage();
+
+        // Read it here, not before: an array only written to is dead by the measurement above.
+        const liveCount = live.length;
+        live = null;
+        Bun.gc(true);
+        const shrunk = process.memoryUsage();
+
+        console.log(JSON.stringify({ liveCount, grown, shrunk }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(`exited with ${exitCode}\n${stderr}`);
+    const result = JSON.parse(stdout);
+
+    // Dropping the live set hands blocks back, so capacity falls. heapUsed is a snapshot of
+    // the live set, so it has to fall with it rather than outlive the capacity it is paired
+    // with: a stale snapshot reported against a shrunk capacity is how heapUsed > heapTotal.
+    expect(result.liveCount).toBe(60);
+    expect(result.grown.heapTotal).toBeGreaterThan(8 * 1024 * 1024);
+    expect(result.shrunk.heapTotal).toBeLessThan(result.grown.heapTotal);
+    expect(result.shrunk.heapUsed).toBeLessThan(result.grown.heapUsed);
+
+    expect(result.grown.heapUsed).toBeLessThanOrEqual(result.grown.heapTotal);
+    expect(result.shrunk.heapUsed).toBeLessThanOrEqual(result.shrunk.heapTotal);
+    expect(exitCode).toBe(0);
+  });
+
   describe("process.cpuUsage", () => {
     it("works", () => {
       expect(process.cpuUsage()).toEqual({

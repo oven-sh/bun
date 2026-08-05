@@ -248,6 +248,81 @@ it.each(["hot-file-loader.file", "hot-file-loader.css"])(
   timeout,
 );
 
+// https://github.com/oven-sh/bun/issues/4790
+// https://github.com/oven-sh/bun/issues/5844 ("object" is a separate code path)
+it.each(["code", "object"])(
+  "should hot reload when a file loaded through a Bun.plugin onLoad callback (loader: %s) is overwritten",
+  async (kind: string) => {
+    const root = join(cwd, `hot-plugin-${kind}-root.js`);
+    const target = join(cwd, `hot-plugin-loader.${kind}.graphql`);
+    try {
+      var runner = spawn({
+        cmd: [bunExe(), "--hot", `--preload=${join(cwd, "hot-plugin-preload.js")}`, "run", root],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+
+      var reloadCounter = 0;
+      var sawNewContents = false;
+
+      async function onReload() {
+        writeFileSync(target, "v1");
+      }
+
+      var str = "";
+      for await (const chunk of runner.stdout) {
+        str += new TextDecoder().decode(chunk);
+        var any = false;
+        if (!/\[#!plugin\].*[0-9]\n/g.test(str)) continue;
+
+        // Keep the trailing partial line buffered for the next chunk.
+        const lines = str.split("\n");
+        str = lines.pop() ?? "";
+
+        for (let line of lines) {
+          if (!line.includes("[#!plugin]")) continue;
+          reloadCounter++;
+
+          expect(line).toContain(`[#!plugin] Reloaded: ${reloadCounter} `);
+          if (reloadCounter === 1) {
+            // The first evaluation must observe the plugin's output for the
+            // original contents (a native loader would export something else).
+            expect(line).toEndWith("value=v0");
+          } else if (line.endsWith("value=v1")) {
+            // `writeFileSync` truncates before it writes, so a reload can race
+            // with it and observe an empty file. Only require that some reload
+            // after the overwrite re-ran the plugin and saw the new contents.
+            sawNewContents = true;
+          }
+
+          if (reloadCounter >= 4 && sawNewContents) {
+            runner.unref();
+            runner.kill();
+            break;
+          }
+          any = true;
+        }
+
+        if (any) await onReload();
+      }
+
+      expect(reloadCounter).toBeGreaterThanOrEqual(4);
+      expect(sawNewContents).toBe(true);
+    } finally {
+      // @ts-ignore
+      runner?.unref?.();
+      // @ts-ignore
+      runner?.kill?.(9);
+    }
+  },
+  // Bounded (not Infinity) in debug so a watch-registration regression fails
+  // instead of hanging: the reload this test waits for simply never arrives.
+  isDebug ? 60_000 : 10_000,
+);
+
 it(
   "should recover from errors",
   async () => {

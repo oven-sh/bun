@@ -19,8 +19,8 @@ const inputs = [
   ["a", 1, "b", 2, "c", 3],
   [/a/, 1, /b/, 2, /c/, 3],
   // columns discovered across rows: later rows re-find earlier columns and
-  // append new ones, in first-seen order
-  [{ a: 1 }, { b: 2 }, { a: 3, c: 4 }, { c: 5, a: 6, d: 7 }],
+  // append new ones
+  [{ d: 1 }, { b: 2 }, { d: 3, a: 4 }, { a: 5, c: 6, e: 7 }],
 ];
 
 describe("inspect.table", () => {
@@ -28,6 +28,13 @@ describe("inspect.table", () => {
     test(Bun.inspect(input, { colors: false, sorted: true, compact: true }), () => {
       expect(inspect.table(input, { colors: false, sorted: true })).toMatchSnapshot();
     });
+  });
+
+  test("columns keep first-seen order across rows when not sorted", () => {
+    // d, b, a, c, e: discovery order is deliberately non-alphabetical so this
+    // fails if discovered columns were ever sorted instead of appended
+    expect(inspect.table([{ d: 1 }, { b: 2 }, { d: 3, a: 4 }, { a: 5, c: 6, e: 7 }], { colors: false }))
+      .toMatchSnapshot();
   });
 
   it.each([

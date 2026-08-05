@@ -279,7 +279,7 @@ test("Bun.which finds a bin in a later PATH segment after earlier misses", async
   });
   const d = String(dir);
   if (!isWindows) {
-    await $`chmod +x ${join(d, "third/prog_in_third")}`;
+    chmodSync(join(d, "third/prog_in_third"), 0o755);
   }
 
   const delim = isWindows ? ";" : ":";

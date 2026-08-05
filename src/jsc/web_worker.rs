@@ -1202,8 +1202,9 @@ impl WebWorker {
         // TerminationException, still pending on the VM. uncaught_exception
         // would re-enter JS with it (process 'uncaughtException' emit) and trip
         // assertNoException; node does not report a terminate() as uncaught.
+        // No flush_logs here: Log::to_js enters JS and would see the pending
+        // exception, and there is nothing user-facing to report on terminate.
         if self.has_requested_terminate() {
-            self.flush_logs(vm);
             return self.shutdown();
         }
 
@@ -1340,9 +1341,10 @@ impl WebWorker {
             // other thread can dereference it now — `&mut` is exclusive.
             let vm = unsafe { &mut *vm_ptr };
             // terminate() set the JSC termination flag to interrupt running JS;
-            // clear it so process.on('exit') handlers can run. teardownJSCVM
-            // re-sets it for the JSC VM teardown.
-            vm.jsc_vm().clear_has_termination_request();
+            // clear it AND the materialized exception (tryClearException refuses
+            // TerminationExceptions) so on_exit() / socket on_close JS below run
+            // with a clean scope. teardownJSCVM re-arms it for JSC VM teardown.
+            vm.global().clear_termination_exception();
             vm.is_shutting_down = true;
             vm.on_exit();
             if let Some(hooks) = runtime_hooks() {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import fs from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -12,11 +12,12 @@ import { dirname, join } from "node:path";
 // stamp that the loader checks; a mismatch must fail with an actionable error
 // instead of loading misnumbered code.
 //
-// Only dev debug builds have the hot-reload dir, so these tests skip elsewhere
-// (release, CI debug builds, USE_SYSTEM_BUN).
+// Only dev debug builds read the hot-reload dir. Codegen writes `<buildDir>/js`
+// for release builds too, so gate on the build flavor as well as the dir; CI
+// debug builds and USE_SYSTEM_BUN have no dir next to the binary and skip.
 const jsDir = join(dirname(bunExe()), "js");
 const osJsPath = join(jsDir, "node", "os.js");
-const hasDynamicJS = fs.existsSync(osJsPath);
+const hasDynamicJS = isDebug && fs.existsSync(osJsPath);
 
 const SKEW_MESSAGE = "different codegen generation";
 
@@ -103,7 +104,7 @@ describe.skipIf(!hasDynamicJS)("builtin JS hot-reload generation guard", () => {
   });
 });
 
-// Keep the file non-empty for runners without the hot-reload dir.
-test.skipIf(hasDynamicJS)("builtin JS hot-reload dir not present (release or CI build)", () => {
+// Keep the file non-empty for runners without hot-reload support.
+test.skipIf(hasDynamicJS)("builtin JS hot-reload not supported by this build", () => {
   expect(hasDynamicJS).toBe(false);
 });

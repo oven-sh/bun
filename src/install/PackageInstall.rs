@@ -627,9 +627,14 @@ impl HardLinkWindowsInstallTask {
 
         // Concurrent bun processes installing the same package from a shared
         // cache (e.g. parallel `bun x <tool>` runs share one bunx install dir)
-        // race on every file here, and a peer briefly holding the file open
-        // surfaces as an EBUSY-class sharing violation. Retry those with
-        // backoff, mirroring the cache-move retries in extract_tarball.
+        // race on every file here: a peer briefly holding the file open
+        // surfaces as an EBUSY-class sharing violation, and a peer starting
+        // its own install of the package renames the destination dir away
+        // (uninstall-before-install), which surfaces as ENOENT between our
+        // mkdir and link. Both are transient, so retry with backoff,
+        // mirroring the cache-move retries in extract_tarball. Each process
+        // renames the destination at most once per package, so the storm is
+        // bounded and the last installer's links land in the final dir.
         const MAX_RETRIES: u32 = 4;
         let mut retries: u32 = 0;
         loop {
@@ -637,7 +642,12 @@ impl HardLinkWindowsInstallTask {
                 None => return None,
                 Some(err) => err,
             };
-            if err != crate::Error::Sys(bun_errno::SystemErrno::EBUSY) || retries == MAX_RETRIES {
+            let transient = matches!(
+                err,
+                crate::Error::Sys(bun_errno::SystemErrno::EBUSY)
+                    | crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+            );
+            if !transient || retries == MAX_RETRIES {
                 return Some(err);
             }
             retries += 1;

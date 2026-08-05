@@ -74,5 +74,3 @@ pub mod protocol {
     #[path = "error_response_jsc.rs"]
     pub mod error_response_jsc;
 }
-
-// Re-exports of base-crate protocol/types modules.

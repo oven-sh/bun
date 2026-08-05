@@ -238,7 +238,6 @@ unsafe extern "C" {
         next_out: *mut *mut u8,
         total_out: *mut usize,
     ) -> c_int;
-    // Query fns: opaque handle by reference + scalars only.
 }
 
 bun_opaque::opaque_ffi! {

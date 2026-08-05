@@ -873,8 +873,6 @@ pub(crate) type pem_password_cb =
 // ═══════════════════════════════════════════════════════════════════════════
 
 unsafe extern "C" {
-    // ── SSL_METHOD ───────────────────────────────────────────────────────
-
     // ── ENGINE ───────────────────────────────────────────────────────────
     pub safe fn ENGINE_new() -> *mut ENGINE;
     pub fn ENGINE_free(engine: *mut ENGINE) -> c_int;

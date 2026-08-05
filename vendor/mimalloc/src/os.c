@@ -143,7 +143,11 @@ void* _mi_os_get_aligned_hint(size_t try_alignment, size_t size)
 
   // todo: perhaps only do alignment hints if THP is enabled?
   static int deterministic_all = -1;
-  if (deterministic_all < 0) { const char* e = getenv("MIMALLOC_DETERMINISTIC_HINT"); deterministic_all = (e && *e == '1') ? 1 : 0; }
+  if (deterministic_all < 0) {
+    const char* e = getenv("MIMALLOC_DETERMINISTIC_HINT"); deterministic_all = (e && *e == '1') ? 1 : 0;
+    // MIMALLOC_HINT_FLOOR=0x...: start hinted OS allocations at/above this address (a heap image will be mapped below it)
+    const char* fl = getenv("MIMALLOC_HINT_FLOOR"); if (fl && *fl) { unsigned long long v = strtoull(fl, NULL, 0); if (v) mi_os_hint_floor((void*)(uintptr_t)v); }
+  }
   // deterministic mode: every OS allocation gets a bump-pointer hint in the hint area (so nothing lands at kernel-chosen addresses)
   if (!deterministic_all && (try_alignment <= mi_os_mem_config.alloc_granularity || try_alignment > MI_HINT_ALIGN)) return NULL;
   if (deterministic_all && try_alignment > MI_HINT_ALIGN) return NULL;

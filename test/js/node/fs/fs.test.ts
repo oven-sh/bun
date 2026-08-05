@@ -6012,7 +6012,19 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
   const dirLit = JSON.stringify(dir);
 
   async function runScript(source: string) {
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: {
+        ...bunEnv,
+        // Every child exits via process.exit(0) from inside a callback, which
+        // by design skips native job cleanup (the crypto jobs leak their
+        // context box when exit happens mid-completion; same class as the
+        // node_crypto_binding.rs leak LSAN flags on main).
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // stderr is returned (not asserted) so a failing case can show the
     // child's stack trace; debug builds emit benign startup noise there.

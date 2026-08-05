@@ -277,8 +277,12 @@ pub unsafe extern "C" fn Bun__Clipboard__scheduleWrite(
         let entries = unsafe { core::slice::from_raw_parts(representations, count) };
         for entry in entries {
             // SAFETY: same.
-            let (ty, bytes) =
-                unsafe { (copy_bytes(entry.ty, entry.ty_len), copy_bytes(entry.bytes, entry.len)) };
+            let (ty, bytes) = unsafe {
+                (
+                    copy_bytes(entry.ty, entry.ty_len),
+                    copy_bytes(entry.bytes, entry.len),
+                )
+            };
             let Some(mime) = Mime::from_bytes(&ty) else {
                 // Unreachable when WebCore validated support; reject rather
                 // than write a partial item.
@@ -551,7 +555,11 @@ mod platform {
             if p.is_null() {
                 return None;
             }
-            Some(LockedGlobal { h, p, _clipboard: clipboard })
+            Some(LockedGlobal {
+                h,
+                p,
+                _clipboard: clipboard,
+            })
         }
 
         /// `GlobalSize` can over-report by allocation slack; Win32 has no

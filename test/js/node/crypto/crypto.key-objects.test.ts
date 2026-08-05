@@ -1800,3 +1800,74 @@ test("ECDSA should work", async () => {
 function randomProp() {
   return "prop" + crypto.randomUUID().replace(/-/g, "");
 }
+
+// Node.js (OpenSSL) rejects n != p*q at JWK import and otherwise falls back to
+// m^d mod n for bad CRT hints; BoringSSL hard-fails at sign() instead, so an
+// unvalidated import yielded a poisoned KeyObject.
+describe("createPrivateKey RSA JWK key-material validation", () => {
+  const msg = Buffer.from("hello");
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const jwk = privateKey.export({ format: "jwk" }) as Required<JsonWebKey>;
+  const flipByte = (b64u: string, i: number) => {
+    const buf = Buffer.from(b64u, "base64url");
+    buf[i] ^= 1;
+    return buf.toString("base64url");
+  };
+
+  type Outcome =
+    | { imported: false; code: string }
+    | { imported: true; signVerified: boolean; decryptRoundTrip: boolean };
+
+  const tryImport = (mutated: JsonWebKey): Outcome => {
+    let key: KeyObject;
+    try {
+      key = createPrivateKey({ key: mutated, format: "jwk" });
+    } catch (e: any) {
+      return { imported: false, code: e.code };
+    }
+    const sig = sign("sha256", msg, key);
+    const signVerified = verify("sha256", msg, publicKey, sig);
+    const enc = publicEncrypt(publicKey, msg);
+    const decryptRoundTrip = privateDecrypt(key, enc).equals(msg);
+    return { imported: true, signVerified, decryptRoundTrip };
+  };
+
+  it("round-trips an unmodified JWK", () => {
+    expect(tryImport(jwk)).toEqual({ imported: true, signVerified: true, decryptRoundTrip: true });
+  });
+
+  // OpenSSL tolerates inconsistent CRT hints by falling back to a raw modular
+  // exponentiation; BoringSSL does not, so we recompute dp/dq/qi at import.
+  const usable: Outcome = { imported: true, signVerified: true, decryptRoundTrip: true };
+  it.each([
+    ["p and q swapped", { ...jwk, p: jwk.q, q: jwk.p }],
+    ["dp corrupt", { ...jwk, dp: flipByte(jwk.dp, 3) }],
+    ["dq corrupt", { ...jwk, dq: flipByte(jwk.dq, 3) }],
+    ["qi corrupt", { ...jwk, qi: flipByte(jwk.qi, 3) }],
+    ["dp and dq swapped", { ...jwk, dp: jwk.dq, dq: jwk.dp }],
+  ])("accepts and signs correctly when CRT hints are inconsistent: %s", (_name, mutated) => {
+    expect(tryImport(mutated)).toEqual(usable);
+  });
+
+  const rejected: Outcome = { imported: false, code: "ERR_CRYPTO_INVALID_JWK" };
+  it.each([
+    ["n != p*q (p corrupt)", { ...jwk, p: flipByte(jwk.p, 3) }],
+    ["n != p*q (q corrupt)", { ...jwk, q: flipByte(jwk.q, 3) }],
+    ["n corrupt", { ...jwk, n: flipByte(jwk.n, 3) }],
+    ["d corrupt", { ...jwk, d: flipByte(jwk.d, 10) }],
+    ["e = 1", { ...jwk, e: "AQ" }],
+    ["e mismatched with d", { ...jwk, e: "Aw" }],
+  ])("rejects at import when the core key material is invalid: %s", (_name, mutated) => {
+    expect(tryImport(mutated)).toEqual(rejected);
+  });
+
+  it("exports recomputed CRT hints after importing with corrupt ones", () => {
+    const key = createPrivateKey({ key: { ...jwk, qi: flipByte(jwk.qi, 3) }, format: "jwk" });
+    const reexported = key.export({ format: "jwk" }) as Required<JsonWebKey>;
+    expect({ dp: reexported.dp, dq: reexported.dq, qi: reexported.qi }).toEqual({
+      dp: jwk.dp,
+      dq: jwk.dq,
+      qi: jwk.qi,
+    });
+  });
+});

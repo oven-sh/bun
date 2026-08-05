@@ -1478,6 +1478,11 @@ KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, Thr
                 ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK RSA key"_s);
                 return {};
             }
+
+            if (!rsaView.validateOrRepairPrivateKey()) {
+                ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK RSA key"_s);
+                return {};
+            }
         }
 
         auto key = EVPKeyPointer::NewRSA(WTF::move(rsa));

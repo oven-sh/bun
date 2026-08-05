@@ -449,6 +449,7 @@ public:
         BignumPointer&& dp,
         BignumPointer&& dq,
         BignumPointer&& qi);
+    bool validateOrRepairPrivateKey();
 
     using CipherParams = Cipher::CipherParams;
 

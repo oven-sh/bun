@@ -1929,7 +1929,7 @@ pub(crate) fn install_isolated_packages(
         {
             Output::err(
                 err,
-                "failed to remove './node_modules/.bun/node_modules'",
+                "hoist is disabled, but the existing './node_modules/.bun/node_modules' could not be removed",
                 format_args!(""),
             );
             Global::exit(1);

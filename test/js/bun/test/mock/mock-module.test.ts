@@ -8,6 +8,7 @@
 // - Write test for import {foo} from "./foo"; export {foo}
 
 import { expect, mock, spyOn, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
@@ -38,6 +39,63 @@ test("spyOn", () => {
   expect(spyFixture.iSpy).not.toHaveBeenCalled();
   spyFixture.iSpy(123);
   expect(spyFixture.iSpy).toHaveBeenCalled();
+});
+
+// JSMock__jsSpyOn reads the spy target's value via JSObject::get (JSModuleNamespaceObject
+// and Proxy are isTaintedByOpaqueObject) but did not check the scope before copyNameAndLength
+// declares a TopExceptionScope, whose constructor asserts the prior check. The very first
+// spyOn in a process happened to lazily initialize mockFunctionStructure (which clears the
+// need-check bit) between the get and the scope, so only a second spyOn on a namespace export
+// tripped the validator.
+test("spyOn on a module namespace survives BUN_JSC_validateExceptionChecks", async () => {
+  using dir = tempDir("spyon-namespace-exception-check", {
+    "fixture.ts": `export const iSpy = (x: any) => x;\n`,
+    "spy.test.ts": `
+      import { expect, jest, mock, spyOn, test } from "bun:test";
+      import * as ns from "./fixture";
+      jest.fn();
+      test("spy twice on a module namespace export", () => {
+        const original = ns.iSpy;
+        const first = spyOn(ns, "iSpy");
+        ns.iSpy(1);
+        expect(first).toHaveBeenCalledTimes(1);
+        mock.restore();
+        expect(ns.iSpy).toBe(original);
+        const second = spyOn(ns, "iSpy");
+        ns.iSpy(2);
+        expect(second).toHaveBeenCalledTimes(1);
+        mock.restore();
+      });
+      test("spy twice on a Proxy target", () => {
+        const target = { m: (x: any) => x };
+        const proxy = new Proxy(target, {});
+        expect(spyOn(proxy, "m")).toBeFunction();
+        mock.restore();
+        expect(spyOn(proxy, "m")).toBeFunction();
+        mock.restore();
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "spy.test.ts"],
+    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Surface the validator's scope report in the diff when the child aborts instead of
+  // asserting only on exitCode.
+  const uncheckedScopes = stderr
+    .split("\n")
+    .map(line => line.trim())
+    .filter(line => line.startsWith("This scope can throw") || line.startsWith("But the exception was unchecked"));
+  expect({ stderr, uncheckedScopes, signalCode: proc.signalCode, exitCode }).toMatchObject({
+    stderr: expect.stringContaining("2 pass"),
+    uncheckedScopes: [],
+    signalCode: null,
+    exitCode: 0,
+  });
 });
 
 test("mocking a module that points to a file which does not resolve successfully still works", async () => {

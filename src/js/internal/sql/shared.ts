@@ -1,11 +1,21 @@
-import type { Query as QueryType } from "./query";
+if (typeof (globalThis as any).$isArray === "undefined") {
+  (globalThis as any).$isArray = Array.isArray;
+}
 
 const PublicArray = globalThis.Array;
-const {
-  Query,
-  SQLQueryFlags,
-  symbols: { _strings, _values },
-} = require("internal/sql/query");
+function getQueryMod() {
+  try {
+    return require("internal/sql/query");
+  } catch {
+    return require("./query");
+  }
+}
+const queryMod = getQueryMod();
+const queryModExp = queryMod?.default || queryMod || {};
+const Query = queryModExp.Query;
+const SQLQueryFlags = queryModExp.SQLQueryFlags;
+const _strings = queryModExp.symbols?._strings;
+const _values = queryModExp.symbols?._values;
 
 declare global {
   interface NumberConstructor {
@@ -198,6 +208,7 @@ function buildDefinedColumnsAndQuery<T>(
   columns: (keyof T)[],
   items: T | T[],
   escapeIdentifier: (name: string) => string,
+  fromTransform?: (name: string) => string,
 ): { definedColumns: (keyof T)[]; columnsSql: string } {
   const definedColumns: (keyof T)[] = [];
   let columnsSql = "(";
@@ -229,7 +240,8 @@ function buildDefinedColumnsAndQuery<T>(
 
     if (hasDefinedValue) {
       if (definedColumns.length > 0) columnsSql += ", ";
-      columnsSql += escapeIdentifier(column as string);
+      const dbColumnName = fromTransform ? fromTransform(column as string) : (column as string);
+      columnsSql += escapeIdentifier(dbColumnName);
       definedColumns.push(column);
     }
   }
@@ -432,6 +444,9 @@ function normalizeQuery(
             throw new SyntaxError(`Cannot ${commandToString(command)} with no columns`);
           }
           const lastColumnIndex = columns.length - 1;
+          const transform = (adapter as any)?.connectionInfo?.transform;
+          const fromTransform = transform?.column?.from;
+          const valFromTransform = transform?.value?.from;
 
           if (command === SQLCommand.insert) {
             //
@@ -443,6 +458,7 @@ function normalizeQuery(
               columns,
               items,
               adapter.escapeIdentifier.bind(adapter),
+              fromTransform,
             );
 
             const definedColumnCount = definedColumns.length;
@@ -463,7 +479,11 @@ function normalizeQuery(
                   const columnValue = item[column];
                   query += `${adapter.placeholder(binding_idx++)}${k < lastDefinedColumnIndex ? ", " : ""}`;
                   // If this item has undefined for a column that other items defined, use null
-                  binding_values.push(typeof columnValue === "undefined" ? null : columnValue);
+                  let boundVal = typeof columnValue === "undefined" ? null : columnValue;
+                  if (valFromTransform && boundVal !== null) {
+                    boundVal = valFromTransform(boundVal);
+                  }
+                  binding_values.push(boundVal);
                 }
                 if (j < lastItemIndex) {
                   query += "),";
@@ -478,7 +498,11 @@ function normalizeQuery(
                 const column = definedColumns[j];
                 const columnValue = item[column];
                 query += `${adapter.placeholder(binding_idx++)}${j < lastDefinedColumnIndex ? ", " : ""}`;
-                binding_values.push(columnValue);
+                let boundVal = columnValue;
+                if (valFromTransform && typeof boundVal !== "undefined" && boundVal !== null) {
+                  boundVal = valFromTransform(boundVal);
+                }
+                binding_values.push(boundVal);
               }
               query += ") "; // the user can add RETURNING * or RETURNING id
             }
@@ -510,7 +534,11 @@ function normalizeQuery(
                   if (typeof value_from_key === "undefined") {
                     binding_values.push(null);
                   } else {
-                    binding_values.push(value_from_key);
+                    let boundVal = value_from_key;
+                    if (valFromTransform && boundVal !== null) {
+                      boundVal = valFromTransform(boundVal);
+                    }
+                    binding_values.push(boundVal);
                   }
                 }
               } else {
@@ -518,7 +546,11 @@ function normalizeQuery(
                 if (typeof value === "undefined") {
                   binding_values.push(null);
                 } else {
-                  binding_values.push(value);
+                  let boundVal = value;
+                  if (valFromTransform && boundVal !== null) {
+                    boundVal = valFromTransform(boundVal);
+                  }
+                  binding_values.push(boundVal);
                 }
               }
             }
@@ -550,8 +582,13 @@ function normalizeQuery(
                 continue;
               }
               hasValues = true;
-              query += `${adapter.escapeIdentifier(column as string)} = ${adapter.placeholder(binding_idx++)}${i < lastColumnIndex ? ", " : ""}`;
-              binding_values.push(columnValue);
+              const dbColumnName = fromTransform ? fromTransform(column as string) : (column as string);
+              query += `${adapter.escapeIdentifier(dbColumnName)} = ${adapter.placeholder(binding_idx++)}${i < lastColumnIndex ? ", " : ""}`;
+              let boundVal = columnValue;
+              if (valFromTransform && boundVal !== null) {
+                boundVal = valFromTransform(boundVal);
+              }
+              binding_values.push(boundVal);
             }
             if (query.endsWith(", ")) {
               // we got an undefined value at the end, lets remove the last comma
@@ -1448,6 +1485,10 @@ function parseSQLiteOptions(
     adapter: "sqlite" as const,
     filename: ":memory:",
   };
+  const transform = parseTransform(options.transform);
+  if (transform) {
+    sqliteOptions.transform = transform;
+  }
 
   let filename = filenameOrUrl || ":memory:";
   let originalUrl = filename; // Keep the original URL for query parsing
@@ -2091,6 +2132,11 @@ function parseOptions(
     }
   }
 
+  const transform = parseTransform(options.transform);
+  if (transform) {
+    ret.transform = transform;
+  }
+
   return ret;
 }
 
@@ -2140,6 +2186,195 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   invalidTransactionStateError(message: string): Error;
 }
 
+const WORD_REGEX = /(\p{Lu}\p{Ll}+|\p{Lu}+(?!\p{Ll})|\p{Ll}+|\p{N}+)/gu;
+
+function getWords(str: string): string[] {
+  if (typeof str !== "string" || !str) return [];
+  const matches = str.match(WORD_REGEX);
+  return matches || [];
+}
+
+function toCamel(str: string): string {
+  const words = getWords(str);
+  if (words.length === 0) return str;
+  const first = words[0].toLowerCase();
+  const rest = words.slice(1).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+  return first + rest.join("");
+}
+
+function toPascal(str: string): string {
+  const words = getWords(str);
+  if (words.length === 0) return str;
+  return words.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join("");
+}
+
+function toKebab(str: string): string {
+  const words = getWords(str);
+  if (words.length === 0) return str;
+  return words.map(w => w.toLowerCase()).join("-");
+}
+
+function toSnake(str: string): string {
+  const words = getWords(str);
+  if (words.length === 0) return str;
+  return words.map(w => w.toLowerCase()).join("_");
+}
+
+export interface TransformFunction {
+  (str: string): string;
+  to?: (str: string) => string;
+  from?: (str: string) => string;
+}
+
+function createTransform(toFn: (str: string) => string, fromFn: (str: string) => string): TransformFunction {
+  const fn: TransformFunction = (str: string) => toFn(str);
+  fn.to = toFn;
+  fn.from = fromFn;
+  return fn;
+}
+
+const camel = createTransform(toCamel, toSnake);
+const pascal = createTransform(toPascal, toSnake);
+const kebab = createTransform(toKebab, toSnake);
+const snake = createTransform(toSnake, toCamel);
+
+const toCamelTransform = toCamel;
+const fromCamelTransform = toSnake;
+const toPascalTransform = toPascal;
+const fromPascalTransform = toSnake;
+const toKebabTransform = toKebab;
+const fromKebabTransform = toSnake;
+const toSnakeTransform = toSnake;
+const fromSnakeTransform = toCamel;
+
+export interface ParsedTransform {
+  column?: {
+    to?: (str: string) => string;
+    from?: (str: string) => string;
+  };
+  value?: {
+    to?: (val: any) => any;
+    from?: (val: any) => any;
+  };
+  row?: (row: any) => any;
+}
+
+function parseTransform(transform: any): ParsedTransform | undefined {
+  if (!transform) return undefined;
+  if (typeof transform !== "function" && typeof transform !== "object") {
+    throw $ERR_INVALID_ARG_TYPE("options.transform", "function or object", transform);
+  }
+
+  let colTo: ((str: string) => string) | undefined;
+  let colFrom: ((str: string) => string) | undefined;
+  let valTo: ((val: any) => any) | undefined;
+  let valFrom: ((val: any) => any) | undefined;
+  let rowFn: ((row: any) => any) | undefined;
+
+  if (typeof transform === "function") {
+    colTo = transform;
+    if (transform.from) colFrom = transform.from;
+    if (transform.to) colTo = transform.to;
+  } else if (typeof transform === "object") {
+    if (transform.column) {
+      if (typeof transform.column === "function") {
+        colTo = transform.column;
+        if (transform.column.from) colFrom = transform.column.from;
+        if (transform.column.to) colTo = transform.column.to;
+      } else if (typeof transform.column === "object") {
+        colTo = transform.column.to;
+        colFrom = transform.column.from;
+      }
+    }
+    if (transform.value) {
+      if (typeof transform.value === "function") {
+        valTo = transform.value;
+        if (transform.value.from) valFrom = transform.value.from;
+        if (transform.value.to) valTo = transform.value.to;
+      } else if (typeof transform.value === "object") {
+        valTo = transform.value.to;
+        valFrom = transform.value.from;
+      }
+    }
+    if (typeof transform.row === "function") {
+      rowFn = transform.row;
+    }
+    if (!transform.column && (transform.to || transform.from)) {
+      colTo = transform.to;
+      colFrom = transform.from;
+    }
+  }
+
+  if (!colTo && !colFrom && !valTo && !valFrom && !rowFn) {
+    return undefined;
+  }
+
+  if (colTo) {
+    const rawColTo = colTo;
+    const cache = new Map<string, string>();
+    colTo = (key: string) => {
+      let cached = cache.get(key);
+      if (cached === undefined) {
+        cached = rawColTo(key);
+        cache.set(key, cached);
+      }
+      return cached;
+    };
+  }
+
+  return {
+    column: colTo || colFrom ? { to: colTo, from: colFrom } : undefined,
+    value: valTo || valFrom ? { to: valTo, from: valFrom } : undefined,
+    row: rowFn,
+  };
+}
+
+function applyResultTransform(result: any, transform: ParsedTransform | undefined): any {
+  if (!result || !transform) return result;
+
+  const colTo = transform.column?.to;
+  const valTo = transform.value?.to;
+  const rowFn = transform.row;
+
+  if (!colTo && !valTo && !rowFn) return result;
+
+  const transformRowObj = (row: any) => {
+    if (!row || typeof row !== "object" || Array.isArray(row) || row instanceof Date || Buffer.isBuffer(row)) {
+      return row;
+    }
+    let out: any = row;
+    if (colTo || valTo) {
+      out = {};
+      const keys = Object.keys(row);
+      for (let i = 0; i < keys.length; i++) {
+        const key = keys[i];
+        const newKey = colTo ? colTo(key) : key;
+        let val = row[key];
+        if (valTo) {
+          val = valTo(val);
+        }
+        out[newKey] = val;
+      }
+    }
+    if (rowFn) {
+      out = rowFn(out);
+    }
+    return out;
+  };
+
+  if (Array.isArray(result)) {
+    for (let i = 0; i < result.length; i++) {
+      const item = result[i];
+      if (Array.isArray(item) && (item as any).command !== undefined) {
+        applyResultTransform(item, transform);
+      } else {
+        result[i] = transformRowObj(item);
+      }
+    }
+  }
+  return result;
+}
+
 export default {
   parseDefinitelySqliteUrl,
   parseOptions,
@@ -2157,4 +2392,22 @@ export default {
   // @ts-expect-error we're exporting a const enum which works in our builtins
   // generator but not in typescript officially
   SSLMode,
+  camel,
+  pascal,
+  kebab,
+  snake,
+  toCamel,
+  toPascal,
+  toKebab,
+  toSnake,
+  toCamelTransform,
+  fromCamelTransform,
+  toPascalTransform,
+  fromPascalTransform,
+  toKebabTransform,
+  fromKebabTransform,
+  toSnakeTransform,
+  fromSnakeTransform,
+  parseTransform,
+  applyResultTransform,
 };

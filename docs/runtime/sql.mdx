@@ -1181,12 +1181,49 @@ console.log(typeof x, x); // "bigint" 9223372036854777n
 
 ---
 
+## Column Name Transforms
+
+You can automatically transform column names (for example, `snake_case` from your database to `camelCase` in JavaScript) by passing the `transform` option to the SQL client:
+
+```ts
+import { SQL, postgres } from "bun";
+
+const sql = new SQL({
+  transform: postgres.camel, // convert snake_case column names to camelCase
+});
+
+const [user] = await sql`SELECT first_name, last_name FROM users WHERE id = 1`;
+console.log(user.firstName, user.lastName); // "Alice" "Smith"
+
+// When using query helpers, Object property keys are automatically converted back to snake_case column names in SQL:
+await sql`INSERT INTO users ${sql({ firstName: "Bob", lastName: "Jones" })}`;
+// SQL generated: INSERT INTO users ("first_name", "last_name") VALUES ($1, $2)
+```
+
+Bun supports built-in Unicode-aware transformers:
+
+- `postgres.camel` / `SQL.camel` (`snake_case` <-> `camelCase`)
+- `postgres.pascal` / `SQL.pascal` (`snake_case` <-> `PascalCase`)
+- `postgres.kebab` / `SQL.kebab` (`snake_case` <-> `kebab-case`)
+- `postgres.snake` / `SQL.snake` (`camelCase` <-> `snake_case`)
+
+Or pass a custom transform function:
+
+```ts
+const sql = new SQL({
+  transform: {
+    column: (name) => name.toUpperCase(),
+  },
+});
+```
+
+---
+
 ## Roadmap
 
 Things we haven't finished yet:
 
 - Connection preloading with the `--db-preconnect` Bun CLI flag
-- Column name transforms (for example, `snake_case` to `camelCase`). This is mostly blocked on a unicode-aware implementation of changing the case in C++ using WebKit's `WTF::String`.
 - Column type transforms
 
 ---

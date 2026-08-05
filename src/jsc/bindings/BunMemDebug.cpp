@@ -168,13 +168,15 @@ static bool imageEnvIsSet() { return getenv("MIMALLOC_DETERMINISTIC_HINT") && ge
 
 static void reexecWithoutASLRIfSlid()
 {
+    if (getenv("BUN_IMAGE_REEXECED"))
+        return;
     bool needEnv = !imageEnvIsSet();
-    setImageEnvDefaults();
 #if OS(DARWIN)
     constexpr uintptr_t linkBase = 0x100000000ull;
     if (((uintptr_t)&_mh_execute_header == linkBase && !needEnv) || getenv("BUN_IMAGE_REEXECED"))
         return;
     setenv("BUN_IMAGE_REEXECED", "1", 1);
+    setImageEnvDefaults();
     char exe[4096]; uint32_t len = sizeof exe;
     if (_NSGetExecutablePath(exe, &len) != 0)
         return;
@@ -190,6 +192,7 @@ static void reexecWithoutASLRIfSlid()
     if (persona != -1 && (persona & ADDR_NO_RANDOMIZE) && !needEnv)
         return;
     setenv("BUN_IMAGE_REEXECED", "1", 1);
+    setImageEnvDefaults();
     if (persona != -1 && personality(persona | ADDR_NO_RANDOMIZE) != -1) {
         extern char** environ;
         // argv: read our own cmdline
@@ -250,19 +253,15 @@ static bool siblingImageExists() // cheap pre-check (no inflate): is there an <e
 
 extern "C" void Bun__imageMaybeRestore()
 {
-    char sibling[4200];
+    // No setenv()/heap use in a process that is about to restore: environ would be reallocated into memory the image overlays.
     bool wantImage = getenv("BUN_IMAGE_IN") || getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT") || siblingImageExists();
     if (wantImage)
-        reexecWithoutASLRIfSlid(); // first: the cache key / libs-base check below must see the final (unslid) library layout
-    if (!getenv("BUN_IMAGE_IN") && !getenv("BUN_IMAGE_OUT") && !getenv("CLAUDE_CODE_SNAPSHOT_OUT") && findSiblingImage(sibling, sizeof sibling))
-        setenv("BUN_IMAGE_IN", sibling, 1);
-    if (false)
-        reexecWithoutASLRIfSlid();
-    if (const char* in = getenv("BUN_IMAGE_IN")) {
-        char path[1024]; snprintf(path, sizeof path, "%s", in);
-        unsetenv("BUN_IMAGE_IN");
+        reexecWithoutASLRIfSlid(); // returns only once we are the unslid process with the image env in place
+    char path[4200] = "";
+    if (const char* in = getenv("BUN_IMAGE_IN")) snprintf(path, sizeof path, "%s", in);
+    else if (!getenv("BUN_IMAGE_OUT") && !getenv("CLAUDE_CODE_SNAPSHOT_OUT")) findSiblingImage(path, sizeof path) || (path[0] = 0);
+    if (path[0])
         imageRestoreAndRun(path);
-    }
 }
 extern "C" void Bun__imageSetBuilding(bool);
 extern "C" void mi_prof_reinit_lock(void);

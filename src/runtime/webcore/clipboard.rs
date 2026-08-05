@@ -170,27 +170,10 @@ impl AnyTaskJobCtx for ClipboardCtx {
                 Ok(None) => Outcome::Representations(Vec::new()),
                 Err(unavailable) => Outcome::Failed(unavailable),
             },
-            Op::Read => {
-                let mut present: Vec<(Mime, Vec<u8>)> = Vec::new();
-                let mut readable = false;
-                let mut unavailable = Unavailable::Platform;
-                for mime in SUPPORTED {
-                    // The whole read fails only when every type does.
-                    match platform::read_type(*mime) {
-                        Ok(Some(bytes)) => {
-                            readable = true;
-                            present.push((*mime, bytes));
-                        }
-                        Ok(None) => readable = true,
-                        Err(reason) => unavailable = reason,
-                    }
-                }
-                if readable {
-                    Outcome::Representations(present)
-                } else {
-                    Outcome::Failed(unavailable)
-                }
-            }
+            Op::Read => match platform::read_all(SUPPORTED) {
+                Ok(present) => Outcome::Representations(present),
+                Err(unavailable) => Outcome::Failed(unavailable),
+            },
             Op::Write(items) => {
                 // A superseded write is cancelled on the JS thread; honoring it
                 // here, under the lock, keeps its AbortError honest (the write
@@ -389,6 +372,8 @@ mod platform {
         ) -> i32;
     }
 
+    use crate::image::backend_coregraphics::clipboard_change_count;
+
     fn uti(mime: Mime) -> &'static CStr {
         match mime {
             Mime::TextPlain => c"public.utf8-plain-text",
@@ -418,6 +403,35 @@ mod platform {
             return Err(Unavailable::Platform);
         }
         Ok(Some(buf))
+    }
+
+    /// NSPasteboard has no lock, so re-read once if another process bumped
+    /// `changeCount` mid-loop; one item must not mix two clipboard states.
+    pub(super) fn read_all(types: &[Mime]) -> Result<Vec<(Mime, Vec<u8>)>, Unavailable> {
+        let mut attempt = 0;
+        loop {
+            let generation = clipboard_change_count();
+            let mut present = Vec::new();
+            let mut readable = false;
+            let mut unavailable = Unavailable::Platform;
+            for mime in types {
+                match read_type(*mime) {
+                    Ok(Some(bytes)) => {
+                        readable = true;
+                        present.push((*mime, bytes));
+                    }
+                    Ok(None) => readable = true,
+                    Err(reason) => unavailable = reason,
+                }
+            }
+            if !readable {
+                return Err(unavailable);
+            }
+            attempt += 1;
+            if attempt == 2 || clipboard_change_count() == generation {
+                return Ok(present);
+            }
+        }
     }
 
     pub(super) fn write_types(items: &[(Mime, &[u8])]) -> Result<(), Unavailable> {
@@ -628,18 +642,16 @@ mod platform {
         bytes.to_vec()
     }
 
-    pub(super) fn read_type(mime: Mime) -> Result<Option<Vec<u8>>, Unavailable> {
-        let formats = read_formats(mime);
-        if formats.iter().all(Option::is_none) {
-            return Ok(None);
-        }
-        let clipboard = ClipboardGuard::open().ok_or(Unavailable::Platform)?;
-        for format in formats.into_iter().flatten() {
+    fn read_type_locked(
+        clipboard: &ClipboardGuard,
+        mime: Mime,
+    ) -> Result<Option<Vec<u8>>, Unavailable> {
+        for format in read_formats(mime).into_iter().flatten() {
             let h = clipboard.get(format);
             if h.is_null() {
                 continue;
             }
-            let locked = LockedGlobal::new(&clipboard, h).ok_or(Unavailable::Platform)?;
+            let locked = LockedGlobal::new(clipboard, h).ok_or(Unavailable::Platform)?;
             let bytes = copy_global(&locked, mime == Mime::TextPlain);
             drop(locked);
             if mime != Mime::TextHtml {
@@ -653,6 +665,27 @@ mod platform {
             return Ok(cf_html_fragment(&bytes[..end]));
         }
         Ok(None)
+    }
+
+    pub(super) fn read_type(mime: Mime) -> Result<Option<Vec<u8>>, Unavailable> {
+        if read_formats(mime).iter().all(Option::is_none) {
+            return Ok(None);
+        }
+        let clipboard = ClipboardGuard::open().ok_or(Unavailable::Platform)?;
+        read_type_locked(&clipboard, mime)
+    }
+
+    /// One open/close spans every type, so another process cannot write
+    /// between them and tear the item across two clipboard states.
+    pub(super) fn read_all(types: &[Mime]) -> Result<Vec<(Mime, Vec<u8>)>, Unavailable> {
+        let clipboard = ClipboardGuard::open().ok_or(Unavailable::Platform)?;
+        let mut present = Vec::new();
+        for mime in types {
+            if let Some(bytes) = read_type_locked(&clipboard, *mime)? {
+                present.push((*mime, bytes));
+            }
+        }
+        Ok(present)
     }
 
     /// Bare `\n` becomes `\r\n`, per the spec's writeText note for Windows:
@@ -959,6 +992,29 @@ mod platform {
             return Err(Unavailable::HelperFailed);
         }
         Ok(None)
+    }
+
+    /// The one-shot helpers give no way to snapshot every type atomically, so
+    /// this is best-effort: the read fails only when every type does.
+    pub(super) fn read_all(types: &[Mime]) -> Result<Vec<(Mime, Vec<u8>)>, Unavailable> {
+        let mut present = Vec::new();
+        let mut readable = false;
+        let mut unavailable = Unavailable::Platform;
+        for mime in types {
+            match read_type(*mime) {
+                Ok(Some(bytes)) => {
+                    readable = true;
+                    present.push((*mime, bytes));
+                }
+                Ok(None) => readable = true,
+                Err(reason) => unavailable = reason,
+            }
+        }
+        if readable {
+            Ok(present)
+        } else {
+            Err(unavailable)
+        }
     }
 
     pub(super) fn write_types(items: &[(Mime, &[u8])]) -> Result<(), Unavailable> {

@@ -1,5 +1,6 @@
 use core::cell::Cell;
 use core::ffi::c_char;
+use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
@@ -1252,10 +1253,10 @@ impl<'a> Parser<'a> {
     ) -> Result<(), AllocError> {
         let count = map.map.count();
         let mut expand_indices = Vec::new();
-        let mut expand_positions = Vec::new();
-        // Each new entry consumes at least one source byte, so this bounds the
-        // index-addressed table without imposing a separate dotenv size limit.
-        let max_tracked_entries = count.checked_add(self.src.len()).ok_or(AllocError)?;
+        let mut expand_positions = HashMap::new();
+        // Each scheduling event consumes at least one source byte, so this
+        // bounds both tracking structures without a separate dotenv size cap.
+        let max_tracked_entries = self.src.len();
         while self.pos < self.src.len() {
             let Some(key) = self.parse_key::<true>() else {
                 self.skip_line();
@@ -1279,26 +1280,22 @@ impl<'a> Parser<'a> {
                 // else: previous value freed by Drop on assignment below
             }
             *entry.value_ptr = HashTableValue { value: value_owned };
-            if should_expand && entry.index >= expand_positions.len() {
-                let new_len = entry.index.checked_add(1).ok_or(AllocError)?;
-                if new_len > max_tracked_entries {
-                    return Err(AllocError);
-                }
-                expand_positions
-                    .try_reserve_exact(new_len - expand_positions.len())
-                    .map_err(|_| AllocError)?;
-                expand_positions.resize(new_len, None);
-            }
-            let position = expand_positions.get(entry.index).copied().flatten();
+            let position = expand_positions.get(&entry.index).copied();
             match (should_expand, position) {
                 (true, None) => {
+                    if expand_positions.len() >= max_tracked_entries
+                        || expand_indices.len() >= max_tracked_entries
+                    {
+                        return Err(AllocError);
+                    }
+                    expand_positions.try_reserve(1).map_err(|_| AllocError)?;
                     expand_indices.try_reserve(1).map_err(|_| AllocError)?;
-                    expand_positions[entry.index] = Some(expand_indices.len());
+                    expand_positions.insert(entry.index, expand_indices.len());
                     expand_indices.push(entry.index);
                 }
                 (false, Some(position)) => {
                     expand_indices[position] = usize::MAX;
-                    expand_positions[entry.index] = None;
+                    expand_positions.remove(&entry.index);
                 }
                 _ => {}
             }

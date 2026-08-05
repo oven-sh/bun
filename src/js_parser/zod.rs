@@ -684,6 +684,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         None => return self.zod_opaque_or_bail(args),
                     }
                 }
+                // zod's $ZodLiteral constructor throws on an empty value list; bailing keeps that throw at module load instead of first parse.
+                if values.is_empty() {
+                    return Extracted::Bail;
+                }
                 Extracted::Ir(Ir::Lit { values })
             }
             b"enum" => {
@@ -1227,13 +1231,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if !keys.iter().all(|m| props.iter().any(|(k, _)| k == m)) {
                         return self.zod_opaque_or_bail(args);
                     }
-                    let picked: Vec<(String, Ir)> = props
-                        .into_iter()
-                        .filter(|(k, _)| {
-                            let in_mask = keys.iter().any(|m| m == k);
-                            if method == b"pick" { in_mask } else { !in_mask }
-                        })
-                        .collect();
+                    // zod's util.pick builds the new shape by iterating the mask, so picked keys take the mask's order; omit starts from the old shape and keeps its order.
+                    let picked: Vec<(String, Ir)> = if method == b"pick" {
+                        keys.iter()
+                            .filter_map(|m| props.iter().find(|(k, _)| k == m).cloned())
+                            .collect()
+                    } else {
+                        props
+                            .into_iter()
+                            .filter(|(k, _)| !keys.iter().any(|m| m == k))
+                            .collect()
+                    };
                     return Extracted::Ir(Ir::Object {
                         props: picked,
                         catchall,

@@ -57,7 +57,7 @@ impl AlgorithmValue {
 
     pub(crate) const DEFAULT: AlgorithmValue = AlgorithmValue::Argon2id(Argon2Params::DEFAULT);
 
-    pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<AlgorithmValue> {
+    fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<AlgorithmValue> {
         if value.is_object() {
             if let Some(algorithm_value) = value.get_truthy(global_object, "algorithm")? {
                 if !algorithm_value.is_string() {

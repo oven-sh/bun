@@ -14,8 +14,11 @@
 #include "JSReadRequest.h"
 #include "JSReadStreamIntoSinkOperation.h"
 #include "JSReadableStream.h"
+#include "JSReadableStreamDefaultController.h"
 #include "JSReadableStreamDefaultReader.h"
 #include "JSSink.h"
+#include "JSTransformStream.h"
+#include "JSTransformStreamDefaultController.h"
 #include "JSStreamsRuntime.h"
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
@@ -196,6 +199,7 @@ void JSReadStreamIntoSinkOperation::visitChildrenImpl(JSCell* cell, Visitor& vis
     visitor.appendHidden(thisObject->m_sink);
     visitor.appendHidden(thisObject->m_result);
     visitor.appendHidden(thisObject->m_pendingBatch);
+    visitor.appendHidden(thisObject->m_nativeTransform);
 }
 
 DEFINE_VISIT_CHILDREN(JSReadStreamIntoSinkOperation);
@@ -210,6 +214,7 @@ void JSReadStreamIntoSinkOperation::analyzeHeap(JSCell* cell, HeapAnalyzer& anal
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_sink, "sink"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_result, "result"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pendingBatch, "pendingBatch"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_nativeTransform, "nativeTransform"_s);
 }
 
 } // namespace WebCore
@@ -286,6 +291,7 @@ static void startJSSinkController(JSC::VM& vm, JSGlobalObject* globalObject, JSO
     BUN_START_JSSINK_CONTROLLER(JSReadableH3ResponseSinkController)
     BUN_START_JSSINK_CONTROLLER(JSReadableNetworkSinkController)
     BUN_START_JSSINK_CONTROLLER(JSReadableFetchRequestBodySinkController)
+    BUN_START_JSSINK_CONTROLLER(JSReadableHTMLRewriterSinkController)
 #undef BUN_START_JSSINK_CONTROLLER
     throwTypeError(globalObject, scope, "Unknown direct controller. This is a bug in Bun."_s);
 }
@@ -954,6 +960,12 @@ static void rsisAbrupt(JSC::VM&, JSGlobalObject*, JSReadStreamIntoSinkOperation*
 
 static JSValue rsisSinkWrite(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue chunk)
 {
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(chunk)) {
+        if (auto* ctrl = dynamicDowncast<WebCore::JSReadableSinkControllerBase>(op->m_sink.get())) {
+            if (void* sinkPtr = ctrl->wrapped())
+                return JSValue::decode(Bun__NativeTransformSink__writeBytes(static_cast<uint8_t>(ctrl->sinkId()), sinkPtr, globalObject, static_cast<const uint8_t*>(view->vector()), view->byteLength()));
+        }
+    }
     MarkedArgumentBuffer args;
     args.append(chunk);
     ASSERT(!args.hasOverflowed());
@@ -992,6 +1004,22 @@ static void rsisRunCatching(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStr
         rsisAbrupt(vm, globalObject, op, thrown);
 }
 
+// Detach the native byte transform from this sink. Called BEFORE sink end()/close()
+// so a re-entrant transform write cannot see a freed m_sinkPtr. Idempotent.
+static void rsisDetachNativeTransform(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
+{
+    auto* ts = op->m_nativeTransform.get();
+    if (!ts)
+        return;
+    ts->m_nativeSinkPtr = nullptr;
+    ts->m_nativeSinkCell.clear();
+    if (auto* ready = ts->m_nativeSinkReadyPromise.get()) {
+        ts->m_nativeSinkReadyPromise.clear();
+        resolvePromise(globalObject, ready, jsUndefined());
+    }
+    op->m_nativeTransform.clear();
+}
+
 // The pump's `finally`: release the reader (unless the throw path orphaned it) and detach.
 static void rsisFinally(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
 {
@@ -1008,6 +1036,7 @@ static void rsisFinally(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamI
         reader->m_pipeOperation.clear();
         op->m_reader.clear();
     }
+    rsisDetachNativeTransform(globalObject, op);
     op->m_sink.clear();
     op->m_pendingBatch.clear();
     op->m_waitingOnSink = false;
@@ -1029,6 +1058,7 @@ static void rsisFinish(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperati
     auto scope = DECLARE_THROW_SCOPE(vm);
     op->m_didClose = true;
     auto* result = op->m_result.get();
+    rsisDetachNativeTransform(globalObject, op);
     JSValue endResult = rsisSinkEnd(vm, globalObject, op);
     RETURN_IF_EXCEPTION(scope, );
     rsisFinally(vm, globalObject, op);
@@ -1046,6 +1076,7 @@ static void rsisAbrupt(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIn
     if (auto* stream = op->m_stream.get())
         publicStreamCancelIgnoringResult(vm, globalObject, stream, error);
     JSValue rejectionValue = error;
+    rsisDetachNativeTransform(globalObject, op);
     if (op->m_sink && !op->m_didClose) {
         op->m_didClose = true;
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -1232,6 +1263,28 @@ static void rsisHandleChunk(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStr
     RELEASE_AND_RETURN(scope, rsisAfterBatch(globalObject, op));
 }
 
+// `stream` is the readable half of a byte-producing native JSTransformStream subclass
+// (Compression/Decompression/TextEncoder) → that transform; otherwise null.
+static JSTransformStream* nativeByteTransformBehind(JSReadableStream* stream)
+{
+    if (stream->m_controllerKind != ControllerKind::Default)
+        return nullptr;
+    auto* defCtrl = uncheckedDowncast<JSReadableStreamDefaultController>(stream->m_controller.get());
+    if (!defCtrl || defCtrl->m_algorithms.kind != SourceKind::Transform)
+        return nullptr;
+    auto* ts = dynamicDowncast<JSTransformStream>(defCtrl->m_algorithms.algorithmContext.get());
+    if (!ts || !ts->m_controller)
+        return nullptr;
+    switch (ts->m_controller->m_transformerKind) {
+    case TransformerKind::Compression:
+    case TransformerKind::Decompression:
+    case TransformerKind::TextEncoder:
+        return ts;
+    default:
+        return nullptr;
+    }
+}
+
 static void rsisBegin(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1242,6 +1295,21 @@ static void rsisBegin(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamInt
     RETURN_IF_EXCEPTION(scope, );
     op->m_reader.set(vm, op, reader);
     reader->m_pipeOperation.set(vm, reader, op);
+    // Byte-producing native transform + native JSSink: attach the sink to the transform so its
+    // transform arms write coder output straight to the sink (no JSUint8Array per chunk). The
+    // pump below still runs to drain any already-queued chunk, wait for done, and call end().
+    // Attached only after the reader is acquired so a failed second attempt (stream already
+    // locked) cannot overwrite the first pump's attachment.
+    if (auto* ts = nativeByteTransformBehind(stream); ts && !ts->m_nativeSinkPtr) {
+        if (auto* sinkCtrl = dynamicDowncast<WebCore::JSReadableSinkControllerBase>(op->m_sink.get())) {
+            if (void* sinkPtr = sinkCtrl->wrapped()) {
+                ts->m_nativeSinkPtr = sinkPtr;
+                ts->m_nativeSinkId = static_cast<uint8_t>(sinkCtrl->sinkId());
+                ts->m_nativeSinkCell.set(vm, ts, sinkCtrl);
+                op->m_nativeTransform.set(vm, op, ts);
+            }
+        }
+    }
     JSValue many = readableStreamDefaultReaderReadMany(globalObject, reader);
     RETURN_IF_EXCEPTION(scope, );
     if (auto* manyPromise = dynamicDowncast<JSPromise>(many)) {
@@ -1277,6 +1345,7 @@ JSPromise* readStreamIntoSink(JSGlobalObject* globalObject, JSReadableStream* st
 static void readStreamIntoSinkOnCloseImpl(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue streamValue, JSValue reason)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    rsisDetachNativeTransform(globalObject, op);
     // The sink closed underneath the pump (which may stay suspended forever): end() FIRST,
     // before the fallible cancel below, so the controller cell always detaches from the
     // native sink instead of being collected attached (its destructor would over-release).
@@ -1465,6 +1534,16 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundReadStreamIntoSinkOnReady, (JS
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* op = uncheckedDowncast<JSReadStreamIntoSinkOperation>(callFrame->argument(0));
+    // A native transform arm may be parked on m_nativeSinkReadyPromise without the
+    // pump itself being suspended (output bypasses the pump's read loop). Resolve it
+    // regardless of m_waitingOnSink so the transform's in-flight write can settle.
+    if (auto* ts = op->m_nativeTransform.get()) {
+        if (auto* ready = ts->m_nativeSinkReadyPromise.get()) {
+            ts->m_nativeSinkReadyPromise.clear();
+            Bun::WebStreams::resolvePromise(globalObject, ready, jsUndefined());
+            scope.assertNoException();
+        }
+    }
     if (!op->m_waitingOnSink)
         return JSValue::encode(jsUndefined());
     op->m_waitingOnSink = false;

@@ -2372,7 +2372,7 @@ pub fn count(args: fmt::Arguments<'_>) -> usize {
 /// the rare ≥ 2³² tail falls back to a `/= 10` loop so the full `u64` range is
 /// covered (the old `fast_digit_count` panicked on table OOB there).
 #[inline]
-pub fn digit_count_u64(x: u64) -> usize {
+fn digit_count_u64(x: u64) -> usize {
     if x == 0 {
         return 1;
     }
@@ -2426,7 +2426,7 @@ pub fn digit_count_u64(x: u64) -> usize {
 /// Decimal digit count of a signed 64-bit integer, including the leading `-`
 /// for negatives. Handles `i64::MIN` via `unsigned_abs`.
 #[inline]
-pub fn digit_count_i64(n: i64) -> usize {
+fn digit_count_i64(n: i64) -> usize {
     (n < 0) as usize + digit_count_u64(n.unsigned_abs())
 }
 
@@ -2607,8 +2607,8 @@ pub fn hex_upper(bytes: &[u8]) -> HexBytes<'_, false> {
     HexBytes(bytes)
 }
 
-pub const LOWER_HEX_TABLE: [u8; 16] = *b"0123456789abcdef";
-pub const UPPER_HEX_TABLE: [u8; 16] = *b"0123456789ABCDEF";
+const LOWER_HEX_TABLE: [u8; 16] = *b"0123456789abcdef";
+const UPPER_HEX_TABLE: [u8; 16] = *b"0123456789ABCDEF";
 
 /// Sentinel returned by [`HEX_DECODE_TABLE`] for non-hex-digit bytes.
 pub const HEX_INVALID: u8 = 0xff;
@@ -2800,7 +2800,7 @@ pub const fn hex4_upper(v: u16) -> [u8; 4] {
 }
 /// Four hex nibbles for a `u16` (`\\uXXXX`). `LOWER == false` → uppercase.
 #[inline]
-pub const fn hex_u16<const LOWER: bool>(v: u16) -> [u8; 4] {
+const fn hex_u16<const LOWER: bool>(v: u16) -> [u8; 4] {
     let t = if LOWER {
         &LOWER_HEX_TABLE
     } else {
@@ -3461,9 +3461,7 @@ fn truncated_hash32_impl(int: u64, writer: &mut impl fmt::Write) -> fmt::Result 
 
 /// Const-fn core of [`truncated_hash32`] / [`TruncatedHash32`]: the 8-byte
 /// base32-ish encoding (native-endian byte reinterpretation).
-/// Exposed so const contexts (e.g. `js_parser::generated_symbol_name!`) can
-/// share the single alphabet table instead of copy-pasting it.
-pub const fn truncated_hash32_bytes(int: u64) -> [u8; 8] {
+const fn truncated_hash32_bytes(int: u64) -> [u8; 8] {
     const CHARS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
     let b = int.to_ne_bytes();
     [

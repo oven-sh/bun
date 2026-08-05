@@ -179,7 +179,7 @@ const observerCounts = new Map();
 const kObservers = new Set();
 
 /** Entry types routed through this JS-side registry instead of the native observer. */
-const kNodeEntryTypes = new Set(["net", "dns", "http", "function", "quic"]);
+const kNodeEntryTypes = new Set(["net", "dns", "http", "http2", "function", "quic"]);
 
 function hasObserver(type) {
   return (observerCounts.get(type) ?? 0) > 0;
@@ -330,7 +330,6 @@ const kInternalAssertionSuffix =
 
 export default {
   kInternalAssertionSuffix,
-  NotImplementedError,
   throwNotImplemented,
   hideFromStack,
   warnNotImplementedOnce,

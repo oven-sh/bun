@@ -47,11 +47,11 @@ unsafe extern "Rust" {
 }
 // ────────────────────────────────────────────────────────────────────────────
 
-pub const PIPE_READ_BUFFER_SIZE: usize = 256 * 1024;
+const PIPE_READ_BUFFER_SIZE: usize = 256 * 1024;
 pub type PipeReadBuffer = [u8; PIPE_READ_BUFFER_SIZE];
 
 /// Intrusive MPSC queue over `AnyTaskWithExtraContext` linked via its `.next` field.
-pub type ConcurrentTaskQueue = UnboundedQueue<AnyTaskWithExtraContext>;
+type ConcurrentTaskQueue = UnboundedQueue<AnyTaskWithExtraContext>;
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<AnyTaskWithExtraContext>`.
 unsafe impl bun_threading::Linked for AnyTaskWithExtraContext {

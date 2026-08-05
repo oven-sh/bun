@@ -228,12 +228,6 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
   }
   const fastPath = this[kWriteStreamFastPath];
   if (this.open !== streamNoop) {
-    // if (fastPath) {
-    //   // disable fast path in this case
-    //   $assert(this[kWriteStreamFastPath] === true, "fastPath is not true");
-    //   this[kWriteStreamFastPath] = undefined;
-    // }
-
     // Backwards compat for monkey patching open().
     const orgEmit: any = this.emit;
     this.emit = function (...args) {

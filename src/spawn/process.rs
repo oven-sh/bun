@@ -932,7 +932,7 @@ pub mod waiter_thread_posix {
         pub(crate) js_process: ProcessQueue,
     }
 
-    pub type ProcessQueue = NewQueue<Process>;
+    type ProcessQueue = NewQueue<Process>;
 
     pub struct NewQueue<T: 'static> {
         pub(crate) queue: ConcurrentQueue<T>,

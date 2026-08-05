@@ -53,6 +53,14 @@ MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, char const* data, NewSt
     return MaybeLocal<String>(isolate->currentHandleScope()->createLocal<String>(vm, jsString));
 }
 
+Local<String> String::NewFromUtf8Literal(Isolate* isolate, const char* literal, NewStringType type, int length)
+{
+    // V8 statically asserts the literal length is in range, so this never returns empty.
+    Local<String> result;
+    (void)NewFromUtf8(isolate, literal, type, length).ToLocal(&result);
+    return result;
+}
+
 MaybeLocal<String> String::NewFromOneByte(Isolate* isolate, const uint8_t* data, NewStringType type, int signed_length)
 {
     size_t length = 0;

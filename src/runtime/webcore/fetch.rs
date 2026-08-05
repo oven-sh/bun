@@ -36,7 +36,7 @@ pub mod fetch_tasklet;
 
 #[path = "fetch/FetchRequestBodySink.rs"]
 pub mod fetch_request_body_sink;
-pub use self::fetch_request_body_sink::{FetchRequestBodySink, FetchRequestBodySinkJSSink};
+pub use self::fetch_request_body_sink::FetchRequestBodySink;
 
 #[path = "fetch/compress_body.rs"]
 pub mod compress_body;
@@ -1746,11 +1746,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
                     let original_size = body.any_blob().blob().size.get();
                     let stat_size = blob::SizeType::try_from(stat.st_size).expect("int cast");
-                    let blob_size = if bun_sys::S::ISREG(stat.st_mode as u32) {
-                        stat_size
-                    } else {
-                        original_size.min(stat_size)
-                    };
                     let blob_offset = body.any_blob().blob().offset.get();
 
                     // `http::SendFile` fields are `usize`; blob sizes/offsets
@@ -1759,7 +1754,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         fd: opened_fd,
                         remain: (blob_offset + original_size) as usize,
                         offset: blob_offset as usize,
-                        content_size: blob_size as usize,
+                        content_size: original_size.min(stat_size) as usize,
                     };
 
                     if bun_sys::S::ISREG(stat.st_mode as u32) {
@@ -1770,6 +1765,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             .max(sf.offset)
                             .min(stat_size_usize)
                             .saturating_sub(sf.offset);
+                        // `remain` is now the exact byte count we will send (the slice
+                        // window clamped to the file); that is the Content-Length.
+                        sf.content_size = sf.remain;
                     }
                     body.detach();
                     body = HTTPRequestBody::Sendfile(sf);

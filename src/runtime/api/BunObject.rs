@@ -956,7 +956,7 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
     let vm = global_this.bun_vm();
     let mut arguments = ArgumentsSlice::init(vm, callframe.arguments());
     let mut path = ZigStringSlice::EMPTY;
-    let mut editor_choice: Option<Editor> = None;
+    let mut editor_name: Option<ZigStringSlice> = None;
     let mut line: Option<ZigStringSlice> = None;
     let mut column: Option<ZigStringSlice> = None;
 
@@ -964,59 +964,65 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
         path = file_path_.to_slice(global_this)?;
     }
 
+    // Option getters and `toString` run arbitrary user JS that may re-enter
+    // this function, so every JS-visible coercion must finish before the
+    // EDITOR_CONTEXT borrow below is taken (re-entry while borrowed panics).
+    if let Some(opts) = arguments.next_eat() {
+        if !opts.is_undefined_or_null() {
+            if let Some(editor_val) = opts.get_truthy(global_this, "editor")? {
+                editor_name = Some(editor_val.to_slice(global_this)?);
+            }
+
+            if let Some(line_) = opts.get_truthy(global_this, "line")? {
+                line = Some(line_.to_slice(global_this)?);
+            }
+
+            if let Some(column_) = opts.get_truthy(global_this, "column")? {
+                column = Some(column_.to_slice(global_this)?);
+            }
+        }
+    }
+
     EDITOR_CONTEXT.with(|cell| -> JsResult<JSValue> {
         let mut slot = cell.borrow_mut();
         let slot = &mut *slot;
         let edit = &mut slot.ctx;
         let env = vm.transpiler.env_mut();
+        let mut editor_choice: Option<Editor> = None;
 
-        if let Some(opts) = arguments.next_eat() {
-            if !opts.is_undefined_or_null() {
-                if let Some(editor_val) = opts.get_truthy(global_this, "editor")? {
-                    let sliced = editor_val.to_slice(global_this)?;
-                    let prev_name = edit.name;
+        if let Some(sliced) = &editor_name {
+            let prev_name = edit.name;
 
-                    if !strings::eql_long(prev_name, sliced.slice(), true) {
-                        let prev = core::mem::take(edit);
-                        // Own the bytes in `name_storage` and
-                        // hand back a thread-lifetime borrow.
-                        let prev_storage =
-                            core::mem::replace(&mut slot.name_storage, sliced.slice().to_vec());
-                        // SAFETY: `name_storage` lives in a thread_local that
-                        // outlives any caller; we never reallocate it while
-                        // `edit.name` is observed (single-threaded JS VM).
-                        edit.name =
-                            unsafe { bun_ptr::detach_lifetime(slot.name_storage.as_slice()) };
-                        edit.detect_editor(env);
-                        editor_choice = edit.editor;
-                        if editor_choice.is_none() {
-                            slot.name_storage = prev_storage;
-                            *edit = prev;
-                            return Err(global_this.throw(format_args!(
-                                "Could not find editor \"{}\"",
-                                bstr::BStr::new(sliced.slice()),
-                            )));
-                        } else if edit.name.as_ptr() == edit.path.as_ptr() {
-                            // `detect_editor` aliased `path` to `name` (absolute
-                            // editor path). `name` is backed by `slot.name_storage`,
-                            // which a later call may drop while the detached editor
-                            // thread is still reading argv[0]. Give `path`
-                            // process-lifetime storage, matching every other
-                            // `detect_editor` branch.
-                            edit.path = bun_resolver::fs::FileSystem::instance()
-                                .dirname_store
-                                .append_slice(edit.path)
-                                .expect("unreachable");
-                        }
-                    }
-                }
-
-                if let Some(line_) = opts.get_truthy(global_this, "line")? {
-                    line = Some(line_.to_slice(global_this)?);
-                }
-
-                if let Some(column_) = opts.get_truthy(global_this, "column")? {
-                    column = Some(column_.to_slice(global_this)?);
+            if !strings::eql_long(prev_name, sliced.slice(), true) {
+                let prev = core::mem::take(edit);
+                // Own the bytes in `name_storage` and
+                // hand back a thread-lifetime borrow.
+                let prev_storage =
+                    core::mem::replace(&mut slot.name_storage, sliced.slice().to_vec());
+                // SAFETY: `name_storage` lives in a thread_local that
+                // outlives any caller; we never reallocate it while
+                // `edit.name` is observed (single-threaded JS VM).
+                edit.name = unsafe { bun_ptr::detach_lifetime(slot.name_storage.as_slice()) };
+                edit.detect_editor(env);
+                editor_choice = edit.editor;
+                if editor_choice.is_none() {
+                    slot.name_storage = prev_storage;
+                    *edit = prev;
+                    return Err(global_this.throw(format_args!(
+                        "Could not find editor \"{}\"",
+                        bstr::BStr::new(sliced.slice()),
+                    )));
+                } else if edit.name.as_ptr() == edit.path.as_ptr() {
+                    // `detect_editor` aliased `path` to `name` (absolute
+                    // editor path). `name` is backed by `slot.name_storage`,
+                    // which a later call may drop while the detached editor
+                    // thread is still reading argv[0]. Give `path`
+                    // process-lifetime storage, matching every other
+                    // `detect_editor` branch.
+                    edit.path = bun_resolver::fs::FileSystem::instance()
+                        .dirname_store
+                        .append_slice(edit.path)
+                        .expect("unreachable");
                 }
             }
         }
@@ -2330,7 +2336,7 @@ pub mod JSZlib {
     // borrowing a local `Vec<u8>`, then leaks only the Vec's allocation into
     // the ArrayBuffer — so both zlib paths converge on `global_deallocator`
     // and the per-type callbacks are gone. (`no_mangle` dropped: 0 C++ refs.)
-    pub use bun_alloc::c_thunks::mi_free_ctx as global_deallocator;
+    use bun_alloc::c_thunks::mi_free_ctx as global_deallocator;
 
     #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
     #[strum(serialize_all = "lowercase")]

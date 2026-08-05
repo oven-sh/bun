@@ -28,7 +28,6 @@ use bun_jsc::{JSGlobalObject, JSValue};
 
 use crate::api::html_rewriter;
 use crate::api::server;
-use crate::webcore::body;
 
 // Request contexts are a single generic
 // `NewRequestContext<ThisServer, SSL, DEBUG, HTTP3>`; alias the six
@@ -55,9 +54,9 @@ pub enum Tag {
     HTTPSServerRequestContext,
     DebugHTTPServerRequestContext,
     DebugHTTPSServerRequestContext,
-    BodyValueBufferer,
     HTTPSServerH3RequestContext,
     DebugHTTPSServerH3RequestContext,
+    HTMLRewriterSuspension,
 }
 
 impl Tag {
@@ -70,9 +69,9 @@ impl Tag {
             1 => Tag::HTTPSServerRequestContext,
             2 => Tag::DebugHTTPServerRequestContext,
             3 => Tag::DebugHTTPSServerRequestContext,
-            4 => Tag::BodyValueBufferer,
-            5 => Tag::HTTPSServerH3RequestContext,
-            6 => Tag::DebugHTTPSServerH3RequestContext,
+            4 => Tag::HTTPSServerH3RequestContext,
+            5 => Tag::DebugHTTPSServerH3RequestContext,
+            6 => Tag::HTMLRewriterSuspension,
             _ => unreachable!(),
         }
     }
@@ -105,8 +104,8 @@ impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> NativePromise
 {
     const TAG: Tag = npc_tag_for(SSL, DBG, H3);
 }
-impl NativePromiseContextType for body::ValueBufferer<'_> {
-    const TAG: Tag = Tag::BodyValueBufferer;
+impl NativePromiseContextType for html_rewriter::RewriterPipe {
+    const TAG: Tag = Tag::HTMLRewriterSuspension;
 }
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer. `ctx` is stored
@@ -118,14 +117,22 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         ctx: *mut c_void,
         tag: u8,
+        held: JSValue,
     ) -> JSValue;
     safe fn Bun__NativePromiseContext__take(value: JSValue) -> *mut c_void;
 }
 
-/// The caller must have already taken a ref on `ctx`. The returned cell owns
-/// that ref until `take()` transfers it back or GC runs the destructor.
-pub(crate) fn create<T: NativePromiseContextType>(global: &JSGlobalObject, ctx: *mut T) -> JSValue {
-    Bun__NativePromiseContext__create(global, ctx.cast::<c_void>(), T::TAG as u8)
+/// The cell owns the caller's claim on `ctx` until `take()` transfers it back
+/// or GC runs the destructor (which defers to [`DeferredDerefTask`]). `held`
+/// is visited by the cell, so whatever GC object keeps `ctx` alive can ride
+/// along for as long as the promise can settle; pass `JSValue::ZERO` when
+/// nothing needs rooting.
+pub(crate) fn create<T: NativePromiseContextType>(
+    global: &JSGlobalObject,
+    ctx: *mut T,
+    held: JSValue,
+) -> JSValue {
+    Bun__NativePromiseContext__create(global, ctx.cast::<c_void>(), T::TAG as u8, held)
 }
 
 /// Transfers the ref back to the caller and nulls the cell so the destructor
@@ -218,21 +225,19 @@ impl DeferredDerefTask {
                 Tag::DebugHTTPSServerRequestContext => {
                     (*ctx.cast::<DebugHTTPSServerRequestContext>()).deref()
                 }
-                Tag::BodyValueBufferer => {
-                    // ValueBufferer is embedded by value inside HTMLRewriter's
-                    // BufferOutputSink, with the owner pointer stored in .ctx.
-                    // The pending-promise ref was taken on the owner, so we
-                    // release it there.
-                    let bufferer = &*ctx.cast::<body::ValueBufferer<'_>>();
-                    html_rewriter::BufferOutputSink::deref(
-                        bufferer.ctx.cast::<html_rewriter::BufferOutputSink>(),
-                    );
-                }
                 Tag::HTTPSServerH3RequestContext => {
                     (*ctx.cast::<HTTPSServerH3RequestContext>()).deref()
                 }
                 Tag::DebugHTTPSServerH3RequestContext => {
                     (*ctx.cast::<DebugHTTPSServerH3RequestContext>()).deref()
+                }
+                Tag::HTMLRewriterSuspension => {
+                    let back = bun_ptr::BackRef::from(NonNull::new_unchecked(
+                        ctx.cast::<html_rewriter::RewriterPipe>(),
+                    ));
+                    if html_rewriter::RewriterPipe::abandon_suspension(back) {
+                        drop(Box::from_raw(ctx.cast::<html_rewriter::RewriterPipe>()));
+                    }
                 }
             }
         }
@@ -251,4 +256,4 @@ const _: () =
 const _: () =
     assert!(core::mem::align_of::<DebugHTTPSServerRequestContext>() > DeferredDerefTask::TAG_MASK);
 const _: () =
-    assert!(core::mem::align_of::<body::ValueBufferer<'_>>() > DeferredDerefTask::TAG_MASK);
+    assert!(core::mem::align_of::<html_rewriter::RewriterPipe>() > DeferredDerefTask::TAG_MASK);

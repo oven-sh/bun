@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -203,6 +203,107 @@ it("MessageEvent with deleted data", () => {
   data: null,
 }`,
   );
+});
+
+it("Event subclass with a throwing getter does not make Bun.inspect throw", () => {
+  class ThrowType extends Event {
+    get type() {
+      throw new Error("type-getter-boom");
+    }
+  }
+  const typeOut = Bun.inspect(new ThrowType("t"));
+  expect(typeOut).toContain("type: [Getter]");
+  expect(typeOut).not.toContain("type-getter-boom");
+  expect(() => Bun.inspect({ payload: [new ThrowType("t")] })).not.toThrow();
+
+  class ThrowData extends MessageEvent {
+    get data() {
+      throw new Error("data-getter-boom");
+    }
+  }
+  expect(Bun.inspect(new ThrowData("message", { data: "p" }))).toBe(
+    `MessageEvent {\n  type: "message",\n  data: undefined,\n}`,
+  );
+
+  class ThrowError extends ErrorEvent {
+    get error() {
+      throw new Error("error-getter-boom");
+    }
+    get message() {
+      throw new Error("message-getter-boom");
+    }
+  }
+  expect(Bun.inspect(new ThrowError("error", { message: "m", error: new Error("i") }))).toBe(
+    `ErrorEvent {\n  type: "error",\n}`,
+  );
+
+  // Own-instance accessors (not subclass) on the Event branch reads.
+  const me = new MessageEvent("message", { data: "p" });
+  Object.defineProperty(me, "data", {
+    get() {
+      throw new Error("own-data-boom");
+    },
+    configurable: true,
+  });
+  expect(Bun.inspect(me)).toBe(`MessageEvent {\n  type: "message",\n  data: undefined,\n}`);
+  expect(Bun.inspect({ nested: me })).toContain("data: undefined");
+});
+
+it("AggregateError with a hostile 'errors' property does not make Bun.inspect throw", () => {
+  // Accessor own prop: getDirect returns the GetterSetter cell, for_each throws.
+  const a = new AggregateError([new Error("x")], "agg");
+  Object.defineProperty(a, "errors", {
+    get() {
+      throw new Error("errors-getter-boom");
+    },
+    configurable: true,
+  });
+  expect(() => Bun.inspect(a)).not.toThrow();
+  expect(() => Bun.inspect({ nested: a })).not.toThrow();
+
+  // Non-iterable data prop: for_each throws TypeError.
+  const b = new AggregateError([new Error("x")], "agg");
+  b.errors = { not: "iterable" };
+  expect(() => Bun.inspect(b)).not.toThrow();
+
+  // Deleted own prop: getDirect returns empty; used to segfault in for_each.
+  const c = new AggregateError([new Error("x")], "agg");
+  delete c.errors;
+  expect(() => Bun.inspect(c)).not.toThrow();
+});
+
+it("Event subclass with a throwing getter does not make toMatchSnapshot fail", async () => {
+  using dir = tempDir("inspect-event-snapshot", {
+    "snap.test.js": `
+      import { test, expect } from "bun:test";
+      test("type", () => {
+        class E extends Event { get type() { throw new Error("type-getter-boom"); } }
+        expect(new E("t")).toMatchSnapshot();
+      });
+      test("data", () => {
+        class M extends Event { get data() { throw new Error("data-getter-boom"); } }
+        expect(new M("message")).toMatchSnapshot();
+      });
+      test("error", () => {
+        class R extends Event {
+          get error() { throw new Error("error-getter-boom"); }
+          get message() { throw new Error("message-getter-boom"); }
+        }
+        expect(new R("error")).toMatchSnapshot();
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--update-snapshots", "snap.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const all = stdout + stderr;
+  expect(all).not.toContain("Failed to pretty format");
+  expect(all).toContain("3 pass");
+  expect(exitCode).toBe(0);
 });
 
 // https://github.com/oven-sh/bun/issues/561

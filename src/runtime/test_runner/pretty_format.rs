@@ -1853,9 +1853,13 @@ impl<'a> Formatter<'a> {
                 }
                 Tag::Event => {
                     let event_type_value: JSValue = 'brk: {
-                        let value_: JSValue = match value.get(self.global_this, "type")? {
-                            Some(v) => v,
-                            None => break 'brk JSValue::UNDEFINED,
+                        let value_: JSValue = match value.get(self.global_this, "type") {
+                            Ok(Some(v)) => v,
+                            Ok(None) => break 'brk JSValue::UNDEFINED,
+                            Err(_) => {
+                                self.global_this.clear_exception();
+                                break 'brk JSValue::UNDEFINED;
+                            }
                         };
                         if value_.is_string() {
                             break 'brk value_;
@@ -1902,9 +1906,16 @@ impl<'a> Formatter<'a> {
                             pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                         ));
 
-                        if let Some(message_value) =
-                            value.fast_get(self.global_this, jsc::BuiltinName::Message)?
+                        let message_value = match value
+                            .fast_get(self.global_this, jsc::BuiltinName::Message)
                         {
+                            Ok(v) => v,
+                            Err(_) => {
+                                self.global_this.clear_exception();
+                                None
+                            }
+                        };
+                        if let Some(message_value) = message_value {
                             if message_value.is_string() {
                                 self.write_indent(writer.ctx).expect("unreachable");
                                 writer.print(format_args!(
@@ -1931,9 +1942,15 @@ impl<'a> Formatter<'a> {
                                     pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
                                     pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                                 ));
-                                let data: JSValue = value
-                                    .fast_get(self.global_this, jsc::BuiltinName::Data)?
-                                    .unwrap_or(JSValue::UNDEFINED);
+                                let data: JSValue = match value
+                                    .fast_get(self.global_this, jsc::BuiltinName::Data)
+                                {
+                                    Ok(v) => v.unwrap_or(JSValue::UNDEFINED),
+                                    Err(_) => {
+                                        self.global_this.clear_exception();
+                                        JSValue::UNDEFINED
+                                    }
+                                };
                                 let tag = Tag::get(data, self.global_this)?;
 
                                 self.format::<W, ENABLE_ANSI_COLORS>(
@@ -1942,9 +1959,16 @@ impl<'a> Formatter<'a> {
                                 writer.write_all(b", \n");
                             }
                             EventType::ErrorEvent => {
-                                if let Some(data) =
-                                    value.fast_get(self.global_this, jsc::BuiltinName::Error)?
+                                let error_value = match value
+                                    .fast_get(self.global_this, jsc::BuiltinName::Error)
                                 {
+                                    Ok(v) => v,
+                                    Err(_) => {
+                                        self.global_this.clear_exception();
+                                        None
+                                    }
+                                };
+                                if let Some(data) = error_value {
                                     self.write_indent(writer.ctx).expect("unreachable");
                                     writer.print(format_args!(
                                         "{}error{}:{} ",

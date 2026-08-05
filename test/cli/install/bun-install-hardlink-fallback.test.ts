@@ -145,6 +145,11 @@ describe("concurrent installs into the same destination", () => {
 
     for (let round = 0; round < ROUNDS; round++) {
       rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
+      if (round > 0) {
+        // Cold cache: the processes also race extracting into the cache, not
+        // just copying out of it.
+        rmSync(join(String(dir), "cache"), { recursive: true, force: true });
+      }
       const procs = Array.from({ length: PROCESS_COUNT }, () =>
         Bun.spawn({ cmd, cwd: String(dir), env, stdout: "pipe", stderr: "pipe" }),
       );

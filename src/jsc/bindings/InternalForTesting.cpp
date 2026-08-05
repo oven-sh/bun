@@ -5,6 +5,7 @@
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSArrayBufferView.h"
 #include "headers-handwritten.h"
+#include "JSBuffer.h"
 #include "webcore/HTTPHeaderMap.h"
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/WTFString.h>
@@ -103,6 +104,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_BunString_toThreadSafeRefCountDelta, (JSC::J
 
 extern "C" void Bun__MemoryPressure__emit(JSC::JSGlobalObject* global, int level);
 extern "C" bool Bun__MemoryPressure__isInstalled(JSC::JSGlobalObject* global);
+extern "C" bool Bun__MemoryPressure__hasOsBackend(JSC::JSGlobalObject* global);
+extern "C" const uint8_t* Bun__MemoryPressure__psiTrigger(size_t* len);
 
 // Synthetically fire process.on("memoryPressure") so tests can exercise the
 // emit path without depending on real OS memory pressure.
@@ -122,6 +125,20 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_emitMemoryPressure, (JSC::JSGlobalObject * g
 JSC_DEFINE_HOST_FUNCTION(jsFunction_isMemoryPressureWatcherInstalled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return JSValue::encode(jsBoolean(Bun__MemoryPressure__isInstalled(defaultGlobalObject(globalObject))));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_memoryPressureWatcherHasOsBackend, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return JSValue::encode(jsBoolean(Bun__MemoryPressure__hasOsBackend(defaultGlobalObject(globalObject))));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_memoryPressurePsiTrigger, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    size_t len = 0;
+    const uint8_t* ptr = Bun__MemoryPressure__psiTrigger(&len);
+    if (!ptr || !len)
+        return JSValue::encode(jsNull());
+    return JSValue::encode(createBuffer(globalObject, ptr, len));
 }
 
 }

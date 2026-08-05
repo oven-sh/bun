@@ -437,15 +437,17 @@ describe("robustness", () => {
     expect(cur).toEqual({ a: 1 });
   });
 
-  test("extremely deep dotted keys and headers throw instead of crashing", () => {
-    // Parsing these is iterative (every segment is processed before the limit
-    // can trip), so unlike OVERFLOW_DEPTH this depth is paid in full: it must
-    // stay small enough to be fast in debug builds while still overflowing
-    // the JS-conversion recursion at release frame sizes.
-    const depth = 250_000;
-    const path = Buffer.alloc(depth * 2 - 1, "a.").toString();
-    expect(() => TOML.parse(path + " = 1")).toThrow(RangeError);
-    expect(() => TOML.parse(`[${path}]`)).toThrow(RangeError);
+  // Parsing these is iterative (every segment is processed before the limit
+  // can trip), so unlike OVERFLOW_DEPTH this depth is paid in full: it must
+  // stay small enough to be fast in debug builds while still overflowing the
+  // JS-conversion recursion at release frame sizes. One parse per test so
+  // each stays under the default timeout.
+  const DEEP_DOTTED = Buffer.alloc(250_000 * 2 - 1, "a.").toString();
+  test("an extremely deep dotted key throws instead of crashing", () => {
+    expect(() => TOML.parse(DEEP_DOTTED + " = 1")).toThrow(RangeError);
+  });
+  test("an extremely deep dotted header throws instead of crashing", () => {
+    expect(() => TOML.parse(`[${DEEP_DOTTED}]`)).toThrow(RangeError);
   });
 
   test("a very long string value round-trips", () => {
@@ -503,13 +505,103 @@ describe("error contract", () => {
 
   test("unquoted string values name the fix", () => {
     // The old parser silently accepted bare words as strings; this is the
-    // most common spec violation in real-world bunfig.toml files.
-    expect(syntaxError("linker = isolated").message).toBe('TOML Parse error: Strings must be quoted: "isolated"');
-    expect(syntaxError("a = tru").message).toBe('TOML Parse error: Strings must be quoted: "tru"');
-    expect(syntaxError("a = nope").message).toBe('TOML Parse error: Strings must be quoted: "nope"');
+    // most common spec violation in real-world bunfig.toml files. The fix-it
+    // includes the `key = ` portion so it can be pasted verbatim.
+    expect(syntaxError("linker = isolated").message).toBe(
+      'TOML Parse error: String values must be quoted; write: linker = "isolated"',
+    );
+    expect(syntaxError("[install]\nlinker = isolated").message).toBe(
+      'TOML Parse error: String values must be quoted; write: linker = "isolated"',
+    );
+    expect(syntaxError("install.linker = isolated").message).toBe(
+      'TOML Parse error: String values must be quoted; write: install.linker = "isolated"',
+    );
+    expect(syntaxError('"my key" = isolated').message).toBe(
+      'TOML Parse error: String values must be quoted; write: "my key" = "isolated"',
+    );
+    expect(syntaxError("a = tru").message).toBe('TOML Parse error: String values must be quoted; write: a = "tru"');
+    expect(syntaxError("a = nope").message).toBe('TOML Parse error: String values must be quoted; write: a = "nope"');
     // Bare words that merely start with inf/nan are unquoted strings too.
-    expect(syntaxError("timeout = infinity").message).toBe('TOML Parse error: Strings must be quoted: "infinity"');
-    expect(syntaxError("unit = nanoseconds").message).toBe('TOML Parse error: Strings must be quoted: "nanoseconds"');
+    expect(syntaxError("timeout = infinity").message).toBe(
+      'TOML Parse error: String values must be quoted; write: timeout = "infinity"',
+    );
+    expect(syntaxError("unit = nanoseconds").message).toBe(
+      'TOML Parse error: String values must be quoted; write: unit = "nanoseconds"',
+    );
+    // The captured value runs to the end of the value expression (not just
+    // bare-key characters) so URLs and file names are quoted whole.
+    expect(syntaxError("registry = https://registry.npmjs.org/").message).toBe(
+      'TOML Parse error: String values must be quoted; write: registry = "https://registry.npmjs.org/"',
+    );
+    expect(syntaxError("preload = setup.ts").message).toBe(
+      'TOML Parse error: String values must be quoted; write: preload = "setup.ts"',
+    );
+    expect(syntaxError("a = foo bar  # c").message).toBe(
+      'TOML Parse error: String values must be quoted; write: a = "foo bar"',
+    );
+    expect(syntaxError("a = foo\t# c").message).toBe(
+      'TOML Parse error: String values must be quoted; write: a = "foo"',
+    );
+    // Inside an array or inline table the `key = ` part is omitted.
+    expect(syntaxError("a = [isolated]").message).toBe(
+      'TOML Parse error: String values must be quoted; write: "isolated"',
+    );
+    expect(syntaxError("a = [1, isolated]").message).toBe(
+      'TOML Parse error: String values must be quoted; write: "isolated"',
+    );
+    expect(syntaxError("a = { b = isolated }").message).toBe(
+      'TOML Parse error: String values must be quoted; write: b = "isolated"',
+    );
+    // The prefix is dropped (never printed half-formed) when the backward
+    // scan did not provably reach its start: a stop byte inside a quoted
+    // key, an escape that defeats quote-parity, or the length cap.
+    expect(syntaxError('"a,b" = isolated').message).toBe(
+      'TOML Parse error: String values must be quoted; write: "isolated"',
+    );
+    expect(syntaxError("'a[b' = isolated").message).toBe(
+      'TOML Parse error: String values must be quoted; write: "isolated"',
+    );
+    expect(syntaxError('"a,\\"b" = isolated').message).toBe(
+      'TOML Parse error: String values must be quoted; write: "isolated"',
+    );
+    expect(syntaxError(Buffer.alloc(70, "a").toString() + " = isolated").message).toBe(
+      'TOML Parse error: String values must be quoted; write: "isolated"',
+    );
+    // Values that would need escaping to quote, or that exceed the scan cap,
+    // fall back to the generic instruction rather than a broken suggestion.
+    const generic = "TOML Parse error: String values must be quoted; wrap the value in double quotes";
+    expect(syntaxError("a = " + Buffer.alloc(70, "x").toString()).message).toBe(generic);
+    expect(syntaxError("a = it's").message).toBe(generic);
+    expect(syntaxError("a = has\\back").message).toBe(generic);
+    expect(syntaxError("a = foo\x7Fbar").message).toBe(generic);
+    expect(syntaxError(Buffer.from("a = foo\x00bar")).message).toBe(generic);
+  });
+
+  test("escape errors inside a drive-letter string name the Windows-path fix", () => {
+    // `"C:\Users"` is an easy mistake to carry over from .npmrc; the
+    // spec-accurate "must be followed by 8 hex digits" message does not
+    // help a user who meant a path separator.
+    const hint =
+      "TOML Parse error: Backslash begins an escape sequence; for a Windows path, " +
+      "use a single-quoted string ('C:\\...') or double each backslash (\"C:\\\\...\")";
+    expect(syntaxError('cache = "C:\\Users\\bob"').message).toBe(hint);
+    expect(syntaxError('cache = "C:\\Program Files"').message).toBe(hint);
+    expect(syntaxError('cache = "C:\\xyz"').message).toBe(hint);
+    expect(syntaxError('cache = "C:\\users"').message).toBe(hint);
+    // The drive letter is echoed back so the example matches the input.
+    expect(syntaxError('cache = "d:\\my"').message).toBe(
+      "TOML Parse error: Backslash begins an escape sequence; for a Windows path, " +
+        "use a single-quoted string ('d:\\...') or double each backslash (\"d:\\\\...\")",
+    );
+    // A string that is not drive-letter-prefixed keeps the precise escape error.
+    expect(syntaxError('a = "foo\\zbar"').message).toBe("TOML Parse error: Invalid escape sequence: 'z'");
+    expect(syntaxError('a = "\\U12345"').message).toBe(
+      "TOML Parse error: A Unicode escape must be followed by exactly 8 hex digits",
+    );
+    // Multi-line strings are not path-shaped, so they keep the precise error too.
+    expect(syntaxError('a = """C:\\my"""').message).toBe("TOML Parse error: Invalid escape sequence: 'm'");
+    // The single-quoted form the hint recommends actually parses.
+    expect(TOML.parse("cache = 'C:\\Users\\bob'")).toEqual({ cache: "C:\\Users\\bob" });
   });
 
   test("common mistakes produce specific messages", () => {

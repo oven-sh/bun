@@ -258,20 +258,93 @@ impl<'a, 'log> Scanner<'a, 'log> {
     }
 
     /// A bare word in value position is almost always an unquoted string,
-    /// which the old parser silently accepted; name the fix directly.
+    /// which the old parser silently accepted; name the fix directly. Scans
+    /// back to the start of the `key = ` expression so the suggestion is a
+    /// drop-in replacement for the whole line.
     fn err_unquoted_string(&mut self, pos: usize) -> PErr {
-        let mut end = pos;
-        while end < self.src.len() && is_bare_key_char(self.peek_at(end)) && end - pos < 64 {
-            end += 1;
+        const GENERIC: &[u8] = b"String values must be quoted; wrap the value in double quotes";
+        if self.redact {
+            return self.err(pos, GENERIC);
         }
-        if self.redact || end == pos {
-            return self.err(pos, b"Strings must be quoted");
+        // Capture everything up to the end of the value expression, then trim
+        // trailing whitespace, so URLs and file names are quoted whole.
+        let mut end = pos;
+        loop {
+            match self.peek_at(end) {
+                0 if end >= self.src.len() => break,
+                b'\n' | b'\r' | b'#' | b',' | b']' | b'}' => break,
+                b'"' | b'\'' | b'\\' => return self.err(pos, GENERIC),
+                c if (c < 0x20 && c != b'\t') || c == 0x7F => return self.err(pos, GENERIC),
+                _ => end += 1,
+            }
+            if end - pos == 64 {
+                return self.err(pos, GENERIC);
+            }
+        }
+        while end > pos && matches!(self.src[end - 1], b' ' | b'\t') {
+            end -= 1;
+        }
+        if end == pos {
+            return self.err(pos, GENERIC);
+        }
+        let mut key_start = pos;
+        let mut capped = false;
+        while key_start > 0
+            && !matches!(self.src[key_start - 1], b'\n' | b'\r' | b'[' | b'{' | b',')
+        {
+            if pos - key_start == 64 {
+                capped = true;
+                break;
+            }
+            key_start -= 1;
+        }
+        while key_start < pos && matches!(self.src[key_start], b' ' | b'\t') {
+            key_start += 1;
+        }
+        let prefix = &self.src[key_start..pos];
+        // An unbalanced quote or a `\` in the prefix means a stop byte sat
+        // inside a quoted key, so the prefix is a fragment; drop it.
+        let whole = !capped
+            && !bun_core::strings::contains(prefix, b"\\")
+            && prefix.iter().filter(|&&c| c == b'"').count() % 2 == 0
+            && prefix.iter().filter(|&&c| c == b'\'').count() % 2 == 0;
+        if whole && bun_core::strings::contains(prefix, b"=") {
+            self.err_fmt(
+                pos,
+                format_args!(
+                    "String values must be quoted; write: {}\"{}\"",
+                    bstr::BStr::new(prefix),
+                    bstr::BStr::new(&self.src[pos..end]),
+                ),
+            )
+        } else {
+            self.err_fmt(
+                pos,
+                format_args!(
+                    "String values must be quoted; write: \"{}\"",
+                    bstr::BStr::new(&self.src[pos..end]),
+                ),
+            )
+        }
+    }
+
+    /// A backslash inside a basic string that begins with a drive letter
+    /// (`C:`) almost certainly meant a Windows path separator, not an
+    /// escape; say so instead of naming the escape rule that was violated.
+    fn err_windows_path_escape(&mut self, escape_pos: usize, drive: u8) -> PErr {
+        if self.redact {
+            return self.err(
+                escape_pos,
+                b"Backslash begins an escape sequence; for a Windows path, \
+                  use a single-quoted string or double each backslash",
+            );
         }
         self.err_fmt(
-            pos,
+            escape_pos,
             format_args!(
-                "Strings must be quoted: \"{}\"",
-                bstr::BStr::new(&self.src[pos..end])
+                "Backslash begins an escape sequence; for a Windows path, \
+                 use a single-quoted string ('{}:\\...') or double each backslash (\"{}:\\\\...\")",
+                drive as char, drive as char,
             ),
         )
     }
@@ -1119,6 +1192,15 @@ impl<'a, 'log> Scanner<'a, 'log> {
         }
 
         let start = self.pos;
+        // `"<letter>:...` is treated as a Windows path for escape errors.
+        let path_drive = if !multiline
+            && self.peek_at(start).is_ascii_alphabetic()
+            && self.peek_at(start + 1) == b':'
+        {
+            self.peek_at(start)
+        } else {
+            0
+        };
         let mut buf: Option<ArenaVec<'a, u8>> = None;
         let mut is_ascii = true;
         loop {
@@ -1185,7 +1267,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                         }
                     }
                     let b = Self::materialize(self.bump, self.src, start, self.pos, &mut buf);
-                    self.scan_escape(b, &mut is_ascii)?;
+                    self.scan_escape(b, &mut is_ascii, path_drive)?;
                 }
                 b'\n' => {
                     if !multiline {
@@ -1239,7 +1321,12 @@ impl<'a, 'log> Scanner<'a, 'log> {
         }
     }
 
-    fn scan_escape(&mut self, buf: &mut ArenaVec<'a, u8>, is_ascii: &mut bool) -> PResult<()> {
+    fn scan_escape(
+        &mut self,
+        buf: &mut ArenaVec<'a, u8>,
+        is_ascii: &mut bool,
+        path_drive: u8,
+    ) -> PResult<()> {
         debug_assert_eq!(self.peek(), b'\\');
         let escape_pos = self.pos;
         self.pos += 1;
@@ -1256,15 +1343,15 @@ impl<'a, 'log> Scanner<'a, 'log> {
             // TOML 1.1
             b'e' => buf.push(0x1B),
             b'x' => {
-                let cp = self.read_hex_codepoint("hex escape", 2, escape_pos)?;
+                let cp = self.read_hex_codepoint("hex escape", 2, escape_pos, path_drive)?;
                 self.append_scalar(buf, cp, escape_pos, is_ascii)?;
             }
             b'u' => {
-                let cp = self.read_hex_codepoint("Unicode escape", 4, escape_pos)?;
+                let cp = self.read_hex_codepoint("Unicode escape", 4, escape_pos, path_drive)?;
                 self.append_scalar(buf, cp, escape_pos, is_ascii)?;
             }
             b'U' => {
-                let cp = self.read_hex_codepoint("Unicode escape", 8, escape_pos)?;
+                let cp = self.read_hex_codepoint("Unicode escape", 8, escape_pos, path_drive)?;
                 self.append_scalar(buf, cp, escape_pos, is_ascii)?;
             }
             0 if self.at_eof() => {
@@ -1272,6 +1359,9 @@ impl<'a, 'log> Scanner<'a, 'log> {
             }
             _ => {
                 self.pos -= 1;
+                if path_drive != 0 {
+                    return Err(self.err_windows_path_escape(escape_pos, path_drive));
+                }
                 return Err(self.err_char(self.pos, "Invalid escape sequence:"));
             }
         }
@@ -1283,10 +1373,14 @@ impl<'a, 'log> Scanner<'a, 'log> {
         what: &'static str,
         digits: usize,
         escape_pos: usize,
+        path_drive: u8,
     ) -> PResult<u32> {
         let mut value: u32 = 0;
         for _ in 0..digits {
             let Some(d) = bun_core::fmt::hex_digit_value_u32(u32::from(self.peek())) else {
+                if path_drive != 0 {
+                    return Err(self.err_windows_path_escape(escape_pos, path_drive));
+                }
                 return Err(self.err_fmt(
                     escape_pos,
                     format_args!(

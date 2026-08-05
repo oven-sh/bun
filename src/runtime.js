@@ -984,6 +984,7 @@ function __zodCompile(n) {
       var propFns = [];
       var propOptIn = [];
       var propOptOut = [];
+      var propConc = [];
       var propRefIdx = [];
       for (var pi = 0; pi < n.p.length; pi++) {
         var pNode = n.p[pi][1];
@@ -993,6 +994,7 @@ function __zodCompile(n) {
         propFns.push(pFn);
         propOptIn.push(__zodOptIn(pNode));
         propOptOut.push(__zodOptOut(pNode));
+        propConc.push(__zodConclusive(pNode));
         propRefIdx.push(pNode.k === "ref" ? pNode.r : -1);
       }
       var keyCount = propKeys.length;
@@ -1023,7 +1025,8 @@ function __zodCompile(n) {
             oout = __zodRefOpt(child, true);
           }
           if (r === __zodFail) {
-            if (oin && oout && !(key in v)) continue;
+            // Dropping an absent optional key mirrors zod only when the failure proves zod raises issues; an inconclusive fail is a delegation signal.
+            if (oin && oout && propConc[i] && !(key in v)) continue;
             return __zodFail;
           }
           if (!oin && !(key in v)) return __zodFail;

@@ -82,9 +82,18 @@ const SCHEMAS: Record<string, any> = {
   readonlyDefaultOptional: z.string().default("x").readonly().optional(),
   nullableConstDefaultOptional: z.nullable(ConstDefault).optional(),
   unionConstDefaultOptional: z.union([z.number(), ConstDefault]).optional(),
+  // The same shapes as object properties with the key absent: zod still
+  // produces the default, so the property loop must not drop the key on an
+  // inconclusive failure.
+  objReadonlyDefaultOptional: z.object({ p: z.string().default("x").readonly().optional() }),
+  objNullableConstDefaultOptional: z.object({ p: z.nullable(ConstDefault).optional() }),
   optionalConstDefault: z.optional(ConstDefault),
   defaultNegZero: z.number().default(-0),
   literalNegZero: z.literal(-0),
+  // Non-finite bounds/literals cannot ride in the IR JSON; these must defer.
+  minInfinity: z.number().min(1e400),
+  maxNegInfinity: z.number().max(-1e400),
+  literalInfinity: z.literal(1e400),
   defaultObj: z.object({ a: z.number() }).default({ a: 1 }),
   defaultArr: z.array(z.string()).default([]),
   defaultFn: z.number().default(() => 42),
@@ -287,6 +296,8 @@ const INPUTS: [string, unknown][] = [
   ["obj-req-optundef", { req: "r", opt: undefined }],
   ["obj-req-nul", { req: "r", nul: null }],
   ["obj-req-full", { req: "r", opt: "o", def: "x", nul: "n", nish: 5 }],
+  ["obj-p", { p: "s" }],
+  ["obj-p-undef", { p: undefined }],
   ["obj-u-undef", { u: undefined }],
   ["obj-u-dunion", { u: { type: "a", a: "s" } }],
   ["obj-nested", { o: { i: 1 }, arr: ["a"] }],

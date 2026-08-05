@@ -72,7 +72,7 @@ Restored or not, footprint grows ~10–25 MB per trivial turn over the first tur
 
 ## Linux status
 
-The product path (`imageDump`/`imageRestoreAndRun`) goes through a small platform seam with Linux implementations written but not yet compiled/tested: `/proc/self/maps` + `mincore` region scan, linker-symbol data segment bounds, `personality(ADDR_NO_RANDOMIZE)` self re-exec, epoll+eventfd loop reinit in usockets, `/proc/self/task` thread wait, `/proc/self/fd` paths. The attribution tooling (dirtymap etc.) is Darwin-only.
+Builds and runs on Linux x86_64 (AL2023, `jarred-sandbox`: `~/bun-lowmem` + `~/WebKit`, `BUN_WEBKIT_PATH=/root/WebKit bun run build:release:local`). Smoke test (`/tmp/img-smoke.js`: 200K objects, snapshot at idle, restore, timers): image 33.9 MB, restore maps 30.8 MB clean + copies 3.1 MB data, `process.on('restore')` fires, ticks run. Platform seam: `/proc/self/maps` + `mincore` region scan, linker-symbol data segment bounds, `personality(ADDR_NO_RANDOMIZE)` self re-exec, epoll+eventfd loop reinit in usockets, `/proc/self/task` thread wait, `/proc/self/fd` paths. Not yet on Linux: CC end-to-end, footprint numbers, the attribution tooling (Darwin-only).
 
 ## Known gotchas
 

@@ -72,10 +72,18 @@ public:
     // transferred endpoint. Collected == the owning MessagePort's wrapper was garbage
     // collected while still entangled. Only Explicit sets ClosedByRequest, so jsRef()
     // can tell a real close from a collection (node never collects an entangled port,
-    // so reading Closed alone made .ref() GC-dependent). Both notify the peer.
+    // so reading Closed alone made .ref() GC-dependent). An Explicit close always
+    // notifies the peer. A Collected close notifies only a peer on a *different*
+    // context (closingCtx is the collected port's context): node never tears a
+    // channel down because a wrapper was collected, so a same-context listening
+    // peer must keep the loop alive exactly as if the port were still reachable;
+    // but a cross-context peer would otherwise be stranded forever, because once
+    // the collected port is gone its context's teardown has nothing left to
+    // notify (node delivers that close at worker exit; collection time is the
+    // closest equivalent we have).
     enum class CloseKind : uint8_t { Explicit,
         Collected };
-    void close(uint8_t side, CloseKind = CloseKind::Collected);
+    void close(uint8_t side, CloseKind = CloseKind::Collected, ScriptExecutionContextIdentifier closingCtx = 0);
 
     // Lockless snapshot for the GC visitor / hasPendingActivity.
     uint64_t state(uint8_t side) const { return m_sides[side].state.load(std::memory_order_acquire); }
@@ -89,6 +97,10 @@ private:
     MessagePortPipe() = default;
 
     void scheduleDrain(uint8_t side, ScriptExecutionContextIdentifier);
+    // True if `side` (attaching/registering on ctxId) must be told its peer is
+    // gone: the peer was explicitly closed, or was collected on a different
+    // context (see CloseKind above).
+    bool peerRequiresCloseNotification(uint8_t side, ScriptExecutionContextIdentifier ctxId);
     void notifyPeerClosed(uint8_t peerSide);
     void drainAndDispatch(uint8_t side, ScriptExecutionContextIdentifier expectedCtx);
 

@@ -50,8 +50,11 @@ const server = serve({
     }),
     "/file-route": Bun.file(process.env.BIG_FILE),
   },
-  async fetch(req) {
+  async fetch(req, server) {
     const url = new URL(req.url);
+    if (url.pathname === "/early-hints") {
+      return new Response(String(server.writeEarlyHints(req, { Link: "</app.css>; rel=preload; as=style" })));
+    }
     if (url.pathname === "/hello") {
       return new Response("hello over h3", {
         headers: { "x-proto": "h3", "content-type": "text/plain" },
@@ -217,6 +220,15 @@ describe("Bun.serve HTTP/3", () => {
       expect(res.status).toBe(200);
       expect(res.headers.get("x-proto")).toBe("h3");
       expect(await res.text()).toBe("hello over h3");
+    });
+  });
+
+  test("writeEarlyHints returns false", async () => {
+    await withServer(async port => {
+      const res = await fetchH3(port, "/early-hints");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("link")).toBeNull();
+      expect(await res.text()).toBe("false");
     });
   });
 

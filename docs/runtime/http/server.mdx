@@ -639,6 +639,12 @@ interface Server extends Disposable {
   subscriberCount(topic: string): number;
 
   /**
+   * Send an HTTP 103 Early Hints response before the final response.
+   * @returns false when the request is complete, transport is unsupported, or headers are empty
+   */
+  writeEarlyHints(request: Request, headers: HeadersInit): boolean;
+
+  /**
    * Get client IP address and port.
    * @returns null for closed requests or Unix sockets
    */

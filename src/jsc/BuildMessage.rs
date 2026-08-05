@@ -45,6 +45,39 @@ impl BuildMessage {
         })
     }
 
+    /// Builds the `.stack` string; also used by ResolveMessage.
+    pub(crate) fn generate_stack_string(name: &[u8], msg: &bun_ast::Msg) -> Vec<u8> {
+        let mut text: Vec<u8> = Vec::new();
+        write!(
+            &mut text,
+            "{}: {}",
+            bstr::BStr::new(name),
+            bstr::BStr::new(&msg.data.text)
+        )
+        .expect("infallible: in-memory write");
+        if let Some(location) = &msg.data.location {
+            if !location.file.is_empty() && location.line > 0 {
+                write!(
+                    &mut text,
+                    "\n    at {}:{}",
+                    bstr::BStr::new(&location.file),
+                    location.line,
+                )
+                .expect("infallible: in-memory write");
+                if location.column > 0 {
+                    write!(&mut text, ":{}", location.column).expect("infallible: in-memory write");
+                }
+            }
+        }
+        text
+    }
+
+    #[crate::host_fn(getter)]
+    pub fn get_stack(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        let text = Self::generate_stack_string(b"BuildMessage", &self.msg);
+        Ok(ZigString::init_utf8(&text).to_js(global))
+    }
+
     pub(crate) fn to_string_fn(&self, global: &JSGlobalObject) -> JSValue {
         // write! into a Vec<u8>; Rust aborts on OOM so no OOM-throw path is needed.
         let mut text: Vec<u8> = Vec::new();

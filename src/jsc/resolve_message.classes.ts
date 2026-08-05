@@ -14,6 +14,11 @@ export default [
         cache: true,
         writable: true,
       },
+      stack: {
+        getter: "getStack",
+        cache: true,
+        writable: true,
+      },
       code: {
         getter: "getCode",
         cache: true,
@@ -73,6 +78,11 @@ export default [
     proto: {
       message: {
         getter: "getMessage",
+        cache: true,
+        writable: true,
+      },
+      stack: {
+        getter: "getStack",
         cache: true,
         writable: true,
       },

@@ -29,6 +29,7 @@ let tarballDirMissingFile: Fixture;
 let tarballDirBadIntegrity: Fixture;
 let tarballDirOnline: Fixture;
 let tarballDirPrefetch: Fixture;
+let tarballDirPatched: Fixture;
 let manifestResolve: Fixture;
 
 const deps = {
@@ -95,6 +96,7 @@ beforeAll(async () => {
   tarballDirBadIntegrity = await registry.createTestDir();
   tarballDirOnline = await registry.createTestDir();
   tarballDirPrefetch = await registry.createTestDir();
+  tarballDirPatched = await registry.createTestDir();
   manifestResolve = await registry.createTestDir();
 
   await Promise.all([
@@ -107,6 +109,23 @@ beforeAll(async () => {
     seed(tarballDirBadIntegrity, { name: "tarball-dir-integrity", dependencies: deps }),
     seed(tarballDirOnline, { name: "tarball-dir-online", dependencies: deps }),
     seed(tarballDirPrefetch, { name: "tarball-dir-prefetch", dependencies: { "no-deps": "^1.0.0" } }),
+    write(
+      join(tarballDirPatched.packageDir, "patches", "no-deps@1.0.1.patch"),
+      `diff --git a/patched.txt b/patched.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e728b8dad
+--- /dev/null
++++ b/patched.txt
+@@ -0,0 +1 @@
++hello world
+`,
+    ).then(() =>
+      seed(tarballDirPatched, {
+        name: "tarball-dir-patched",
+        dependencies: { "no-deps": "1.0.1" },
+        patchedDependencies: { "no-deps@1.0.1": "patches/no-deps@1.0.1.patch" },
+      }),
+    ),
     seed(manifestResolve, { name: "manifest-resolve", dependencies: { "no-deps": "^1.0.0" } }),
   ]);
 
@@ -211,7 +230,8 @@ test.concurrent("--offline --tarball-dir installs with a cold cache (isolated li
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [out, exitCode2] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [out, runErr, exitCode2] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(runErr).toBe("");
   expect(out.trim()).toBe("1.0.0");
   expect(exitCode2).toBe(0);
 });
@@ -286,6 +306,44 @@ test.concurrent("--tarball-dir covers tarballs fetched during resolution (no loc
   expect(err).not.toContain("error:");
   expect(exitCode).toBe(0);
   expect(await installedVersion(tarballDirPrefetch, "no-deps")).toBe("1.1.0");
+});
+
+test.concurrent("--offline --tarball-dir installs a patched dependency with a cold cache", async () => {
+  const { packageDir } = tarballDirPatched;
+  const patchedFile = file(join(packageDir, "node_modules", "no-deps", "patched.txt"));
+  // drop the extracted and patched cache entries but keep the seeded manifest
+  // (phase two below resolves from it)
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  const cacheDir = join(packageDir, ".bun-cache");
+  for (const entry of await readdir(cacheDir)) {
+    if (entry.startsWith("no-deps")) {
+      await rm(join(cacheDir, entry), { recursive: true, force: true });
+    }
+  }
+  await addTarball(tarballDirPatched, "no-deps", "1.0.1");
+
+  // with the lockfile: the install phase reads the tarball from the directory,
+  // extracts it, and applies the patch
+  let result = await runInstall(packageDir, ["--offline", "--tarball-dir=tarballs"]);
+  expect(result.err).not.toContain("error:");
+  expect(result.exitCode).toBe(0);
+  expect(await installedVersion(tarballDirPatched, "no-deps")).toBe("1.0.1");
+  expect(await patchedFile.text()).toBe("hello world\n");
+
+  // without the lockfile: the resolve-phase patch-hash task enqueues the
+  // tarball read (this path used to assume a network task always exists)
+  await rm(join(packageDir, "bun.lock"), { force: true });
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  for (const entry of await readdir(cacheDir)) {
+    if (entry.startsWith("no-deps")) {
+      await rm(join(cacheDir, entry), { recursive: true, force: true });
+    }
+  }
+  result = await runInstall(packageDir, ["--offline", "--tarball-dir=tarballs"]);
+  expect(result.err).not.toContain("error:");
+  expect(result.exitCode).toBe(0);
+  expect(await installedVersion(tarballDirPatched, "no-deps")).toBe("1.0.1");
+  expect(await patchedFile.text()).toBe("hello world\n");
 });
 
 test.concurrent("--offline resolves from the cached manifest without a lockfile", async () => {

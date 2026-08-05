@@ -348,27 +348,44 @@ impl PatchTask {
                         .behavior
                         .is_required();
                     let pkg_again: Package = *manager.lockfile.packages.get(pkg_id as usize);
-                    let network_task: *mut crate::NetworkTask =
-                        package_manager::generate_network_task_for_tarball(
-                            manager,
-                            // TODO: not just npm package
-                            task_id,
-                            url,
-                            is_required,
-                            dep_id,
-                            &pkg_again,
-                            Some(name_and_version_hash),
-                            match pkg_resolution_tag {
-                                crate::resolution_real::Tag::Npm => {
-                                    Authorization::AllowAuthorization
-                                }
-                                _ => Authorization::NoAuthorization,
-                            },
-                        )?
-                        .unwrap_or_else(|| unreachable!());
-                    if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::Extract {
-                        manager.set_preinstall_state(pkg_meta_id, PreinstallState::Extracting);
-                        package_manager::enqueue_network_task(manager, network_task);
+                    match package_manager::generate_network_task_for_tarball(
+                        manager,
+                        // TODO: not just npm package
+                        task_id,
+                        url,
+                        is_required,
+                        dep_id,
+                        &pkg_again,
+                        Some(name_and_version_hash),
+                        match pkg_resolution_tag {
+                            crate::resolution_real::Tag::Npm => Authorization::AllowAuthorization,
+                            _ => Authorization::NoAuthorization,
+                        },
+                    ) {
+                        Ok(Some(network_task)) => {
+                            // reshaped for borrowck — end the pool-slot borrow
+                            // before `manager` is reborrowed below.
+                            let network_task: *mut crate::NetworkTask = network_task;
+                            if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::Extract
+                            {
+                                manager
+                                    .set_preinstall_state(pkg_meta_id, PreinstallState::Extracting);
+                                package_manager::enqueue_network_task(manager, network_task);
+                            }
+                        }
+                        // `--tarball-dir` scheduled a local read of the
+                        // tarball instead of a download.
+                        Ok(None) => {
+                            if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::Extract
+                            {
+                                manager
+                                    .set_preinstall_state(pkg_meta_id, PreinstallState::Extracting);
+                            }
+                        }
+                        // Already reported by `generate_network_task_for_tarball`;
+                        // the install fails with that error.
+                        Err(crate::network_task::ForTarballError::NetworkDisabled) => {}
+                        Err(err) => return Err(err.into()),
                     }
                 }
                 PreinstallState::ApplyPatch => {

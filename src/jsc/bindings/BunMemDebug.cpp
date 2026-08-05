@@ -160,13 +160,15 @@ extern "C" struct mach_header_64 _mh_execute_header;
 static void setImageEnvDefaults()
 {
     setenv("MIMALLOC_DETERMINISTIC_HINT", "1", 0);
-    // A process that restores an image must keep its own early heap out of the image's address range (mimalloc hint area starts at 2TiB; images live in its first 64GiB).
-    if (!getenv("BUN_IMAGE_OUT") && !getenv("CLAUDE_CODE_SNAPSHOT_OUT")) setenv("MIMALLOC_HINT_FLOOR", "0x21000000000", 0);
+    // Builder and restorer must not share heap addresses for their *own* early allocations: builders (whose heap becomes the image) allocate
+    // from 2.5TiB up, so a restoring process's ordinary early heap (mimalloc default 2TiB base) never sits where image regions get mapped.
+    if (getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT")) setenv("MIMALLOC_HINT_FLOOR", "0x28000000000", 0);
+    else unsetenv("MIMALLOC_HINT_FLOOR");
     setenv("BUN_IMAGE_JIT_ADDR", "0x3c0000000", 0);
     setenv("BUN_JSC_useBaselineJIT", "0", 0);
     setenv("BUN_JSC_useFTLJIT", "0", 0);
 }
-static bool imageEnvIsSet() { bool building = getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT"); return getenv("MIMALLOC_DETERMINISTIC_HINT") && getenv("BUN_IMAGE_JIT_ADDR") && (building || getenv("MIMALLOC_HINT_FLOOR")); }
+static bool imageEnvIsSet() { bool building = getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT"); return getenv("MIMALLOC_DETERMINISTIC_HINT") && getenv("BUN_IMAGE_JIT_ADDR") && (!building || getenv("MIMALLOC_HINT_FLOOR")); }
 
 static void reexecWithoutASLRIfSlid()
 {

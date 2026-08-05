@@ -1302,13 +1302,12 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
         }
         // `AsyncFSTask`s are `Box::leak`'d in `create()` and freed by
         // `destroy()` (called from `run_from_js_thread`'s scopeguard).
-        // `destroy()` resets `JSPromiseStrong` (touches the StrongRootBlock list)
-        // and unrefs the loop `KeepAlive`, both of which are still valid
-        // here — we're before `destructOnExit`. Before
-        // `release_queued_tasks_for_shutdown` existed these boxes stayed
-        // reachable via `concurrent_tasks` (rooted by the static `VMHolder`),
-        // so LSan didn't flag them; the drain unhooks that root and surfaces
-        // the real leak.
+        // `release_at_shutdown` first frees result heap that `fs_to_js`
+        // would have transferred to JS (a terminated worker's in-flight
+        // readFile otherwise strands its whole result buffer), then
+        // `destroy()` resets `JSPromiseStrong` (touches the StrongRootBlock
+        // list) and unrefs the loop `KeepAlive`, both of which are still
+        // valid here — we're before `destructOnExit`.
         for_each_fs_async_op!(__fs_pat) => {
             macro_rules! __fs_destroy {
                 ($($tag:ident $ty:ident;)*) => { match task.tag {
@@ -1317,7 +1316,7 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
                         // `AsyncFSTask::create`. The work-pool callback ran
                         // (it posted this entry) so the threadpool no longer
                         // holds the embedded `task` field.
-                        unsafe { fs_async::$ty::destroy(task.ptr.cast::<fs_async::$ty>()) };
+                        unsafe { fs_async::$ty::release_at_shutdown(task.ptr.cast::<fs_async::$ty>()) };
                     })*
                     // SAFETY: outer arm guard proves one of the table tags matched.
                     _ => unsafe { core::hint::unreachable_unchecked() },

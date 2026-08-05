@@ -1015,6 +1015,20 @@ mod _async_tasks {
             // `bun_sys::Error` frees its path on Drop.
             task.r#ref.unref(bun_io::js_vm_ctx());
         }
+
+        /// Shutdown-drain release for a completion that never reaches
+        /// `run_from_js_thread`: free result heap that `fs_to_js` would have
+        /// transferred to JS, then [`Self::destroy`].
+        ///
+        /// SAFETY: same contract as [`Self::destroy`].
+        pub(crate) unsafe fn release_at_shutdown(this: *mut Self) {
+            // SAFETY: caller contract; the drain owns the queued task.
+            if let Ok(r) = unsafe { &mut (*this).result } {
+                r.release_unrun();
+            }
+            // SAFETY: caller contract.
+            unsafe { Self::destroy(this) };
+        }
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -1155,6 +1169,11 @@ mod _async_tasks {
     /// Each `ret::*` type implements this by forwarding to its inherent method.
     pub trait FsReturn {
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
+
+        /// Free heap that `fs_to_js` would have transferred to JS. Called only
+        /// by the shutdown drain for completions released unrun (the default
+        /// is right for types whose `Drop` already frees everything).
+        fn release_unrun(&mut self) {}
     }
     impl FsReturn for JSValue {
         #[inline]
@@ -1196,6 +1215,16 @@ mod _async_tasks {
         #[inline]
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
             self.to_js(global)
+        }
+
+        fn release_unrun(&mut self) {
+            // The `Buffer` variant's `Drop` is deliberately a no-op (ownership
+            // normally transfers to a JS ArrayBuffer in `to_js`); released
+            // unrun, the bytes must be freed here or a terminated worker
+            // leaks every in-flight read's result.
+            if let StringOrBuffer::Buffer(buffer) = self {
+                buffer.destroy();
+            }
         }
     }
     impl FsReturn for StringOrUndefined {
@@ -1409,6 +1438,20 @@ mod _async_tasks {
             let mut task = unsafe { bun_core::heap::take(this) };
             // `bun_sys::Error` frees its path on Drop.
             task.r#ref.unref(bun_io::js_vm_ctx());
+        }
+
+        /// Shutdown-drain release for a completion that never reaches
+        /// `run_from_js_thread`: free result heap that `fs_to_js` would have
+        /// transferred to JS, then [`Self::destroy`].
+        ///
+        /// SAFETY: same contract as [`Self::destroy`].
+        pub(crate) unsafe fn release_at_shutdown(this: *mut Self) {
+            // SAFETY: caller contract; the drain owns the queued task.
+            if let Ok(r) = unsafe { &mut (*this).result } {
+                r.release_unrun();
+            }
+            // SAFETY: caller contract.
+            unsafe { Self::destroy(this) };
         }
     }
 
@@ -2706,6 +2749,15 @@ mod _async_tasks {
             task.r#ref.unref(bun_io::js_vm_ctx());
             task.free_root_path();
             task.clear_result_list();
+        }
+
+        /// Shutdown-drain alias of [`Self::destroy`], which already releases
+        /// the result list (`clear_result_list`).
+        ///
+        /// SAFETY: same contract as [`Self::destroy`].
+        pub(crate) unsafe fn release_at_shutdown(this: *mut Self) {
+            // SAFETY: caller contract.
+            unsafe { Self::destroy(this) };
         }
     }
 

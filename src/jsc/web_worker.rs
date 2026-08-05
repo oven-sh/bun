@@ -1450,7 +1450,9 @@ impl WebWorker {
             bun_uws::on_thread_exit();
             drop(arena.take());
         } else {
-            core::mem::forget(arena.take());
+            // Deliberate leak; `ManuallyDrop` rather than `mem::forget` for
+            // clippy::mem_forget.
+            let _leaked = core::mem::ManuallyDrop::new(arena.take());
         }
 
         // We MUST NOT call `pthread_exit` here —

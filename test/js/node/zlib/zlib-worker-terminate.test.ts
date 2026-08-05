@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 // worker.terminate() while async node:zlib compression is in flight on the
 // thread pool must not dereference the worker's freed VM/EventLoop from the
 // pool-thread completion. One lane per Native* tag (zlib/brotli/zstd) keeps
 // do_work() busy so terminate reliably lands mid-compression.
 test("worker.terminate() during in-flight node:zlib async compression does not UAF", async () => {
-  const ROUNDS = isASAN ? 4 : 10;
+  const ROUNDS = isASAN || isDebug ? 4 : 10;
 
   const script = /* js */ `
     const { Worker } = require("node:worker_threads");

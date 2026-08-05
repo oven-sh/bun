@@ -574,7 +574,15 @@ impl<Op: PasswordOp> PasswordJob<Op> {
     #[allow(clippy::boxed_local)]
     fn run_owned(mut self: Box<Self>) {
         let event_loop = self.event_loop;
-        let value = self.op.compute(&self.password);
+        // Teardown in progress: skip the deliberately-slow KDF; the shutdown
+        // drain reclaims the queued result unread via `release_unrun`.
+        // SAFETY: the fence taken in `JSPasswordObject::run` keeps the loop
+        // alive for this read.
+        let value = if unsafe { (*event_loop).offthread_cancel_requested() } {
+            Err(HashError::JSTerminated)
+        } else {
+            self.op.compute(&self.password)
+        };
         let result = Box::new(PasswordResult::<Op> {
             value,
             promise: core::mem::take(&mut self.promise),

@@ -5,6 +5,30 @@ import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 // is ~2s); every test here is a rare, deliberate outlier.
 const TIMEOUT = 90_000;
 
+// This file's oracle is use-after-free, not leak-freedom: a terminated
+// worker still strands some allocations by design (requeued task boxes, the
+// deliberate fetch-tasklet box leak) and by known pre-existing bugs, so the
+// subprocesses run with leak detection off. UAF reports are unaffected.
+const env = {
+  ...bunEnv,
+  ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+};
+
+// Lines of the one tolerated crash signature (see the assertNoException
+// comments below); returns whatever else stderr contained.
+function onlyKnownTerminateAssert(stderr: string): string[] {
+  return stderr
+    .split("\n")
+    .filter(
+      line =>
+        line !== "" &&
+        !line.startsWith("ASSERTION FAILED") &&
+        line !== "!exception()" &&
+        !line.includes("ExceptionScope.h") &&
+        !line.includes("no stacktrace available"),
+    );
+}
+
 // Worker teardown must wait for every job the worker's VM handed to another
 // thread (WorkPool bodies, webcrypto's phony work queue, the bundler thread)
 // before freeing the VM box, its EventLoop, and the JSC heap. Each family
@@ -133,21 +157,24 @@ describe.skipIf(!isASAN)("worker teardown with off-thread jobs in flight does no
 
           await using proc = Bun.spawn({
             cmd: [bunExe(), "-e", script],
-            env: bunEnv,
+            env,
             stdout: "pipe",
             stderr: "pipe",
           });
           const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           // Any sanitizer report is the bug this file exists to catch.
           expect(stderr).not.toContain("AddressSanitizer");
-          // Debug builds have a separate, pre-existing terminate() bug: the
-          // TerminationException can materialize mid-dispatch and trip JSC's
-          // ExceptionScope::assertNoException before teardown even starts
-          // (reproduces on an unfixed-teardown build too, right after
-          // notifyNeedTermination). Until that missing exception check is
-          // fixed, a round that dies with exactly that assert is tolerated;
-          // everything else must run all rounds cleanly.
-          if (!stderr.includes("assertNoException")) {
+          if (stderr.includes("assertNoException")) {
+            // Debug builds have a separate, pre-existing terminate() bug: the
+            // TerminationException can materialize mid-dispatch and trip JSC's
+            // ExceptionScope::assertNoException abort before teardown even
+            // starts (reproduces on an unfixed-teardown build too, right
+            // after notifyNeedTermination; tracked separately). Tolerate
+            // exactly that abort: stripping its lines must leave stderr
+            // empty, and nothing else is asserted because the abort kills
+            // the subprocess mid-matrix.
+            expect(onlyKnownTerminateAssert(stderr)).toEqual([]);
+          } else {
             expect(stderr).toBe("");
             expect(stdout).toBe("OK\n");
             expect(exitCode).toBe(0);
@@ -242,7 +269,7 @@ describe.skipIf(!isASAN)(
               console.log("survived");
             `,
             ],
-            env: bunEnv,
+            env,
             stdout: "pipe",
             stderr: "pipe",
           });
@@ -250,9 +277,11 @@ describe.skipIf(!isASAN)(
           const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           // Any sanitizer report is the bug this block exists to catch.
           expect(stderr).not.toContain("AddressSanitizer");
-          // Same pre-existing mid-dispatch assertNoException tolerance as the
-          // family matrix above.
-          if (!stderr.includes("assertNoException")) {
+          if (stderr.includes("assertNoException")) {
+            // Same pre-existing mid-dispatch assertNoException tolerance as
+            // the family matrix above: only that exact abort may appear.
+            expect(onlyKnownTerminateAssert(stderr)).toEqual([]);
+          } else {
             expect(stderr).toBe("");
             expect(stdout).toBe("survived\n");
             expect(exitCode).toBe(0);

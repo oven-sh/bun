@@ -2499,7 +2499,9 @@ describe("hoist", () => {
     const fromADep = createRequire(
       join(packageDir, "node_modules", ".bun", "a-dep@1.0.1", "node_modules", "a-dep", "package.json"),
     );
-    expect(() => fromADep.resolve("no-deps/package.json")).toThrow();
+    expect(() => fromADep.resolve("no-deps/package.json")).toThrow(
+      expect.objectContaining({ code: "MODULE_NOT_FOUND" }),
+    );
   });
 
   test("hoist = false removes a stale fallback directory from a previous install", async () => {

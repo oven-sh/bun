@@ -1689,7 +1689,21 @@ pub fn take_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::VirtualMachine)
             }
         }
     }
+    let cancel_timers = bun_core::image::cancel_timers_at_snapshot()
+        || bun_core::env_var::BUN_SNAPSHOT_CANCEL_TIMERS
+            .get()
+            .unwrap_or(false);
     loop {
+        if cancel_timers {
+            // The app asked us to drop its (self-re-arming) timers; do it every round since draining runs JS that may arm more.
+            let state = crate::jsc_hooks::runtime_state();
+            if !state.is_null() {
+                // SAFETY: main thread; RuntimeState/VM live; JS not on the stack.
+                unsafe {
+                    crate::timer::All::cancel_all_timeout_objects(&raw mut (*state).timer, vm)
+                };
+            }
+        }
         let blockers = snapshot_blockers(vm);
         if blockers.is_empty() {
             break;

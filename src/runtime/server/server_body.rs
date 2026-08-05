@@ -128,10 +128,10 @@ trait RequestCtxOps: RequestCtx {
     fn arm_on_data(&self, resp: &mut Self::Resp);
     // body-streaming callback hooks (type-erased, stored on `Body::PendingValue`).
     // `this` must be a live `*mut Self::RequestCtx` cast to `*mut c_void`.
-    fn on_start_buffering_callback(this: *mut c_void);
-    fn on_start_streaming_request_body_callback(this: *mut c_void) -> WebCore::DrainResult;
+    fn on_start_buffering_callback(this: NonNull<c_void>);
+    fn on_start_streaming_request_body_callback(this: NonNull<c_void>) -> WebCore::DrainResult;
     fn on_request_body_readable_stream_available(
-        this: *mut c_void,
+        this: NonNull<c_void>,
         global_this: &JSGlobalObject,
         readable: WebCore::ReadableStream,
     );
@@ -258,16 +258,16 @@ where
             .on_data(handler::<ThisServer, SSL, DBG, H3>, self.as_ctx_ptr());
     }
     #[inline]
-    fn on_start_buffering_callback(this: *mut c_void) {
+    fn on_start_buffering_callback(this: NonNull<c_void>) {
         Self::on_start_buffering_callback(this)
     }
     #[inline]
-    fn on_start_streaming_request_body_callback(this: *mut c_void) -> WebCore::DrainResult {
+    fn on_start_streaming_request_body_callback(this: NonNull<c_void>) -> WebCore::DrainResult {
         Self::on_start_streaming_request_body_callback(this)
     }
     #[inline]
     fn on_request_body_readable_stream_available(
-        this: *mut c_void,
+        this: NonNull<c_void>,
         global_this: &JSGlobalObject,
         readable: WebCore::ReadableStream,
     ) {
@@ -3313,7 +3313,7 @@ where
                 // we don't waste memory
                 if let Some(body) = ctx.request_body_mut() {
                     *body = BodyValue::Locked(crate::webcore::body::PendingValue {
-                        task: Some(ctx_slot.cast::<c_void>()),
+                        task: Some(NonNull::new(ctx_slot).unwrap().cast::<c_void>()),
                         global: server.global_this,
                         on_start_buffering: Some(Ctx::on_start_buffering_callback),
                         on_start_streaming: Some(Ctx::on_start_streaming_request_body_callback),
@@ -3948,7 +3948,7 @@ fn server_set_app_flags(
     server: JSValue,
     require_host_header: bool,
     use_strict_method_validation: bool,
-    use_insecure_http_parser: bool,
+    lenient_http_flags: u8,
     http_allow_half_open: bool,
 ) -> JsResult<JSValue> {
     if !server.is_object() {
@@ -3962,7 +3962,7 @@ fn server_set_app_flags(
         unsafe { &mut *this }.set_flags(
             require_host_header,
             use_strict_method_validation,
-            use_insecure_http_parser,
+            lenient_http_flags,
             http_allow_half_open,
         );
     } else if let Some(this) = server.as_::<HTTPSServer>() {
@@ -3970,7 +3970,7 @@ fn server_set_app_flags(
         unsafe { &mut *this }.set_flags(
             require_host_header,
             use_strict_method_validation,
-            use_insecure_http_parser,
+            lenient_http_flags,
             http_allow_half_open,
         );
     } else if let Some(this) = server.as_::<DebugHTTPServer>() {
@@ -3978,7 +3978,7 @@ fn server_set_app_flags(
         unsafe { &mut *this }.set_flags(
             require_host_header,
             use_strict_method_validation,
-            use_insecure_http_parser,
+            lenient_http_flags,
             http_allow_half_open,
         );
     } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
@@ -3986,7 +3986,7 @@ fn server_set_app_flags(
         unsafe { &mut *this }.set_flags(
             require_host_header,
             use_strict_method_validation,
-            use_insecure_http_parser,
+            lenient_http_flags,
             http_allow_half_open,
         );
     } else {
@@ -4044,7 +4044,7 @@ extern "C" fn server_set_app_flags_shim(
     server: JSValue,
     require_host_header: bool,
     use_strict_method_validation: bool,
-    use_insecure_http_parser: bool,
+    lenient_http_flags: u8,
     http_allow_half_open: bool,
 ) -> JSValue {
     host_fn::to_js_host_fn_result(
@@ -4054,7 +4054,7 @@ extern "C" fn server_set_app_flags_shim(
             server,
             require_host_header,
             use_strict_method_validation,
-            use_insecure_http_parser,
+            lenient_http_flags,
             http_allow_half_open,
         ),
     )

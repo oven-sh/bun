@@ -75,7 +75,6 @@ private:
 private:
     std::unique_ptr<ExtendedDOMIsoSubspaces> m_subspaces;
     JSC::IsoSubspace m_domConstructorSpace;
-    JSC::IsoSubspace m_domBuiltinConstructorSpace;
     JSC::IsoSubspace m_domNamespaceObjectSpace;
 
     Vector<JSC::IsoSubspace*> m_outputConstraintSpaces;
@@ -108,8 +107,6 @@ public:
     JSC::GCClient::IsoSubspace& domConstructorSpace() { return m_domConstructorSpace; }
 
     ExtendedDOMClientIsoSubspaces& clientSubspaces() { return *m_clientSubspaces.get(); }
-
-    JSC::GCClient::IsoSubspace& domBuiltinConstructorSpace() { return m_domBuiltinConstructorSpace; }
 
     // Constructed eagerly so the concurrent GC marker
     // (Zig::GlobalObject::visitChildrenImpl) never races the mutator on a
@@ -166,7 +163,6 @@ private:
 
     RefPtr<WebCore::DOMWrapperWorld> m_normalWorld;
     JSC::GCClient::IsoSubspace m_domConstructorSpace;
-    JSC::GCClient::IsoSubspace m_domBuiltinConstructorSpace;
     JSC::GCClient::IsoSubspace m_domNamespaceObjectSpace;
 
     std::unique_ptr<ExtendedDOMClientIsoSubspaces> m_clientSubspaces;
@@ -225,15 +221,6 @@ ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, GetClient
     setClient(clientSubspaces, WTF::move(uniqueClientSubspace));
     return clientSpace;
 }
-
-// template<typename T, UseCustomHeapCellType useCustomHeapCellType, typename GetClient, typename SetClient, typename GetServer, typename SetServer>
-// ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, GetClient getClient, SetClient setClient, GetServer getServer, SetServer setServer, JSC::HeapCellType& (*getCustomHeapCellType)(JSHeapData&) = nullptr)
-// {
-//     static NeverDestroyed<JSC::IsoSubspacePerVM> perVM([](JSC::Heap& heap) {
-//         return ISO_SUBSPACE_PARAMETERS(heap.destructibleObjectHeapCellType, T);
-//     });
-//     return &perVM.get().clientIsoSubspaceforVM(vm);
-// }
 
 static JSVMClientData* clientData(JSC::VM& vm)
 {

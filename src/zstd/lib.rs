@@ -337,7 +337,7 @@ pub fn get_decompressed_size(src: &[u8]) -> usize {
 
 pub use bun_core::compress::State;
 
-pub struct ZstdReaderArrayList<'a> {
+struct ZstdReaderArrayList<'a> {
     pub(crate) input: &'a [u8],
     // We operate on the caller's Vec directly via the `&mut` borrow.
     pub(crate) list_ptr: &'a mut Vec<u8>,

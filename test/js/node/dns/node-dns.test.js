@@ -479,6 +479,28 @@ describe("test invalid arguments", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/36892
+  describe.each([
+    ["dns.resolve", hostname => dns.resolve(hostname, undefined, () => {})],
+    ["Resolver#resolve", hostname => new dns.Resolver().resolve(hostname, undefined, () => {})],
+  ])("%s", (_, fn) => {
+    it("with undefined rrtype throws ERR_INVALID_ARG_TYPE", () => {
+      expect(() => fn("localhost")).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: expect.stringContaining('The "rrtype" argument must be of type string'),
+        }),
+      );
+    });
+  });
+
+  it("dns.promises.resolve with undefined rrtype does not throw", async () => {
+    // Node's promises API treats undefined rrtype as "A"
+    const promise = dns_promises.resolve("localhost", undefined);
+    expect(promise).toBeInstanceOf(Promise);
+    await promise.catch(() => {}); // result depends on the environment's resolver
+  });
+
   it("dns.lookupService", async () => {
     expect(() => {
       dns.lookupService("", 443, (err, hostname, service) => {});

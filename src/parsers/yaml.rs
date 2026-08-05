@@ -196,7 +196,7 @@ impl Indent {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
-pub enum IndentIndicator {
+enum IndentIndicator {
     /// trim leading indentation (spaces) (default)
     Auto = 0,
     N1 = 1,
@@ -728,7 +728,7 @@ impl StringRange {
 // borrow across mutating scans.
 // Capture only `off` and have callers pass the end `Pos` explicitly.
 #[derive(Clone, Copy)]
-pub struct StringRangeStart {
+struct StringRangeStart {
     pub(crate) off: Pos,
 }
 
@@ -3110,7 +3110,7 @@ impl MappingProps {
 // NodeProperties
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct NodeProperties<Enc: Encoding> {
+struct NodeProperties<Enc: Encoding> {
     // c-ns-properties
     pub(crate) has_anchor: Option<Token<Enc>>,
     pub(crate) has_tag: Option<Token<Enc>>,
@@ -3248,7 +3248,7 @@ impl<Enc: Encoding> NodeProperties<Enc> {
 // ParseNodeOptions
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct ParseNodeOptions<Enc: Encoding> {
+struct ParseNodeOptions<Enc: Encoding> {
     pub(crate) current_mapping_indent: Option<Indent>,
     pub(crate) explicit_mapping_key: bool,
     /// [139] ns-flow-seq-entry may be a [150] ns-flow-pair, so a JSON-style

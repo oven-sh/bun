@@ -32,6 +32,7 @@ use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, Wor
 // ──────────────────────────────────────────────────────────────────────────
 pub trait MaybeSysResultExt<R>: Sized {
     fn get_errno(&self) -> E;
+    fn init_err_with_p(e: SystemErrno, syscall: sys::Tag, path: impl AsRef<[u8]>) -> Self;
     fn errno_sys<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self>;
     fn errno_sys_fd<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag, fd: FD) -> Option<Self>;
     fn errno_sys_p<Rc: sys::GetErrno>(
@@ -45,7 +46,6 @@ pub trait MaybeSysResultExt<R>: Sized {
         path: impl AsRef<[u8]>,
         dest: impl AsRef<[u8]>,
     ) -> Option<Self>;
-    fn init_err_with_p(e: SystemErrno, syscall: sys::Tag, path: impl AsRef<[u8]>) -> Self;
 }
 impl<R> MaybeSysResultExt<R> for Maybe<R> {
     #[inline]
@@ -4550,12 +4550,6 @@ pub enum StatOrNotFound {
     NotFound,
 }
 impl StatOrNotFound {
-    pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        match self {
-            StatOrNotFound::Stats(s) => s.to_js_newly_created(global_object),
-            StatOrNotFound::NotFound => Ok(JSValue::UNDEFINED),
-        }
-    }
     pub(crate) fn to_js_newly_created(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             StatOrNotFound::Stats(s) => s.to_js_newly_created(global_object),
@@ -4569,7 +4563,7 @@ pub enum StringOrUndefined {
     None,
 }
 impl StringOrUndefined {
-    pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             StringOrUndefined::String(s) => {
                 bun_jsc::bun_string_jsc::transfer_to_js(s, global_object)
@@ -9482,8 +9476,7 @@ pub trait ReaddirEntry: Sized {
     /// `ExpectedType == jsc.Node.Dirent` — whether the caller needs to track
     /// a cached `dirent_path` BunString.
     const IS_DIRENT: bool;
-    /// `Environment.isWindows && (T == String || T == Dirent)` — selects the
-    /// UTF-16 `DirIterator` arm on Windows (`readdir_with_entries` only).
+    /// Windows: entry names arrive as UTF-16 (`append_entry_w`).
     const IS_U16: bool;
     fn destroy_entry(&mut self);
     /// Windows-only: append from a UTF-16 directory entry name.

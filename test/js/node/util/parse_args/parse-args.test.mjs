@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { parseArgs } from "node:util";
 
 describe("parseArgs", () => {
@@ -1102,7 +1102,8 @@ describe("parseArgs extra tests", () => {
 
     test("100 mixed several times", () => {
       let result;
-      for (let i = 0; i < 1000; ++i) {
+      const iters = isDebug || isASAN ? 100 : 1000;
+      for (let i = 0; i < iters; ++i) {
         result = parseArgs({
           allowPositionals: true,
           strict: false,

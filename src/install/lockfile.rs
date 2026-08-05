@@ -834,6 +834,126 @@ impl Lockfile {
         Ok(())
     }
 
+    /// Drops root entries that a `bun add <url>` request replaced: once resolution
+    /// renames the request to its package name, a stale entry for that name from a
+    /// different URL would make hoisting report a dependency loop.
+    fn remove_superseded_root_dependencies(
+        old: &mut Lockfile,
+        manager: &mut PackageManager,
+        updates: &[UpdateRequest],
+    ) {
+        if updates.is_empty() {
+            return;
+        }
+
+        let workspace_package_id = manager
+            .root_package_id
+            .get(old, manager.workspace_name_hash) as usize;
+        if workspace_package_id >= old.packages.len() {
+            return;
+        }
+
+        let dep_slice: DependencySlice = old.packages.items_dependencies()[workspace_package_id];
+        let res_slice: PackageIDSlice = old.packages.items_resolutions()[workspace_package_id];
+        let n = dep_slice.len as usize;
+        if n < 2
+            || res_slice.len as usize != n
+            || dep_slice.off as usize + n > old.buffers.dependencies.len()
+            || res_slice.off as usize + n > old.buffers.resolutions.len()
+        {
+            return;
+        }
+
+        let keep: Vec<bool> = {
+            let string_buf = old.buffers.string_bytes.as_slice();
+            let deps: &[Dependency] = dep_slice.get(old.buffers.dependencies.as_slice());
+            let resolutions: &[PackageID] = res_slice.get(old.buffers.resolutions.as_slice());
+
+            // Only non-aliased URL adds get renamed to the resolved name, so only those can collide.
+            let mut matched = vec![false; n];
+            let mut superseding: Vec<(PackageNameHash, dependency::Behavior, PackageID)> =
+                Vec::new();
+            for (i, dep) in deps.iter().enumerate() {
+                for update in updates.iter() {
+                    if update.matches(dep, string_buf) {
+                        matched[i] = true;
+                        if !update.is_aliased
+                            && !dep.behavior.is_peer()
+                            && matches!(
+                                dep.version.tag,
+                                dependency::Tag::Tarball
+                                    | dependency::Tag::Git
+                                    | dependency::Tag::Github
+                                    | dependency::Tag::Folder
+                                    | dependency::Tag::Symlink
+                            )
+                        {
+                            superseding.push((dep.name_hash, dep.behavior, resolutions[i]));
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // Prune within the same behavior group only, matching the package.json
+            // rewrite; a cross-group collision stays a loud DependencyLoop.
+            let mut keep = vec![true; n];
+            for (i, dep) in deps.iter().enumerate() {
+                if matched[i] || dep.behavior.is_peer() {
+                    continue;
+                }
+                for &(name_hash, behavior, winner_resolution) in &superseding {
+                    if dep.name_hash == name_hash
+                        && dep.behavior == behavior
+                        && resolutions[i] != winner_resolution
+                    {
+                        keep[i] = false;
+                        break;
+                    }
+                }
+            }
+            keep
+        };
+
+        let removed = keep.iter().filter(|k| !**k).count();
+        if removed == 0 {
+            return;
+        }
+
+        // Order-preserving retain; the trailing slots fall outside the shrunk
+        // slice and the cloner never reads them.
+        {
+            let deps = dep_slice.mut_(old.buffers.dependencies.as_mut_slice());
+            let mut w = 0;
+            for r in 0..n {
+                if keep[r] {
+                    if w != r {
+                        deps.swap(w, r);
+                    }
+                    w += 1;
+                }
+            }
+        }
+        {
+            let resolutions = res_slice.mut_(old.buffers.resolutions.as_mut_slice());
+            let mut w = 0;
+            for r in 0..n {
+                if keep[r] {
+                    if w != r {
+                        resolutions.swap(w, r);
+                    }
+                    w += 1;
+                }
+            }
+        }
+
+        let new_len = (n - removed) as u32;
+        old.packages.items_mut::<"dependencies", DependencySlice>()[workspace_package_id].len =
+            new_len;
+        old.packages.items_mut::<"resolutions", PackageIDSlice>()[workspace_package_id].len =
+            new_len;
+    }
+
     pub fn resolve_catalog_dependency(&self, dep: &Dependency) -> Option<DependencyVersion> {
         if dep.version.tag != dependency::Tag::Catalog {
             return Some(dep.version.clone());
@@ -1206,7 +1326,9 @@ fn clean_preprocess_update_requests_cold(
     updates: &mut [UpdateRequest],
     exact_versions: bool,
 ) -> Result<(), BunError> {
-    Lockfile::preprocess_update_requests(old, manager, updates, exact_versions)
+    Lockfile::preprocess_update_requests(old, manager, updates, exact_versions)?;
+    Lockfile::remove_superseded_root_dependencies(old, manager, updates);
+    Ok(())
 }
 
 #[cold]

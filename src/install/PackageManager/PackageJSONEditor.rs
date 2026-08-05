@@ -1168,12 +1168,35 @@ pub(crate) fn edit(
                     }
                 }
 
+                // The resolved name may already have its own entry (installed from a
+                // different URL); remove every such entry instead of emitting a duplicate key.
+                let resolved_name = request.get_resolved_name(&manager.lockfile);
+                if request.package_id != INVALID_PACKAGE_ID
+                    && !resolved_name.is_empty()
+                    && resolved_name != request.get_name()
+                {
+                    let mut i = 0;
+                    while i < new_dependencies.len() {
+                        if i != k
+                            && new_dependencies[i].key.as_ref().is_some_and(|key| {
+                                key.data
+                                    .e_string()
+                                    .is_some_and(|s| s.eql_bytes(resolved_name))
+                            })
+                        {
+                            new_dependencies.remove(i);
+                            if i < k {
+                                k -= 1;
+                            }
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
+
                 new_dependencies[k].key = Some(Expr::allocate(
                     arena,
-                    E::EString::init(arena_dup(
-                        arena,
-                        request.get_resolved_name(&manager.lockfile),
-                    )),
+                    E::EString::init(arena_dup(arena, resolved_name)),
                     bun_ast::Loc::EMPTY,
                 ));
 

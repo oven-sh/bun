@@ -1380,6 +1380,30 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             let _ = unsafe { bun_jsc::any_task_job::dispatch_erased(task.ptr) };
             true
         }
+        // Archive `AsyncTask` completions: same shape — `run_from_js`
+        // early-outs on `is_shutting_down` and frees the box (KeepAlive
+        // unref + ctx `Drop` + promise `Strong` release; JSC still live, no
+        // JS runs). The pool callback posted this entry
+        // (`outstanding_offthread` barrier), so the JS thread is sole owner.
+        task_tag::ArchiveExtractTask
+        | task_tag::ArchiveBlobTask
+        | task_tag::ArchiveWriteTask
+        | task_tag::ArchiveFilesTask => {
+            macro_rules! release_archive_task {
+                ($ty:ty) => {{
+                    let _ = ArchiveAsyncTask::run_from_js(task.ptr.cast::<$ty>());
+                }};
+            }
+            match task.tag {
+                task_tag::ArchiveExtractTask => release_archive_task!(ArchiveExtractTask),
+                task_tag::ArchiveBlobTask => release_archive_task!(ArchiveBlobTask),
+                task_tag::ArchiveWriteTask => release_archive_task!(ArchiveWriteTask),
+                task_tag::ArchiveFilesTask => release_archive_task!(ArchiveFilesTask),
+                // SAFETY: outer arm guard proves one of the four tags matched.
+                _ => unsafe { core::hint::unreachable_unchecked() },
+            }
+            true
+        }
         task_tag::PasswordHashResult => {
             // SAFETY: tag identifies pointee; boxed by `PasswordJob::run_owned`.
             unsafe {

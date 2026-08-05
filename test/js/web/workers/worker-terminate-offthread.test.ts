@@ -68,6 +68,10 @@ describe.skipIf(!isASAN)("worker teardown with off-thread jobs in flight does no
       lanes(3, () => crypto.subtle.digest("SHA-512", data));`,
     "Bun.build (JSBundleCompletionTask)": `
       lanes(1, () => Bun.build({ entrypoints: [d.dir + "/entry.ts"], target: "bun", write: false, logLevel: "silent" }).catch(() => {}));`,
+    "Bun.Archive gzip bytes (ArchiveBlobTask)": `
+      const chunk = Buffer.alloc(512 << 10); for (let i = 0; i < chunk.length; i += 7) chunk[i] = i & 0xff;
+      const files = {}; for (let i = 0; i < 24; i++) files["ar" + (i % 4) + "/f" + i + ".bin"] = chunk;
+      lanes(3, () => new Bun.Archive(files, { compress: "gzip", level: 6 }).bytes());`,
   };
 
   // Three teardown doors, all funneling into the same WebWorker::shutdown:

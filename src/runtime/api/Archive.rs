@@ -729,6 +729,12 @@ impl<C: TaskContext> AsyncTask<C> {
     }
 
     fn schedule(this: *mut Self) {
+        // Paired with the `offthread_job_end` in `run_callback`. Taken before
+        // the pool can observe the task, so `WebWorker::shutdown` cannot see
+        // the count at zero while this job is in flight.
+        // SAFETY: JS thread; `this` is the live allocation from `create`, and
+        // `vm` is this thread's own VM.
+        unsafe { (*(*this).vm).event_loop_shared() }.offthread_job_begin();
         // SAFETY: `this` is alive (owned by the task system) until run_from_js drops it;
         // task field is intrusive and stable since `this` is heap-allocated.
         WorkPool::schedule(unsafe { &raw mut (*this).task });
@@ -755,14 +761,25 @@ impl<C: TaskContext> AsyncTask<C> {
         // allocated by `create` — only ever invoked by the thread pool against
         // a task it scheduled, so provenance covers the full allocation.
         let this: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, work_task) };
-        // SAFETY: thread-pool has exclusive access to ctx until it enqueues the concurrent task.
-        unsafe { (*this).ctx.run() };
-        // SAFETY: vm points to the live owning VM; concurrent_task is intrusive on the same allocation.
+        // SAFETY: the job's own `outstanding_offthread` count (taken in
+        // `schedule`) keeps `vm` alive until the `offthread_job_end` below.
+        let vm = unsafe { (*this).vm };
+        // Teardown in progress: skip the compute; the shutdown drain reclaims
+        // the completion unrun (`result` keeps its construction value).
+        if !unsafe { (*vm).event_loop_shared() }.offthread_cancel_requested() {
+            // SAFETY: thread-pool has exclusive access to ctx until it enqueues the concurrent task.
+            unsafe { (*this).ctx.run() };
+        }
+        // SAFETY: vm is alive (fence above); concurrent_task is intrusive on
+        // the same allocation. The JS thread may free `*this` right after the
+        // enqueue and the VM right after the end call, so neither is touched
+        // past its line.
         unsafe {
             let ct = core::ptr::NonNull::from(
                 (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
             );
-            (*(*this).vm).enqueue_task_concurrent(ct);
+            (*vm).enqueue_task_concurrent(ct);
+            (*vm).event_loop_shared().offthread_job_end();
         }
     }
 

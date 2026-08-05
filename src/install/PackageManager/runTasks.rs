@@ -1847,21 +1847,30 @@ pub fn generate_network_task_for_tarball<'a>(
             }
             description
         };
+        // (`add_*_pretty!` takes a literal format string, so the error and
+        // warning arms repeat it.)
+        let remedy: &str = if package.resolution.tag == crate::resolution::Tag::Npm {
+            "run an online install first, or provide the tarball with --tarball-dir"
+        } else {
+            "run an online install first"
+        };
         if is_network_task_required(this, task_id) {
             bun_ast::add_error_pretty!(
                 this.log_mut(),
                 None,
                 bun_ast::Loc::EMPTY,
-                "<b>{}<r> is missing from the cache and network requests are disabled (--offline)",
+                "<b>{}<r> is missing from the cache and network requests are disabled (--offline); {}",
                 description,
+                remedy,
             );
         } else {
             bun_ast::add_warning_pretty!(
                 this.log_mut(),
                 None,
                 bun_ast::Loc::EMPTY,
-                "<b>{}<r> is missing from the cache and network requests are disabled (--offline)",
+                "<b>{}<r> is missing from the cache and network requests are disabled (--offline); {}",
                 description,
+                remedy,
             );
         }
         mark_network_task_failed(this, task_id);

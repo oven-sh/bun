@@ -416,7 +416,7 @@ impl<'a> Task<'a> {
                             None,
                             Loc::EMPTY,
                             format_args!(
-                                "git dependency \"{}\" is missing from the cache and network requests are disabled (--offline)",
+                                "git dependency \"{}\" is missing from the cache and network requests are disabled (--offline); run an online install first",
                                 bstr::BStr::new(name),
                             ),
                         );

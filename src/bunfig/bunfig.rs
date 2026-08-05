@@ -1339,8 +1339,11 @@ impl<'a> Parser<'a> {
         if let Some(v) = install_obj.get(b"frozenLockfile").and_then(|e| e.as_bool()) {
             install.frozen_lockfile = Some(v);
         }
-        if let Some(v) = install_obj.get(b"offline").and_then(|e| e.as_bool()) {
-            install.offline = Some(v);
+        if let Some(offline) = install_obj.get(b"offline") {
+            // A silently-ignored bad value would leave the install online
+            // when the user asked for offline; reject it instead.
+            self.expect(&offline, ExprTag::EBoolean)?;
+            install.offline = Some(offline.as_bool().expect("infallible: type checked"));
         }
         if let Some(tarball_dir) = install_obj.get(b"tarballDir") {
             self.expect_string(&tarball_dir)?;

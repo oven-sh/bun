@@ -71,7 +71,7 @@ const SHARED_PARAMS: &[ParamType] = &[
     clap::param!("--dry-run                             Perform a dry run without making changes"),
     clap::param!("--frozen-lockfile                     Disallow changes to lockfile"),
     clap::param!(
-        "--offline                             Disallow network requests; fail if a package is not cached"
+        "--offline                             Disallow network requests; fail if a package is not available locally"
     ),
     clap::param!(
         "--tarball-dir <PATH>                  Read package tarballs from a directory of name@version.tgz files instead of downloading them"

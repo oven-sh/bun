@@ -170,6 +170,16 @@ test.concurrent("--offline --tarball-dir installs with a cold cache (hoisted)", 
   expect(await installedVersion(tarballDirHoisted, "one-dep")).toBe("1.0.0");
   expect(await installedVersion(tarballDirHoisted, "no-deps")).toBe("1.0.1");
   expect(await installedVersion(tarballDirHoisted, "@types/no-deps")).toBe("1.0.0");
+
+  // same install driven purely by bunfig (install.offline + install.tarballDir)
+  await clearCacheAndNodeModules(tarballDirHoisted);
+  const bunfigPath = join(tarballDirHoisted.packageDir, "bunfig.toml");
+  await write(bunfigPath, (await file(bunfigPath).text()) + `offline = true\ntarballDir = "tarballs"\n`);
+  const bunfigRun = await runInstall(tarballDirHoisted.packageDir);
+  expect(bunfigRun.err).not.toContain("error:");
+  expect(bunfigRun.exitCode).toBe(0);
+  expect(await installedVersion(tarballDirHoisted, "one-dep")).toBe("1.0.0");
+  expect(await installedVersion(tarballDirHoisted, "@types/no-deps")).toBe("1.0.0");
 });
 
 test.concurrent("--offline --tarball-dir installs with a cold cache (isolated linker)", async () => {

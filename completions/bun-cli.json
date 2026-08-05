@@ -308,7 +308,7 @@
         },
         {
           "name": "offline",
-          "description": "Disallow network requests; fail if a package is not cached",
+          "description": "Disallow network requests; fail if a package is not available locally",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -635,7 +635,7 @@
         },
         {
           "name": "offline",
-          "description": "Disallow network requests; fail if a package is not cached",
+          "description": "Disallow network requests; fail if a package is not available locally",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -964,7 +964,7 @@
         },
         {
           "name": "offline",
-          "description": "Disallow network requests; fail if a package is not cached",
+          "description": "Disallow network requests; fail if a package is not available locally",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -1241,7 +1241,7 @@
         },
         {
           "name": "offline",
-          "description": "Disallow network requests; fail if a package is not cached",
+          "description": "Disallow network requests; fail if a package is not available locally",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -1570,7 +1570,7 @@
         },
         {
           "name": "offline",
-          "description": "Disallow network requests; fail if a package is not cached",
+          "description": "Disallow network requests; fail if a package is not available locally",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -1868,7 +1868,7 @@
         },
         {
           "name": "offline",
-          "description": "Disallow network requests; fail if a package is not cached",
+          "description": "Disallow network requests; fail if a package is not available locally",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -2142,7 +2142,7 @@
         },
         {
           "name": "offline",
-          "description": "Disallow network requests; fail if a package is not cached",
+          "description": "Disallow network requests; fail if a package is not available locally",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -2409,7 +2409,7 @@
         },
         {
           "name": "offline",
-          "description": "Disallow network requests; fail if a package is not cached",
+          "description": "Disallow network requests; fail if a package is not available locally",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -2729,7 +2729,7 @@
         },
         {
           "name": "offline",
-          "description": "Disallow network requests; fail if a package is not cached",
+          "description": "Disallow network requests; fail if a package is not available locally",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -3167,7 +3167,7 @@
         },
         {
           "name": "offline",
-          "description": "Disallow network requests; fail if a package is not cached",
+          "description": "Disallow network requests; fail if a package is not available locally",
           "hasValue": false,
           "required": false,
           "multiple": false

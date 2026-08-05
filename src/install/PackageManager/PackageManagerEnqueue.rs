@@ -1122,7 +1122,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             this.log_mut(),
                                             None,
                                             bun_ast::Loc::EMPTY,
-                                            "no cached manifest for package <b>{}<r> and network requests are disabled (--offline)",
+                                            "no cached manifest for package <b>{}<r> and network requests are disabled (--offline); run an online install first",
                                             bstr::BStr::new(&name_str),
                                         );
                                     } else {
@@ -1130,7 +1130,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             this.log_mut(),
                                             None,
                                             bun_ast::Loc::EMPTY,
-                                            "no cached manifest for package <b>{}<r> and network requests are disabled (--offline)",
+                                            "no cached manifest for package <b>{}<r> and network requests are disabled (--offline); run an online install first",
                                             bstr::BStr::new(&name_str),
                                         );
                                     }

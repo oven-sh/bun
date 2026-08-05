@@ -1646,7 +1646,7 @@ impl<'a> PackageInstaller<'a> {
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
                             // NetworkDisabled was already logged by `generate_network_task_for_tarball`.
                             Err(ForTarballError::InvalidURL | ForTarballError::NetworkDisabled) => {
-                                self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
+                                self.fail_and_advance_tree::<IS_PENDING_PACKAGE_INSTALL>(log_level)
                             }
                             Err(ForTarballError::AlreadyFailed) => self
                                 .increment_tree_install_count(
@@ -1678,7 +1678,7 @@ impl<'a> PackageInstaller<'a> {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
                             Err(ForTarballError::InvalidURL | ForTarballError::NetworkDisabled) => {
-                                self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
+                                self.fail_and_advance_tree::<IS_PENDING_PACKAGE_INSTALL>(log_level)
                             }
                             Err(ForTarballError::AlreadyFailed) => self
                                 .increment_tree_install_count(
@@ -1716,7 +1716,7 @@ impl<'a> PackageInstaller<'a> {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
                             Err(ForTarballError::InvalidURL | ForTarballError::NetworkDisabled) => {
-                                self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
+                                self.fail_and_advance_tree::<IS_PENDING_PACKAGE_INSTALL>(log_level)
                             }
                             Err(ForTarballError::AlreadyFailed) => self
                                 .increment_tree_install_count(
@@ -2351,7 +2351,7 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
-    fn fail_with_invalid_url<const IS_PENDING_PACKAGE_INSTALL: bool>(
+    fn fail_and_advance_tree<const IS_PENDING_PACKAGE_INSTALL: bool>(
         &mut self,
         log_level: Options::LogLevel,
     ) {

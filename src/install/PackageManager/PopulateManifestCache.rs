@@ -69,7 +69,7 @@ fn start_manifest_task(
             manager.log_mut(),
             None,
             bun_ast::Loc::EMPTY,
-            "no cached manifest for package <b>{}<r> and network requests are disabled (--offline)",
+            "no cached manifest for package <b>{}<r> and network requests are disabled (--offline); run an online install first",
             bstr::BStr::new(pkg_name),
         );
         return Ok(());

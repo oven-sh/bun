@@ -67,6 +67,8 @@ new!(pub BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: boolean, "BUN_DEBUG_ENA
 // to return true without mutating `/etc/NIXOS` on the shared rootfs. Used by
 // `test/regression/issue/29290.test.ts` to exercise the Nix-host branch.
 new!(pub BUN_DEBUG_FORCE_NIX_HOST: boolean, "BUN_DEBUG_FORCE_NIX_HOST", { default: false });
+// Testing hook for #15753: enable the glibc-addon pre-dlopen check on glibc hosts.
+new!(pub BUN_INTERNAL_NAPI_FORCE_MUSL_CHECK: boolean, "BUN_INTERNAL_NAPI_FORCE_MUSL_CHECK", { default: false });
 new!(pub BUN_DEBUG_HASH_RANDOM_SEED: unsigned, "BUN_DEBUG_HASH_RANDOM_SEED", { deser: { error_handling: NotSet } });
 new!(pub BUN_DEBUG_QUIET_LOGS: boolean, "BUN_DEBUG_QUIET_LOGS", {});
 new!(pub BUN_DEBUG_TEST_TEXT_LOCKFILE: boolean, "BUN_DEBUG_TEST_TEXT_LOCKFILE", { default: false });
@@ -208,6 +210,7 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER, "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE, "BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE", {});
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE, "BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO", {});
     // Force the event loop to use epoll_pwait(2) instead of epoll_pwait2(2).
     // Escape hatch for seccomp policies that block syscall 441 without

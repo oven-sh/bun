@@ -3,8 +3,8 @@
 use core::alloc::Layout;
 use core::ptr::NonNull;
 
+use crate::Allocator;
 use crate::MAX_ALIGN_T as MAX_ALIGN;
-use crate::{Alignment, Allocator};
 
 /// Owns a single raw `MAX_ALIGN`-aligned buffer (a `Vec<u8>` would allocate
 /// with align 1, violating the `alignment <= MAX_ALIGN` contract).
@@ -23,9 +23,6 @@ unsafe impl Send for MaxHeapAllocator {}
 unsafe impl Sync for MaxHeapAllocator {}
 
 impl MaxHeapAllocator {
-    /// No-op (single owned buffer freed on Drop).
-    pub fn free(&mut self, _buf: &mut [u8], _alignment: Alignment, _ret_addr: usize) {}
-
     pub(crate) fn reset(&mut self) {
         self.len = 0;
     }

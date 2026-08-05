@@ -40,7 +40,7 @@ pub use tagged_pointer::TaggedPtr;
 pub mod ref_count;
 pub use ref_count::{
     AnyRefCounted, CellRefCounted, RefCount, RefCounted, RefPtr, ScopedRef, ThreadSafeRefCount,
-    ThreadSafeRefCounted, finalize_js_box, finalize_js_box_noop,
+    ThreadSafeRefCounted, destroy_box_with, finalize_js_box, finalize_js_box_noop,
 };
 // Derive macros — same names as the traits (separate namespace). The derives
 // expand to `::bun_ptr::…` paths, so this crate is the canonical re-export
@@ -218,6 +218,13 @@ impl<T: ?Sized> From<core::ptr::NonNull<T>> for BackRef<T, Shared> {
     #[inline]
     fn from(p: core::ptr::NonNull<T>) -> Self {
         BackRef(p, core::marker::PhantomData)
+    }
+}
+
+impl<T: ?Sized, P> From<BackRef<T, P>> for core::ptr::NonNull<T> {
+    #[inline]
+    fn from(b: BackRef<T, P>) -> Self {
+        b.0
     }
 }
 
@@ -632,6 +639,107 @@ unsafe impl<T: ?Sized + Sync, P> Send for BackRef<T, P> {}
 // holds exactly when `T: Sync`, so sharing the back-reference across threads is
 // sound.
 unsafe impl<T: ?Sized + Sync, P> Sync for BackRef<T, P> {}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DetachablePtr<T> — scoped `&mut T` parked behind `&self` for re-entrant reads.
+//
+// Pattern: a Rust/C library hands a handler closure `&mut X` for the duration
+// of one synchronous call; the handler needs to expose `X` to re-entrant code
+// (JS host-fns) that can only reach it through `&self` on a long-lived wrapper.
+// The handler erases the lifetime and parks the pointer with [`set`]; host-fns
+// read it via [`get_mut`]; a scopeguard calls [`detach`] before the closure
+// returns the borrow to the library. A detached slot reads as `None`, so a
+// wrapper retained past its handler scope never reaches a dangling pointer.
+//
+// This is the `&mut`-yielding sibling of [`BackRef`]. Like `BackRef`, the
+// safety obligation is a TYPE invariant discharged at the *set* site (not a
+// per-`get` `unsafe` block): whoever parks a pointer must arrange the paired
+// `detach()` before the original `&mut T` borrow ends, and every `get_mut()`
+// caller consumes the result within its own synchronous frame without holding
+// it across a call that could reach the same slot. Under that protocol the
+// single `unsafe` in [`get_mut`] is sound; keeping it here (rather than at
+// each host-fn call site) is the same centralisation trade-off `BackRef::get`
+// / `LaunderedSelf::r` already make in this crate.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A nullable slot for a lifetime-erased `&mut T` borrowed from an outer scope.
+/// See the module comment above for the full protocol.
+///
+/// # Type invariant
+/// Whenever the slot is non-null, the pointee is a live, exclusively-borrowed
+/// `T` whose originating `&mut T` scope has not yet ended (the setter has
+/// arranged a [`detach`](Self::detach) that runs before it does). Each
+/// [`get_mut`](Self::get_mut) borrow is the sole live `&mut T` for its use —
+/// callers take it once per host-fn body and never hold it across a re-entry
+/// that could reach the same slot.
+#[repr(transparent)]
+pub struct DetachablePtr<T>(core::cell::Cell<*mut T>);
+
+impl<T> DetachablePtr<T> {
+    /// A detached (null) slot.
+    #[inline]
+    pub const fn null() -> Self {
+        DetachablePtr(core::cell::Cell::new(core::ptr::null_mut()))
+    }
+
+    /// Construct with an initial parked pointer. Establishes the type
+    /// invariant: `ptr` (if non-null) must satisfy the contract on [`set`].
+    #[inline]
+    pub const fn new(ptr: *mut T) -> Self {
+        DetachablePtr(core::cell::Cell::new(ptr))
+    }
+
+    /// Park / retarget the slot. Safe: no reference is forged here. The type
+    /// invariant is the caller's structural guarantee — `ptr` is the
+    /// lifetime-erased address of a live `&mut T`, and a paired [`detach`]
+    /// will run before that borrow ends.
+    #[inline]
+    pub fn set(&self, ptr: *mut T) {
+        self.0.set(ptr);
+    }
+
+    /// Null the slot. After this, [`get_mut`] returns `None` and the wrapper's
+    /// host-fns become harmless no-ops.
+    #[inline]
+    pub fn detach(&self) {
+        self.0.set(core::ptr::null_mut());
+    }
+
+    /// `true` once [`detach`] has run (or the slot was never set).
+    #[inline]
+    pub fn is_detached(&self) -> bool {
+        self.0.get().is_null()
+    }
+
+    /// Recover the raw pointer (for forwarding / identity checks).
+    #[inline]
+    pub fn as_ptr(&self) -> *mut T {
+        self.0.get()
+    }
+
+    /// Load the parked `&mut T`, or `None` if detached.
+    ///
+    /// # Safety (encapsulated)
+    /// Sound under the `DetachablePtr` type invariant: a non-null load means
+    /// the pointee is still inside the setter's live exclusive borrow — valid,
+    /// aligned, and lent to nobody else. The unbounded `'a` is the caller's
+    /// obligation per the invariant: consume within the current synchronous
+    /// frame, never across a re-entry that could reach this slot.
+    #[inline]
+    pub fn get_mut<'a>(&self) -> Option<&'a mut T> {
+        // SAFETY: `DetachablePtr` type invariant — non-null ⇒ pointee is a
+        // live `&mut T` whose originating borrow has not ended; the paired
+        // `detach()` nulls the slot before it does. Sole live `&mut` per call.
+        unsafe { self.0.get().as_mut() }
+    }
+}
+
+impl<T> Default for DetachablePtr<T> {
+    #[inline]
+    fn default() -> Self {
+        Self::null()
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AsCtxPtr — `&self` → `*mut Self` for FFI / C-callback ctx slots.

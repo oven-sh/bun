@@ -124,10 +124,6 @@ bool EventEmitter::emit(const Identifier& eventType, const MarkedArgumentBuffer&
     return fireEventListeners(eventType, arguments);
 }
 
-void EventEmitter::uncaughtExceptionInEventHandler()
-{
-}
-
 Vector<Identifier> EventEmitter::getEventNames()
 {
     auto* data = eventTargetData();
@@ -285,10 +281,6 @@ const SimpleEventListenerVector& EventEmitter::eventListeners(const Identifier& 
     auto* listenerVector = data ? data->eventListenerMap.find(eventType) : nullptr;
     static NeverDestroyed<SimpleEventListenerVector> emptyVector;
     return listenerVector ? *listenerVector : emptyVector.get();
-}
-
-void EventEmitter::invalidateEventListenerRegions()
-{
 }
 
 } // namespace WebCore

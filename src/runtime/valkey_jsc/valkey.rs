@@ -984,24 +984,8 @@ impl ValkeyClient {
         debug!("Processing HELLO response");
 
         match value {
-            RESPValue::Error(err) => {
+            RESPValue::Error(err) | RESPValue::BlobError(err) => {
                 self.fail(err, RedisError::AuthenticationFailed)?;
-                Ok(())
-            }
-            RESPValue::SimpleString(str_) => {
-                if str_.as_ref() == b"OK" {
-                    self.status = Status::Connected;
-                    self.flags.is_authenticated = true;
-                    self.flags.is_reconnecting = false;
-                    self.retry_attempts = 0;
-                    self.on_valkey_connect(value)?;
-                    return Ok(());
-                }
-                self.fail(
-                    b"Authentication failed (unexpected response)",
-                    RedisError::AuthenticationFailed,
-                )?;
-
                 Ok(())
             }
             RESPValue::Map(map) => {
@@ -1038,10 +1022,10 @@ impl ValkeyClient {
                 Ok(())
             }
             _ => {
-                self.fail(
-                    b"Authentication failed with unexpected response",
-                    RedisError::AuthenticationFailed,
-                )?;
+                // HELLO only replies Map or Error. Anything else is unsolicited
+                // (e.g. a proxy greeting); drop it so the real HELLO reply is
+                // paired with HELLO instead of shifting later replies by one.
+                debug!("Dropping unsolicited non-HELLO frame before handshake completes");
                 Ok(())
             }
         }

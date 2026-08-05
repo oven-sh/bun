@@ -107,6 +107,12 @@ const TJPARAM_QUALITY: c_int = 3;
 const TJPARAM_SUBSAMP: c_int = 4;
 pub(crate) const TJPARAM_JPEGWIDTH: c_int = 5;
 pub(crate) const TJPARAM_JPEGHEIGHT: c_int = 6;
+/// Read-only after `tj3DecompressHeader`; one of the TJCS values below.
+pub(crate) const TJPARAM_COLORSPACE: c_int = 8;
+// tjcs enum values from turbojpeg.h (RGB=0, YCbCr=1, …).
+pub(crate) const TJCS_GRAY: c_int = 2;
+pub(crate) const TJCS_CMYK: c_int = 3;
+pub(crate) const TJCS_YCCK: c_int = 4;
 const TJPARAM_PROGRESSIVE: c_int = 12;
 const TJPARAM_MAXPIXELS: c_int = 24;
 /// `2` = save only APP2/ICC_PROFILE markers (enough for colour management,

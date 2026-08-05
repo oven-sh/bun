@@ -1058,6 +1058,7 @@ describe("production headers and import.meta.env", () => {
     expect(out.htmlETag).toMatch(/^"[0-9a-f]{16}"$/);
     expect(out.jsETag).toMatch(/^"[0-9a-f]{16}"$/);
     expect(out.jsHasSourceMapURL).toBe(true);
+    expect(out.jsHasDebugId).toBe(true);
     expect(out.mapStatus).toBe(200);
     expect(out.mapETag).toMatch(/^"[0-9a-f]{16}"$/);
     expect(out.mapETag).not.toBe('"0000000000000000"');
@@ -1121,7 +1122,8 @@ describe("production headers and import.meta.env", () => {
           const js = await (await fetch(new URL(jsPath, base))).text();
           const mapRes = await fetch(new URL(jsPath + ".map", base));
           console.log(JSON.stringify({
-            hasMapComment: js.includes("sourceMappingURL"),
+            hasLinkedMapComment: /sourceMappingURL=\\/chunk-[a-z0-9]+\\.js\\.map/.test(js),
+            hasInlineMapComment: js.includes("sourceMappingURL=data:application/json"),
             mapStatus: mapRes.status,
           }));
           await server.stop(true);
@@ -1136,18 +1138,28 @@ describe("production headers and import.meta.env", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       if (exitCode !== 0) throw new Error(stdout + "\n" + stderr);
-      return JSON.parse(stdout) as { hasMapComment: boolean; mapStatus: number };
+      return JSON.parse(stdout) as {
+        hasLinkedMapComment: boolean;
+        hasInlineMapComment: boolean;
+        mapStatus: number;
+      };
     };
 
-    // Opt back into linked sourcemaps in production.
-    expect(await run("false", `[serve.static]\nsourcemap = "linked"`)).toEqual({
-      hasMapComment: true,
-      mapStatus: 200,
-    });
-    // Opt out of sourcemaps in development.
-    expect(await run("{ hmr: false }", `[serve.static]\nsourcemap = false`)).toEqual({
-      hasMapComment: false,
-      mapStatus: 404,
-    });
+    const cases: [development: string, bunfigValue: string, expected: Awaited<ReturnType<typeof run>>][] = [
+      // Opt back into sourcemaps in production.
+      ["false", `"linked"`, { hasLinkedMapComment: true, hasInlineMapComment: false, mapStatus: 200 }],
+      ["false", `true`, { hasLinkedMapComment: true, hasInlineMapComment: false, mapStatus: 200 }],
+      ["false", `"inline"`, { hasLinkedMapComment: false, hasInlineMapComment: true, mapStatus: 404 }],
+      // External emits .map files without a sourceMappingURL comment.
+      ["false", `"external"`, { hasLinkedMapComment: false, hasInlineMapComment: false, mapStatus: 200 }],
+      // "none" matches the production default.
+      ["false", `"none"`, { hasLinkedMapComment: false, hasInlineMapComment: false, mapStatus: 404 }],
+      // Opt out of sourcemaps in development.
+      ["{ hmr: false }", `false`, { hasLinkedMapComment: false, hasInlineMapComment: false, mapStatus: 404 }],
+    ];
+    const results = await Promise.all(
+      cases.map(([development, value]) => run(development, `[serve.static]\nsourcemap = ${value}`)),
+    );
+    expect(results).toEqual(cases.map(([, , expected]) => expected));
   });
 });

@@ -511,6 +511,8 @@ function __zodOptIn(n) {
       return any;
     }
     case "ref":
+    // Opaque constructs (readonly/lazy/pipe around default/catch, ...) can be optional-in; the answer is unknown, not false.
+    case "opq":
       return null;
     default:
       return false;
@@ -540,6 +542,7 @@ function __zodOptOut(n) {
       return any;
     }
     case "ref":
+    case "opq":
       return null;
     default:
       return false;
@@ -896,7 +899,13 @@ function __zodCompile(n) {
       return (v, refs) => {
         var innerOptIn = optInnerOptIn;
         if (innerOptIn === null) {
-          innerOptIn = optInnerNode.k === "ref" ? __zodRefOpt(refs[optInnerNode.r], false) : false;
+          if (optInnerNode.k === "ref") {
+            innerOptIn = __zodRefOpt(refs[optInnerNode.r], false);
+          } else {
+            // Unresolvable inner optionality (opaque, or a wrapper around a ref): zod may run the inner on undefined, so delegate rather than claim success.
+            if (v === undefined) return __zodFail;
+            innerOptIn = false;
+          }
         }
         if (innerOptIn) {
           // Mirrors $ZodOptional handleOptionalResult: run the inner type first; a conclusive failure on undefined input collapses to undefined.

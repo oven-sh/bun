@@ -60,9 +60,10 @@ function linkerFor(triple: string, cfg: Config): string {
  * Write `.cargo/config.toml` next to the workspace `Cargo.toml` (repo root).
  * Returns the absolute path written.
  *
- * Windows-msvc targets are omitted: the MSVC linker isn't a clang driver and
- * doesn't take `-fuse-ld=lld`; that path is handled entirely via env in
- * `rust.ts` (`CARGO_TARGET_..._LINKER = cfg.msvcLinker`).
+ * Windows-msvc targets get a rustflags-only section (no `linker =` line):
+ * the MSVC linker isn't a clang driver and doesn't take `-fuse-ld=lld`;
+ * that path is handled entirely via env in `rust.ts`
+ * (`CARGO_TARGET_..._LINKER = cfg.msvcLinker`).
  */
 export function generateCargoConfig(cfg: Config): string {
   const outPath = resolve(cfg.cwd, ".cargo", "config.toml");
@@ -82,9 +83,9 @@ export function generateCargoConfig(cfg: Config): string {
   // `-Zpolonius=next` everywhere: workspace code relies on the polonius
   // borrow checker (see the matching push in rust.ts), so every rustc
   // invocation that type-checks workspace crates needs it or borrowck
-  // fails. Windows-msvc triples get a section for it too (they are
-  // otherwise omitted — the MSVC linker path is env-only, see above) so
-  // `cargo check --target *-windows-msvc` / `rust:check-all` work.
+  // fails. Windows-msvc triples get a rustflags-only section (their linker
+  // is env-only, see the doc comment above) so `cargo check --target
+  // *-windows-msvc` / `rust:check-all` work.
   const polonius = `"-Z", "polonius=next"`;
   for (const triple of allRustTargets) {
     lines.push("");

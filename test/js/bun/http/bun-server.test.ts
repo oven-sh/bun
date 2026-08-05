@@ -1093,6 +1093,102 @@ test("late keep-alive request to a node:http server after close() still dispatch
   );
 });
 
+test("request on a connection surviving graceful stop() never reaches a collected handler", async () => {
+  // Stress sibling of the late-keep-alive tests above. Each round parks two
+  // pooled keep-alive connections on a server, stops it gracefully, drops the
+  // only binding, then churns the heap and forces GC before sending late
+  // requests on the surviving connections (interleaved across rounds so the
+  // fetches run from a different frame than the one whose conservative stack
+  // scan could still see the wrapper).
+  //
+  // Invariant: a late request is answered by the original handler ("ok <tag>")
+  // or refused -- never by a server whose wrapper was already collected
+  // (FinalizationRegistry fired) and never with a foreign body. Before the
+  // open-connection gate on the `js_value` downgrade, the churn closures here
+  // could reuse the swept handler cell and run AS the fetch handler (wrong
+  // bodies, "Expected a Response object, but received ...", or a swept-cell
+  // call that crashes outright under ASAN).
+  const dir = tempDirWithFiles("stop-keepalive-gc", {
+    "churn-fixture.js": `
+      // Run at least MIN_ROUNDS rounds and at least MIN_MS of wall time (debug
+      // builds hit the round floor, release builds the time floor), hard-capped
+      // so the pass case stays bounded on any build speed.
+      const MIN_ROUNDS = 30, MAX_ROUNDS = 400, MIN_MS = 8000, MAX_MS = 45000;
+      let sink;
+      function churn() {
+        let a = [];
+        for (let j = 0, n = 20000 + Math.random() * 40000; j < n; j++) a.push(j & 1 ? { j } : "s" + j);
+        sink = a;
+        for (let j = 0; j < 40000; j++) sink = function () { return j; };
+        for (let j = 0; j < 200; j++) sink = new Response("x");
+      }
+      const dead = new Set();
+      const fr = new FinalizationRegistry(u => dead.add(u));
+      const urls = [];
+      const fails = [];
+      const t0 = Date.now();
+      for (let round = 1; !fails.length; round++) {
+        const elapsed = Date.now() - t0;
+        if (round > MAX_ROUNDS || elapsed > MAX_MS) break;
+        if (round > MIN_ROUNDS && elapsed > MIN_MS) break;
+        const tag = round;
+        let server = Bun.serve({
+          port: 0,
+          idleTimeout: 60,
+          fetch() { return new Response("ok " + tag); },
+        });
+        const url = "http://127.0.0.1:" + server.port + "/";
+        fr.register(server, url);
+        // Two pooled keep-alive connections that outlive the server binding.
+        await Promise.all([1, 2].map(() => fetch(url).then(r => r.text())));
+        await new Promise(r => setImmediate(r));
+        server.stop(); // graceful: pooled connections stay open
+        server = null;
+        urls.push(url);
+        if (urls.length > 6) urls.shift();
+        churn();
+        Bun.gc(false);
+        churn();
+        churn();
+        const decoys = [];
+        for (let i = 0; i < 3; i++) decoys.push(Bun.serve({ port: 0, fetch() { return new Response("decoy"); } }));
+        churn();
+        const rs = await Promise.all(
+          urls.map(u => {
+            const wasCollected = dead.has(u);
+            return fetch(u).then(
+              async r => ({ u, wasCollected, status: r.status, body: await r.text() }),
+              () => ({ u, wasCollected, status: 0, body: "" }),
+            );
+          }),
+        );
+        for (const d of decoys) d.stop(true);
+        for (const { status, body, wasCollected } of rs) {
+          if (status === 200 && !body.startsWith("ok ")) {
+            fails.push("round " + round + ": wrong body " + JSON.stringify(body.slice(0, 16)));
+          } else if (status === 200 && wasCollected) {
+            fails.push("round " + round + ": collected server answered");
+          }
+        }
+      }
+      if (fails.length) {
+        console.log("FAIL " + fails.join("; "));
+        process.exit(1);
+      }
+      console.log("PASS");
+      process.exit(0);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(dir, "churn-fixture.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "PASS", stderr: "", exitCode: 0 });
+}, 90_000);
+
 test("server wrapper survives GC while a websocket is connected after stop()", async () => {
   // The previous test exercises the one-tick HTTP keep-alive race; this one
   // covers the steadier websocket case. After a graceful stop() with a live

@@ -51,6 +51,7 @@ const STREAM_ID_UNI_BIT: u64 = 0x2;
 /// HTTP/3 application error codes (RFC 9114 §8.1).
 const H3_NO_ERROR: u64 = 0x100;
 const H3_INTERNAL_ERROR: u64 = 0x102;
+const H3_REQUEST_REJECTED: u64 = 0x10b;
 
 /// Node's DefaultApplication normalized option defaults
 /// (node/src/quic/session.cc).
@@ -1074,8 +1075,7 @@ impl QuicSession {
                     }
                 }
                 SessionEvent::GoawayReceived => {
-                    // lsquic doesn't surface the GOAWAY stream-id; Node
-                    // reports -1n when the id is unavailable.
+                    // Node v26 reports -1n here; the id is read internally for rejection.
                     let last_stream_id = match JSValue::from_int64_no_truncate(global, -1) {
                         Ok(v) => v,
                         Err(e) => {
@@ -2378,6 +2378,35 @@ lsquic_callback! {
 
     pub(super) fn on_goaway_received(session: &QuicSession) {
         session.push_event(SessionEvent::GoawayReceived);
+        // lsquic fake-resets id>goaway_id with no on_reset (→clean EOF); reject so readers error.
+        let Some(stream_id) = session
+            .conn()
+            .and_then(|c| c.min_goaway_stream_id())
+            .filter(|_| !session.is_server())
+        else {
+            return;
+        };
+        let streams: Vec<*mut super::stream::QuicStream> = session.streams.get().clone();
+        for sp in streams {
+            let Some(stream) = session.live_stream(sp) else {
+                continue;
+            };
+            let id = stream.stream_id();
+            // Low 2 bits 0 = client-bidi (RFC 9000 §2.1); id<0 = pending.
+            if id < 0
+                || id as u64 & 0x3 != 0
+                || id as u64 <= stream_id
+                || stream.with_state(|s| s.reset != 0)
+            {
+                continue;
+            }
+            stream.mark_reset(H3_REQUEST_REJECTED);
+            session.push_event(SessionEvent::StreamReset {
+                stream: sp,
+                code: H3_REQUEST_REJECTED,
+            });
+            session.push_event(SessionEvent::StreamWake { stream: sp });
+        }
     }
 
     pub(super) fn on_hsk_confirmed(session: &QuicSession) {

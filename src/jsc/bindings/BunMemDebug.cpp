@@ -1189,6 +1189,25 @@ extern "C" void uws_adopt_loop_for_current_thread(struct us_loop_t*);
 void _mi_scavenger_forked_child(void); // C++-mangled (mimalloc is built as C++ here)
 extern "C" void Bun__imageAdoptMainThreadVM();
 extern "C" char** environ;
+
+#if OS(LINUX)
+#include <elf.h>
+// Linker/loader-owned data in our own image (.got, .got.plt, .init_array, .fini_array): process-specific, never program state — keep this process's copy across the overlay.
+static size_t platformLinkerOwnedRanges(uint64_t (*out)[2], size_t cap)
+{
+    size_t n = 0; int fd = open("/proc/self/exe", O_RDONLY); if (fd < 0) return 0;
+    Elf64_Ehdr eh; if (pread(fd, &eh, sizeof eh, 0) != (ssize_t)sizeof eh || !eh.e_shnum) { close(fd); return 0; }
+    std::vector<Elf64_Shdr> sh(eh.e_shnum); pread(fd, sh.data(), eh.e_shnum * sizeof(Elf64_Shdr), eh.e_shoff);
+    std::vector<char> names(sh[eh.e_shstrndx].sh_size); pread(fd, names.data(), names.size(), sh[eh.e_shstrndx].sh_offset);
+    for (auto& sec : sh) {
+        if (sec.sh_name >= names.size() || !sec.sh_addr) continue; const char* nm = names.data() + sec.sh_name;
+        if (!strcmp(nm, ".got") || !strcmp(nm, ".got.plt") || !strcmp(nm, ".init_array") || !strcmp(nm, ".fini_array") || !strcmp(nm, ".preinit_array")) { if (n < cap) { out[n][0] = sec.sh_addr; out[n][1] = sec.sh_addr + sec.sh_size; n++; } }
+    }
+    close(fd); return n;
+}
+#else
+static size_t platformLinkerOwnedRanges(uint64_t (*)[2], size_t) { return 0; }
+#endif
 // ===== v0 heap image experiment (macOS, no-ASLR, JIT off): dump all mimalloc/JSC memory + __DATA at idle; a fresh process maps it back and runs JS on the image VM.
 
 // ---- platform seam for the image product path (region walk, residency, data segments, JIT copy) ----
@@ -1612,6 +1631,7 @@ static void imageRestoreAndRun(const char* path)
     size_t mapped = 0, copied = 0;
     struct DataSeg { uint64_t* dst; const uint64_t* src; size_t words; }; DataSeg dataSegs[16]; size_t nDataSegs = 0; // no heap here: the allocator's state is being overlaid
     bool useLibFixups = haveFixups && getenv("BUN_IMAGE_LIB_FIXUPS"); // experimental (Linux): let system libraries slide; see SNAPSHOT.md 'ASLR'
+    uint64_t linkerRanges[8][2]; size_t nLinkerRanges = useLibFixups ? platformLinkerOwnedRanges(linkerRanges, 8) : 0;
     bool verbose = !!getenv("BUN_IMAGE_VERBOSE");
     for (auto& r : regions) {
         if (verbose) { fprintf(stderr, "[image] restoring %llx+%llx kind=%llu tag=%llu\n", r.addr, r.len, r.kind & 0xff, r.kind >> 8); }
@@ -1709,8 +1729,15 @@ static void imageRestoreAndRun(const char* path)
     { // libc-free critical section: overwrite our data segments with the builder's, then rebase extern-library pointers. Plain loops only (no PLT calls).
         // Process-owned libc globals that live in *our* data segment (copy relocations in a non-PIE executable): keep this process's values.
         char** volatile* environSlot = (char** volatile*)&environ; char** savedEnviron = *environSlot; // volatile: the overlay below rewrites it behind the compiler's back
-        for (size_t di = 0; di < nDataSegs; di++) { DataSeg& d = dataSegs[di]; volatile uint64_t* dst = d.dst; const uint64_t* src = d.src; for (size_t k = 0; k < d.words; k++) dst[k] = src[k]; }
-        if (useLibFixups) for (size_t k = 0; k < nFixups; k++) { ImageFixup& f = fixups[k]; if (f.lib < nLibDelta && libDelta[f.lib]) *(volatile uint64_t*)f.addr += libDelta[f.lib]; }
+        for (size_t di = 0; di < nDataSegs; di++) {
+            DataSeg& d = dataSegs[di]; volatile uint64_t* dst = d.dst; const uint64_t* src = d.src;
+            for (size_t k = 0; k < d.words; k++) {
+                uint64_t a = (uint64_t)(d.dst + k); bool linkerOwned = false;
+                for (size_t q = 0; q < nLinkerRanges; q++) if (a >= linkerRanges[q][0] && a < linkerRanges[q][1]) { linkerOwned = true; break; }
+                if (!linkerOwned) dst[k] = src[k];
+            }
+        }
+        if (useLibFixups) for (size_t k = 0; k < nFixups; k++) { ImageFixup& f = fixups[k]; bool linkerOwned = false; for (size_t q = 0; q < nLinkerRanges; q++) if (f.addr >= linkerRanges[q][0] && f.addr < linkerRanges[q][1]) { linkerOwned = true; break; } if (!linkerOwned && f.lib < nLibDelta && libDelta[f.lib]) *(volatile uint64_t*)f.addr += libDelta[f.lib]; }
         if (useLibFixups) *environSlot = savedEnviron;
     }
     for (size_t di = 0; di < nDataSegs; di++) munmap((void*)dataSegs[di].src, dataSegs[di].words * 8);

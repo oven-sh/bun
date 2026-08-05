@@ -13,6 +13,7 @@ enum NativeEnum {
 }
 
 const Inner = z.object({ v: z.number() });
+const ConstDefault = z.string().default("x");
 function makeSchema() {
   return z.string().min(1);
 }
@@ -70,6 +71,13 @@ const SCHEMAS: Record<string, any> = {
   nullableOptional: z.string().nullable().optional(),
   optionalDefault: z.string().default("d").optional(),
   withDefault: z.string().default("dflt"),
+  // Optionals whose inner optionality is not statically derivable (opaque
+  // construct or a wrapper around a schema-valued const): zod still runs the
+  // inner on undefined, so these must not short-circuit to undefined.
+  readonlyDefaultOptional: z.string().default("x").readonly().optional(),
+  nullableConstDefaultOptional: z.nullable(ConstDefault).optional(),
+  unionConstDefaultOptional: z.union([z.number(), ConstDefault]).optional(),
+  optionalConstDefault: z.optional(ConstDefault),
   defaultNegZero: z.number().default(-0),
   literalNegZero: z.literal(-0),
   defaultObj: z.object({ a: z.number() }).default({ a: 1 }),

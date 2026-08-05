@@ -9,6 +9,7 @@
 use crate::p::P;
 use bun_ast::{self as js_ast, E, Expr, Flags, G, OpCode};
 use bun_collections::{ArrayHashMap, VecExt};
+use bun_core::UnwrapOrOom;
 
 pub(crate) struct ZodState {
     /// Local bindings holding the zod module namespace (`import { z }`, `import * as z`, default import).
@@ -1654,7 +1655,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         refs: Vec<Expr>,
     ) -> Expr {
         let body =
-            G::FnBody::init_return_expr(self.arena, original).expect("zod thunk body allocation");
+            G::FnBody::init_return_expr(self.arena, original).unwrap_or_oom();
         let thunk = self.new_expr(
             E::Arrow {
                 args: js_ast::StoreSlice::EMPTY,

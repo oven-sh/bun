@@ -1217,15 +1217,12 @@ JSC::EncodedJSValue BUFFER_OUT_OF_BOUNDS(JSC::ThrowScope& throwScope, JSC::JSGlo
     return {};
 }
 
-JSC::EncodedJSValue UNKNOWN_SIGNAL(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue signal, bool triedUppercase)
+JSC::EncodedJSValue UNKNOWN_SIGNAL(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue signal)
 {
     WTF::StringBuilder builder;
     builder.append("Unknown signal: "_s);
     JSValueToStringSafe(globalObject, builder, signal);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
-    if (triedUppercase) {
-        builder.append(" (signals must use all capital letters)"_s);
-    }
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_SIGNAL, builder.toString()));
     throwScope.release();
     return {};

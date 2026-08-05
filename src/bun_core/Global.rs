@@ -619,7 +619,7 @@ pub fn set_thread_name(name: &ZStr) {
 // Safe `extern "C" fn()` — every registrant (C++ `Bun__atexit` lambdas, Rust
 // `extern "C"` thunks in fs_events / ParentDeathWatchdog) takes no args and has
 // no memory-safety preconditions, so the call site needs no `unsafe` block.
-pub type ExitFn = extern "C" fn();
+type ExitFn = extern "C" fn();
 
 // Registration can happen from any thread (FFI `Bun__atexit`), so this is
 // guarded with a Mutex.

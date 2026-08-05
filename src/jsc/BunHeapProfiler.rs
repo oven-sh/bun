@@ -1,7 +1,7 @@
 use crate::CrateError as Error;
 use bun_core::Output;
 use bun_core::{OwnedString, String as BunString};
-use bun_paths::{AutoAbsPath, PathBuffer, resolve_path};
+use bun_paths::{AutoAbsPathChecked, PathBuffer, resolve_path};
 use bun_sys::{self as sys, E, Fd, FdDirExt};
 
 use crate::VM;
@@ -42,8 +42,8 @@ pub(crate) fn generate_and_write_profile(
     // Freed by Drop on ZigStringSlice.
     let profile_slice = profile_string.to_utf8();
 
-    // Determine the output path using AutoAbsPath
-    let mut path_buf = AutoAbsPath::init_top_level_dir();
+    // dir/name are unbounded CLI input, so use the length-checked variant.
+    let mut path_buf = AutoAbsPathChecked::init_top_level_dir();
     // `defer path_buf.deinit()` — handled by Drop.
 
     build_output_path(&mut path_buf, config)?;
@@ -102,7 +102,10 @@ pub(crate) fn generate_and_write_profile(
     Ok(())
 }
 
-fn build_output_path(path: &mut AutoAbsPath, config: &HeapProfilerConfig) -> Result<(), Error> {
+fn build_output_path(
+    path: &mut AutoAbsPathChecked,
+    config: &HeapProfilerConfig,
+) -> Result<(), Error> {
     // Generate filename
     let mut filename_buf = PathBuffer::uninit();
     let filename: &[u8] = if !config.name.is_empty() {

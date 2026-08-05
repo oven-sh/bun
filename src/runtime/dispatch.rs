@@ -512,6 +512,9 @@ pub(crate) fn run_task(
         task_tag::NativeZlib => compression_arm!(NativeZlib),
         task_tag::NativeBrotli => compression_arm!(NativeBrotli),
         task_tag::NativeZstd => compression_arm!(NativeZstd),
+        task_tag::CompressionStreamCoderTask => {
+            run_then_destroy!(work crate::webcore::compression_stream_coder::CompressionStreamCoderTask)
+        }
 
         // ── process / signals ────────────────────────────────────────────
         task_tag::ProcessWaiterThreadTask => {

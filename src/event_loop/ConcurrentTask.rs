@@ -116,6 +116,7 @@ pub mod task_tag {
         NativeBrotli,
         NativeZlib,
         NativeZstd,
+        CompressionStreamCoderTask,
         Open,
         PasswordHashResult,
         PasswordVerifyResult,

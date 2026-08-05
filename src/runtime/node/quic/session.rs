@@ -1565,6 +1565,14 @@ impl QuicSession {
             ),
             None => (JSValue::UNDEFINED, JSValue::UNDEFINED),
         };
+        // Before onSessionHandshake: `onearlyrejected` must precede `await opened`.
+        if early_data.0 && !early_data.1 && !self.is_server.get() {
+            if let Some(callback) = callbacks::get(global, "onSessionEarlyDataRejected") {
+                let vm = global.bun_vm().as_mut();
+                vm.event_loop_ref()
+                    .run_callback(callback, global, self.handle(), &[]);
+            }
+        }
         if let Some(callback) = callbacks::get(global, "onSessionHandshake") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref().run_callback(
@@ -1590,16 +1598,6 @@ impl QuicSession {
                 "\u{1e}{{\"qlog_version\":\"0.3\",\"qlog_format\":\"JSON-SEQ\",\"title\":\"bun node:quic\"}}\n\u{1e}{{\"time\":{t},\"name\":\"connectivity:connection_started\",\"data\":{{}}}}\n"
             );
             self.emit_qlog(global, &chunk, false);
-        }
-
-        // Node destroys the early streams and fires `onearlyrejected` — on
-        // the CLIENT only.
-        if early_data.0 && !early_data.1 && !self.is_server.get() {
-            if let Some(callback) = callbacks::get(global, "onSessionEarlyDataRejected") {
-                let vm = global.bun_vm().as_mut();
-                vm.event_loop_ref()
-                    .run_callback(callback, global, self.handle(), &[]);
-            }
         }
 
         // Matching Node: the server session exists and then closes with a

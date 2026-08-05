@@ -919,8 +919,11 @@ pub(crate) fn defines_from_transform_options(
             Box::from(b"\"development\"".as_slice())
         };
 
-        user_defines.get_or_put_value(b"process.env.NODE_ENV", quoted_node_env.clone())?;
-        user_defines.get_or_put_value(b"process.env.BUN_ENV", quoted_node_env)?;
+        // Only inject NODE_ENV if env_behavior is not Disable
+        if self.env_behavior != DotEnv::Behavior::Disable {
+            user_defines.get_or_put_value(b"process.env.NODE_ENV", quoted_node_env.clone())?;
+            user_defines.get_or_put_value(b"process.env.BUN_ENV", quoted_node_env)?;
+        }
 
         // Automatically set `process.browser` to `true` for browsers and false for node+js
         // This enables some extra dead code elimination

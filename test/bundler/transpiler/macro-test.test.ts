@@ -133,6 +133,96 @@ test("ireturnapromise", async () => {
   expect(await ireturnapromise()).toEqual("aaa");
 });
 
+// Platform objects other than Response/Request/Blob have no AST representation, so returning
+// one from a macro must fail the build. It used to silently inline "" at every call site.
+test.concurrent.each([
+  ["a URL", `new URL("https://bun.com/docs")`, "URL"],
+  ["Headers", `new Headers({ "x-bun": "1" })`, "Headers"],
+  ["an object with a nested URL", `{ list: [new URL("https://bun.com/docs")] }`, "URL"],
+])("macro returning %s is a build error", async (_label, expression, className) => {
+  using dir = tempDir("macro-platform-object", {
+    "macro.ts": `export function getValue() {\n  return ${expression};\n}\n`,
+    "index.ts": `import { getValue } from "./macro.ts" with { type: "macro" };\nconsole.log(JSON.stringify(getValue()));\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toMatchObject({
+    stderr: expect.stringContaining(`cannot coerce ${className}`),
+    exitCode: 1,
+  });
+  // The bundle must not be emitted with the macro call replaced by an empty string.
+  expect(stdout).not.toContain('""');
+});
+
+// docs/bundler/macros.mdx: a Response/Blob whose MIME type is application/json is inlined as
+// the parsed value. Content-Type values usually carry parameters (";charset=utf-8") and the
+// type/subtype is case-insensitive; neither must demote the result to a base64 data URL string.
+test.concurrent.each([
+  [
+    "Response with application/json;charset=utf-8",
+    `new Response(JSON.stringify({ hello: "world", list: [1, 2, 3] }), {
+      headers: { "Content-Type": "application/json;charset=utf-8" },
+    })`,
+  ],
+  [
+    "Response with Application/JSON; charset=UTF-8",
+    `new Response(JSON.stringify({ hello: "world", list: [1, 2, 3] }), {
+      headers: { "Content-Type": "Application/JSON; charset=UTF-8" },
+    })`,
+  ],
+  [
+    "Blob with application/json; charset=utf-8",
+    `new Blob([JSON.stringify({ hello: "world", list: [1, 2, 3] })], { type: "application/json; charset=utf-8" })`,
+  ],
+])("macro returning a %s inlines the parsed JSON", async (_label, expression) => {
+  using dir = tempDir("macro-json-mime", {
+    "macro.ts": `export function getValue() {\n  return ${expression};\n}\n`,
+    "index.ts": `import { getValue } from "./macro.ts" with { type: "macro" };\nconsole.log(JSON.stringify(getValue()));\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds print "[macro] call getValue" to stdout first, so only the tail is matched.
+  expect({ stdout, stderr, exitCode }).toMatchObject({
+    stdout: expect.stringMatching(/\{"hello":"world","list":\[1,2,3\]\}\n$/),
+    exitCode: 0,
+  });
+});
+
+// A parameterized or oddly-cased text MIME type keeps being inlined as the response text.
+test.concurrent.each([
+  ["a default text/plain;charset=utf-8 Response", `new Response("plain text body")`],
+  ["a TEXT/Plain Response", `new Response("plain text body", { headers: { "Content-Type": "TEXT/Plain" } })`],
+])("macro returning %s inlines the body text", async (_label, expression) => {
+  using dir = tempDir("macro-text-mime", {
+    "macro.ts": `export function getValue() {\n  return ${expression};\n}\n`,
+    "index.ts": `import { getValue } from "./macro.ts" with { type: "macro" };\nconsole.log(getValue());\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toMatchObject({
+    stdout: expect.stringMatching(/plain text body\n$/),
+    exitCode: 0,
+  });
+});
+
 // A numeric key >= 100000 (JSC's MIN_SPARSE_ARRAY_INDEX) makes the property put inside
 // JSC__JSValue__putToPropertyKey take a path that can throw, so the binding must check for
 // an exception. BUN_JSC_validateExceptionChecks=1 aborts the child if the check is missing.

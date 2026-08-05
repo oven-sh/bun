@@ -1433,13 +1433,19 @@ pub(crate) fn collect_compile_assets(
 
 /// `--compile-image`: run the freshly built executable with `BUN_IMAGE_OUT=<exe>.img`; the app snapshots itself once idle.
 fn write_heap_image_by_running(root_fd: bun_sys::Fd, outfile: &[u8]) {
-    let mut buf = bun_paths::PathBuffer::uninit();
-    let mut exe = match bun_sys::get_fd_path(root_fd, &mut buf) {
-        Ok(p) => p.to_vec(),
-        Err(_) => b".".to_vec(),
+    let mut exe: Vec<u8> = if outfile.first() == Some(&b'/') {
+        outfile.to_vec()
+    } else {
+        let mut buf = bun_paths::PathBuffer::uninit();
+        let mut p = match bun_sys::get_fd_path(root_fd, &mut buf) {
+            Ok(p) => p.to_vec(),
+            Err(_) => b".".to_vec(),
+        };
+        p.push(b'/');
+        p.extend_from_slice(outfile);
+        p
     };
-    exe.push(b'/');
-    exe.extend_from_slice(outfile);
+    let _ = &mut exe;
     let mut img = exe.clone();
     img.extend_from_slice(b".img");
     let exe_str = String::from_utf8_lossy(&exe).into_owned();

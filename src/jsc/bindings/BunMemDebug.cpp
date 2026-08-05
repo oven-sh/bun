@@ -73,6 +73,11 @@
 #include <dirent.h>
 #include <ucontext.h>
 #endif
+#ifndef MAP_JIT
+#define MAP_JIT 0
+#endif
+#include <JavaScriptCore/Completion.h>
+#pragma clang diagnostic ignored "-Wformat" // uint64_t is unsigned long on Linux, unsigned long long on Darwin; this file prints a lot of addresses
 #include <signal.h>
 #include <sys/mman.h>
 #include <fcntl.h>

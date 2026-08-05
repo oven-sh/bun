@@ -260,6 +260,8 @@ pub trait BlobExt {
     fn get_size_for_bindings(&self) -> u64;
     fn get_stat(&self, global_this: &JSGlobalObject, callback: &CallFrame) -> JsResult<JSValue>;
     fn get_size(&self, _: &JSGlobalObject) -> JSValue;
+    fn view_size(&self) -> SizeType;
+    fn stat_file_size(&self, store: &StoreRef) -> Option<SizeType>;
     fn resolve_size(&self);
     fn resolved_size(&self) -> (SizeType, SizeType);
     fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut Blob>
@@ -758,11 +760,12 @@ impl BlobExt for Blob {
                 writer.write_int_le::<u32>(stored_name.len() as u32)?;
                 writer.write_all(stored_name)?;
             } else {
-                // Version 4: a file-backed slice's window end. Written before
-                // resolve_size() so an unresolved blob stays MAX_SIZE (unknown)
-                // on the wire and the receiver stats it locally, like v3.
-                writer.write_int_le::<u64>(self.size.get())?;
-                self.resolve_size();
+                // Version 4: slice window end (MAX_SIZE = unbounded; receiver re-stats).
+                writer.write_int_le::<u64>(if self.size_is_explicit.get() {
+                    self.size.get()
+                } else {
+                    MAX_SIZE
+                })?;
                 store.serialize(writer)?;
             }
         }
@@ -1270,25 +1273,22 @@ impl BlobExt for Blob {
     }
 
     fn get_exists_sync(&self) -> JSValue {
-        if self.size.get() == MAX_SIZE {
-            self.resolve_size();
-        }
-
         // If there's no store that means it's empty and we just return true
         let Some(store) = self.store.get() else {
             return JSValue::TRUE;
         };
 
-        if matches!(store.data, store::Data::Bytes(_)) {
+        match store.data_mut().tag() {
             // Bytes will never error
-            return JSValue::TRUE;
+            store::DataTag::Bytes => JSValue::TRUE,
+            store::DataTag::File => {
+                resolve_file_stat(store);
+                let file = store.data_mut().as_file();
+                // We say regular files and pipes exist.
+                JSValue::from(bun_sys::S::ISREG(file.mode) || bun_sys::S::ISFIFO(file.mode))
+            }
+            store::DataTag::S3 => JSValue::FALSE,
         }
-
-        // We say regular files and pipes exist.
-        let store::Data::File(file) = &store.data else {
-            return JSValue::FALSE;
-        };
-        JSValue::from(bun_sys::S::ISREG(file.mode) || bun_sys::S::ISFIFO(file.mode))
     }
     fn do_write(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: bun_vm() never returns null for a Bun-owned global.
@@ -1960,6 +1960,7 @@ impl BlobExt for Blob {
         let blob = self.dupe();
         blob.offset.set(offset);
         blob.size.set(len);
+        blob.size_is_explicit.set(len != MAX_SIZE);
 
         let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
         // infer the content type if it was not specified
@@ -1987,17 +1988,22 @@ impl BlobExt for Blob {
         // index the full fixed-3 array (args[2] is written below regardless of len).
         let args = &mut arguments_[..];
 
-        if self.size.get() == 0 {
+        if self.size.get() == 0 && !self.is_bun_file() {
             let ptr = Blob::new(Blob::init_empty(global_this));
             // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new`; force
             // the inherent `Blob::to_js(&mut self)` over `JsClass::to_js`.
             return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
         }
 
+        let this_size_i64 = i64::try_from(self.size.get()).expect("int cast");
+        let mut neg_base: Option<i64> = None;
+        let mut resolve_neg =
+            || *neg_base.get_or_insert_with(|| i64::try_from(self.view_size()).expect("int cast"));
+
         // If the optional start parameter is not used as a parameter, let relativeStart be 0.
         let mut relative_start: i64 = 0;
         // If the optional end parameter is not used, let relativeEnd be size.
-        let mut relative_end: i64 = i64::try_from(self.size.get()).expect("int cast");
+        let mut relative_end: i64 = this_size_i64;
 
         // Mutate the fixed-3 args array in place to shift the string arg into [2].
         if args[0].is_string() {
@@ -2014,11 +2020,9 @@ impl BlobExt for Blob {
             if start_.is_number() {
                 let start = start_.to_int64();
                 if start < 0 {
-                    relative_start = (start
-                        .wrapping_add(i64::try_from(self.size.get()).expect("int cast")))
-                    .max(0);
+                    relative_start = (start.wrapping_add(resolve_neg())).max(0);
                 } else {
-                    relative_start = start.min(i64::try_from(self.size.get()).expect("int cast"));
+                    relative_start = start.min(this_size_i64);
                 }
             }
         }
@@ -2027,11 +2031,9 @@ impl BlobExt for Blob {
             if end_.is_number() {
                 let end = end_.to_int64();
                 if end < 0 {
-                    relative_end = (end
-                        .wrapping_add(i64::try_from(self.size.get()).expect("int cast")))
-                    .max(0);
+                    relative_end = (end.wrapping_add(resolve_neg())).max(0);
                 } else {
-                    relative_end = end.min(i64::try_from(self.size.get()).expect("int cast"));
+                    relative_end = end.min(this_size_i64);
                 }
             }
         }
@@ -2142,21 +2144,13 @@ impl BlobExt for Blob {
     fn get_last_modified(&self, _: &JSGlobalObject) -> JSValue {
         if let Some(store) = self.store.get() {
             if matches!(store.data, store::Data::File(_)) {
-                // do not hold a pattern-bound `&File` across
-                // `resolve_file_stat` — it materializes `&mut File` on the same
-                // memory (Stacked Borrows UB; the optimizer may legally cache the
-                // pre-call `last_modified` and return the stale `INIT_TIMESTAMP`).
-                // Re-read via `StoreRef::data_mut` (raw-ptr-backed accessor) after
-                // the mutating call.
+                resolve_file_stat(store);
                 let last_modified = store.data_mut().as_file().last_modified;
-                // last_modified can be already set during read.
-                if last_modified == jsc::INIT_TIMESTAMP && !self.is_s3() {
-                    resolve_file_stat(store);
+                // stat failed (missing file): expose 0, not the internal sentinel.
+                if last_modified == jsc::INIT_TIMESTAMP {
+                    return JSValue::js_number(0.0);
                 }
-                // Fresh borrow after possible mutation by `resolve_file_stat`.
-                return JSValue::js_number(JSValue::purify_nan(
-                    store.data_mut().as_file().last_modified as f64,
-                ));
+                return JSValue::js_number(JSValue::purify_nan(last_modified as f64));
             }
         }
 
@@ -2164,28 +2158,25 @@ impl BlobExt for Blob {
             return JSValue::js_number(JSValue::purify_nan(self.last_modified.get()));
         }
 
-        JSValue::js_number(jsc::INIT_TIMESTAMP as f64)
+        JSValue::js_number(0.0)
     }
 
     fn get_size_for_bindings(&self) -> u64 {
+        if let Some(store) = self.store.get() {
+            if matches!(store.data, store::Data::File(_)) {
+                return match self.stat_file_size(store) {
+                    Some(s) => s,
+                    None if self.size_is_explicit.get() => self.size.get(),
+                    None => u64::MAX,
+                };
+            }
+        }
         if self.size.get() == MAX_SIZE {
             self.resolve_size();
         }
-
-        // If the file doesn't exist or is not seekable
-        // signal that the size is unknown.
-        if let Some(store) = self.store.get() {
-            if let store::Data::File(file) = &store.data {
-                if !file.seekable.unwrap_or(false) {
-                    return u64::MAX;
-                }
-            }
-        }
-
         if self.size.get() == MAX_SIZE {
             return u64::MAX;
         }
-
         self.size.get()
     }
     fn get_stat(&self, global_this: &JSGlobalObject, callback: &CallFrame) -> JsResult<JSValue> {
@@ -2251,6 +2242,16 @@ impl BlobExt for Blob {
     }
 
     fn get_size(&self, _: &JSGlobalObject) -> JSValue {
+        if let Some(store) = self.store.get() {
+            if matches!(store.data, store::Data::File(_)) {
+                return JSValue::js_number(match self.stat_file_size(store) {
+                    Some(s) => s as f64,
+                    None if self.size_is_explicit.get() => self.size.get() as f64,
+                    None if store.data_mut().as_file().seekable == Some(false) => f64::INFINITY,
+                    None => 0.0,
+                });
+            }
+        }
         if self.size.get() == MAX_SIZE {
             if self.is_s3() {
                 return JSValue::js_number(f64::NAN);
@@ -2258,17 +2259,37 @@ impl BlobExt for Blob {
             self.resolve_size();
             if self.size.get() == MAX_SIZE && self.store.get().is_some() {
                 return JSValue::js_number(f64::INFINITY);
-            } else if self.size.get() == 0 && self.store.get().is_some() {
-                if let store::Data::File(file) =
-                    &self.store().expect("infallible: store present").data
-                {
-                    if !file.seekable.unwrap_or(true) && file.max_size == MAX_SIZE {
-                        return JSValue::js_number(f64::INFINITY);
-                    }
-                }
             }
         }
         JSValue::js_number(self.size.get() as f64)
+    }
+
+    /// Live size for the W3C slice algorithm; does not write `self.size`.
+    fn view_size(&self) -> SizeType {
+        if let Some(store) = self.store.get() {
+            if matches!(store.data, store::Data::File(_)) {
+                return self
+                    .stat_file_size(store)
+                    .unwrap_or_else(|| self.size.get());
+            }
+        }
+        self.size.get()
+    }
+
+    /// Re-stat: bytes past `self.offset` (clamped by an explicit bound), or `None`.
+    fn stat_file_size(&self, store: &StoreRef) -> Option<SizeType> {
+        resolve_file_stat(store);
+        let file = store.data_mut().as_file();
+        if file.seekable.is_some() && file.max_size != MAX_SIZE {
+            let offset = file.max_size.min(self.offset.get());
+            let available = file.max_size - offset;
+            return Some(if self.size_is_explicit.get() {
+                available.min(self.size.get())
+            } else {
+                available
+            });
+        }
+        None
     }
 
     fn resolve_size(&self) {
@@ -3330,6 +3351,7 @@ impl BlobExt for Blob {
                                     ),
                                     charset: Cell::new(blob.charset.get()),
                                     is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
+                                    size_is_explicit: Cell::new(blob.size_is_explicit.get()),
                                     ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
                                     global_this: Cell::new(blob.global_this.get()),
                                     last_modified: Cell::new(blob.last_modified.get()),
@@ -4263,6 +4285,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         // resolve_size() clamps this to the actual file size on first use.
         if size != MAX_SIZE {
             blob.size.set(size as SizeType);
+            blob.size_is_explicit.set(true);
         }
     }
     if let Some(store) = blob.store.get() {
@@ -6183,37 +6206,31 @@ fn resolve_file_stat(store: &StoreRef) {
     // `StoreRef` liveness invariant; the caller holds the only ref across
     // this call, so an exclusive borrow is sound.
     let file = store.data_mut().as_file_mut();
-    match &file.pathlike {
+    let stat = match &file.pathlike {
         PathOrFileDescriptor::Path(path) => {
             let mut buffer = bun_paths::PathBuffer::uninit();
-            match bun_sys::stat(path.slice_z(&mut buffer)) {
-                bun_sys::Result::Ok(stat) => {
-                    file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
-                        ((stat.st_size.max(0)) as u64) as SizeType
-                    } else {
-                        MAX_SIZE
-                    };
-                    file.mode = stat.st_mode as bun_sys::Mode;
-                    file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
-                    file.last_modified = stat_to_js_mtime(&stat);
-                }
-                // the file may not exist yet. That's okay.
-                _ => {}
-            }
+            bun_sys::stat(path.slice_z(&mut buffer))
         }
-        PathOrFileDescriptor::Fd(fd) => match bun_sys::fstat(*fd) {
-            bun_sys::Result::Ok(stat) => {
-                file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
-                    ((stat.st_size.max(0)) as u64) as SizeType
-                } else {
-                    MAX_SIZE
-                };
-                file.mode = stat.st_mode as bun_sys::Mode;
-                file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
-                file.last_modified = stat_to_js_mtime(&stat);
-            }
-            _ => {}
-        },
+        PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd),
+    };
+    match stat {
+        bun_sys::Result::Ok(stat) => {
+            file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
+                ((stat.st_size.max(0)) as u64) as SizeType
+            } else {
+                MAX_SIZE
+            };
+            file.mode = stat.st_mode as bun_sys::Mode;
+            file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
+            file.last_modified = stat_to_js_mtime(&stat);
+        }
+        // stat failed: clear the cached snapshot.
+        _ => {
+            file.max_size = MAX_SIZE;
+            file.mode = 0;
+            file.seekable = None;
+            file.last_modified = jsc::INIT_TIMESTAMP;
+        }
     }
 }
 

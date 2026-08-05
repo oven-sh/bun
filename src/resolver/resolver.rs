@@ -2082,6 +2082,19 @@ impl<'a> Resolver<'a> {
         ResultUnion::NotFound
     }
 
+    /// Whether a relative import specifier explicitly names a directory:
+    /// `.`, `..`, or a path ending in `/.` or `/..`.
+    fn import_path_names_directory(import_path: &[u8]) -> bool {
+        let rest = if let Some(r) = import_path.strip_suffix(b"..") {
+            r
+        } else if let Some(r) = import_path.strip_suffix(b".") {
+            r
+        } else {
+            return false;
+        };
+        rest.is_empty() || ResolvePath::is_sep_any(rest[rest.len() - 1])
+    }
+
     pub(crate) fn check_relative_path(
         &mut self,
         source_dir: &[u8],
@@ -2094,6 +2107,27 @@ impl<'a> Resolver<'a> {
             .abs_buf_checked(&[source_dir, import_path], bufs!(relative_abs_path))
         else {
             return ResultUnion::NotFound;
+        };
+
+        // "." and ".." (and specifiers ending in "/." or "/..") explicitly name
+        // a directory, but joining normalizes the dot segments away, leaving a
+        // path whose basename can collide with a sibling file (importing "."
+        // from `lib/run.ts` must load `lib/index.ts`, never a sibling
+        // `lib.ts`). Re-append the trailing separator that "./" keeps through
+        // the join so these resolve as directories, matching Node's
+        // `trailingSlashRegex` handling in `Module._findPath`.
+        let abs_path: &[u8] = if Self::import_path_names_directory(import_path)
+            && !strings::ends_with_char(abs_path, SEP)
+        {
+            let len = abs_path.len();
+            let buf = bufs!(relative_abs_path);
+            if len + 1 >= buf.len() {
+                return ResultUnion::NotFound;
+            }
+            buf[len] = SEP;
+            &buf[..=len]
+        } else {
+            abs_path
         };
 
         if self.opts.external.abs_paths.count() > 0

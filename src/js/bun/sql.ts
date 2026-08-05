@@ -557,6 +557,36 @@ const SQL: typeof Bun.SQL = function SQL(
       }
       return unsafeQueryFromTransaction(string, [], pooledConnection, state.queries);
     }
+    // every transaction_sql.close path converges here: cancel whatever is
+    // still pending, roll the transaction back, and only then set the closed
+    // bit (run_internal_transaction_sql rejects once it is set), so a later
+    // COMMIT attempt fails with connectionClosedError instead of committing a
+    // closed transaction. The pooled connection itself stays open; it is
+    // released back to the pool by onTransactionConnected once the begin
+    // callback settles.
+    let closeTransactionPromise: Promise<void> | null = null;
+    async function rollbackAndMarkClosed() {
+      if (state.connectionState & ReservedConnectionState.closed) {
+        // the connection dropped while close() was waiting; the server
+        // already aborted the transaction so there is nothing to roll back
+        return;
+      }
+      for (const query of state.queries) {
+        (query as Query<any, any>).cancel();
+      }
+      try {
+        if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
+          await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+        }
+        await run_internal_transaction_sql(ROLLBACK_COMMAND);
+      } finally {
+        // even when ROLLBACK fails the transaction must not be committable
+        state.connectionState |= ReservedConnectionState.closed;
+      }
+    }
+    function closeTransaction() {
+      return (closeTransactionPromise ??= rollbackAndMarkClosed());
+    }
     function transaction_sql(
       strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
       ...values: any[]
@@ -661,37 +691,25 @@ const SQL: typeof Bun.SQL = function SQL(
         }
 
         if (timeout > 0 && (transactionQueries.size > 0 || transactionSavepoints.size > 0)) {
-          const { promise, resolve } = Promise.withResolvers();
-          // race all queries vs timeout
+          const { promise, resolve, reject } = Promise.withResolvers();
+          // grace period: wait up to the timeout for the pending queries and
+          // savepoints to settle before rolling back
           const pending_queries = Array.from(transactionQueries);
           const pending_savepoints = Array.from(transactionSavepoints);
-          const timer = setTimeout(async () => {
-            for (const query of transactionQueries) {
-              (query as Query<any, any>).cancel();
-            }
-            if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-              await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
-            }
-            await run_internal_transaction_sql(ROLLBACK_COMMAND);
-            state.connectionState |= ReservedConnectionState.closed;
-            resolve();
-          }, timeout * 1000);
-          timer.unref(); // dont block the event loop
-          Promise.all([Promise.all(pending_queries), Promise.all(pending_savepoints)]).finally(() => {
+          function settleClose() {
             clearTimeout(timer);
-            resolve();
-          });
+            closeTransaction().then(resolve, reject);
+          }
+          const timer = setTimeout(settleClose, timeout * 1000);
+          timer.unref(); // dont block the event loop
+          // allSettled: one rejecting query must not cut the grace period
+          // short for the rest, and its rejection is observed here instead of
+          // surfacing as an unhandled rejection
+          Promise.allSettled([...pending_queries, ...pending_savepoints]).then(settleClose, settleClose);
           return promise;
         }
       }
-      for (const query of transactionQueries) {
-        (query as Query<any, any>).cancel();
-      }
-      if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-        await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
-      }
-      await run_internal_transaction_sql(ROLLBACK_COMMAND);
-      state.connectionState |= ReservedConnectionState.closed;
+      return closeTransaction();
     };
     transaction_sql[Symbol.asyncDispose] = () => transaction_sql.close();
     transaction_sql.options = sql.options;

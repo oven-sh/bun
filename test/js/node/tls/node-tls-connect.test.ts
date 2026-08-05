@@ -1292,3 +1292,57 @@ describe("throwing 'secureConnect' listener", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// A peer FIN during the TLS handshake must surface as ECONNRESET like Node,
+// not ERR_SOCKET_CLOSED (Node's code for local use-after-close).
+describe("peer closes during TLS handshake", () => {
+  async function withHandshakeDroppingServer<T>(fn: (port: number) => Promise<T>): Promise<T> {
+    const srv = net.createServer(s => {
+      s.on("error", () => {});
+      s.once("data", () => s.end());
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    try {
+      return await fn((srv.address() as AddressInfo).port);
+    } finally {
+      srv.close();
+    }
+  }
+
+  it("https.request reports ECONNRESET, not ERR_SOCKET_CLOSED", async () => {
+    await withHandshakeDroppingServer(async port => {
+      const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException>();
+      const req = https.get({ host: "127.0.0.1", port, path: "/", rejectUnauthorized: false });
+      req.on("error", resolve);
+      const err = await promise;
+      expect({ code: err.code, message: err.message, host: (err as any).host, port: (err as any).port }).toEqual({
+        code: "ECONNRESET",
+        message: "Client network socket disconnected before secure TLS connection was established",
+        host: "127.0.0.1",
+        port,
+      });
+    });
+  });
+
+  it("tls.connect with a queued write reports ECONNRESET and cancels the write with ECANCELED", async () => {
+    await withHandshakeDroppingServer(async port => {
+      const socketErr = Promise.withResolvers<NodeJS.ErrnoException>();
+      const writeErr = Promise.withResolvers<NodeJS.ErrnoException>();
+      const sock = tls.connect({ host: "127.0.0.1", port, rejectUnauthorized: false });
+      sock.on("error", socketErr.resolve);
+      sock.write("GET / HTTP/1.1\r\n\r\n", err => writeErr.resolve(err as NodeJS.ErrnoException));
+      const [se, we] = await Promise.all([socketErr.promise, writeErr.promise]);
+      expect({
+        socket: { code: se.code, message: se.message },
+        write: { code: we.code, syscall: (we as any).syscall },
+      }).toEqual({
+        socket: {
+          code: "ECONNRESET",
+          message: "Client network socket disconnected before secure TLS connection was established",
+        },
+        write: { code: "ECANCELED", syscall: "write" },
+      });
+    });
+  });
+});

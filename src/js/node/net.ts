@@ -361,6 +361,11 @@ function onConnectEnd() {
   }
 }
 
+// https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc (TLSWrap::InvokeQueued)
+function tlsWriteCanceled() {
+  return new ErrnoException(UV_ECANCELED, "write", "Canceled because of SSL destruction");
+}
+
 /**
  * Build the Error for a handshake that failed before completing. A fatal SSL
  * protocol error (wrong version number, bad record, ...) carries the OpenSSL
@@ -1340,7 +1345,14 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     const pendingWrite = self[kwriteCallback];
     if (pendingWrite) {
       self[kwriteCallback] = null;
-      pendingWrite($ERR_SOCKET_CLOSED());
+      if (self.secureConnecting && !self._hadError) {
+        // onConnectEnd listens on 'end' (nextTick); the write-error destroy
+        // would win that race and surface the wrong code.
+        onConnectEnd.$call(self);
+        pendingWrite(tlsWriteCanceled());
+      } else {
+        pendingWrite($ERR_SOCKET_CLOSED());
+      }
     }
   },
   handshake(socket, success, verifyError) {

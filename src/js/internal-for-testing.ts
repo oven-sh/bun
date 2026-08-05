@@ -225,21 +225,86 @@ export const isolatedModuleCacheSourceType: (specifier: string) => string | null
 );
 export const Dequeue = require("internal/fifo");
 
+// Link-time-constant primordials probe; one entry per holder kind in JSCPrimordials.h.
+export const primordials = {
+  run(arrayLike: unknown[], string: string, mapLike: Map<unknown, unknown>, u8: Uint8Array, regexp: RegExp) {
+    return {
+      ArrayPrototypePush: $ArrayPrototypePush.$call(arrayLike, 1, 2),
+      ArrayPrototypeSlice: $ArrayPrototypeSlice.$call(arrayLike, 0),
+      ArrayPrototypeSymbolIterator: $ArrayPrototypeSymbolIterator.$call(arrayLike).next().value,
+      StringPrototypeSlice: $StringPrototypeSlice.$call(string, 1, 3),
+      StringPrototypeSplit: $StringPrototypeSplit.$call(string, ""),
+      ObjectKeys: $ObjectKeys({ a: 1, b: 2 }),
+      ObjectDefineProperty: $ObjectDefineProperty({}, "x", { value: 42 }).x,
+      FunctionPrototypeBind: $FunctionPrototypeBind.$call(function (this: number, y: number) {
+        return this + y;
+      }, 5)(3),
+      RegExpPrototypeTest: $RegExpPrototypeTest.$call(regexp, string),
+      RegExpPrototypeGetSource: $RegExpPrototypeGetSource.$call(regexp),
+      MapPrototypeGet: $MapPrototypeGet.$call(mapLike, "k"),
+      MapPrototypeGetSize: $MapPrototypeGetSize.$call(mapLike),
+      DateNow: typeof $DateNow(),
+      NumberIsInteger: $NumberIsInteger(3),
+      MathMax: $MathMax(1, 5, 3),
+      ReflectOwnKeys: $ReflectOwnKeys({ a: 1 }),
+      JSONStringify: $JSONStringify({ a: 1 }),
+      TypedArrayPrototypeGetLength: $TypedArrayPrototypeGetLength.$call(u8),
+      TypedArrayPrototypeSubarray: $TypedArrayPrototypeGetLength.$call($TypedArrayPrototypeSubarray.$call(u8, 1, 3)),
+      DataViewPrototypeGetByteLength: $DataViewPrototypeGetByteLength.$call(
+        new DataView($TypedArrayPrototypeGetBuffer.$call(u8)),
+      ),
+      PromiseResolve: $PromiseResolve.$call($Promise, 1) instanceof $Promise,
+    };
+  },
+  // Materializes every primordial and returns one { name, holder, kind, key, value, available }
+  // row per JSCPrimordialsTable.h entry, straight from JSC.
+  audit: $newCppFunction("PrimordialsAudit.cpp", "Bun__primordialsAudit", 0) as () => Array<{
+    name: string;
+    holder: string;
+    kind: "Method" | "Getter" | "Setter" | "Value" | "Self";
+    key: string | symbol | null;
+    value: unknown;
+    available: boolean;
+  }>,
+  // Node's primordials object as internal modules see it (like Node's
+  // internal/test/binding.primordials); user code has no other way to reach it.
+  get object() {
+    return require("internal/primordials");
+  },
+};
+
 // Userland access to node-internal modules for vendored node tests that
 // declare `// Flags: --expose-internals` (served via the require interceptor
 // in test/js/node/test/common/index.js). Static requires only — the builtin
 // bundler cannot rewrite variable-path requires. Extend the map as more
-// vendored tests need more internals.
+// vendored tests need more internals. Values are lazy so merely requiring
+// bun:internal-for-testing does not evaluate the whole internal-module graph.
 export const exposedInternals = {
-  "internal/streams/add-abort-signal": require("internal/streams/add-abort-signal"),
-  "internal/async_context_frame": require("internal/async_context_frame"),
-  "internal/async_hooks": require("internal/async_hooks"),
-  "internal/webstreams/adapters": require("internal/webstreams_adapters"),
-  "internal/dgram": require("internal/dgram"),
+  get "internal/streams/add-abort-signal"() {
+    return require("internal/streams/add-abort-signal");
+  },
+  get "internal/async_context_frame"() {
+    return require("internal/async_context_frame");
+  },
+  get "internal/async_hooks"() {
+    return require("internal/async_hooks");
+  },
+  get "internal/webstreams/adapters"() {
+    return require("internal/webstreams_adapters");
+  },
+  get "internal/dgram"() {
+    return require("internal/dgram");
+  },
   // Node's internal/fixed_queue module IS the FixedQueue class.
-  "internal/fixed_queue": require("internal/fixed_queue").FixedQueue,
-  "internal/freelist": require("internal/freelist"),
-  "internal/validators": require("internal/validators"),
+  get "internal/fixed_queue"() {
+    return require("internal/fixed_queue").FixedQueue;
+  },
+  get "internal/freelist"() {
+    return require("internal/freelist");
+  },
+  get "internal/validators"() {
+    return require("internal/validators");
+  },
   "internal/fs/utils": {
     // Both are the REAL parsers the fs entry points use (FileSystemFlags::from_js
     // and args::Rm::from_js), not JS reimplementations -- vendored tests assert

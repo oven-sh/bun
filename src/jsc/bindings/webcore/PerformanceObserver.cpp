@@ -38,15 +38,6 @@ namespace WebCore {
 PerformanceObserver::PerformanceObserver(ScriptExecutionContext& scriptExecutionContext, Ref<PerformanceObserverCallback>&& callback)
     : m_callback(WTF::move(callback))
 {
-    // if (is<Document>(scriptExecutionContext)) {
-    //     auto& document = downcast<Document>(scriptExecutionContext);
-    //     if (auto* window = document.domWindow())
-    //         m_performance = &window->performance();
-    // } else if (is<WorkerGlobalScope>(scriptExecutionContext)) {
-    //     auto& workerGlobalScope = downcast<WorkerGlobalScope>(scriptExecutionContext);
-    //     m_performance = &workerGlobalScope.performance();
-    // } else
-    //     ASSERT_NOT_REACHED();
     m_performance = uncheckedDowncast<Zig::GlobalObject>(scriptExecutionContext.globalObject())->performance();
 }
 

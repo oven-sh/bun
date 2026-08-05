@@ -43,7 +43,7 @@ pub type MacroMap = StringArrayHashMap<MacroImportReplacementMap>;
 // borrow kept alive by `PackageJSON::source_contents` (the owning field).
 type ScriptsMap = StringArrayHashMap<&'static [u8]>;
 
-pub type MainFieldMap = StringMap;
+type MainFieldMap = StringMap;
 
 #[derive(Default)]
 pub struct DependencyMap {
@@ -65,7 +65,7 @@ impl Clone for DependencyMap {
 }
 
 // Inherent impls cannot carry associated type aliases (stable), so use a free alias.
-pub type DependencyHashMap =
+type DependencyHashMap =
     ArrayHashMap<SemverString, Dependency /* , SemverString::ArrayHashContext */>;
 
 pub struct PackageJSON {
@@ -226,9 +226,9 @@ pub enum SideEffects {
     Mixed(MixedPatterns),
 }
 
-pub type SideEffectsMap = bun_collections::HashMap<StringHashMapUnownedKey, ()>;
+type SideEffectsMap = bun_collections::HashMap<StringHashMapUnownedKey, ()>;
 
-pub type GlobList = Vec<Box<[u8]>>;
+type GlobList = Vec<Box<[u8]>>;
 
 pub struct MixedPatterns {
     pub(crate) exact: SideEffectsMap,
@@ -293,7 +293,7 @@ impl SideEffects {
 /// extend a lifetime"). `crate::fs::FileSystem` already has an inherent
 /// borrowing `abs(&self) -> &[u8]` (lib.rs); that wins method resolution at
 /// call-sites that only need a transient borrow.
-pub trait FileSystemPackageJsonExt {
+trait FileSystemPackageJsonExt {
     fn join(&self, parts: &[&[u8]]) -> &'static [u8];
     fn normalize(&self, str: &[u8]) -> Box<[u8]>;
 }

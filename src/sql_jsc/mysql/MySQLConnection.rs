@@ -1726,11 +1726,6 @@ impl ReaderContext for Reader {
     }
 }
 
-// Canonical type lives in `bun_sql::mysql`; re-export so this module's
-// struct-literal call sites (`QueryResult { .. }`) flow into
-// `JSMySQLConnection::on_query_result(MySQLQueryResult)` without conversion.
-pub use bun_sql::mysql::MySQLQueryResult as QueryResult;
-
 pub(crate) type PreparedStatementsMap = StringHashMap<*mut MySQLStatement>;
 /// Result of `PreparedStatementsMap::get_or_put` — surfaced for
 /// `JSMySQLConnection::get_statement_from_signature_name`.

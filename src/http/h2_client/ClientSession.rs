@@ -1038,8 +1038,12 @@ impl ClientSession {
             // Deep-copy before detaching: `response` borrows
             // `stream.decoded_headers`.
             client.h2_clone_metadata(&response);
+            // `is_done()`: Content-Length: 0 can arrive as `HasBody` (e.g. an
+            // SSE content-type), which would make the headerProgress update
+            // below terminal and free `client` while the stream still holds it.
             if result == HeaderResult::Finished
                 || (stream.remote_closed() && stream.body_buffer.is_empty())
+                || client.state.is_done()
             {
                 stream.client = None;
                 client.h2 = None;

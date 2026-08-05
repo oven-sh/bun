@@ -237,7 +237,7 @@ describe("renderers skip front matter by default", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout).toBe('"<h1>Heading</h1>\\n"\n');
+    expect(JSON.parse(stdout)).toBe("<h1>Heading</h1>\n");
     expect(exitCode).toBe(0);
   });
 });

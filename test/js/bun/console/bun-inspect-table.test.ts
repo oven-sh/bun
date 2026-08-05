@@ -33,8 +33,9 @@ describe("inspect.table", () => {
   test("columns keep first-seen order across rows when not sorted", () => {
     // d, b, a, c, e: discovery order is deliberately non-alphabetical so this
     // fails if discovered columns were ever sorted instead of appended
-    expect(inspect.table([{ d: 1 }, { b: 2 }, { d: 3, a: 4 }, { a: 5, c: 6, e: 7 }], { colors: false }))
-      .toMatchSnapshot();
+    expect(
+      inspect.table([{ d: 1 }, { b: 2 }, { d: 3, a: 4 }, { a: 5, c: 6, e: 7 }], { colors: false }),
+    ).toMatchSnapshot();
   });
 
   it.each([

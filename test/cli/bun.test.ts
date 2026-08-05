@@ -126,6 +126,79 @@ describe("bun", () => {
       }
     });
   });
+  describe("--help", () => {
+    async function help(cmd: string, env: Record<string, string | undefined>) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), cmd, "--help"],
+        env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: undefined, ...env },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out: stdout + stderr, exitCode };
+    }
+    function line(out: string, needle: string) {
+      return out.split(/\r?\n/).find(l => l.includes(needle)) ?? "<no matching line>";
+    }
+
+    const descFlags: [string, string, string][] = [
+      ["test", "--rerun-each", "Re-run each test file <NUMBER> times"],
+      ["test", "--bail", "Exit the test suite after <NUMBER> failures"],
+      ["audit", "--audit-level", "equal to <level> (low, moderate, high, critical)"],
+      ["build", "--allow-unresolved", "Use '<empty>' for opaque specifiers"],
+    ];
+    describe.each([{ NO_COLOR: "1" }, { FORCE_COLOR: "1" }])("%j", env => {
+      test.concurrent.each(descFlags)(
+        "bun %s --help keeps placeholder in %s description",
+        async (cmd, flag, expected) => {
+          const { out, exitCode } = await help(cmd, env);
+          expect(line(out, flag)).toContain(expected);
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
+
+    const pmUsage: [string, string][] = [
+      ["install", "bun install [flags] <name>@<version>"],
+      ["add", "bun add [flags] <package><@version>"],
+      ["remove", "bun remove [flags] [<packages>]"],
+      ["update", "bun update [flags] <name>@<version>"],
+      ["link", "bun link [flags] [<packages>]"],
+      ["patch", "bun patch [flags or options] <package>@<version>"],
+      ["patch-commit", "bun patch-commit [flags or options] <directory>"],
+      ["info", "bun info [flags] <package>[@<version>]"],
+    ];
+    test.concurrent.each(pmUsage)("bun %s --help usage line keeps placeholders", async (cmd, expected) => {
+      const { out, exitCode } = await help(cmd, { NO_COLOR: "1" });
+      expect(line(out, "Usage:")).toBe(`Usage: ${expected}`);
+      expect(exitCode).toBe(0);
+    });
+
+    test("bun add --help usage line keeps placeholders (FORCE_COLOR)", async () => {
+      const { out, exitCode } = await help("add", { FORCE_COLOR: "1" });
+      expect(out).toContain("\x1b[34m<package>\x1b[0m");
+      expect(out).not.toContain("<blue>");
+      expect(exitCode).toBe(0);
+    });
+
+    test("still strips <d>/<r> colour markup from flag descriptions (NO_COLOR)", async () => {
+      const { out, exitCode } = await help("run", { NO_COLOR: "1" });
+      const tsconfig = line(out, "--tsconfig-override");
+      expect(tsconfig).toContain("Default $cwd/tsconfig.json");
+      expect(tsconfig).not.toContain("<d>");
+      expect(tsconfig).not.toContain("<r>");
+      expect(exitCode).toBe(0);
+    });
+
+    test("still resolves <d>/<r> colour markup in flag descriptions (FORCE_COLOR)", async () => {
+      const { out, exitCode } = await help("run", { FORCE_COLOR: "1" });
+      const tsconfig = line(out, "--tsconfig-override");
+      expect(tsconfig).toContain("Default \x1b[2m$cwd\x1b[0m/tsconfig.json");
+      expect(tsconfig).not.toContain("<d>");
+      expect(tsconfig).not.toContain("<r>");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("test command line arguments", () => {
     test("test --config, issue #4128", () => {
       const path = `${tmpdir()}/bunfig-${Date.now()}.toml`;

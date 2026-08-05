@@ -1436,8 +1436,11 @@ mod _impl {
             return bun_sys::E::SUCCESS;
         }
 
-        // get_errno already returns bun_sys::E (= SystemErrno) directly.
-        bun_sys::get_errno(code)
+        // Windows: `code` is a UV_E* return value, not -1-with-errno.
+        #[cfg(windows)]
+        return bun_sys::windows::translate_uv_error_to_e(code);
+        #[cfg(not(windows))]
+        return bun_sys::get_errno(code);
     }
 
     pub(crate) fn set_priority1(global: &JSGlobalObject, pid: i32, priority: i32) -> JsResult<()> {
@@ -1451,7 +1454,7 @@ mod _impl {
                     errno: -(bun_sys::posix::E::ESRCH as c_int),
                     #[cfg(windows)]
                     errno: libuv::UV_ESRCH,
-                    syscall: BunString::static_("uv_os_getpriority").into(),
+                    syscall: BunString::static_("uv_os_setpriority").into(),
                     ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))
@@ -1464,7 +1467,7 @@ mod _impl {
                     errno: -(bun_sys::posix::E::EACCES as c_int),
                     #[cfg(windows)]
                     errno: libuv::UV_EACCES,
-                    syscall: BunString::static_("uv_os_getpriority").into(),
+                    syscall: BunString::static_("uv_os_setpriority").into(),
                     ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))
@@ -1477,15 +1480,12 @@ mod _impl {
                     errno: -(bun_sys::posix::E::ESRCH as c_int),
                     #[cfg(windows)]
                     errno: libuv::UV_ESRCH,
-                    syscall: BunString::static_("uv_os_getpriority").into(),
+                    syscall: BunString::static_("uv_os_setpriority").into(),
                     ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))
             }
-            _ => {
-                // no other error codes can be emitted
-                Ok(())
-            }
+            _ => Ok(()),
         }
     }
 

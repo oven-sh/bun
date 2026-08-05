@@ -561,6 +561,121 @@ describe("bundler", () => {
       stdout: "this should be kept\nunused import",
     },
   });
+  itBundled("dce/PackageJsonSideEffectsArrayKeepModuleNamedPackage", {
+    todo: isWindows,
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import {foo} from "demo-pkg"
+        console.log('unused import')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/index-main.js": /* js */ `
+        export const foo = 123
+        console.log('TEST FAILED')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/index-module.js": /* js */ `
+        export const foo = 123
+        console.log('this should be kept')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "name": "demo-pkg",
+          "main": "index-main.js",
+          "module": "index-module.js",
+          "sideEffects": ["./index-module.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "this should be kept\nunused import",
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/8993
+  itBundled("dce/PackageJsonSideEffectsArrayModuleMainBareImport", {
+    todo: isWindows,
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg"
+        console.log('after import')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/index-module.js": /* js */ `
+        import "./register.js"
+        export const foo = 1
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/register.js": /* js */ `
+        console.log('this should be kept')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/index-main.js": /* js */ `
+        console.log('TEST FAILED')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "name": "demo-pkg",
+          "main": "dist/index-main.js",
+          "module": "dist/index-module.js",
+          "sideEffects": ["./dist/index-module.js", "./dist/register.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "this should be kept\nafter import",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsGlobModuleMainBareImport", {
+    todo: isWindows,
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg"
+        console.log('after import')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/index-module.js": /* js */ `
+        console.log('this should be kept')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/bundle.node.js": /* js */ `
+        console.log('TEST FAILED')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "name": "demo-pkg",
+          "main": "dist/bundle.node.js",
+          "module": "dist/index-module.js",
+          "sideEffects": ["./dist/index-*.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "this should be kept\nafter import",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsArrayModuleMainBareImportRemove", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg"
+        console.log('unused import')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/index-module.js": /* js */ `
+        export const foo = 'TEST FAILED'
+        console.log('TEST FAILED')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/index-main.js": /* js */ `
+        console.log('TEST FAILED')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "name": "demo-pkg",
+          "main": "dist/index-main.js",
+          "module": "dist/index-module.js",
+          "sideEffects": ["./dist/index-main.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
+    },
+  });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleImplicitMain", {
     todo: true,
     files: {

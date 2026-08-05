@@ -137,11 +137,7 @@ describe.skipIf(!isASAN)("worker teardown with off-thread jobs in flight does no
             stdout: "pipe",
             stderr: "pipe",
           });
-          const [stdout, stderr, exitCode] = await Promise.all([
-            proc.stdout.text(),
-            proc.stderr.text(),
-            proc.exited,
-          ]);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           // Any sanitizer report is the bug this file exists to catch.
           expect(stderr).not.toContain("AddressSanitizer");
           // Debug builds have a separate, pre-existing terminate() bug: the

@@ -197,7 +197,7 @@ plugin({
 });
 
 // This is to test that it works when imported from a separate file
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
 import "../../third_party/svelte";
 import "./module-plugins";
@@ -722,3 +722,131 @@ it.concurrent("a no-op onResolve that returns args.path unchanged is transparent
   expect(stdout.trim() || stderr).toBe("entry ran:dep");
   expect(exitCode).toBe(0);
 });
+
+it.concurrent("onResolve into a custom namespace with no matching onLoad is a hard error", async () => {
+  const fixture = `
+    Bun.plugin({
+      name: "p",
+      setup(b) {
+        b.onResolve({ filter: /.*/, namespace: "virt" }, a => ({ path: a.path, namespace: "virtl" }));
+        // Only this exact path is loadable in namespace "virtl".
+        b.onLoad({ filter: /^handled$/, namespace: "virtl" }, () => ({ contents: "export default 'H'", loader: "js" }));
+      },
+    });
+    async function attempt(label, fn) {
+      try {
+        const m = await fn();
+        return { label, ok: true, value: m.default };
+      } catch (e) {
+        return { label, ok: false, code: e.code, message: String(e.message).split("\\n")[0] };
+      }
+    }
+    const results = [
+      await attempt("esm:handled", () => import("virt:handled")),
+      await attempt("esm:img.png", () => import("virt:img.png")),
+      await attempt("esm:style.q", () => import("virt:style.q")),
+      await attempt("esm:note.svg", () => import("virt:note.svg")),
+      await attempt("esm:mod.js", () => import("virt:mod.js")),
+      await attempt("esm:noext", () => import("virt:noext")),
+      await attempt("esm:data.json", () => import("virt:data.json")),
+      await attempt("cjs:other.png", () => Promise.resolve(require("virt:other.png"))),
+      // Built-in schemes must keep working while a plugin runner is active.
+      await attempt("data:", () => import("data:text/javascript,export default 42")),
+      await attempt("node:path", () => import("node:path").then(m => ({ default: typeof m.basename }))),
+    ];
+    console.log(JSON.stringify(results));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const results = stdout.trim() ? JSON.parse(stdout) : { crashed: stderr };
+  expect(results).toEqual([
+    { label: "esm:handled", ok: true, value: "H" },
+    {
+      label: "esm:img.png",
+      ok: false,
+      code: "ERR_MODULE_NOT_FOUND",
+      message: 'No plugin onLoad handler matched "img.png" in namespace "virtl"',
+    },
+    {
+      label: "esm:style.q",
+      ok: false,
+      code: "ERR_MODULE_NOT_FOUND",
+      message: 'No plugin onLoad handler matched "style.q" in namespace "virtl"',
+    },
+    {
+      label: "esm:note.svg",
+      ok: false,
+      code: "ERR_MODULE_NOT_FOUND",
+      message: 'No plugin onLoad handler matched "note.svg" in namespace "virtl"',
+    },
+    {
+      label: "esm:mod.js",
+      ok: false,
+      code: "ERR_MODULE_NOT_FOUND",
+      message: 'No plugin onLoad handler matched "mod.js" in namespace "virtl"',
+    },
+    {
+      label: "esm:noext",
+      ok: false,
+      code: "ERR_MODULE_NOT_FOUND",
+      message: 'No plugin onLoad handler matched "noext" in namespace "virtl"',
+    },
+    {
+      label: "esm:data.json",
+      ok: false,
+      code: "ERR_MODULE_NOT_FOUND",
+      message: 'No plugin onLoad handler matched "data.json" in namespace "virtl"',
+    },
+    {
+      label: "cjs:other.png",
+      ok: false,
+      code: "ERR_MODULE_NOT_FOUND",
+      message: 'No plugin onLoad handler matched "other.png" in namespace "virtl"',
+    },
+    { label: "data:", ok: true, value: 42 },
+    { label: "node:path", ok: true, value: "function" },
+  ]);
+  expect(exitCode).toBe(0);
+});
+
+// ':' is a legal POSIX filename character; Windows cannot create it on disk.
+it.skipIf(isWindows).concurrent(
+  "the unmatched-onLoad guard does not trip on absolute paths containing ':'",
+  async () => {
+    using dir = tempDir("plugin-colon-in-path", {
+      "sub:dir/mod.js": `export default "from-colon-dir";`,
+      "sub:dir/asset.xyz": `ignored`,
+      "entry.js": `
+      Bun.plugin({
+        name: "dummy",
+        setup(b) {
+          b.onLoad({ filter: /^never$/, namespace: "dummy" }, () => ({ contents: "", loader: "js" }));
+        },
+      });
+      const js = await import("./sub:dir/mod.js");
+      const asset = await import("./sub:dir/asset.xyz");
+      console.log(JSON.stringify({ js: js.default, asset: typeof asset.default }));
+    `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+      js: "from-colon-dir",
+      asset: "string",
+    });
+    expect(exitCode).toBe(0);
+  },
+);

@@ -75,8 +75,7 @@ impl PluginRunner {
             && colon == 1
             && specifier.len() > 3
             && bun_paths::resolve_path::is_sep_any(specifier[2])
-            && ((specifier[0] > b'a' && specifier[0] < b'z')
-                || (specifier[0] > b'A' && specifier[0] < b'Z'))
+            && specifier[0].is_ascii_alphabetic()
         {
             return b"";
         }

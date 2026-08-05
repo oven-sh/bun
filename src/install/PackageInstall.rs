@@ -1143,7 +1143,9 @@ impl<'a> PackageInstall<'a> {
                                     }
                                     let entry_dirname = bun_paths::resolve_path::dirname::<
                                         bun_paths::platform::Auto,
-                                    >(entry.path.as_bytes());
+                                    >(
+                                        entry.path.as_bytes()
+                                    );
                                     if !entry_dirname.is_empty() {
                                         let _ = bun_sys::MakePath::make_path::<OSPathChar>(
                                             &*subdir,

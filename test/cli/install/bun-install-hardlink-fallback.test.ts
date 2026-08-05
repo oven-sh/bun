@@ -112,74 +112,78 @@ describe("concurrent installs into the same destination", () => {
   // clonefile is the macOS default backend and has its own copy loop.
   const BACKENDS = ["hardlink", ...(isMacOS ? ["clonefile"] : [])];
 
-  test.each(BACKENDS)("%s backend: tolerate each other instead of failing with EBUSY", async backend => {
-    const deps: Record<string, string> = {};
-    for (let p = 0; p < PKG_COUNT; p++) {
-      deps[`many-files-${p}`] = `file:./many-files-${p}.tgz`;
-    }
-    using dir = tempDir("concurrent-install", {
-      "package.json": JSON.stringify({ name: "concurrent-install-test", dependencies: deps }),
-    });
-    const filler = Buffer.alloc(256, "x").toString();
-    for (let p = 0; p < PKG_COUNT; p++) {
-      const files: Record<string, string> = {
-        "package/package.json": JSON.stringify({ name: `many-files-${p}`, version: "1.0.0" }),
-      };
-      for (let f = 0; f < FILE_COUNT; f++) {
-        files[`package/lib/file${f}.js`] = `module.exports = ${f}; // ${filler}`;
+  test.each(BACKENDS)(
+    "%s backend: tolerate each other instead of failing with EBUSY",
+    async backend => {
+      const deps: Record<string, string> = {};
+      for (let p = 0; p < PKG_COUNT; p++) {
+        deps[`many-files-${p}`] = `file:./many-files-${p}.tgz`;
       }
-      const tarball = await new Bun.Archive(files, { compress: "gzip" }).bytes();
-      await Bun.write(join(String(dir), `many-files-${p}.tgz`), tarball);
-    }
-
-    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), "cache") };
-    const cmd = [bunExe(), "install", "--backend", backend];
-
-    // Warm the cache and the lockfile so the racing rounds below start at
-    // the cache-to-node_modules copy phase together.
-    {
-      await using warm = Bun.spawn({ cmd, cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
-      const [stdout, stderr, exitCode] = await Promise.all([warm.stdout.text(), warm.stderr.text(), warm.exited]);
-      expect(stderr).not.toContain("error");
-      expect(stdout).toMatch(/\d+ packages? installed/);
-      expect(exitCode).toBe(0);
-    }
-
-    for (let round = 0; round < ROUNDS; round++) {
-      rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
-      if (round > 0 && isWindows) {
-        // Cold cache: the processes also race extracting into the cache, not
-        // just copying out of it. Windows-only for now: the POSIX extract
-        // path can still delete a cache entry out from under a concurrent
-        // reader when its publish rename collides (#36227), which is a
-        // separate fix.
-        rmSync(join(String(dir), "cache"), { recursive: true, force: true });
+      using dir = tempDir("concurrent-install", {
+        "package.json": JSON.stringify({ name: "concurrent-install-test", dependencies: deps }),
+      });
+      const filler = Buffer.alloc(256, "x").toString();
+      for (let p = 0; p < PKG_COUNT; p++) {
+        const files: Record<string, string> = {
+          "package/package.json": JSON.stringify({ name: `many-files-${p}`, version: "1.0.0" }),
+        };
+        for (let f = 0; f < FILE_COUNT; f++) {
+          files[`package/lib/file${f}.js`] = `module.exports = ${f}; // ${filler}`;
+        }
+        const tarball = await new Bun.Archive(files, { compress: "gzip" }).bytes();
+        await Bun.write(join(String(dir), `many-files-${p}.tgz`), tarball);
       }
-      const procs = Array.from({ length: PROCESS_COUNT }, () =>
-        Bun.spawn({ cmd, cwd: String(dir), env, stdout: "pipe", stderr: "pipe" }),
-      );
-      const results = await Promise.all(
-        procs.map(async proc => {
-          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          return { stdout, stderr, exitCode };
-        }),
-      );
-      for (const { stdout, stderr, exitCode } of results) {
-        // "<errno>: failed <step> for package <name>"; matching the whole
-        // phrase (not just EBUSY) makes a failure print the error lines.
-        expect(stderr).not.toContain(": failed ");
-        expect(stdout).not.toContain("Failed to install");
+
+      const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), "cache") };
+      const cmd = [bunExe(), "install", "--backend", backend];
+
+      // Warm the cache and the lockfile so the racing rounds below start at
+      // the cache-to-node_modules copy phase together.
+      {
+        await using warm = Bun.spawn({ cmd, cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([warm.stdout.text(), warm.stderr.text(), warm.exited]);
+        expect(stderr).not.toContain("error");
+        expect(stdout).toMatch(/\d+ packages? installed/);
         expect(exitCode).toBe(0);
       }
-      // The racing installs must still converge on a complete tree with
-      // intact contents.
-      for (let p = 0; p < PKG_COUNT; p++) {
-        const lib = join(String(dir), "node_modules", `many-files-${p}`, "lib");
-        expect(readdirSync(lib)).toHaveLength(FILE_COUNT);
-        for (const f of [0, FILE_COUNT - 1]) {
-          expect(await Bun.file(join(lib, `file${f}.js`)).text()).toBe(`module.exports = ${f}; // ${filler}`);
+
+      for (let round = 0; round < ROUNDS; round++) {
+        rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
+        if (round > 0 && isWindows) {
+          // Cold cache: the processes also race extracting into the cache, not
+          // just copying out of it. Windows-only for now: the POSIX extract
+          // path can still delete a cache entry out from under a concurrent
+          // reader when its publish rename collides (#36227), which is a
+          // separate fix.
+          rmSync(join(String(dir), "cache"), { recursive: true, force: true });
+        }
+        const procs = Array.from({ length: PROCESS_COUNT }, () =>
+          Bun.spawn({ cmd, cwd: String(dir), env, stdout: "pipe", stderr: "pipe" }),
+        );
+        const results = await Promise.all(
+          procs.map(async proc => {
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            return { stdout, stderr, exitCode };
+          }),
+        );
+        for (const { stdout, stderr, exitCode } of results) {
+          // "<errno>: failed <step> for package <name>"; matching the whole
+          // phrase (not just EBUSY) makes a failure print the error lines.
+          expect(stderr).not.toContain(": failed ");
+          expect(stdout).not.toContain("Failed to install");
+          expect(exitCode).toBe(0);
+        }
+        // The racing installs must still converge on a complete tree with
+        // intact contents.
+        for (let p = 0; p < PKG_COUNT; p++) {
+          const lib = join(String(dir), "node_modules", `many-files-${p}`, "lib");
+          expect(readdirSync(lib)).toHaveLength(FILE_COUNT);
+          for (const f of [0, FILE_COUNT - 1]) {
+            expect(await Bun.file(join(lib, `file${f}.js`)).text()).toBe(`module.exports = ${f}; // ${filler}`);
+          }
         }
       }
-    }
-  }, 120_000);
+    },
+    120_000,
+  );
 });

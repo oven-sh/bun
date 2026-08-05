@@ -81,7 +81,9 @@ test("fails with error if not provided abort signal", async () => {
   const invalidSignals = [{}, null, undefined, Symbol(), [], 1, 0, 1n, true, false, "a", () => {}];
 
   for (const sig of invalidSignals) {
-    await expect(() => aborted(sig, {})).toThrow();
+    await expect(aborted(sig, {})).rejects.toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+    );
   }
 });
 
@@ -90,6 +92,21 @@ test("fails if not provided a resource", async () => {
   const invalidResources = [null, undefined, 0, 1, 0n, 1n, Symbol(), "", "a"];
 
   for (const resource of invalidResources) {
-    await expect(() => aborted(ac.signal, resource)).toThrow();
+    await expect(aborted(ac.signal, resource)).rejects.toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+    );
   }
+});
+
+test("validation errors reject instead of throwing synchronously", () => {
+  let threw = false;
+  let promise;
+  try {
+    promise = aborted(42, {});
+  } catch {
+    threw = true;
+  }
+  expect(threw).toBe(false);
+  expect(promise).toBeInstanceOf(Promise);
+  return expect(promise).rejects.toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
 });

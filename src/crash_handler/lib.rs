@@ -1139,6 +1139,9 @@ mod draft {
                                 if writer.write_all(THREAD_LIMIT_MESSAGE).is_err() {
                                     abort();
                                 }
+                                if writer.write_all(
+                                b"To send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
+                            ).is_err() { abort(); }
                             } else {
                                 if writer.write_all(
                                 b"Bun has crashed. This indicates a bug in Bun, not your code.\n\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",

@@ -374,6 +374,16 @@ public:
         auto* socketData = responseData->socketData;
         HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
 
+        /* The socket is leaving this context; its onClose (and so filter -1)
+         * will never fire once adopted. Fire it now so a filter that counts
+         * live HTTP connections stays balanced across every upgrade path.
+         * Read filteredOpen before responseData is destructed below. */
+        if (((AsyncSocketData<SSL> *) responseData)->filteredOpen) {
+            for (auto &f : httpContextData->filterHandlers) {
+                f((HttpResponse<SSL> *) this, -1);
+            }
+        }
+
         /* Destroy HttpResponseData (the IsNodeHttp=true type on node:http
          * compat contexts; upgrade() is not on a templated handler path, so it
          * selects at runtime like socketExtSize()). */

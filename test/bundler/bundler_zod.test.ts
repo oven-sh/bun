@@ -68,15 +68,27 @@ itBundled("zod/ImpureArgumentBailsOut", {
       // schema must be left untransformed.
       const S = z.string().min(limit());
       console.log(S.safeParse("a").success, S.safeParse("abc").success);
+      // Impure args in positions the IR does not consume must also bail:
+      // zero-arg check params, simple ctor params, and mode-method args.
+      function msg() { return { message: "m" }; }
+      const P = z.number().positive(msg());
+      console.log(P.safeParse(1).success);
+      const U = z.any(msg());
+      console.log(U.safeParse(1).success);
+      const O = z.string().optional(msg());
+      console.log(O.safeParse(undefined).success);
       // A pure sibling still transforms.
       const T = z.string().min(2);
       console.log(T.safeParse("abc").success);
     `,
   },
-  run: { stdout: "false true\ntrue" },
+  run: { stdout: "false true\ntrue\ntrue\ntrue\ntrue" },
   onAfterBundle(api) {
     const code = api.readFile("/out.js");
     expect(code).toContain("min(limit())");
+    expect(code).toContain("positive(msg())");
+    expect(code).toContain("any(msg())");
+    expect(code).toContain("optional(msg())");
     expect(code.split("__zod(() =>").length - 1).toBe(1);
   },
 });

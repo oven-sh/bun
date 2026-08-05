@@ -733,6 +733,13 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
             zigGlobalObject->m_moduleWrapperStart,
             sourceString,
             zigGlobalObject->m_moduleWrapperEnd);
+    } else if (sourceString.contains("$Bun_import_meta"_s)) [[unlikely]] {
+        // The transpiler rewrote import.meta to a sixth wrapper parameter;
+        // evaluateCommonJSModuleOnce supplies it when parameterCount() > 5.
+        wrappedString = makeString(
+            "(function(exports,require,module,__filename,__dirname,$Bun_import_meta){"_s,
+            sourceString,
+            "\n})"_s);
     } else {
         wrappedString = makeString(
             "(function(exports,require,module,__filename,__dirname){"_s,
@@ -1443,16 +1450,16 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
     JSValue keyJSString,
     ResolvedSource& source)
 {
-    if (JSValue compileFunction = this->m_overriddenCompile.get()) {
+    JSValue compileFunction = this->m_overriddenCompile.get();
+    if (!compileFunction && globalObject->hasOverriddenModulePrototypeCompile) [[unlikely]] {
+        compileFunction = globalObject->modulePrototypeUnderscoreCompileFunction();
+    }
+    if (compileFunction) {
         auto& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
-        if (!compileFunction) {
-            throwTypeError(globalObject, scope, "overridden module._compile is not a function (called from overridden Module._extensions)"_s);
-            return;
-        }
         JSC::CallData callData = JSC::getCallData(compileFunction.asCell());
         if (callData.type == JSC::CallData::Type::None) {
-            throwTypeError(globalObject, scope, "overridden module._compile is not a function (called from overridden Module._extensions)"_s);
+            throwTypeError(globalObject, scope, "overridden module._compile is not a function"_s);
             return;
         }
         WTF::String sourceString = source.source_code.toWTFString(BunString::ZeroCopy);
@@ -1479,6 +1486,7 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
         arguments.append(keyJSString);
         JSC::profiledCall(globalObject, ProfilingReason::API, compileFunction, callData, this, arguments);
         RETURN_IF_EXCEPTION(scope, );
+        this->hasEvaluated = true;
         return;
     }
     this->evaluate(globalObject, key, source, false);

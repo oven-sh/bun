@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
+import { bunEnv, bunExe, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -256,6 +256,90 @@ describe.concurrent("node-module-module", () => {
     const stdout = await proc.stdout.text();
     expect(stdout.trim().endsWith("--pass--")).toBe(true);
     expect(await proc.exited).toBe(0);
+  });
+
+  test("Overwriting Module.prototype._compile intercepts require()", async () => {
+    using dir = tempDir("module-prototype-compile", {
+      "package.json": JSON.stringify({ type: "commonjs" }),
+      "main.cjs": `
+        const Module = require("module");
+        const orig = Module.prototype._compile;
+        let hits = 0;
+        const override = function (code, filename) {
+          hits++;
+          return orig.call(this, code.replace("ORIGINAL", "PATCHED"), filename);
+        };
+        Module.prototype._compile = override;
+        // A module instance must reflect the prototype override while it's active.
+        const reflects = new Module("x")._compile === override;
+        const v1 = require("./t.js");
+        // import.meta in CJS (Bun extension) must still work when routed through _compile.
+        const metaUrl = require("./meta.cjs");
+        // Restoring the original re-enables the fast path.
+        Module.prototype._compile = orig;
+        delete require.cache[require.resolve("./t.js")];
+        const v2 = require("./t.js");
+        console.log(JSON.stringify({
+          present: typeof orig === "function",
+          hits,
+          v1,
+          v2,
+          reflects,
+          metaIsFileUrl: typeof metaUrl === "string" && metaUrl.startsWith("file://") && metaUrl.endsWith("meta.cjs"),
+        }));
+      `,
+      "t.js": `module.exports = "ORIGINAL";`,
+      "meta.cjs": `module.exports = import.meta.url;`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      present: true,
+      hits: 2,
+      v1: "PATCHED",
+      v2: "ORIGINAL",
+      reflects: true,
+      metaIsFileUrl: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("non-chaining Module.prototype._compile override still marks the module loaded", async () => {
+    using dir = tempDir("module-prototype-compile-vm", {
+      "package.json": JSON.stringify({ type: "commonjs" }),
+      "main.cjs": `
+        const Module = require("module"), vm = require("vm"), path = require("path");
+        Module.prototype._compile = function (code, filename) {
+          const wrapped = vm.runInThisContext(Module.wrap(code));
+          return wrapped.call(this.exports, this.exports, require, this, filename, path.dirname(filename));
+        };
+        const v = require("./t.cjs");
+        const loaded = require.cache[require.resolve("./t.cjs")].loaded;
+        import("./t.cjs").then(
+          m => console.log(JSON.stringify({ v, loaded, importOk: true, default: m.default })),
+          e => console.log(JSON.stringify({ v, loaded, importOk: false, err: String(e) })),
+        );
+      `,
+      "t.cjs": `module.exports = 42;`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ v: 42, loaded: true, importOk: true, default: 42 });
+    expect(exitCode).toBe(0);
   });
 
   test.each([

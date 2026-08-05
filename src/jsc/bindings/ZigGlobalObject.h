@@ -314,7 +314,7 @@ public:
 
     JSObject* lazyRequireCacheObject() const { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
     Bun::JSCommonJSExtensions* lazyRequireExtensionsObject() const { return m_lazyRequireExtensionsObject.getInitializedOnMainThread(this); }
-    JSC::JSFunction* modulePrototypeUnderscoreCompileFunction() const { return m_modulePrototypeUnderscoreCompileFunction.getInitializedOnMainThread(this); }
+    JSC::JSCell* modulePrototypeUnderscoreCompileFunction() const { return m_modulePrototypeUnderscoreCompileFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* requireESMFromHijackedExtension() const { return m_commonJSRequireESMFromHijackedExtensionFunction.getInitializedOnMainThread(this); }
 
     Structure* NodeVMGlobalObjectStructure() const { return m_cachedNodeVMGlobalObjectStructure.getInitializedOnMainThread(this); }
@@ -503,7 +503,7 @@ public:
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleResolveFilenameFunction)                           \
     V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleRunMainFunction)                                   \
-    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_modulePrototypeUnderscoreCompileFunction)            \
+    V(public, LazyPropertyOfGlobalObject<JSCell>, m_modulePrototypeUnderscoreCompileFunction)                \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_commonJSRequireESMFromHijackedExtensionFunction)     \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_nodeModuleConstructor)                                 \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_nodeModuleSourceMapEntryStructure)                    \
@@ -795,6 +795,8 @@ public:
     bool hasOverriddenModuleWrapper = false;
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
+    // De-optimization once `require("module").prototype._compile` is written to
+    bool hasOverriddenModulePrototypeCompile = false;
 
     // node:crypto deprecation warnings are emitted at most once per realm, like Node, whose
     // flags live in per-realm module state (lib/internal/crypto/keys.js). They must not be

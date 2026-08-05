@@ -116,13 +116,7 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
     let spawn_argv: Vec<Box<[u8]>> = argv
         .iter()
         .enumerate()
-        .map(|(i, s)| {
-            Box::<[u8]>::from(if i == 0 {
-                exec_argv0.unwrap_or(s)
-            } else {
-                *s
-            })
-        })
+        .map(|(i, s)| Box::<[u8]>::from(if i == 0 { exec_argv0.unwrap_or(s) } else { *s }))
         .collect();
 
     let result = spawn_sync::spawn(&spawn_sync::Options {

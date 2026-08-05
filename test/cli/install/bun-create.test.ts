@@ -497,9 +497,11 @@ it("should not crash with --no-install and bun-create.postinstall starting with 
 // waits for the stub to finish before printing its last line, so without the
 // fix the timing line reliably lands between PI_START and PI_END.
 // POSIX-only: the stub `git` is a shell script.
-it.skipIf(!isPosix)("should not interleave the git timing line with postinstall output", async () => {
-  using dir = tempDir("create-git-timing", {
-    "bin/git": `#!/bin/sh
+it.skipIf(!isPosix)(
+  "should not interleave the git timing line with postinstall output",
+  async () => {
+    using dir = tempDir("create-git-timing", {
+      "bin/git": `#!/bin/sh
 case "$*" in
   *commit*)
     i=0
@@ -509,16 +511,16 @@ case "$*" in
 esac
 exit 0
 `,
-    "bun-create/tmpl/index.js": "// hi\n",
-    "bun-create/tmpl/package.json": JSON.stringify({
-      name: "tmpl",
-      version: "1.0.0",
-      "bun-create": { postinstall: "postinstall-step" },
-      scripts: { "postinstall-step": "sh scripts/postinstall.sh" },
-      dependencies: { localdep: "file:./localdep" },
-    }),
-    "bun-create/tmpl/localdep/package.json": JSON.stringify({ name: "localdep", version: "1.0.0" }),
-    "bun-create/tmpl/scripts/postinstall.sh": `#!/bin/sh
+      "bun-create/tmpl/index.js": "// hi\n",
+      "bun-create/tmpl/package.json": JSON.stringify({
+        name: "tmpl",
+        version: "1.0.0",
+        "bun-create": { postinstall: "postinstall-step" },
+        scripts: { "postinstall-step": "sh scripts/postinstall.sh" },
+        dependencies: { localdep: "file:./localdep" },
+      }),
+      "bun-create/tmpl/localdep/package.json": JSON.stringify({ name: "localdep", version: "1.0.0" }),
+      "bun-create/tmpl/scripts/postinstall.sh": `#!/bin/sh
 echo PI_START >&2
 touch postinstall_started
 i=0
@@ -526,29 +528,31 @@ while [ ! -f git_finished ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done
 sleep 0.5
 echo PI_END >&2
 `,
-  });
-  chmodSync(join(String(dir), "bin", "git"), 0o755);
+    });
+    chmodSync(join(String(dir), "bin", "git"), 0o755);
 
-  await using proc = spawn({
-    cmd: [bunExe(), "create", "tmpl", join(String(dir), "dest")],
-    cwd: String(dir),
-    env: {
-      ...env,
-      PATH: join(String(dir), "bin") + ":" + process.env.PATH,
-      BUN_CREATE_DIR: join(String(dir), "bun-create"),
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = spawn({
+      cmd: [bunExe(), "create", "tmpl", join(String(dir), "dest")],
+      cwd: String(dir),
+      env: {
+        ...env,
+        PATH: join(String(dir), "bin") + ":" + process.env.PATH,
+        BUN_CREATE_DIR: join(String(dir), "bun-create"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [err, _out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
-  expect(err).toContain("PI_START");
-  const endIdx = err.indexOf("PI_END");
-  expect(endIdx).toBeGreaterThan(-1);
-  const gitIdx = err.indexOf("] git");
-  expect(gitIdx).toBeGreaterThan(endIdx);
-  expect(exitCode).toBe(0);
-}, 45_000);
+    const [err, _out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(err).toContain("PI_START");
+    const endIdx = err.indexOf("PI_END");
+    expect(endIdx).toBeGreaterThan(-1);
+    const gitIdx = err.indexOf("] git");
+    expect(gitIdx).toBeGreaterThan(endIdx);
+    expect(exitCode).toBe(0);
+  },
+  45_000,
+);
 
 // On POSIX, a `bun `-prefixed bun-create postinstall task used to silently not
 // run: the `<exe> run` prefix was stripped, leaving the bare string `bun` as

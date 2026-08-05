@@ -132,7 +132,9 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
         }
       }
 
-      return (mod.exports = namespace["module.exports"] ?? namespace);
+      // A present "module.exports" binding wins even when it holds null, so test for the
+      // binding rather than for a nullish value.
+      return (mod.exports = "module.exports" in namespace ? namespace["module.exports"] : namespace);
     }
   }
 
@@ -356,7 +358,7 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
       }
     }
 
-    this.exports = namespace["module.exports"] ?? namespace;
+    this.exports = "module.exports" in namespace ? namespace["module.exports"] : namespace;
     return;
   }
 }

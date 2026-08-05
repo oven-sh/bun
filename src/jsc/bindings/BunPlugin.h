@@ -77,6 +77,10 @@ public:
 
         void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
 
+        // True when `specifier` was registered by mock.module(), as opposed to a
+        // Bun.plugin() virtual module.
+        bool hasModuleMock(const String& specifier) const;
+
         std::optional<String> resolveVirtualModule(const String& path, const String& from);
 
         ~OnLoad()

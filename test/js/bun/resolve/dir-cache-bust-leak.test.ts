@@ -30,6 +30,7 @@ test("dir cache busts don't re-intern unchanged package.json/tsconfig.json", asy
     "a/x.js": `module.exports = "a";`,
     "b/y.js": `module.exports = "b";`,
     "c/z.js": `module.exports = "c";`,
+    "c/z2.js": `module.exports = "c2";`,
     // The presence of node_modules keeps the runtime's auto-install out of
     // the failed resolves below (no registry traffic).
     "node_modules/.gitkeep": "",
@@ -73,7 +74,20 @@ test("dir cache busts don't re-intern unchanged package.json/tsconfig.json", asy
       const viaBase = require2("@base/z");
       for (let i = 0; i < 10; i++) miss();
       const p5 = pkgLen(), t5 = tsLen();
-      console.log(JSON.stringify({ before, after, viaBase, p0, p1, p2, p3, p4, p5, t0, t1, t2, t3, t4, t5 }));
+
+      // A parent that turns malformed re-merges once (without it), stays flat
+      // while malformed, and re-merges once more when fixed.
+      writeFileSync(join(here, "tsconfig.base.json"), "{ this is not json !!");
+      miss();
+      const t6 = tsLen();
+      for (let i = 0; i < 10; i++) miss();
+      const t7 = tsLen();
+      writeFileSync(join(here, "tsconfig.base.json"), ${JSON.stringify(JSON.stringify(tsconfigBase))});
+      miss();
+      const t8 = tsLen();
+      const viaBaseFixed = require2("@base/z2");
+      const p6 = pkgLen();
+      console.log(JSON.stringify({ before, after, viaBase, viaBaseFixed, p0, p1, p2, p3, p4, p5, p6, t0, t1, t2, t3, t4, t5, t6, t7, t8 }));
     `,
   });
 
@@ -110,6 +124,13 @@ test("dir cache busts don't re-intern unchanged package.json/tsconfig.json", asy
     tsBaseGrowth: out.t4 - out.t3,
     pkgFinalGrowth: out.p5 - out.p4,
     tsFinalGrowth: out.t5 - out.t4,
+    // A malformed parent re-merges once, stays flat while malformed, and
+    // re-merges once more when fixed.
+    tsMalformedGrowth: out.t6 - out.t5,
+    tsMalformedFlat: out.t7 - out.t6,
+    tsFixedGrowth: out.t8 - out.t7,
+    viaBaseFixed: out.viaBaseFixed,
+    pkgTailGrowth: out.p6 - out.p5,
   }).toEqual({
     before: "a",
     after: "b",
@@ -124,6 +145,11 @@ test("dir cache busts don't re-intern unchanged package.json/tsconfig.json", asy
     tsBaseGrowth: 1,
     pkgFinalGrowth: 0,
     tsFinalGrowth: 0,
+    tsMalformedGrowth: 1,
+    tsMalformedFlat: 0,
+    tsFixedGrowth: 1,
+    viaBaseFixed: "c2",
+    pkgTailGrowth: 0,
   });
   expect(exitCode).toBe(0);
 });

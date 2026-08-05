@@ -19,6 +19,46 @@ bun_output::declare_scope!(Lockfile, hidden);
 
 const SCRIPT_NAMES_LEN: usize = LockfileScripts::NAMES.len();
 
+fn registry_href_without_userinfo(href: &[u8]) -> Box<[u8]> {
+    if let Some(scheme_end) = href.windows(3).position(|w| w == b"://") {
+        let auth_start = scheme_end + 3;
+        let auth_end = href[auth_start..]
+            .iter()
+            .position(|&b| b == b'/' || b == b'?' || b == b'#')
+            .map(|i| auth_start + i)
+            .unwrap_or(href.len());
+        if let Some(at) = href[auth_start..auth_end].iter().rposition(|&b| b == b'@') {
+            let host_start = auth_start + at + 1;
+            let mut out = Vec::with_capacity(href.len() - (host_start - auth_start));
+            out.extend_from_slice(&href[..auth_start]);
+            out.extend_from_slice(&href[host_start..]);
+            return out.into_boxed_slice();
+        }
+    }
+    Box::from(href)
+}
+
+fn git_dep_dev_install_command() -> Option<Box<[u8]>> {
+    let bun_exe = bun_core::self_exe_path().ok()?;
+    let options = &crate::package_manager_real::PackageManager::get().options;
+    let mut cmd: Vec<u8> = Vec::with_capacity(bun_exe.len() + 128);
+    bun_core::handle_oom(bun_shell_parser::escape_8bit::<true, false>(
+        bun_exe.as_bytes(),
+        &mut cmd,
+    ));
+    cmd.extend_from_slice(b" install --ignore-scripts --no-save --no-summary --no-progress");
+    if options.did_override_default_scope {
+        let registry = registry_href_without_userinfo(options.scope.url.href());
+        if !registry.is_empty() {
+            cmd.extend_from_slice(b" --registry ");
+            bun_core::handle_oom(bun_shell_parser::escape_8bit::<true, false>(
+                &registry, &mut cmd,
+            ));
+        }
+    }
+    Some(cmd.into_boxed_slice())
+}
+
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
 pub struct Scripts {
@@ -168,6 +208,15 @@ impl Scripts {
             ResolutionTag::Git | ResolutionTag::Github | ResolutionTag::Root => {
                 let prepare_scripts = [&self.preprepare, &self.prepare, &self.postprepare];
 
+                // Match npm: make a git dep's devDependencies available to `prepare` (#10297).
+                let install_deps = if resolution_tag != ResolutionTag::Root
+                    && prepare_scripts.iter().any(|s| !s.is_empty())
+                {
+                    git_dep_dev_install_command()
+                } else {
+                    None
+                };
+
                 for script in prepare_scripts {
                     if !script.is_empty() {
                         if first_script_index == -1 {
@@ -178,6 +227,30 @@ impl Scripts {
                         counter += 1;
                     }
                     script_index += 1;
+                }
+
+                if let Some(install_cmd) = install_deps {
+                    const PREPREPARE: usize = 3;
+                    scripts[PREPREPARE] = Some(match scripts[PREPREPARE].take() {
+                        Some(user_preprepare) => {
+                            let mut chained =
+                                Vec::with_capacity(install_cmd.len() + 8 + user_preprepare.len());
+                            chained.extend_from_slice(&install_cmd);
+                            chained.extend_from_slice(b" && ( ");
+                            chained.extend_from_slice(&user_preprepare);
+                            chained.extend_from_slice(b"\n)");
+                            chained.into_boxed_slice()
+                        }
+                        None => {
+                            counter += 1;
+                            if first_script_index == -1
+                                || first_script_index > i8::try_from(PREPREPARE).expect("int cast")
+                            {
+                                first_script_index = i8::try_from(PREPREPARE).expect("int cast");
+                            }
+                            install_cmd
+                        }
+                    });
                 }
             }
             ResolutionTag::Workspace => {
@@ -481,5 +554,25 @@ impl List {
                     .push(script.to_vec().into_boxed_slice());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::registry_href_without_userinfo as strip;
+
+    #[test]
+    fn strips_userinfo() {
+        assert_eq!(&*strip(b"http://host:4873/"), b"http://host:4873/");
+        assert_eq!(&*strip(b"https://user:pass@host/"), b"https://host/");
+        assert_eq!(&*strip(b"http://TOKEN@host:4873/"), b"http://host:4873/");
+        assert_eq!(&*strip(b"https://user:p@ss@host/"), b"https://host/");
+        assert_eq!(
+            &*strip(b"https://host?m=@backup"),
+            b"https://host?m=@backup"
+        );
+        assert_eq!(&*strip(b"https://host#@frag"), b"https://host#@frag");
+        assert_eq!(&*strip(b"host:4873/"), b"host:4873/");
+        assert_eq!(&*strip(b""), b"");
     }
 }

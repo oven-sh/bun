@@ -49,7 +49,6 @@ test("buffer.resolveObjectURL args", async () => {
 });
 
 test("buffer.resolveObjectURL is not a constructor", () => {
-  // a native construct handler must never return a primitive
   expect(() => new (resolveObjectURL as any)("foo")).toThrow(TypeError);
   expect(() => Reflect.construct(resolveObjectURL, ["foo"])).toThrow(TypeError);
 });

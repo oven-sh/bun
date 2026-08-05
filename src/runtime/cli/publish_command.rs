@@ -144,7 +144,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
     ) -> Result<Context<'a, DIRECTORY_PUBLISH>, FromTarballError> {
         let mut abs_buf = PathBuffer::uninit();
         let abs_tarball_path = join_abs_string_buf_z::<path::platform::Auto>(
-            FileSystem::instance().top_level_dir,
+            FileSystem::instance().top_level_dir(),
             &mut abs_buf,
             &[tarball_path],
         );
@@ -651,7 +651,7 @@ impl PublishCommand {
                     PackError::MissingPackageJSON => {
                         Output::err_generic(
                             "failed to find package.json from: '{}'",
-                            (bstr::BStr::new(FileSystem::instance().top_level_dir),),
+                            (bstr::BStr::new(FileSystem::instance().top_level_dir()),),
                         );
                     }
                     PackError::RestrictedUnscopedPackage => {

@@ -725,7 +725,7 @@ pub(crate) fn run_scripts_with_filter(
         ctx.filters.iter().map(|f| f.as_ref()).collect()
     };
 
-    let filter_instance = FilterArg::FilterSet::init(&filters_to_use, fsinstance.top_level_dir)?;
+    let filter_instance = FilterArg::FilterSet::init(&filters_to_use, fsinstance.top_level_dir())?;
     let mut patterns: Vec<Box<[u8]>> = Vec::new();
 
     // Find package.json at workspace root
@@ -735,7 +735,7 @@ pub(crate) fn run_scripts_with_filter(
         // and no other `&mut Log` borrow is live for the duration of this call.
         unsafe { ctx.log_mut() },
         &mut patterns,
-        fsinstance.top_level_dir,
+        fsinstance.top_level_dir(),
         &mut root_buf,
     )?;
 
@@ -899,7 +899,7 @@ pub(crate) fn run_scripts_with_filter(
             RunCommand::find_shell(
                 // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
                 unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b""),
-                fsinstance.top_level_dir,
+                fsinstance.top_level_dir(),
             )
             .ok_or(crate::Error::MissingShell)?
         }

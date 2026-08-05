@@ -1279,7 +1279,7 @@ pub(crate) fn get_workspace_filters(
             #[cfg(windows)]
             {
                 let abs_path = bun_paths::path_to_posix_buf::<u8>(
-                    FileSystem::instance().top_level_dir,
+                    FileSystem::instance().top_level_dir(),
                     &mut path_buf.0,
                 );
                 break 'abs_root_path strings::without_trailing_slash(

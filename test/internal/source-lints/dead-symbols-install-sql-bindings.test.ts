@@ -102,7 +102,6 @@ test("dead C++ bindings do not reappear", () => {
     ["src/jsc/bindings/ImportMetaObject.cpp", /RequireResolve\b/],
     // extern "C" helpers with no Rust-side import in regenerated cpp.rs.
     ["src/jsc/bindings/BunString.cpp", /BunString__toWTFString/],
-    ["src/jsc/bindings/ErrorStackTrace.cpp", /Bun__errorInstance__finalize/],
     // Never-instantiated struct (wrapAnsi.cpp's HyperlinkState is the live one).
     ["src/jsc/bindings/sliceAnsi.cpp", /struct HyperlinkInfo\b/],
     // Template with zero instantiations (the structure accessor pair is live).

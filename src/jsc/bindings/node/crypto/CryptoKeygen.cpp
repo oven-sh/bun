@@ -35,20 +35,19 @@ void SecretKeyJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
     m_result = WTF::move(key);
 }
 
-extern "C" void Bun__SecretKeyJobCtx__runFromJS(SecretKeyJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSC::JSValue callback)
+extern "C" uint32_t Bun__SecretKeyJobCtx__takeCallbackArgs(SecretKeyJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, EncodedJSValue* args)
 {
-    ctx->runFromJS(lexicalGlobalObject, callback);
+    return ctx->takeCallbackArgs(lexicalGlobalObject, args);
 }
-void SecretKeyJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSC::JSValue callback)
+uint32_t SecretKeyJobCtx::takeCallbackArgs(JSGlobalObject* lexicalGlobalObject, EncodedJSValue* args)
 {
     VM& vm = lexicalGlobalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     if (!m_result) {
-        JSObject* err = createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "key generation failed"_s);
-        Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
-        return;
+        args[0] = JSValue::encode(createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "key generation failed"_s));
+        return 1;
     }
 
     KeyObject keyObject = KeyObject::create(WTF::move(*m_result));
@@ -56,11 +55,9 @@ void SecretKeyJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSC::JSValu
     Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(lexicalGlobalObject);
     JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTF::move(keyObject));
 
-    Bun__EventLoop__runCallback2(lexicalGlobalObject,
-        JSValue::encode(callback),
-        JSValue::encode(jsUndefined()),
-        JSValue::encode(jsNull()),
-        JSValue::encode(secretKey));
+    args[0] = JSValue::encode(jsNull());
+    args[1] = JSValue::encode(secretKey);
+    return 2;
 }
 
 extern "C" void Bun__SecretKeyJobCtx__deinit(SecretKeyJobCtx* ctx)

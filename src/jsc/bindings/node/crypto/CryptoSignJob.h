@@ -49,7 +49,7 @@ public:
         JSValue algorithmValue, JSValue dataValue, JSValue keyValue, JSValue signatureValue, JSValue callbackValue);
 
     void runTask(JSC::JSGlobalObject*);
-    void runFromJS(JSC::JSGlobalObject*, JSC::JSValue callback);
+    uint32_t takeCallbackArgs(JSC::JSGlobalObject*, JSC::EncodedJSValue* args);
     void deinit();
 
     Mode m_mode;

@@ -33,13 +33,15 @@ void CheckPrimeJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
     m_result = res != 0;
 }
 
-extern "C" void Bun__CheckPrimeJobCtx__runFromJS(CheckPrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, EncodedJSValue callback)
+extern "C" uint32_t Bun__CheckPrimeJobCtx__takeCallbackArgs(CheckPrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, EncodedJSValue* args)
 {
-    ctx->runFromJS(lexicalGlobalObject, JSValue::decode(callback));
+    return ctx->takeCallbackArgs(lexicalGlobalObject, args);
 }
-void CheckPrimeJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
+uint32_t CheckPrimeJobCtx::takeCallbackArgs(JSGlobalObject*, EncodedJSValue* args)
 {
-    Bun__EventLoop__runCallback2(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(jsUndefined()), JSValue::encode(jsBoolean(m_result)));
+    args[0] = JSValue::encode(jsUndefined());
+    args[1] = JSValue::encode(jsBoolean(m_result));
+    return 2;
 }
 
 extern "C" void Bun__CheckPrimeJobCtx__deinit(CheckPrimeJobCtx* ctx)
@@ -196,11 +198,11 @@ void GeneratePrimeJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
     });
 }
 
-extern "C" void Bun__GeneratePrimeJobCtx__runFromJS(GeneratePrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, EncodedJSValue callback)
+extern "C" uint32_t Bun__GeneratePrimeJobCtx__takeCallbackArgs(GeneratePrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, EncodedJSValue* args)
 {
-    ctx->runFromJS(lexicalGlobalObject, JSValue::decode(callback));
+    return ctx->takeCallbackArgs(lexicalGlobalObject, args);
 }
-void GeneratePrimeJobCtx::runFromJS(JSGlobalObject* globalObject, JSValue callback)
+uint32_t GeneratePrimeJobCtx::takeCallbackArgs(JSGlobalObject* globalObject, EncodedJSValue* args)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -210,21 +212,13 @@ void GeneratePrimeJobCtx::runFromJS(JSGlobalObject* globalObject, JSValue callba
     if (scope.exception()) [[unlikely]] {
         auto* err = scope.exception();
         (void)scope.tryClearException();
-        Bun__EventLoop__runCallback1(
-            globalObject,
-            JSValue::encode(callback),
-            JSValue::encode(jsUndefined()),
-            JSValue::encode(err));
-        return;
+        args[0] = JSValue::encode(err);
+        return 1;
     }
 
-    Bun__EventLoop__runCallback2(
-        globalObject,
-        JSValue::encode(callback),
-        JSValue::encode(jsUndefined()),
-        JSValue::encode(jsUndefined()),
-        JSValue::encode(result));
-    return;
+    args[0] = JSValue::encode(jsUndefined());
+    args[1] = JSValue::encode(result);
+    return 2;
 }
 
 extern "C" void Bun__GeneratePrimeJobCtx__deinit(GeneratePrimeJobCtx* ctx)

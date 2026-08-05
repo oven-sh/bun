@@ -66,18 +66,35 @@ macro_rules! extern_crypto_job {
             // to a non-null pointer and discharges the validity proof at the
             // type level. `global` in `runTask` is forwarded raw (the trait
             // hands us `*mut`; C++ never reads through it off-thread).
+            //
+            // `takeCallbackArgs` writes the completion callback's arguments
+            // into `args[..argc]` and returns `argc` (≤ 3). The C++ side never
+            // sees the callback value, so it cannot run user JS; invocation
+            // happens in `then` below, after the ctx is freed.
             unsafe extern "C" {
                 #[link_name = concat!("Bun__", $name_str, "Ctx__runTask")]
                 safe fn ctx_run_task(ctx: &Ctx, global: *mut JSGlobalObject);
-                #[link_name = concat!("Bun__", $name_str, "Ctx__runFromJS")]
-                safe fn ctx_run_from_js(ctx: &Ctx, global: &JSGlobalObject, callback: JSValue);
+                #[link_name = concat!("Bun__", $name_str, "Ctx__takeCallbackArgs")]
+                safe fn ctx_take_callback_args(
+                    ctx: &Ctx,
+                    global: &JSGlobalObject,
+                    args: &mut [JSValue; 3],
+                ) -> u32;
                 #[link_name = concat!("Bun__", $name_str, "Ctx__deinit")]
                 safe fn ctx_deinit(ctx: &Ctx);
             }
 
             pub(crate) struct ExternCtx {
+                // Null once `then` has freed it.
                 ctx: *mut Ctx,
                 callback: StrongOptional,
+            }
+
+            impl ExternCtx {
+                fn deinit_ctx(&mut self) {
+                    ctx_deinit(Ctx::opaque_ref(self.ctx));
+                    self.ctx = core::ptr::null_mut();
+                }
             }
 
             impl AnyTaskJobCtx for ExternCtx {
@@ -88,11 +105,25 @@ macro_rules! extern_crypto_job {
                     let Some(callback) = self.callback.try_swap() else {
                         return Ok(());
                     };
-                    let ctx = Ctx::opaque_ref(self.ctx);
-                    if let Err(err) = jsc::from_js_host_call_generic(global, || {
-                        ctx_run_from_js(ctx, global, callback);
-                    }) {
-                        global.report_active_exception_as_unhandled(err);
+                    let mut args = [JSValue::UNDEFINED; 3];
+                    let argc = jsc::from_js_host_call_generic(global, || {
+                        ctx_take_callback_args(Ctx::opaque_ref(self.ctx), global, &mut args)
+                    });
+                    // Free the ctx BEFORE any user JS runs (the callback, or an
+                    // uncaughtException handler): user code may never return
+                    // (`process.exit()`), which would strand everything the ctx
+                    // still owns.
+                    self.deinit_ctx();
+                    match argc {
+                        Ok(argc) => {
+                            global.bun_vm().event_loop_mut().run_callback(
+                                callback,
+                                global,
+                                JSValue::UNDEFINED,
+                                &args[..(argc as usize).min(args.len())],
+                            );
+                        }
+                        Err(err) => global.report_active_exception_as_unhandled(err),
                     }
                     Ok(())
                 }
@@ -100,7 +131,11 @@ macro_rules! extern_crypto_job {
 
             impl Drop for ExternCtx {
                 fn drop(&mut self) {
-                    ctx_deinit(Ctx::opaque_ref(self.ctx));
+                    // Non-null when the job dies without completing (shutdown
+                    // early-out, `init` failure, missing callback).
+                    if !self.ctx.is_null() {
+                        self.deinit_ctx();
+                    }
                     self.callback.deinit();
                 }
             }

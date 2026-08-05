@@ -25,7 +25,7 @@ struct HkdfJobCtx {
     static std::optional<HkdfJobCtx> fromJS(JSC::JSGlobalObject*, JSC::CallFrame*, JSC::ThrowScope&, Mode);
 
     void runTask(JSC::JSGlobalObject*);
-    void runFromJS(JSC::JSGlobalObject*, JSC::JSValue callback);
+    uint32_t takeCallbackArgs(JSC::JSGlobalObject*, JSC::EncodedJSValue* args);
     void deinit();
 
     ncrypto::Digest m_digest;

@@ -29,44 +29,36 @@ void KeyPairJobCtx::runTask(JSGlobalObject* globalObject, ncrypto::EVPKeyCtxPoin
     m_keyObj = KeyObject::create(CryptoKeyType::Private, WTF::move(key));
 }
 
-void KeyPairJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
+uint32_t KeyPairJobCtx::takeCallbackArgs(JSGlobalObject* lexicalGlobalObject, EncodedJSValue* args)
 {
     VM& vm = lexicalGlobalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
-    auto exceptionCallback = [lexicalGlobalObject, callback](JSValue exceptionValue) {
-        Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(exceptionValue));
-    };
-
     if (!m_keyObj.data()) {
-        JSValue err = createCryptoError(lexicalGlobalObject, scope, m_opensslError, "key generation failed"_s);
-        Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
-        return;
+        args[0] = JSValue::encode(createCryptoError(lexicalGlobalObject, scope, m_opensslError, "key generation failed"_s));
+        return 1;
     }
 
     JSValue publicKeyValue = m_keyObj.exportPublic(lexicalGlobalObject, scope, m_publicKeyEncoding);
     if (scope.exception()) [[unlikely]] {
         JSValue exceptionValue = scope.exception();
         (void)scope.tryClearException();
-        exceptionCallback(exceptionValue);
-        return;
+        args[0] = JSValue::encode(exceptionValue);
+        return 1;
     }
 
     JSValue privateKeyValue = m_keyObj.exportPrivate(lexicalGlobalObject, scope, m_privateKeyEncoding);
     if (scope.exception()) [[unlikely]] {
         JSValue exceptionValue = scope.exception();
         (void)scope.tryClearException();
-        exceptionCallback(exceptionValue);
-        return;
+        args[0] = JSValue::encode(exceptionValue);
+        return 1;
     }
 
-    Bun__EventLoop__runCallback3(
-        lexicalGlobalObject,
-        JSValue::encode(callback),
-        JSValue::encode(jsUndefined()),
-        JSValue::encode(jsNull()),
-        JSValue::encode(publicKeyValue),
-        JSValue::encode(privateKeyValue));
+    args[0] = JSValue::encode(jsNull());
+    args[1] = JSValue::encode(publicKeyValue);
+    args[2] = JSValue::encode(privateKeyValue);
+    return 3;
 }
 
 KeyEncodingConfig parseKeyEncodingConfig(JSGlobalObject* globalObject, ThrowScope& scope, JSValue keyTypeValue, JSValue optionsValue)

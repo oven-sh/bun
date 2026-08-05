@@ -30,7 +30,7 @@ public:
     static std::optional<DhJobCtx> fromJS(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* options);
 
     void runTask(JSC::JSGlobalObject*);
-    void runFromJS(JSC::JSGlobalObject*, JSC::JSValue callback);
+    uint32_t takeCallbackArgs(JSC::JSGlobalObject*, JSC::EncodedJSValue* args);
     void deinit();
 
     RefPtr<KeyObjectData> m_privateKey;

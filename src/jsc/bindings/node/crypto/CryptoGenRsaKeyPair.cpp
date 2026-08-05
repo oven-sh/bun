@@ -26,9 +26,9 @@ extern "C" void Bun__RsaKeyPairJobCtx__runTask(RsaKeyPairJobCtx* ctx, JSGlobalOb
     ctx->runTask(globalObject, keyCtx);
 }
 
-extern "C" void Bun__RsaKeyPairJobCtx__runFromJS(RsaKeyPairJobCtx* ctx, JSGlobalObject* globalObject, EncodedJSValue callback)
+extern "C" uint32_t Bun__RsaKeyPairJobCtx__takeCallbackArgs(RsaKeyPairJobCtx* ctx, JSGlobalObject* globalObject, EncodedJSValue* args)
 {
-    ctx->runFromJS(globalObject, JSValue::decode(callback));
+    return ctx->takeCallbackArgs(globalObject, args);
 }
 
 extern "C" RsaKeyPairJob* Bun__RsaKeyPairJob__create(JSGlobalObject* globalObject, RsaKeyPairJobCtx* ctx, EncodedJSValue callback);

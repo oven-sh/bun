@@ -23,7 +23,7 @@ public:
     }
 
     void runTask(JSC::JSGlobalObject* globalObject, ncrypto::EVPKeyCtxPointer& ctx);
-    void runFromJS(JSC::JSGlobalObject* globalObject, JSC::JSValue callback);
+    uint32_t takeCallbackArgs(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue* args);
     void deinit();
 
     int err() const { return m_opensslError; };

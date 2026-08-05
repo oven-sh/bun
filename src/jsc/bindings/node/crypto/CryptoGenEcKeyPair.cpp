@@ -25,9 +25,9 @@ extern "C" void Bun__EcKeyPairJobCtx__runTask(EcKeyPairJobCtx* ctx, JSGlobalObje
     ctx->runTask(globalObject, keyCtx);
 }
 
-extern "C" void Bun__EcKeyPairJobCtx__runFromJS(EcKeyPairJobCtx* ctx, JSGlobalObject* globalObject, EncodedJSValue callback)
+extern "C" uint32_t Bun__EcKeyPairJobCtx__takeCallbackArgs(EcKeyPairJobCtx* ctx, JSGlobalObject* globalObject, EncodedJSValue* args)
 {
-    ctx->runFromJS(globalObject, JSValue::decode(callback));
+    return ctx->takeCallbackArgs(globalObject, args);
 }
 
 extern "C" EcKeyPairJob* Bun__EcKeyPairJob__create(JSGlobalObject* globalObject, EcKeyPairJobCtx* ctx, EncodedJSValue callback);

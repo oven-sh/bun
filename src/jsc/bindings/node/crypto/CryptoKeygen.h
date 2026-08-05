@@ -11,7 +11,7 @@ struct SecretKeyJobCtx {
     ~SecretKeyJobCtx() = default;
 
     void runTask(JSC::JSGlobalObject* lexicalGlobalObject);
-    void runFromJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue callback);
+    uint32_t takeCallbackArgs(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue* args);
     void deinit();
 
     static std::optional<SecretKeyJobCtx> fromJS(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue typeValue, JSC::JSValue optionsValue);

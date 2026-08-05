@@ -1806,16 +1806,17 @@ impl<'a> Resolver<'a> {
             // loose check to avoid always doing this copy, but avoid spending
             // too much time on the check.
             if strings::index_of(import_path, b"..").is_some() {
-                let platform = bun_paths::Platform::AUTO;
-                let ends_with_dir = platform.is_separator(import_path[import_path.len() - 1])
-                    || Self::import_path_names_directory(import_path);
+                let ends_with_dir = Self::import_path_names_directory(import_path);
                 let buf = bufs!(relative_abs_path);
                 let Some(abs) = self.fs_ref().abs_buf_checked(&[import_path], buf) else {
                     return ResultUnion::NotFound;
                 };
                 let mut len = abs.len();
                 if ends_with_dir {
-                    buf[len] = platform.separator();
+                    if len >= buf.len() {
+                        return ResultUnion::NotFound;
+                    }
+                    buf[len] = bun_paths::Platform::AUTO.separator();
                     len += 1;
                 }
                 // `bufs!` hands out an unconstrained-lifetime `&mut PathBuffer`

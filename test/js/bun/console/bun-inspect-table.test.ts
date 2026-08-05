@@ -18,6 +18,9 @@ const inputs = [
   [1, 2, 3],
   ["a", 1, "b", 2, "c", 3],
   [/a/, 1, /b/, 2, /c/, 3],
+  // columns discovered across rows: later rows re-find earlier columns and
+  // append new ones, in first-seen order
+  [{ a: 1 }, { b: 2 }, { a: 3, c: 4 }, { c: 5, a: 6, d: 7 }],
 ];
 
 describe("inspect.table", () => {

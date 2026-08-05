@@ -79,6 +79,37 @@ describe("Bun.markdown.react", () => {
     expect(link.props.children).toEqual(["click"]);
   });
 
+  // https://github.com/oven-sh/bun/issues/31936
+  test("email autolink href has mailto: prefix", () => {
+    const link = children("<email@example.com>\n")[0].props.children[0];
+    expect(link.type).toBe("a");
+    expect(link.props.href).toBe("mailto:email@example.com");
+    expect(link.props.children).toEqual(["email@example.com"]);
+  });
+
+  test("URL autolink href has no prefix", () => {
+    const link = children("<https://example.com>\n")[0].props.children[0];
+    expect(link.props.href).toBe("https://example.com");
+  });
+
+  test("permissive email autolink href has mailto: prefix", () => {
+    const link = children("email@example.com\n", undefined, { autolinks: true })[0].props.children[0];
+    expect(link.type).toBe("a");
+    expect(link.props.href).toBe("mailto:email@example.com");
+    expect(link.props.children).toEqual(["email@example.com"]);
+  });
+
+  test("permissive www autolink href has http:// prefix", () => {
+    const link = children("www.example.com\n", undefined, { autolinks: true })[0].props.children[0];
+    expect(link.props.href).toBe("http://www.example.com");
+    expect(link.props.children).toEqual(["www.example.com"]);
+  });
+
+  test("permissive URL autolink href has no prefix", () => {
+    const link = children("https://example.com\n", undefined, { autolinks: true })[0].props.children[0];
+    expect(link.props.href).toBe("https://example.com");
+  });
+
   test("image has src and alt in props", () => {
     const img = children("![alt](img.png)\n")[0].props.children[0];
     expect(img.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);

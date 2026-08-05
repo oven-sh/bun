@@ -1,6 +1,6 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -205,6 +205,51 @@ it("write result is not cumulative", async () => {
   expect(await writer.write("world!")).toBe(6);
   await writer.end();
   await util.promisify(fs.close)(fd);
+});
+
+// https://github.com/oven-sh/bun/issues/12194
+//
+// A chunk that pushes the sink's internal buffer past its auto-flush threshold
+// must still report its own byte count. Previously the write() that triggered
+// the drain returned the whole drained total (older buffered chunks included),
+// so a `total += sink.write(chunk)` loop double-counted.
+//
+// Writes are issued without `await` in between so the auto-flush microtask
+// cannot drain the buffer first. Skipped on Windows: there every write to a
+// file-backed sink returns a (shared) promise, which the backpressured-write
+// tests below already cover.
+it.skipIf(!isPosix)("write result is not cumulative when the chunk flushes buffered bytes", async () => {
+  using dir = tempDir("filesink-cumulative", {});
+  const filename = path.join(String(dir), "test.bin");
+  const writer = Bun.file(filename).writer();
+
+  const ascii = Buffer.alloc(505, "a").toString();
+  const bytes = Buffer.alloc(64 * 1024, "c");
+  // Decoding as "latin1" keeps the JSString 8-bit so writer.write() reaches
+  // write_latin1's non-ASCII branch; decoding via utf8 would yield a 16-bit
+  // string that routes to write_utf16 instead.
+  const latin1 = Buffer.alloc(40_000, 0xe9).toString("latin1");
+  const utf16 = Buffer.alloc(20_000, "😀").toString();
+
+  const results = [
+    writer.write(ascii), // buffered
+    writer.write(bytes), // flushes `ascii` + itself
+    writer.write(Buffer.alloc(10, "d")), // buffered
+    writer.write(latin1), // flushes the 10 bytes + itself (latin1 path)
+    writer.write("e"), // buffered
+    writer.write(utf16), // flushes the 1 byte + itself (utf16 path)
+  ];
+  await writer.end();
+
+  expect(results).toEqual([
+    Buffer.byteLength(ascii),
+    bytes.byteLength,
+    10,
+    Buffer.byteLength(latin1),
+    1,
+    Buffer.byteLength(utf16),
+  ]);
+  expect(results.reduce((sum, n) => sum + n, 0)).toBe(fs.statSync(filename).size);
 });
 
 // A backpressured write buffers everything `write(2)` would not take, so the

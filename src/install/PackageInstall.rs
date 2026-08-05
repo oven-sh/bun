@@ -614,7 +614,6 @@ impl HardLinkWindowsInstallTask {
     }
 
     fn run(&mut self) -> Option<crate::Error> {
-        use bun_sys::windows;
         // Read scalar fields before borrowing `bytes` so no `&mut self` reborrow
         // overlaps the slice borrows below.
         let src_len = self.src_len;
@@ -626,6 +625,39 @@ impl HardLinkWindowsInstallTask {
         let dest_len = dest.len() - 1;
         debug_assert_eq!(dest[dest_len], 0);
 
+        // Concurrent bun processes installing the same package from a shared
+        // cache (e.g. parallel `bun x <tool>` runs share one bunx install dir)
+        // race on every file here, and a peer briefly holding the file open
+        // surfaces as an EBUSY-class sharing violation. Retry those with
+        // backoff, mirroring the cache-move retries in extract_tarball.
+        const MAX_RETRIES: u32 = 4;
+        let mut retries: u32 = 0;
+        loop {
+            let err = match Self::link_or_copy(src, dest, dest_len, basename) {
+                None => return None,
+                Some(err) => err,
+            };
+            if err != crate::Error::Sys(bun_errno::SystemErrno::EBUSY) || retries == MAX_RETRIES {
+                return Some(err);
+            }
+            retries += 1;
+            std::thread::sleep(std::time::Duration::from_millis(10u64 << (retries - 1)));
+        }
+    }
+
+    /// One attempt at materializing `dest` as a hard link of `src` (falling
+    /// back to a copy). `None` on success, including when `dest` already is
+    /// the same file object as `src` — a concurrent install of the same
+    /// package landed the identical link first, which must not be treated as
+    /// a conflict to delete and recreate.
+    fn link_or_copy(
+        src: &[u16],
+        dest: &mut [u16],
+        dest_len: usize,
+        basename: usize,
+    ) -> Option<crate::Error> {
+        use bun_sys::windows;
+
         // `windows::CreateHardLinkW` is the safe wrapper (logs + Option<&mut SA>).
         if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) != 0 {
             return None;
@@ -635,13 +667,8 @@ impl HardLinkWindowsInstallTask {
             windows::Win32Error::ALREADY_EXISTS
             | windows::Win32Error::FILE_EXISTS
             | windows::Win32Error::CANNOT_MAKE => {
-                // Race condition: this shouldn't happen
-                if cfg!(debug_assertions) {
-                    bun_output::scoped_log!(
-                        install,
-                        "CreateHardLinkW returned EEXIST, this shouldn't happen: {}",
-                        bun_core::fmt::fmt_path_u16(&dest[..dest_len], Default::default())
-                    );
+                if windows::same_file_w(dest.as_ptr(), src.as_ptr()) {
+                    return None;
                 }
                 // SAFETY: FFI — dest is a valid NUL-terminated u16 buffer.
                 unsafe { windows::DeleteFileW(dest.as_ptr()) };
@@ -659,6 +686,13 @@ impl HardLinkWindowsInstallTask {
         dest[dirpath_len] = bun_paths::SEP_WINDOWS as u16;
 
         if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) != 0 {
+            return None;
+        }
+
+        // The DeleteFileW above can fail while a peer holds the file open, in
+        // which case `dest` may still be the link we want; CopyFileW onto it
+        // would copy the file over itself and fail with a sharing violation.
+        if windows::same_file_w(dest.as_ptr(), src.as_ptr()) {
             return None;
         }
 

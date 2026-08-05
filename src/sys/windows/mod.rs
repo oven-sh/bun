@@ -552,6 +552,51 @@ pub fn CreateHardLinkW(
 
 pub use bun_windows_sys::externs::CopyFileW;
 
+/// `(volume serial, file index)` identifying the file object behind `path`,
+/// or `None` if it can't be opened or queried. The open requests no access
+/// bits, so it is exempt from share-mode arbitration and succeeds even while
+/// another process holds the file open exclusively.
+fn file_object_id_w(path: LPCWSTR) -> Option<(DWORD, DWORD, DWORD)> {
+    // SAFETY: FFI — `path` is a NUL-terminated wide string (caller contract);
+    // `FILE_FLAG_BACKUP_SEMANTICS` permits directories, harmless on files.
+    let handle = unsafe {
+        externs::CreateFileW(
+            path,
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            ptr::null_mut(),
+            externs::OPEN_EXISTING,
+            externs::FILE_FLAG_BACKUP_SEMANTICS,
+            ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return None;
+    }
+    let mut info: externs::BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
+    // SAFETY: `handle` is valid (checked above); `info` is a valid out-param.
+    let ok = unsafe { externs::GetFileInformationByHandle(handle, &mut info) };
+    // SAFETY: `handle` came from CreateFileW above.
+    unsafe {
+        let _ = externs::CloseHandle(handle);
+    }
+    (ok != 0).then_some((
+        info.dwVolumeSerialNumber,
+        info.nFileIndexHigh,
+        info.nFileIndexLow,
+    ))
+}
+
+/// Whether `a` and `b` name the same file object (e.g. hard links to one
+/// file): same volume serial number and file index. `false` when either path
+/// can't be opened or queried.
+pub fn same_file_w(a: LPCWSTR, b: LPCWSTR) -> bool {
+    match (file_object_id_w(a), file_object_id_w(b)) {
+        (Some(id_a), Some(id_b)) => id_a == id_b,
+        _ => false,
+    }
+}
+
 pub use bun_windows_sys::externs::SetFileInformationByHandle;
 
 pub fn get_last_errno() -> E {

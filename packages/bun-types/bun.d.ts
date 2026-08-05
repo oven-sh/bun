@@ -5650,7 +5650,10 @@ declare module "bun" {
      */
     onResolve(constraints: PluginConstraints, callback: OnResolveCallback): this;
     /**
-     * The config object passed to `Bun.build` as is. Can be mutated.
+     * A shallow snapshot of the config object passed to `Bun.build`. The build
+     * reads every option before plugin `setup()` runs, so mutating this object
+     * has no effect on the build. Nested option values (such as `define` or
+     * `naming`) are shared with the caller's config and are not copied.
      */
     config: BuildConfig & { plugins: BunPlugin[] };
 

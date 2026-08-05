@@ -71,6 +71,7 @@ describe("when importing `.svelte.ts` files with ESM", () => {
     const res = await Bun.build({
       entrypoints: [fixturePath("svelte-export-condition.svelte")],
       outdir,
+      conditions: ["svelte"],
       plugins: [SveltePlugin()],
     });
     expect(res.success).toBeTrue();

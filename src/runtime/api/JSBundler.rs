@@ -484,96 +484,6 @@ pub mod js_bundler {
                 drop(slice);
             }
 
-            // Plugins must be resolved first as they are allowed to mutate the config JSValue
-            if let Some(array) = config.get_array(global_this, "plugins")? {
-                let length = array.get_length(global_this)?;
-                let mut iter = array.array_iterator(global_this)?;
-                let mut onstart_promise_array = JSValue::UNDEFINED;
-                let mut i: usize = 0;
-                while let Some(plugin) = iter.next()? {
-                    if !plugin.is_object() {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Expected plugin to be an object"
-                        )));
-                    }
-
-                    if let Some(slice) = plugin.get_optional_slice(global_this, b"name")? {
-                        if slice.slice().is_empty() {
-                            return Err(global_this.throw_invalid_arguments(format_args!(
-                                "Expected plugin to have a non-empty name"
-                            )));
-                        }
-                        drop(slice);
-                    } else {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Expected plugin to have a name"
-                        )));
-                    }
-
-                    let Some(function) = plugin.get_function(global_this, b"setup")? else {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Expected plugin to have a setup() function"
-                        )));
-                    };
-
-                    let bun_plugins: *mut Plugin = match **plugins {
-                        Some(p) => p,
-                        None => {
-                            let p = Plugin::create(
-                                global_this,
-                                match this.target {
-                                    Target::Bun | Target::BunMacro => jsc::BunPluginTarget::Bun,
-                                    Target::Node => jsc::BunPluginTarget::Node,
-                                    _ => jsc::BunPluginTarget::Browser,
-                                },
-                            );
-                            **plugins = Some(p);
-                            p
-                        }
-                    };
-
-                    let is_last = i == (length as usize).saturating_sub(1);
-                    // SAFETY: bun_plugins is a valid pointer created/stored above
-                    let mut plugin_result = unsafe {
-                        (*bun_plugins).add_plugin(
-                            function,
-                            config,
-                            onstart_promise_array,
-                            is_last,
-                            false,
-                        )?
-                    };
-
-                    if !plugin_result.is_empty_or_undefined_or_null() {
-                        if let Some(promise) = plugin_result.as_any_promise() {
-                            promise.set_handled(global_this.vm());
-                            // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
-                            global_this.bun_vm().as_mut().wait_for_promise(promise);
-                            match promise
-                                .unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled)
-                            {
-                                jsc::PromiseResult::Pending => unreachable!(),
-                                jsc::PromiseResult::Fulfilled(val) => {
-                                    plugin_result = val;
-                                }
-                                jsc::PromiseResult::Rejected(err) => {
-                                    return Err(global_this.throw_value(err));
-                                }
-                            }
-                        }
-                    }
-
-                    if let Some(err) = plugin_result.to_error() {
-                        return Err(global_this.throw_value(err));
-                    } else if global_this.has_exception() {
-                        return Err(JsError::Thrown);
-                    }
-
-                    onstart_promise_array = plugin_result;
-                    i += 1;
-                }
-            }
-
             if let Some(macros_flag) = config.get_boolean_loose(global_this, "macros")? {
                 this.no_macros = !macros_flag;
             }
@@ -1300,6 +1210,96 @@ pub mod js_bundler {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "Cannot use compile.assets with target 'browser' for standalone HTML"
                     )));
+                }
+            }
+
+            // Plugin setup() runs last so writes to `build.config` cannot alter the build.
+            if let Some(array) = config.get_array(global_this, "plugins")? {
+                let length = array.get_length(global_this)?;
+                let mut iter = array.array_iterator(global_this)?;
+                let mut onstart_promise_array = JSValue::UNDEFINED;
+                let mut i: usize = 0;
+                while let Some(plugin) = iter.next()? {
+                    if !plugin.is_object() {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "Expected plugin to be an object"
+                        )));
+                    }
+
+                    if let Some(slice) = plugin.get_optional_slice(global_this, b"name")? {
+                        if slice.slice().is_empty() {
+                            return Err(global_this.throw_invalid_arguments(format_args!(
+                                "Expected plugin to have a non-empty name"
+                            )));
+                        }
+                        drop(slice);
+                    } else {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "Expected plugin to have a name"
+                        )));
+                    }
+
+                    let Some(function) = plugin.get_function(global_this, b"setup")? else {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "Expected plugin to have a setup() function"
+                        )));
+                    };
+
+                    let bun_plugins: *mut Plugin = match **plugins {
+                        Some(p) => p,
+                        None => {
+                            let p = Plugin::create(
+                                global_this,
+                                match this.target {
+                                    Target::Bun | Target::BunMacro => jsc::BunPluginTarget::Bun,
+                                    Target::Node => jsc::BunPluginTarget::Node,
+                                    _ => jsc::BunPluginTarget::Browser,
+                                },
+                            );
+                            **plugins = Some(p);
+                            p
+                        }
+                    };
+
+                    let is_last = i == (length as usize).saturating_sub(1);
+                    // SAFETY: bun_plugins is a valid pointer created/stored above
+                    let mut plugin_result = unsafe {
+                        (*bun_plugins).add_plugin(
+                            function,
+                            config,
+                            onstart_promise_array,
+                            is_last,
+                            false,
+                        )?
+                    };
+
+                    if !plugin_result.is_empty_or_undefined_or_null() {
+                        if let Some(promise) = plugin_result.as_any_promise() {
+                            promise.set_handled(global_this.vm());
+                            // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
+                            global_this.bun_vm().as_mut().wait_for_promise(promise);
+                            match promise
+                                .unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled)
+                            {
+                                jsc::PromiseResult::Pending => unreachable!(),
+                                jsc::PromiseResult::Fulfilled(val) => {
+                                    plugin_result = val;
+                                }
+                                jsc::PromiseResult::Rejected(err) => {
+                                    return Err(global_this.throw_value(err));
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(err) = plugin_result.to_error() {
+                        return Err(global_this.throw_value(err));
+                    } else if global_this.has_exception() {
+                        return Err(JsError::Thrown);
+                    }
+
+                    onstart_promise_array = plugin_result;
+                    i += 1;
                 }
             }
 

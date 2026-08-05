@@ -43,7 +43,9 @@ uint32_t KeyPairJobCtx::takeCallbackArgs(JSGlobalObject* lexicalGlobalObject, En
 
     JSValue publicKeyValue = m_keyObj.exportPublic(lexicalGlobalObject, scope, m_publicKeyEncoding);
     if (scope.exception()) [[unlikely]] {
-        JSValue exceptionValue = scope.exception();
+        // The thrown value, not the Exception cell: the callback's err
+        // argument must be the Error object (node parity).
+        JSValue exceptionValue = scope.exception()->value();
         (void)scope.tryClearException();
         args[0] = JSValue::encode(exceptionValue);
         return 1;
@@ -51,7 +53,7 @@ uint32_t KeyPairJobCtx::takeCallbackArgs(JSGlobalObject* lexicalGlobalObject, En
 
     JSValue privateKeyValue = m_keyObj.exportPrivate(lexicalGlobalObject, scope, m_privateKeyEncoding);
     if (scope.exception()) [[unlikely]] {
-        JSValue exceptionValue = scope.exception();
+        JSValue exceptionValue = scope.exception()->value();
         (void)scope.tryClearException();
         args[0] = JSValue::encode(exceptionValue);
         return 1;

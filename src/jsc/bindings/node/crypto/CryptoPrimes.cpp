@@ -210,7 +210,8 @@ uint32_t GeneratePrimeJobCtx::takeCallbackArgs(JSGlobalObject* globalObject, Enc
     JSValue result = GeneratePrimeJob::result(globalObject, scope, m_prime, m_bigint);
     EXCEPTION_ASSERT(result.isEmpty() == !!scope.exception());
     if (scope.exception()) [[unlikely]] {
-        auto* err = scope.exception();
+        // The thrown value, not the Exception cell (see KeyPairJobCtx).
+        JSValue err = scope.exception()->value();
         (void)scope.tryClearException();
         args[0] = JSValue::encode(err);
         return 1;

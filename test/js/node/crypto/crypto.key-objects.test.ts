@@ -1801,6 +1801,25 @@ function randomProp() {
   return "prop" + crypto.randomUUID().replace(/-/g, "");
 }
 
+test("generateKeyPair passes the thrown Error to the callback when key export fails", async () => {
+  const { promise, resolve } = Promise.withResolvers<Error & { code?: string }>();
+  // P-224 keygen succeeds, JWK export does not, driving the caught-exception
+  // branch of the async completion. Node surfaces the Error object itself.
+  generateKeyPair(
+    "ec",
+    {
+      namedCurve: "secp224r1",
+      publicKeyEncoding: { format: "jwk" },
+      privateKeyEncoding: { format: "jwk" },
+    } as any,
+    err => resolve(err as any),
+  );
+  const err = await promise;
+  expect(err).toBeInstanceOf(Error);
+  expect(err.code).toBe("ERR_CRYPTO_JWK_UNSUPPORTED_CURVE");
+  expect(err.message).toContain("Unsupported JWK EC curve");
+});
+
 // The async crypto jobs (generateKeyPair, sign, diffieHellman, hkdf, ...) run
 // on the work pool and complete on the JS thread. The native job ctx must be
 // freed before the JS callback is invoked: a callback that never returns
@@ -1838,6 +1857,15 @@ describe.skipIf(!isASAN)("async crypto jobs: process.exit() in the callback leak
     "hkdf": `crypto.hkdf("sha256", "key", "salt", "info", 32, done);`,
     "checkPrime": `crypto.checkPrime(7n, done);`,
     "generateKey (secret)": `crypto.generateKey("hmac", { length: 256 }, done);`,
+    // The second path to the same leak: the completion task is enqueued but
+    // never dispatched (the spin keeps the JS thread busy until exit), so the
+    // shutdown release of queued jobs must free the ctx.
+    "generateKeyPair (exit before completion dispatch)": `{
+        crypto.generateKeyPair("rsa", { modulusLength: 512 }, () => {});
+        const end = Bun.nanoseconds() + 1_000_000_000;
+        while (Bun.nanoseconds() < end) {}
+        process.exit(0);
+      }`,
   };
 
   for (const [name, snippet] of Object.entries(cases)) {

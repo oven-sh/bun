@@ -37,6 +37,7 @@ pub trait AnyTaskJobCtx: Sized {
 #[repr(C)]
 pub struct AnyTaskJob<C> {
     run_from_js_erased: fn(*mut ()) -> JsResult<()>,
+    release_erased: fn(*mut ()),
     vm: bun_ptr::BackRef<VirtualMachine>,
     task: WorkPoolTask,
     poll: KeepAlive,
@@ -56,7 +57,29 @@ pub unsafe fn dispatch_erased(ptr: *mut ()) -> JsResult<()> {
     entry(ptr)
 }
 
+/// Free a queued job at VM shutdown without running its completion. The ctx
+/// `Drop` releases what it owns (native resources, JSC handles) — it must run
+/// while the VM is still live, which is why
+/// `release_queued_tasks_for_shutdown` claims this tag instead of leaving the
+/// job parked in the queue (where a C++-side ctx would strand its resources
+/// past the leak check).
+///
+/// # Safety
+/// `ptr` must be a live `*mut AnyTaskJob<C>` produced by [`AnyTaskJob::create`]
+/// whose task was popped from the event-loop queue (the work-pool phase is
+/// done, so the queue held exclusive ownership); the job is freed.
+pub unsafe fn release_erased(ptr: *mut ()) {
+    // SAFETY: `AnyTaskJob<C>` is `#[repr(C)]` with `release_erased` second;
+    // caller contract that `ptr` is such an allocation.
+    let entry = unsafe { *ptr.cast::<fn(*mut ())>().add(1) };
+    entry(ptr)
+}
+
 const _: () = assert!(core::mem::offset_of!(AnyTaskJob<()>, run_from_js_erased) == 0);
+const _: () = assert!(
+    core::mem::offset_of!(AnyTaskJob<()>, release_erased)
+        == core::mem::size_of::<fn(*mut ()) -> JsResult<()>>()
+);
 
 impl<C> bun_event_loop::Taskable for AnyTaskJob<C> {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AnyTaskJob;
@@ -82,6 +105,7 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         let vm = bun_ptr::BackRef::new(global.bun_vm());
         let job = bun_core::heap::into_raw(Box::new(Self {
             run_from_js_erased: |p| Self::run_from_js(p.cast::<Self>()),
+            release_erased: |p| Self::release(p.cast::<Self>()),
             vm,
             task: WorkPoolTask {
                 node: Default::default(),
@@ -157,5 +181,13 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
             return Ok(());
         }
         this.ctx.then(vm.global())
+    }
+
+    /// [`release_erased`]'s monomorphic body: free the job (running `Drop for
+    /// C`) without calling [`AnyTaskJobCtx::then`].
+    fn release(this: *mut Self) {
+        // SAFETY: `this` was produced by `heap::into_raw` in `create`; the
+        // caller (the popped queue entry) held exclusive ownership.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }

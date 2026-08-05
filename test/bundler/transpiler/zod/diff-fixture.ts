@@ -134,6 +134,8 @@ const SCHEMAS: Record<string, any> = {
   objExtend: z.object({ a: z.string() }).extend({ b: z.number() }),
   objExtendOverride: z.object({ a: z.string() }).extend({ a: z.number() }),
   objPick: z.object({ a: z.string(), b: z.number(), c: z.boolean() }).pick({ a: true, c: true }),
+  // Mask order differs from shape order: zod's output keys follow the mask.
+  objPickReorder: z.object({ a: z.string(), b: z.number(), c: z.boolean() }).pick({ c: true, a: true }),
   objOmit: z.object({ a: z.string(), b: z.number() }).omit({ b: true }),
   objPartial: z.object({ a: z.string(), b: z.number() }).partial(),
   objPartialMask: z.object({ a: z.string(), b: z.number() }).partial({ a: true }),
@@ -285,6 +287,7 @@ const INPUTS: [string, unknown][] = [
   ["obj-a-num", { a: 1 }],
   ["obj-ab", { a: "s", b: 2 }],
   ["obj-ab-bad", { a: 1, b: 2 }],
+  ["obj-ac", { a: "s", c: true }],
   ["obj-t-a", { t: "a", x: "s" }],
   ["obj-type-a", { type: "a", a: "s" }],
   ["obj-type-b", { type: "b", b: 1 }],
@@ -369,11 +372,14 @@ function ser(v: unknown, depth = 0): unknown {
     const name = proto?.constructor?.name;
     if (name && name !== "Object") return "$class:" + name;
   }
-  const out: Record<string, unknown> = {};
+  // Entries array rather than a plain object: toEqual ignores object key
+  // order, but key enumeration order is observable (Object.keys,
+  // JSON.stringify), so the fast path must reproduce zod's exactly.
+  const out: unknown[] = [];
   for (const key of Object.keys(v)) {
-    out[key] = ser((v as Record<string, unknown>)[key], depth + 1);
+    out.push([key, ser((v as Record<string, unknown>)[key], depth + 1)]);
   }
-  return out;
+  return { $obj: out };
 }
 
 const report: Record<string, unknown> = {};

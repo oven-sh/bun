@@ -57,6 +57,26 @@ test.concurrent(
   120_000,
 );
 
+test.concurrent("construction-time throws stay at module load", async () => {
+  const run = async (on: boolean) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(fixtureDir, "eager-throw-fixture.ts")],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_ZOD: on ? "1" : undefined },
+      cwd: fixtureDir,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+  const [on, off] = await Promise.all([run(true), run(false)]);
+  expect(off.stderr).toContain("Cannot create literal schema with no valid values");
+  expect(off.stdout).toBe("");
+  expect(off.exitCode).not.toBe(0);
+  expect(on.stderr).toContain("Cannot create literal schema with no valid values");
+  expect(on.stdout).toBe("");
+  expect(on.exitCode).not.toBe(0);
+});
+
 test.concurrent("transform applies in the runtime transpiler", async () => {
   // `bun build --no-bundle` prints the transpiled module, which must contain
   // the wrapper call and the serialized IR when the flag is on.

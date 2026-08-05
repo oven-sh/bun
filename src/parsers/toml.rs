@@ -181,6 +181,14 @@ impl TOML {
 
 const MAX_SAFE_INTEGER: i64 = (1 << 53) - 1;
 
+/// Dotted keys and table headers are parsed iteratively, so without this cap a
+/// single `a.a.a…` path builds an unbounded chain of nested tables before the
+/// (recursive) JS conversion trips its own stack guard. Every consumer of the
+/// result recurses over it with a stack guard, so a path much deeper than this
+/// throws at conversion time anyway; capping here just refuses to build the
+/// tree it would throw on. Well above the old parser's 512 and any real use.
+const MAX_DOTTED_PATH_SEGMENTS: usize = 4096;
+
 const BARE_CR: &[u8] = b"Bare carriage return is not allowed; use \\r\\n or \\n";
 const UNDERSCORE_IN_NUMBER: &[u8] = b"Underscores in numbers must be surrounded by digits";
 
@@ -1497,7 +1505,12 @@ impl<'a, 'log> Parser<'a, 'log> {
         path.push(self.scanner.scan_key_after_sep()?);
         loop {
             match self.scanner.scan_header_sep(aot)? {
-                HeaderSep::Dot => path.push(self.scanner.scan_key_after_sep()?),
+                HeaderSep::Dot => {
+                    if path.len() >= MAX_DOTTED_PATH_SEGMENTS {
+                        return Err(PErr::StackOverflow);
+                    }
+                    path.push(self.scanner.scan_key_after_sep()?);
+                }
                 HeaderSep::Close => break,
             }
         }
@@ -1648,7 +1661,12 @@ impl<'a, 'log> Parser<'a, 'log> {
         path.push(first);
         loop {
             match self.scanner.scan_keyval_sep()? {
-                KeyvalSep::Dot => path.push(self.scanner.scan_key_after_sep()?),
+                KeyvalSep::Dot => {
+                    if path.len() >= MAX_DOTTED_PATH_SEGMENTS {
+                        return Err(PErr::StackOverflow);
+                    }
+                    path.push(self.scanner.scan_key_after_sep()?);
+                }
                 KeyvalSep::Equals => break,
             }
         }

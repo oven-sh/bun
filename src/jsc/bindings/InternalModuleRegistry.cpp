@@ -104,31 +104,24 @@ ALWAYS_INLINE JSC::JSValue generateNativeModule(
 }
 
 #ifdef BUN_DYNAMIC_JS_LOAD_PATH
-// bundle-modules.ts ends every file in BUN_DYNAMIC_JS_LOAD_PATH with
-// `// @bun-internal-module-generation=<hash>`. The hash covers every
-// codegen-assigned numeric ID space those files bake in ($lazy native-call
-// IDs, internal module registry indices, error-code and js_classes IDs), and
-// BUN_INTERNAL_MODULE_GENERATION is the hash this binary's dispatch tables
-// were generated with. A file with a different stamp came from a different
-// codegen run (rebuild in flight, or an aborted one) and its IDs may dispatch
-// to the wrong native code; a file with no stamp is mid-write. Editing JS
-// doesn't change the stamp, so hot-reload keeps working.
+// bundle-modules.ts stamps every file it writes to BUN_DYNAMIC_JS_LOAD_PATH
+// with the generation hash of the codegen-assigned numeric IDs the file bakes
+// in; BUN_INTERNAL_MODULE_GENERATION is the hash this binary was generated
+// with. A different or missing stamp means the file's IDs may dispatch to the
+// wrong native code (rebuild in flight, aborted build, or a mid-write file).
 static bool hasMatchingGenerationStamp(const Vector<uint8_t>& contents)
 {
-    static constexpr char needle[] = "// @bun-internal-module-generation=";
-    static constexpr size_t needleLength = sizeof(needle) - 1;
-    static constexpr char expected[] = BUN_INTERNAL_MODULE_GENERATION;
+    static constexpr char expected[] = "// @bun-internal-module-generation=" BUN_INTERNAL_MODULE_GENERATION;
     static constexpr size_t expectedLength = sizeof(expected) - 1;
 
-    // The stamp is the last line; scan only the tail (slack for the trailing
-    // newline, or \r\n if the checkout rewrote it).
-    static constexpr size_t tailLength = needleLength + expectedLength + 8;
-    size_t begin = contents.size() > tailLength ? contents.size() - tailLength : 0;
-    for (size_t i = begin; i + needleLength + expectedLength <= contents.size(); i++) {
-        if (memcmp(contents.span().data() + i, needle, needleLength) == 0)
-            return memcmp(contents.span().data() + i + needleLength, expected, expectedLength) == 0;
-    }
-    return false;
+    // The stamp must be the last line: trim trailing whitespace, then require
+    // the exact suffix (a matching stamp earlier in the file doesn't count).
+    size_t end = contents.size();
+    while (end > 0 && (contents[end - 1] == '\n' || contents[end - 1] == '\r' || contents[end - 1] == ' '))
+        end--;
+    if (end < expectedLength)
+        return false;
+    return memcmp(contents.span().data() + end - expectedLength, expected, expectedLength) == 0;
 }
 
 JSValue initializeInternalModuleFromDisk(JSGlobalObject* globalObject, VM& vm, const WTF::String& moduleName, WTF::String fileBase, const WTF::String& urlString)

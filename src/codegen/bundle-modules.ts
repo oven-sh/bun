@@ -243,17 +243,12 @@ if (out.exitCode !== 0) {
 
 mark("Bundle modules");
 
-// In debug builds the files written to JS_DIR are re-read from disk at runtime
-// (BUN_DYNAMIC_JS_LOAD_PATH) so src/js edits apply without relinking. Those
-// files bake in codegen-assigned numeric IDs — `$lazy` native-call IDs,
-// internal module registry indices, error-code IDs, js_classes IDs — that must
-// match the dispatch tables compiled into the binary. Stamp each file with a
-// hash of all of those ID spaces; InternalModuleRegistry.cpp refuses files
-// whose stamp doesn't match the one its build was generated with (a rebuild in
-// flight, or an aborted one, would otherwise dispatch to the wrong native
-// code). Module preprocessing has already registered every `$lazy` call a
-// module file can contain, so the signature is complete at this point, and the
-// hash doesn't cover file contents, so editing JS never invalidates it.
+// Hash of every codegen-assigned numeric ID space baked into module JS
+// ($lazy native-call IDs, module registry indices, error-code and js_classes
+// IDs). InternalModuleRegistry.cpp refuses hot-reloading JS_DIR files whose
+// stamp doesn't match the binary's, so a renumbering rebuild can't make
+// $lazy(N) dispatch to the wrong native code. Content isn't hashed: editing
+// JS never invalidates the stamp.
 const generation = new Bun.CryptoHasher("sha256")
   .update(JSON.stringify([moduleList, nativeStartIndex]))
   .update(getJS2NativeSignature())
@@ -300,9 +295,8 @@ for (const entrypoint of bundledEntryPoints) {
 
   const outputPath = path.join(JS_DIR, file_path);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-  // The stamp is appended only to the on-disk copy (the embedded blob always
-  // matches the binary) and goes at the end so line numbers stay identical to
-  // the embedded sources. Its absence also marks a partially-written file.
+  // Stamp only the on-disk copy, at EOF so line numbers match the embedded
+  // sources (which always match the binary and don't need a stamp).
   fs.writeFileSync(outputPath, captured + generationStamp);
   outputs.set(file_path.replace(".js", ""), captured);
 }

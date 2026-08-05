@@ -155,6 +155,9 @@ pub struct VirtualMachine {
     /// `RawSlice` carries the BACKREF outlives-holder invariant — read via
     /// `main()`.
     main: bun_ptr::RawSlice<u8>,
+    /// `process.argv[1]`: the entry path as written (absolute, not realpath'd).
+    /// Empty falls back to `main`. Same BACKREF invariant as `main`.
+    main_for_argv: bun_ptr::RawSlice<u8>,
     pub main_is_html_entrypoint: bool,
     pub main_resolved_path: bun_core::String,
     pub main_hash: u32,
@@ -2078,6 +2081,7 @@ impl VirtualMachine {
             // `log` is a fresh leaked Box; outlives the VM.
             addr_of_mut!((*vm).log).write(NonNull::new(log));
             addr_of_mut!((*vm).main).write(bun_ptr::RawSlice::EMPTY);
+            addr_of_mut!((*vm).main_for_argv).write(bun_ptr::RawSlice::EMPTY);
             addr_of_mut!((*vm).main_hash).write(0);
             addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::empty());
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
@@ -2249,6 +2253,23 @@ impl VirtualMachine {
     #[inline]
     pub fn set_main(&mut self, path: &[u8]) {
         self.main = bun_ptr::RawSlice::new(path);
+    }
+
+    /// `process.argv[1]` path; falls back to [`Self::main`] when unset.
+    #[inline]
+    pub fn main_for_argv(&self) -> &[u8] {
+        let argv = self.main_for_argv.slice();
+        if argv.is_empty() {
+            self.main.slice()
+        } else {
+            argv
+        }
+    }
+
+    /// Caller guarantees `path` outlives this VM (BACKREF; see `main`).
+    #[inline]
+    pub fn set_main_for_argv(&mut self, path: &[u8]) {
+        self.main_for_argv = bun_ptr::RawSlice::new(path);
     }
 
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until

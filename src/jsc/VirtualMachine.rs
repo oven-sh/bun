@@ -1003,20 +1003,30 @@ impl VirtualMachine {
         self.is_shutting_down
     }
 
-    /// See [`Self::terminate_cancel_hooks`]. JS thread only.
+    /// See [`Self::terminate_cancel_hooks`]. JS thread only. No-op on the
+    /// main-thread VM: only `WebWorker::shutdown` runs the fan-out, so the
+    /// registry (and the O(n) unregister scan) would be dead weight on the
+    /// outbound-fetch hot path there.
     pub fn register_terminate_cancel_hook(
         &mut self,
         ptr: *mut (),
         data: u64,
         run: fn(*mut (), u64),
     ) {
+        if self.is_main_thread() {
+            return;
+        }
         self.terminate_cancel_hooks
             .push(TerminateCancelHook { ptr, data, run });
     }
 
     /// Remove the hook registered with `ptr`; no-op when absent (the fan-out
-    /// empties the list). JS thread only.
+    /// empties the list, and the main-thread VM never registers). JS thread
+    /// only.
     pub fn unregister_terminate_cancel_hook(&mut self, ptr: *mut ()) {
+        if self.is_main_thread() {
+            return;
+        }
         if let Some(i) = self
             .terminate_cancel_hooks
             .iter()

@@ -81,17 +81,29 @@ describe.skipIf(!isASAN)("worker teardown with off-thread jobs in flight does no
       const fs = require("node:fs/promises");
       let i = 0;
       lanes(2, () => fs.cp(d.dir + "/tree", d.dir + "/copy" + (i++ % 4), { recursive: true, force: true }));`,
-    "Bun.$ shell builtins (ShellTask)": `
+    "Bun.$ shell builtins (ShellTask + custom rm/cp schedulers)": `
       let i = 0;
       lanes(2, async () => {
         const n = "sh" + (i++ % 4);
-        await Bun.$\`mkdir -p \${n}/a/b && rm -rf \${n}\`.cwd(d.dir).quiet();
+        await Bun.$\`mkdir -p \${n}/a/b && cp -R \${n} \${n}c && rm -rf \${n} \${n}c\`.cwd(d.dir).quiet();
       });`,
     "crypto.subtle.digest (ConcurrentCppTask)": `
       const data = buf();
       lanes(3, () => crypto.subtle.digest("SHA-512", data));`,
     "Bun.build (JSBundleCompletionTask)": `
       lanes(1, () => Bun.build({ entrypoints: [d.dir + "/entry.ts"], target: "bun", write: false, logLevel: "silent" }).catch(() => {}));`,
+    "Bun.Archive.blob (Archive AsyncTask)": `
+      const archive = new Bun.Archive({ "a.bin": buf(), "b/b.txt": "hello" });
+      lanes(2, () => archive.blob());`,
+    "dynamic import (RuntimeTranspilerStore)": `
+      const fs = require("node:fs/promises");
+      let di = 0;
+      lanes(2, async () => {
+        di++;
+        const p = d.dir + "/dyn" + (di % 8) + ".ts";
+        await fs.writeFile(p, "export const x" + di + ": number = " + di + ";");
+        await import(p + "?v=" + di);
+      });`,
   };
 
   // Three teardown doors, all funneling into the same WebWorker::shutdown:
@@ -146,7 +158,13 @@ describe.skipIf(!isASAN)("worker teardown with off-thread jobs in flight does no
                 w.on("error", () => {});
                 const exited = new Promise(res => w.once("exit", res));
                 ${parentAction}
+                const t0 = Date.now();
                 await exited;
+                // Teardown waits for in-flight jobs, which are a few seconds
+                // at worst here; hitting the fence's 10s deadline means an
+                // unbalanced outstanding_offthread count for this family.
+                const dt = Date.now() - t0;
+                if (dt > 9000) throw new Error("teardown stalled " + dt + "ms (unbalanced off-thread fence?)");
               }
               console.log("OK");
             })().catch(e => {

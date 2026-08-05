@@ -1433,9 +1433,20 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             true
         }
         task_tag::S3HttpDownloadStreamingTask => {
-            // SAFETY: tag identifies pointee; sole owner (see above).
-            drop(unsafe { bun_core::heap::take(task.ptr.cast::<S3HttpDownloadStreamingTask>()) });
-            true
+            let t = task.ptr.cast::<S3HttpDownloadStreamingTask>();
+            // SAFETY: tag identifies pointee; the queue owns this entry.
+            if unsafe { (*t).http_engagement_active() } {
+                // A queued non-final chunk whose HTTP engagement is still
+                // open (only reachable on the fence-timeout leak path, where
+                // the final callback never landed): requeue so the box stays
+                // allocated for the HTTP thread.
+                false
+            } else {
+                // SAFETY: engagement over, so the HTTP thread made its last
+                // access before the fence released; sole owner (see above).
+                drop(unsafe { bun_core::heap::take(t) });
+                true
+            }
         }
         // `cancelled` short-circuits `on_complete` right after the poll
         // unref, so no JS runs; adopting the enqueue's +1 frees the box.

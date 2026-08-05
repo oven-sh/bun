@@ -512,6 +512,11 @@ impl ShellCpTask {
             let st = &raw mut (*this).task;
             (*st).task.callback = Self::work_pool_callback;
             (*st).keep_alive.ref_((*st).event_loop.as_event_loop_ctx());
+            // Paired with the `offthread_job_end` in `ShellTask::on_finish`
+            // (reached via `enqueue_to_event_loop` on both the error path and
+            // `cp_on_finish`); this custom scheduler bypasses
+            // `ShellTask::schedule`, which would otherwise take it.
+            (*st).event_loop.offthread_job_begin();
             WorkPool::schedule(&raw mut (*st).task);
         }
     }

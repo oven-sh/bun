@@ -364,6 +364,17 @@ pub(crate) fn terminate_cancel_hook(_ptr: *mut (), async_http_id: u64) {
     bun_http::http_thread().schedule_shutdown_by_id(async_http_id as u32);
 }
 
+impl S3HttpDownloadStreamingTask {
+    /// Whether the HTTP thread can still invoke `http_callback` for this task
+    /// (the final `has_more == false` callback has not happened yet). The
+    /// shutdown drain must not free the box while this is true — that only
+    /// arises on the fence-timeout leak path, where a queued non-final chunk
+    /// outlives the wait.
+    pub(crate) fn http_engagement_active(&self) -> bool {
+        State(self.state.load(core::sync::atomic::Ordering::Acquire)).has_more()
+    }
+}
+
 impl Drop for S3HttpDownloadStreamingTask {
     fn drop(&mut self) {
         // Runs on the JS thread (the task is freed by `on_response` / the

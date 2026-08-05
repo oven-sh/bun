@@ -95,7 +95,7 @@ public:
         {
         }
 
-        JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* importer);
+        JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* importer, uint8_t kind);
     };
 };
 

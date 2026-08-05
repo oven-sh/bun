@@ -693,6 +693,96 @@ it.concurrent("onResolve can redirect a specifier to a real file in the file nam
   expect(exitCode).toBe(0);
 });
 
+it.concurrent("runtime onLoad/onResolve receive the documented OnLoadArgs/OnResolveArgs fields", async () => {
+  using dir = tempDir("plugin-arg-shape", {
+    "preload.js": `
+      Bun.plugin({
+        name: "argprobe",
+        setup(build) {
+          const path = require("node:path");
+          build.onResolve({ filter: /probe-arg-entry/ }, a => {
+            globalThis.__resolveArgs ??= {
+              keys: Object.keys(a).sort(),
+              importer: a.importer,
+              namespace: a.namespace,
+              kind: a.kind,
+              resolveDirOK: a.resolveDir === path.dirname(a.importer),
+            };
+            return undefined;
+          });
+          build.onResolve({ filter: /.*/, namespace: "probe" }, a => {
+            globalThis.__resolveNsArgs ??= { namespace: a.namespace, kind: a.kind };
+            return { path: a.path, namespace: "probe" };
+          });
+          build.onLoad({ filter: /probe-arg-entry\\.ts$/ }, async a => {
+            let deferred;
+            let deferError = null;
+            try { deferred = a.defer(); } catch (e) { deferError = String(e); }
+            let deferResolved = deferred instanceof Promise;
+            if (deferResolved) await deferred;
+            globalThis.__loadArgs = {
+              keys: Object.keys(a).sort(),
+              namespace: a.namespace,
+              loader: a.loader,
+              deferType: typeof a.defer,
+              deferError,
+              deferResolved,
+            };
+            return { contents: "export default 1", loader: a.loader };
+          });
+          build.onLoad({ filter: /.*/, namespace: "probe" }, a => {
+            globalThis.__loadNsArgs = { namespace: a.namespace, loader: a.loader };
+            return { contents: "export default 2", loader: "js" };
+          });
+        },
+      });
+    `,
+    "sub/probe-arg-entry.ts": `export default 0;`,
+    "entry.js": `
+      const { createRequire } = require("node:module");
+      const req = createRequire(import.meta.url);
+      await import("./sub/probe-arg-entry.ts");
+      req("probe:whatever.json");
+      console.log(JSON.stringify({
+        load: globalThis.__loadArgs,
+        loadNs: globalThis.__loadNsArgs,
+        resolve: globalThis.__resolveArgs,
+        resolveNs: globalThis.__resolveNsArgs,
+      }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--preload", "./preload.js", "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const out = stdout.trim() ? JSON.parse(stdout) : { crashed: stderr };
+  expect(out).toEqual({
+    load: {
+      keys: ["defer", "loader", "namespace", "path"],
+      namespace: "file",
+      loader: "ts",
+      deferType: "function",
+      deferError: null,
+      deferResolved: true,
+    },
+    loadNs: { namespace: "probe", loader: "json" },
+    resolve: {
+      keys: ["importer", "kind", "namespace", "path", "resolveDir"],
+      importer: resolve(String(dir), "entry.js"),
+      namespace: "file",
+      kind: "import-statement",
+      resolveDirOK: true,
+    },
+    resolveNs: { namespace: "probe", kind: "require-call" },
+  });
+  expect(exitCode).toBe(0);
+});
+
 it.concurrent("a no-op onResolve that returns args.path unchanged is transparent", async () => {
   using dir = tempDir("plugin-onresolve-no-op", {
     "preload.js": `

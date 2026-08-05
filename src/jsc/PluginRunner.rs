@@ -51,6 +51,7 @@ impl PluginResolver for PluginRunner {
         log: &mut bun_ast::Log,
         loc: bun_ast::Loc,
         target: BunPluginTarget,
+        kind: bun_ast::ImportKind,
     ) -> bun_bundler::Result<Option<FsPath<'static>>> {
         let global = self.global();
         let js_err = |e: crate::JsError| {
@@ -77,6 +78,7 @@ impl PluginResolver for PluginRunner {
                 }),
                 BunString::init(importer),
                 target,
+                kind,
             )
             .map_err(js_err)?
         else {

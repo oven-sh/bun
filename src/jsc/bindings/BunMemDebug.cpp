@@ -1555,6 +1555,7 @@ static void imageRestoreAndRun(const char* path)
 extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
 {
     int req = s_requested.exchange(0);
+    bool fromCmdFile = false;
     if (!s_dir)
         return;
     if (const char* at = getenv("BUN_IMAGE_OUT_AT_MS")) {
@@ -1591,8 +1592,11 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
         else if (!strncmp(buf, "shrink", 6)) req = 3;
         else if (!strncmp(buf, "gc", 2)) req = 2;
         else req = 1;
+        fromCmdFile = true;
     }
     s_seq++;
+    // Reports also go to <dir>/report.<pid>.txt: a TUI app owns the terminal and stderr text gets lost in its rendering.
+    struct StderrTee { int saved = -1; StderrTee(bool on) { if (!on || !s_dir) return; char p[1200]; snprintf(p, sizeof p, "%s/report.%d.txt", s_dir, getpid()); int fd = open(p, O_WRONLY | O_CREAT | O_APPEND, 0644); if (fd < 0) return; fflush(stderr); saved = dup(2); dup2(fd, 2); close(fd); } ~StderrTee() { if (saved < 0) return; fflush(stderr); dup2(saved, 2); close(saved); } } tee(fromCmdFile);
     if (req == 4) {
         fileSnapshotHeap(*vm);
         return;

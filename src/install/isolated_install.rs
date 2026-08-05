@@ -988,6 +988,11 @@ pub(crate) fn install_isolated_packages(
                 // nothing matched - create a new entry
             }
 
+            // This derivation (name-sorted `<peer name><peer resolution>`
+            // concatenation, Wyhash11 seed 0) names store entries on disk and
+            // is documented as a stable format in
+            // docs/pm/isolated-installs.mdx#the-peer-set-suffix. Changing any
+            // part of it is a breaking change to that format.
             let new_entry_peer_hash: store::entry::PeerHash = 'peer_hash: {
                 let peers = &node_peers[entry.node_id.get() as usize];
                 if peers.len() == 0 {

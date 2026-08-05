@@ -247,8 +247,13 @@ impl<T: Copy> OrderedArraySet<T> {
 //
 // A unique entry in the store. As a path looks like:
 //   './node_modules/.bun/name@version/node_modules/name'
-// or if peers are involved:
-//   './node_modules/.bun/name@version_peer1@version+peer2@version/node_modules/name'
+// or if peers are involved (see `PeerHash`):
+//   './node_modules/.bun/name@version+<16 hex digit peer set hash>/node_modules/name'
+//
+// This layout is documented as a stable format in
+// docs/pm/isolated-installs.mdx#store-layout-reference and pinned by the
+// "store layout contract" tests in test/cli/install/isolated-install.test.ts;
+// changing it is a breaking change to that format.
 //
 // Entries are created for workspaces (including the root), but only in memory. If
 // a module depends on a workspace, a symlink is created pointing outside the store

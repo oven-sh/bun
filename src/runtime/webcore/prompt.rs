@@ -172,17 +172,17 @@ pub mod prompt {
     }
 
     /// Small trait exposing `read_byte() -> Result<u8, _>`; the only
-    /// concrete impl is the process-global `BufferedStdin`.
+    /// concrete impl is the unbuffered `StdinReader`.
     pub trait ReadByte {
         type Error;
         fn read_byte(&mut self) -> Result<u8, Self::Error>;
     }
 
-    impl ReadByte for bun_core::output::BufferedStdin {
+    impl ReadByte for bun_core::output::StdinReader {
         type Error = bun_core::Error;
         #[inline]
         fn read_byte(&mut self) -> Result<u8, Self::Error> {
-            bun_core::output::BufferedStdin::read_byte(self)
+            self.take_byte()
         }
     }
 
@@ -303,11 +303,8 @@ pub mod prompt {
             });
 
         // 7. Pause while waiting for the user's response.
-        // `bun.Output.buffered_stdin.reader()` — process-global 4 KiB buffered stdin.
-        // SAFETY: process-global static; prompt() runs single-threaded on the JS
-        // main thread, so the exclusive borrow is sound for this scope.
-        let reader: &mut bun_core::output::BufferedStdin =
-            unsafe { &mut *Output::buffered_stdin_reader() };
+        // Unbuffered so nothing past '\n' is pulled out of the pipe.
+        let mut reader = Output::stdin_reader();
         let mut second_byte: Option<u8> = None;
         let Ok(first_byte) = reader.read_byte() else {
             // 8. Let result be null if the user aborts, or otherwise the string
@@ -341,7 +338,7 @@ pub mod prompt {
         // size to 4096. If that is too small, then just dynamically allocate
         // the rest.
         if let Err(e) = read_until_delimiter_array_list_append_assume_capacity(
-            &mut *reader,
+            &mut reader,
             &mut input,
             b'\n',
             2048,
@@ -355,7 +352,7 @@ pub mod prompt {
             input.ensure_total_capacity(4096);
 
             if let Err(e2) = read_until_delimiter_array_list_append_assume_capacity(
-                &mut *reader,
+                &mut reader,
                 &mut input,
                 b'\n',
                 4096,
@@ -366,8 +363,7 @@ pub mod prompt {
                     return Ok(JSValue::NULL);
                 }
 
-                if read_until_delimiter_array_list_infinity(&mut *reader, &mut input, b'\n')
-                    .is_err()
+                if read_until_delimiter_array_list_infinity(&mut reader, &mut input, b'\n').is_err()
                 {
                     // 8. Let result be null if the user aborts, or otherwise the string
                     //    that the user responded with.

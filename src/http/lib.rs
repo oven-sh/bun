@@ -39,6 +39,8 @@ pub mod lshpack;
 pub mod proxy_tunnel;
 #[path = "SendFile.rs"]
 pub mod send_file;
+#[path = "session_cache.rs"]
+pub mod session_cache;
 #[path = "Signals.rs"]
 pub mod signals;
 #[path = "ThreadSafeStreamBuffer.rs"]
@@ -1853,6 +1855,28 @@ impl<'a> HTTPClient<'a> {
                     host_z,
                     self.alpn_offer(),
                 );
+
+                if crate::session_cache::eligible(self) {
+                    let want_tunnel = self.http_proxy.is_some() && self.url.is_https();
+                    // SAFETY: `ssl_ptr` is live and pre-handshake (guarded by
+                    // `SSL_is_init_finished == 0` above); `get_ssl_ctx` returns
+                    // the static `https_context` or the heap context this
+                    // client holds a strong ref on, both of which outlive
+                    // every SSL attached to their socket group.
+                    unsafe {
+                        crate::session_cache::install(
+                            ssl_ptr,
+                            self.get_ssl_ctx::<true>(),
+                            self.connected_url.hostname,
+                            self.connected_url.get_port_auto(),
+                            if want_tunnel || self.http_proxy.is_none() {
+                                self.proxy_auth_hash()
+                            } else {
+                                0
+                            },
+                        );
+                    }
+                }
             }
         } else {
             self.first_call::<IS_SSL>(socket);

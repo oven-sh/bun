@@ -14,7 +14,7 @@ let buf = "";
 const env = {
   ...process.env, TERM: "xterm-256color",
   BUN_JSC_useGenerationalGC: process.env.GENGC ?? "1", BUN_JSC_useBaselineJIT: "0", BUN_JSC_useFTLJIT: "0", MIMALLOC_DETERMINISTIC_HINT: "1", BUN_IMAGE_JIT_ADDR: "0x3c0000000",
-  BUN_JSC_useConcurrentGC: "0", BUN_JSC_useConcurrentJIT: "0", BUN_MEMDEBUG: process.cwd(),
+  BUN_MEMDEBUG: process.cwd(),
   ...(img ? { BUN_IMAGE_IN: img } : {}), ...envs,
 };
 const pre = has("--setsid") ? ["/usr/bin/perl", "-e", "use POSIX; POSIX::setsid(); exec @ARGV", "--"] : [];

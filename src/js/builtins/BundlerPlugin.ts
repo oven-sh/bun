@@ -170,6 +170,16 @@ export function runSetupFunction(
     [RegExp, napiModule: unknown, symbol: string, external?: undefined | unknown][]
   >();
 
+  var setupComplete = false;
+  function ensureSetup(name: string) {
+    if (setupComplete) {
+      throw new TypeError(
+        name +
+          "() must be called within a plugin's setup() function. Plugin hooks cannot be registered during the build or after it has finished.",
+      );
+    }
+  }
+
   function validate(filterObject: PluginConstraints, callback, map, symbol, external) {
     if (!filterObject || !$isObject(filterObject)) {
       throw new TypeError('Expected an object with "filter" RegExp');
@@ -226,11 +236,13 @@ export function runSetupFunction(
   }
 
   function onLoad(this: PluginBuilder, filterObject: PluginConstraints, callback: OnLoadCallback): PluginBuilder {
+    ensureSetup("onLoad");
     validate(filterObject, callback, onLoadPlugins, undefined, undefined);
     return this;
   }
 
   function onResolve(this: PluginBuilder, filterObject: PluginConstraints, callback): PluginBuilder {
+    ensureSetup("onResolve");
     validate(filterObject, callback, onResolvePlugins, undefined, undefined);
     return this;
   }
@@ -240,12 +252,14 @@ export function runSetupFunction(
     filterObject: PluginConstraints,
     { napiModule, external, symbol }: { napiModule: unknown; symbol: string; external?: undefined | unknown },
   ): PluginBuilder {
+    ensureSetup("onBeforeParse");
     validate(filterObject, napiModule, onBeforeParsePlugins, symbol, external);
     return this;
   }
 
   const self = this;
   function onStart(this: PluginBuilder, callback): PluginBuilder {
+    ensureSetup("onStart");
     if (isBake) {
       throw new TypeError("onStart() is not supported in Bake yet");
     }
@@ -269,6 +283,7 @@ export function runSetupFunction(
   }
 
   function onEnd(this: PluginBuilder, callback: Function): PluginBuilder {
+    ensureSetup("onEnd");
     if (!$isCallable(callback)) throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
 
     if (!self.onEndCallbacks) self.onEndCallbacks = [];
@@ -343,51 +358,63 @@ export function runSetupFunction(
     return this.promises;
   };
 
-  var setupResult = setup({
-    config: config,
-    onDispose: notImplementedIssueFn(2771, "On-dispose callbacks"),
-    onEnd,
-    onLoad,
-    onResolve,
-    onBeforeParse,
-    onStart,
-    resolve: notImplementedIssueFn(2771, "build.resolve()"),
-    module: () => {
-      throw new TypeError("module() is not supported in Bun.build() yet. Only via Bun.plugin() at runtime");
-    },
-    addPreload: () => {
-      throw new TypeError("addPreload() is not supported in Bun.build() yet.");
-    },
-    // esbuild's options argument is different, we provide some interop
-    initialOptions: {
-      ...config,
-      bundle: true,
-      entryPoints: config.entrypoints ?? config.entryPoints ?? [],
-      minify: typeof config.minify === "boolean" ? config.minify : false,
-      minifyIdentifiers: config.minify === true || (config.minify as MinifyObj)?.identifiers,
-      minifyWhitespace: config.minify === true || (config.minify as MinifyObj)?.whitespace,
-      minifySyntax: config.minify === true || (config.minify as MinifyObj)?.syntax,
-      outbase: config.root,
-      platform: config.target === "bun" ? "node" : config.target,
-    },
-    esbuild: {},
-  } as PluginBuilderExt);
+  const closeSetupAndRethrow = err => {
+    setupComplete = true;
+    throw err;
+  };
+
+  var setupResult;
+  try {
+    setupResult = setup({
+      config: config,
+      onDispose: notImplementedIssueFn(2771, "On-dispose callbacks"),
+      onEnd,
+      onLoad,
+      onResolve,
+      onBeforeParse,
+      onStart,
+      resolve: notImplementedIssueFn(2771, "build.resolve()"),
+      module: () => {
+        throw new TypeError("module() is not supported in Bun.build() yet. Only via Bun.plugin() at runtime");
+      },
+      addPreload: () => {
+        throw new TypeError("addPreload() is not supported in Bun.build() yet.");
+      },
+      // esbuild's options argument is different, we provide some interop
+      initialOptions: {
+        ...config,
+        bundle: true,
+        entryPoints: config.entrypoints ?? config.entryPoints ?? [],
+        minify: typeof config.minify === "boolean" ? config.minify : false,
+        minifyIdentifiers: config.minify === true || (config.minify as MinifyObj)?.identifiers,
+        minifyWhitespace: config.minify === true || (config.minify as MinifyObj)?.whitespace,
+        minifySyntax: config.minify === true || (config.minify as MinifyObj)?.syntax,
+        outbase: config.root,
+        platform: config.target === "bun" ? "node" : config.target,
+      },
+      esbuild: {},
+    } as PluginBuilderExt);
+  } catch (err) {
+    closeSetupAndRethrow(err);
+  }
 
   if (setupResult && $isPromise(setupResult)) {
     if ($peekPromiseStatus(setupResult) === 1) {
       setupResult = $peekPromiseSettledValue(setupResult);
     } else {
       return setupResult.$then(() => {
+        setupComplete = true;
         let selfPromises;
         if (is_last && (selfPromises = self.promises) !== undefined && selfPromises.length > 0) {
           const awaitAll = Promise.all(selfPromises);
           return awaitAll.$then(processSetupResult);
         }
         return processSetupResult();
-      });
+      }, closeSetupAndRethrow);
     }
   }
 
+  setupComplete = true;
   let pendingPromises;
   if (is_last && (pendingPromises = this.promises) !== undefined && pendingPromises.length > 0) {
     const awaitAll = Promise.all(pendingPromises);

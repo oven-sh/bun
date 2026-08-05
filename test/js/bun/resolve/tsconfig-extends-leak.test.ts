@@ -12,8 +12,8 @@
 // the debug-build `BUN_DEBUG_alloc=1` instrumentation which logs every
 // bun.new()/bun.destroy() call, and count TSConfigJSON lifetimes directly.
 
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import path from "path";
 
 // The allocation log is only emitted in builds with Environment.allow_assert
@@ -121,4 +121,177 @@ test("tsconfig 'extends' merge still works after freeing intermediates", async (
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("leaf");
   expect(exitCode).toBe(0);
+});
+
+// ── bustDirCache manifest re-parse leaks ───────────────────────────────────
+// Every failed require()/import() busts the importer's directory (the
+// retry-on-not-found loop in jsc_hooks.rs) and the rebuild in
+// dirInfoUncached() re-parses that directory's package.json / tsconfig.json.
+// The parses are interned into process-lifetime arenas (the DirInfo cache
+// hands out 'static references), so before the keyed-reuse fix every distinct
+// resolution miss grew RSS by roughly 7-12x the manifest size, forever and
+// GC-immune. These tests pin the reuse behavior: an unchanged manifest must
+// not grow the arena, and a changed manifest must still be picked up.
+describe.concurrent("bustDirCache manifest re-parse", () => {
+  test(
+    "failed requires don't re-intern an unchanged package.json",
+    async () => {
+      // ~200KB manifest so the interned-parse cost dwarfs the other per-miss
+      // allocations (dir entries, interned path strings) at a miss count low
+      // enough for debug+ASAN builds.
+      const imports: Record<string, string> = {};
+      for (let i = 0; i < 6000; i++) imports[`#alias${i}`] = "./leak-fixture.js";
+
+      using dir = tempDir("manifest-reparse-leak", {
+        "package.json": JSON.stringify({ name: "reparse-leak-fixture", imports }, null, 2),
+        "leak-fixture.js": `
+        const rss = () => {
+          Bun.gc(true);
+          Bun.gc(true);
+          return process.memoryUsage.rss();
+        };
+        // Warm up one parse generation plus lazy allocator state.
+        for (let i = 0; i < 8; i++) {
+          try { require("./warmup" + i); } catch {}
+        }
+        const before = rss();
+        for (let i = 0; i < 64; i++) {
+          try { require("./nosuch" + i); } catch {}
+        }
+        console.log(JSON.stringify({ growthMB: (rss() - before) / 1024 / 1024 }));
+      `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "leak-fixture.js"],
+        env: {
+          ...bunEnv,
+          // The fixed build frees each re-parse immediately; without a small
+          // quarantine that freed memory sits in the ASAN quarantine (default
+          // 256MB), counts toward RSS, and drowns the signal.
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=8:thread_local_quarantine_size_kb=64"]
+            .filter(Boolean)
+            .join(":"),
+        },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      // 64 distinct misses against the ~200KB manifest re-interned ~90MB
+      // before the fix (linear in miss count); with reuse the loop settles at
+      // a few MB of allocator churn plus the ASAN quarantine.
+      const { growthMB } = JSON.parse(stdout.trim().split("\n").at(-1)!);
+      expect(growthMB).toBeLessThan(isASAN || isDebug ? 32 : 24);
+      expect(exitCode).toBe(0);
+    },
+    // Each miss fully re-reads the directory and re-parses the manifest;
+    // debug+ASAN needs more than the 5s default.
+    30_000,
+  );
+
+  // Same counting approach as the extends-chain test above: the re-parse is
+  // only observable in debug builds via the `.alloc` scoped logger.
+  test.skipIf(!isDebug)("failed requires destroy the re-parse of an unchanged tsconfig.json", async () => {
+    using dir = tempDir("tsconfig-reparse-leak", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@app/*": ["./src/*"] } } }),
+      "fixture.js": `
+        for (let i = 0; i < 12; i++) {
+          try { require("./nosuch" + i); } catch {}
+        }
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: { ...bunEnv, BUN_DEBUG_alloc: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const output = stdout + stderr;
+    const created = [...output.matchAll(/new\(TSConfigJSON\)/g)].length;
+    const destroyed = [...output.matchAll(/destroy\(TSConfigJSON\)/g)].length;
+    // Each of the 12 misses busts the fixture dir and re-parses its
+    // tsconfig.json; the unchanged re-parse must be destroyed by the reuse
+    // check. Before the fix `destroyed` stayed 0 while `created` grew per
+    // miss. Slack of 3 covers the one live interned config plus any ancestor
+    // configs outside the fixture (see the extends-chain test above).
+    expect(created).toBeGreaterThanOrEqual(12);
+    expect(created - destroyed).toBeLessThanOrEqual(3);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a failed require picks up a package.json edit on retry", async () => {
+    using dir = tempDir("manifest-reparse-refresh", {
+      "package.json": JSON.stringify({ name: "fixture", imports: { "#other": "./target.js" } }),
+      "target.js": "module.exports = { ok: 1 };",
+      "fixture.js": `
+        const fs = require("node:fs");
+        let failed = false;
+        try { require("#x"); } catch { failed = true; }
+        if (!failed) throw new Error("expected #x to fail before the manifest update");
+        fs.writeFileSync(
+          "package.json",
+          JSON.stringify({ name: "fixture", imports: { "#other": "./target.js", "#x": "./target.js" } }),
+        );
+        if (require("#x").ok !== 1) throw new Error("expected #x to resolve after the manifest update");
+        console.log("pass");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a failed require picks up a tsconfig.json edit on retry", async () => {
+    using dir = tempDir("tsconfig-reparse-refresh", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "unused-alias": ["./lib/thing.js"] } } }),
+      "lib/thing.js": "module.exports = { ok: 1 };",
+      // The alias must not contain a slash: the retry's cache bust targets
+      // join(importer, specifier, ".."), which only lands on the importer's
+      // directory (where the tsconfig lives) for slash-free specifiers.
+      "fixture.js": `
+        const fs = require("node:fs");
+        let failed = false;
+        try { require("leak-alias"); } catch { failed = true; }
+        if (!failed) throw new Error("expected leak-alias to fail before the tsconfig update");
+        fs.writeFileSync(
+          "tsconfig.json",
+          JSON.stringify({ compilerOptions: { paths: { "leak-alias": ["./lib/thing.js"] } } }),
+        );
+        if (require("leak-alias").ok !== 1) throw new Error("expected leak-alias to resolve after the tsconfig update");
+        console.log("pass");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      // --no-install: the bare "leak-alias" miss must fail fast, not hit the
+      // npm registry through auto-install.
+      cmd: [bunExe(), "--no-install", "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("pass");
+    expect(exitCode).toBe(0);
+  });
 });

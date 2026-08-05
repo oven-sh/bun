@@ -66,14 +66,30 @@ test("$.json", async () => {
 });
 
 test("$.lines", async () => {
-  expect(await Array.fromAsync(await $`echo hello`.lines())).toEqual(["hello", ""]);
+  expect(await Array.fromAsync($`echo hello`.lines())).toEqual(["hello"]);
 
-  const lines = [];
+  const lines: string[] = [];
   for await (const line of $`echo hello`.lines()) {
     lines.push(line);
   }
 
-  expect(lines).toEqual(["hello", ""]);
+  expect(lines).toEqual(["hello"]);
+});
+
+test("$.lines does not yield a trailing empty string for newline-terminated output", async () => {
+  expect(await Array.fromAsync($`echo -n ${"a\nb\nc\n"}`.lines())).toEqual(["a", "b", "c"]);
+});
+
+test("$.lines keeps interior blank lines", async () => {
+  expect(await Array.fromAsync($`echo -n ${"a\n\nb\n"}`.lines())).toEqual(["a", "", "b"]);
+});
+
+test("$.lines with no trailing newline", async () => {
+  expect(await Array.fromAsync($`echo -n ${"a\nb\nc"}`.lines())).toEqual(["a", "b", "c"]);
+});
+
+test("$.lines with empty output yields nothing", async () => {
+  expect(await Array.fromAsync($`echo -n ${""}`.lines())).toEqual([]);
 });
 
 test("$.arrayBuffer", async () => {

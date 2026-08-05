@@ -89,8 +89,7 @@ impl AlgorithmValue {
                                     .throw_invalid_argument_type("hash", "cost", "number"));
                             }
 
-                            // Range-check the double before narrowing: ToInt32's
-                            // modular wrap would accept e.g. 4294967300 as 4.
+                            // Range-check as f64: ToInt32 would wrap e.g. 2^32 + 4 to 4.
                             let rounds = rounds_value.as_number();
 
                             if rounds.fract() != 0.0 || !(4.0..=31.0).contains(&rounds) {
@@ -115,15 +114,12 @@ impl AlgorithmValue {
 
                             let time_cost = time_value.as_number();
 
-                            // NaN fails the `>= 1.0` comparison, so it lands here too.
-                            if !(time_cost >= 1.0) {
+                            if time_cost < 1.0 || time_cost.is_nan() {
                                 return Err(global_object.throw_invalid_arguments(format_args!(
                                     "Time cost must be greater than 0"
                                 )));
                             }
 
-                            // Range-check the double before narrowing: ToInt32's
-                            // modular wrap would accept e.g. 4294967298 as 2.
                             if time_cost.fract() != 0.0 || time_cost > f64::from(u32::MAX) {
                                 return Err(global_object.throw_invalid_arguments(format_args!(
                                     "Time cost must be an integer between 1 and 4294967295"
@@ -147,15 +143,12 @@ impl AlgorithmValue {
                             // argon2 requires `memoryCost >= 8 * parallelism`;
                             // Bun hard-codes `parallelism = 1` (see
                             // `Argon2Params::to_params`), so the floor is 8.
-                            // NaN fails the `>= 8.0` comparison, so it lands here too.
-                            if !(memory_cost >= 8.0) {
+                            if memory_cost < 8.0 || memory_cost.is_nan() {
                                 return Err(global_object.throw_invalid_arguments(format_args!(
                                     "Memory cost must be at least 8"
                                 )));
                             }
 
-                            // Range-check the double before narrowing: ToInt32's
-                            // modular wrap would accept e.g. 4294971904 as 4608.
                             if memory_cost.fract() != 0.0 || memory_cost > f64::from(u32::MAX) {
                                 return Err(global_object.throw_invalid_arguments(format_args!(
                                     "Memory cost must be an integer between 8 and 4294967295"

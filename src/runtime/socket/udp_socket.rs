@@ -353,9 +353,7 @@ impl UDPSocketConfig {
 
         let port: u16 = 'brk: {
             if let Some(value) = options.get_truthy(global_this, "port")? {
-                // Range-check the double before narrowing: `coerce_to_i32` is
-                // ECMAScript ToInt32, whose modular wrap would turn e.g.
-                // 4294967377 into 81 and dodge the bounds check.
+                // Range-check as f64: ToInt32 would wrap e.g. 4294967377 to 81.
                 let number = value.coerce_f64(global_this)?;
                 if number.fract() != 0.0 || !(0.0..=65535.0).contains(&number) {
                     return Err(global_this.throw_invalid_arguments(format_args!(
@@ -1254,8 +1252,8 @@ impl UDPSocket {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         // Iterating the input array can run arbitrary user JS: `iter.next()`'s
-        // slow path hits `JSObject.getIndex`, and `parseAddr` runs ToNumber on
-        // the port / `address.toBunString()`. That JS can drop
+        // slow path hits `JSObject.getIndex`, and `parseAddr` coerces the port
+        // (ToNumber) and address (`toBunString`). That JS can drop
         // the last reference to an earlier payload and force a GC, or detach
         // an earlier ArrayBuffer (`.transfer(n)` frees its backing store
         // synchronously), leaving borrowed pointers in `payloads[]` dangling
@@ -1504,7 +1502,7 @@ impl UDPSocket {
         };
 
         // Resolve the destination before touching the payload. `parseAddr`
-        // runs ToNumber on the port / `address.toBunString()` which can
+        // coerces the port (ToNumber) and address (`toBunString`), which can
         // run user JS that detaches the payload's ArrayBuffer
         // (`.transfer(n)`) or closes this socket. Doing this first means no
         // JSC safepoint sits between capturing `payload.ptr` and handing it
@@ -1575,12 +1573,8 @@ impl UDPSocket {
         storage: &mut sockaddr_storage,
     ) -> JsResult<bool> {
         let _ = self;
-        // Range-check the double, not the ToInt32 wrap: `send(data, 2**32 + 9, ..)`
-        // must not silently target port 9. Port 0 stays allowed (and means "no
-        // port") because the membership/interface callers pass a literal 0;
-        // everything else out of range throws instead of being rewritten to 0,
-        // which on Windows would make send() report success for a datagram
-        // that never goes anywhere.
+        // Range-check as f64: ToInt32 would wrap e.g. 2^32 + 9 to 9. Port 0 is
+        // reserved for the membership/interface callers, which pass a literal 0.
         let number = port_val.coerce_f64(global_this)?;
         let port: u16 = if number == 0.0 {
             0

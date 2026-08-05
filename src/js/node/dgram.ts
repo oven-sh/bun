@@ -523,9 +523,7 @@ function bufferSize(self, size, buffer) {
 }
 
 Socket.prototype.bind = function (port_, address_ /* , callback */) {
-  // `bind(cb)` passes the callback as the first argument: it is not a port.
-  // Node forwards it to the native layer where ToUint32 turns it into 0;
-  // Bun.udpSocket rejects non-numeric ports, so normalize it here.
+  // bind(cb): a function first argument is the callback, not a port.
   let port = typeof port_ === "function" ? null : port_;
 
   healthCheck(this);

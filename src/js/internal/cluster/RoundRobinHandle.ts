@@ -75,7 +75,9 @@ export default class RoundRobinHandle {
     // Still busy binding.
     this.server.once("listening", done);
     this.server.once("error", err => {
-      send(err.errno, null);
+      // Bun's native listen error carries a positive OS errno; the worker feeds
+      // it into ExceptionWithHostPort which needs the negative libuv value.
+      send(err.errno > 0 ? -err.errno : err.errno, null);
     });
   }
 

@@ -479,6 +479,26 @@ describe("read / write", () => {
     await expectDOMException(first, "AbortError");
   });
 
+  // An aborted write whose platform job was already queued must be cancelled
+  // there too; the work pool is not FIFO, so without the cancel the "aborted"
+  // write can land after (and overwrite) the one that superseded it.
+  test("a superseded write never lands after its successor", async () => {
+    if (savedClipboard === null) return; // no reachable clipboard
+    for (let i = 0; i < 10; i++) {
+      // A platform-sourced item collects synchronously, so the platform write
+      // is already queued when writeText() supersedes it.
+      await navigator.clipboard.writeText(`A${i}`);
+      const [itemA] = await navigator.clipboard.read();
+      const aborted = navigator.clipboard.write([itemA]).then(
+        () => "resolved",
+        (e: Error) => e.name,
+      );
+      await navigator.clipboard.writeText(`B${i}`);
+      expect(await aborted).toBe("AbortError");
+      expect(await navigator.clipboard.readText()).toBe(`B${i}`);
+    }
+  });
+
   // collectDataForWriting() calls the realm's Promise.all, which user JS can
   // tamper to synchronously re-enter write([sameItem]); the outer frame must
   // not then touch the newer writer's armed state when it resumes.

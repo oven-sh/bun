@@ -91,3 +91,9 @@ extern "C" void Bun__Clipboard__requestAbandon(WebCore::ClipboardRequest* reques
 {
     adoptRef(*request);
 }
+
+// Read from the work pool (atomic); the job's leaked reference keeps `request` alive.
+extern "C" bool Bun__Clipboard__requestIsCancelled(WebCore::ClipboardRequest* request)
+{
+    return request->isCancelled();
+}

@@ -11,7 +11,8 @@ use bun_jsc::{AnyTaskJob, AnyTaskJobCtx, JSGlobalObject};
 /// `then()` via `requestComplete`, or `Drop` via `requestAbandon` on VM shutdown.
 struct RequestHandle(*mut c_void);
 
-// SAFETY: never dereferenced off the JS thread; `then` only passes it back to C++.
+// SAFETY: off the JS thread the pointer is only read through the atomic
+// `requestIsCancelled`; `then` passes it back to C++ on the JS thread.
 unsafe impl Send for RequestHandle {}
 
 /// Mirrors `WebCore::ClipboardRepresentation`; pointers borrow for the call.
@@ -36,6 +37,8 @@ unsafe extern "C" {
     );
     /// Releases a request the job never got to complete (VM shutting down).
     fn Bun__Clipboard__requestAbandon(request: *mut c_void);
+    /// Whether the JS thread cancelled this request (atomic; safe off-thread).
+    fn Bun__Clipboard__requestIsCancelled(request: *mut c_void) -> bool;
 }
 
 /// Serializes our own jobs; other processes can still race the clipboard.
@@ -134,11 +137,25 @@ impl AnyTaskJobCtx for ClipboardCtx {
                 }
             }
             Op::Write(items) => {
-                let borrowed: Vec<(Mime, &[u8])> =
-                    items.iter().map(|(m, b)| (*m, b.as_slice())).collect();
-                match platform::write_types(&borrowed) {
-                    Ok(()) => Outcome::Representations(Vec::new()),
-                    Err(unavailable) => Outcome::Failed(unavailable),
+                // A superseded write is cancelled on the JS thread; honoring it
+                // here, under the lock, keeps its AbortError honest (the write
+                // never reaches the OS). `then()` still runs; the settled
+                // promise ignores it.
+                // SAFETY: the handle's leaked ref keeps the request alive and
+                // the flag is atomic.
+                if self
+                    .request
+                    .as_ref()
+                    .is_some_and(|request| unsafe { Bun__Clipboard__requestIsCancelled(request.0) })
+                {
+                    Outcome::Representations(Vec::new())
+                } else {
+                    let borrowed: Vec<(Mime, &[u8])> =
+                        items.iter().map(|(m, b)| (*m, b.as_slice())).collect();
+                    match platform::write_types(&borrowed) {
+                        Ok(()) => Outcome::Representations(Vec::new()),
+                        Err(unavailable) => Outcome::Failed(unavailable),
+                    }
                 }
             }
         });

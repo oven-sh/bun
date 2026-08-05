@@ -322,6 +322,7 @@ void Clipboard::ItemWriter::schedulePlatformWrite(ClipboardItemData&& representa
     auto request = ClipboardRequest::create([protectedThis = Ref { *this }](JSC::JSGlobalObject&, std::span<const ClipboardRepresentation>, const String& failureMessage) mutable {
         protectedThis->didFinishPlatformWrite(failureMessage);
     });
+    m_platformWriteRequest = request.copyRef();
 
     scheduleClipboardWrite(*globalObject, WTF::move(request), representations);
 }
@@ -366,6 +367,10 @@ void Clipboard::ItemWriter::rejectWithValue(JSC::JSValue failureReason)
 
 void Clipboard::ItemWriter::invalidate()
 {
+    // A platform write already queued on the work pool would otherwise still
+    // land, making the AbortError below a lie.
+    if (RefPtr request = std::exchange(m_platformWriteRequest, nullptr))
+        request->cancel();
     if (RefPtr promise = std::exchange(m_promise, nullptr))
         promise->reject(ExceptionCode::AbortError);
     // Null m_clipboard first: releaseItems re-enters detachFromClipboard,
@@ -392,6 +397,7 @@ void Clipboard::ItemWriter::detachFromClipboard()
     // An in-flight read's completion bails on the nulled promise before
     // indexing into this.
     m_representationsToWrite = {};
+    m_platformWriteRequest = nullptr;
     RefPtr clipboard = m_clipboard.get();
     if (clipboard && clipboard->m_activeItemWriter.get() == this)
         clipboard->m_activeItemWriter = nullptr;

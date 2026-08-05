@@ -1614,6 +1614,57 @@ describe("bun test", () => {
     expect(stderr).toContain("1 pass");
     expect(exitCode).toBe(1);
   });
+
+  // https://github.com/oven-sh/bun/issues/36963
+  test.concurrent("two test files importing the same module with a syntax error", async () => {
+    using dir = tempDir("bun-test-shared-syntax-error", {
+      "lib.ts": `
+        export function f() {
+          const v = {b: {},),r,};
+        }
+      `,
+      "a.test.ts": `
+        import { f } from "./lib";
+        f();
+      `,
+      "b.test.ts": `
+        import { f } from "./lib";
+        f();
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // First file prints the individual parse errors; the second import of the
+    // same failed module rejects with JSC's cached-error duplicate, an
+    // AggregateError-typed instance without an `errors` property.
+    expect(stderr).toContain('Expected identifier but found ")"');
+    expect(stderr).toContain("errors building");
+    expect(exitCode).toBe(1);
+  });
+
+  // https://github.com/oven-sh/bun/issues/36963
+  test.concurrent("unhandled rejection with an AggregateError whose errors property was deleted", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const e = new AggregateError([new Error("inner")], "outer message"); delete e.errors; Promise.reject(e);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("outer message");
+    expect(exitCode).toBe(1);
+  });
 });
 
 function createTest(input?: string | (string | { filename: string; contents: string })[], filename?: string): string {

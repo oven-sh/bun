@@ -4755,7 +4755,17 @@ impl VirtualMachine {
         // once the AggregateError branch is taken).
         let global_ref = self.global();
 
-        if value.is_aggregate_error(global_ref) {
+        // `getErrorsProperty` is `getDirect` (own data prop, nothrow). It can
+        // return empty even for an AggregateError-typed instance: JSC's module
+        // loader replays a cached fetch error via `duplicateError`, which keeps
+        // the error type but not the `errors` property, and user code can
+        // `delete` it. `for_each` on an empty value derefs a null cell, so in
+        // that case fall through and print it as a plain error (#36963).
+        if value.is_aggregate_error(global_ref)
+            && !value
+                .get_errors_property(global_ref)
+                .is_empty_or_undefined_or_null()
+        {
             // Note: `JSValue::for_each` takes a C-ABI fn
             // pointer + erased ctx, so thread the captures through a struct.
             // The C trampoline erases lifetimes via `*mut c_void`; round-trip
@@ -4810,9 +4820,7 @@ impl VirtualMachine {
                 allow_ansi_color,
                 allow_side_effects,
             };
-            // `getErrorsProperty` is
-            // `getDirect` (own data prop, nothrow); `for_each` may throw, in
-            // which case the error is swallowed.
+            // `for_each` may throw, in which case the error is swallowed.
             let errors = value.get_errors_property(global_ref);
             let _ = errors.for_each(global_ref, (&raw mut ctx).cast(), agg_iter);
             return;

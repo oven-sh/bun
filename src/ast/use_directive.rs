@@ -13,7 +13,7 @@ pub enum UseDirective {
 
 impl UseDirective {
     pub fn parse(contents: &[u8]) -> Option<UseDirective> {
-        let truncated = strings::trim_left(contents, b" \t\n\r;");
+        let truncated = strings::trim_left(strings::without_utf8_bom(contents), b" \t\n\r;");
 
         const DIRECTIVE_LEN: usize = b"'use client';".len();
 

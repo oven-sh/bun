@@ -8,7 +8,11 @@ OBJ       := $(ROOT)/build/$(PROFILE)/obj/vendor
 VENDOR    := $(ROOT)/vendor
 
 CC        ?= clang
+# LSXPACK_MAX_STRLEN must match scripts/build/flags.ts: the linked
+# build/$(PROFILE)/obj/vendor/{lsquic,lsqpack,lshpack} objects are compiled
+# with the 32-bit lsxpack_strlen_t layout.
 CFLAGS    := -std=c11 -O3 -g -Wall -Wextra -Wno-unused-parameter \
+             -DLSXPACK_MAX_STRLEN=UINT32_MAX \
              -I$(VENDOR)/lsquic/include \
              -I$(VENDOR)/hdrhistogram/include \
              -I$(VENDOR)/boringssl/include

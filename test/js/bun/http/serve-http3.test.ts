@@ -525,6 +525,23 @@ describe("Bun.serve HTTP/3 adversarial", () => {
     });
   });
 
+  // A single ~60 KB value Huffman-encodes to ~45 KB, and the QPACK decoder
+  // reserves ~1.5x that, which used to hit quic.c's 64 KB prepare_decode
+  // ceiling and abort the whole connection with QPACK_DECOMPRESSION_FAILED.
+  test("single large request header value (>43 KB encoded) decodes without aborting the connection", async () => {
+    await withServer(async port => {
+      const big = Buffer.alloc(60000, "A").toString();
+      const res = await fetchH3(port, "/headers", { headers: { "x-big": big } });
+      expect(res.status).toBe(200);
+      const seen = (await res.json()) as Record<string, string>;
+      expect(seen["x-big"]?.length).toBe(60000);
+      expect(seen["x-big"]).toBe(big);
+      // The pooled session must still carry a follow-up request.
+      const after = await fetchH3(port, "/hello");
+      expect(await after.text()).toBe("hello over h3");
+    });
+  });
+
   test("8 MB POST body echoes byte-exact", async () => {
     await withServer(async port => {
       // Patterned (not crypto-random) so the test is deterministic but still

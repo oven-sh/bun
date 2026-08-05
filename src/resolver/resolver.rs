@@ -2109,9 +2109,7 @@ impl<'a> Resolver<'a> {
             return ResultUnion::NotFound;
         };
 
-        // The join normalizes "."/".." segments away; re-append the separator
-        // so these resolve like "./" (directory index, never a sibling file),
-        // matching Node's trailingSlashRegex in Module._findPath.
+        // Re-append the separator the join stripped so "." resolves like "./".
         let abs_path: &[u8] = if Self::import_path_names_directory(import_path)
             && !strings::ends_with_char(abs_path, SEP)
         {

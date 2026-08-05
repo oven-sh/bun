@@ -174,13 +174,8 @@ export function registerNativeCall(
   return id;
 }
 
-/**
- * Stable description of the `$lazy` ID space as registered so far. Module
- * preprocessing registers every call site a module file can bake in, so when
- * called after that phase this pins the ID → native-function mapping those
- * files rely on. Part of the generation stamp bundle-modules.ts writes into
- * each hot-reloadable JS file.
- */
+/** The `$lazy` ID → native-function mapping registered so far, for the
+ * generation stamp bundle-modules.ts writes into hot-reloadable JS files. */
 export function getJS2NativeSignature(): string {
   return JSON.stringify(nativeCalls.map(call => [call.id, call.type, call.filename, call.symbol]));
 }

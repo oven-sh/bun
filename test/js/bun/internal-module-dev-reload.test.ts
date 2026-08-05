@@ -70,6 +70,23 @@ describe.skipIf(!hasDynamicJS)("builtin JS hot-reload generation guard", () => {
     }
   });
 
+  test("a valid stamp that is not the final line does not count", async () => {
+    const original = fs.readFileSync(osJsPath);
+    try {
+      // The valid stamp becomes a decoy: a foreign stamp follows it as the
+      // real last line, as if a different codegen run appended to the file.
+      const foreignStamp = "// @bun-internal-module-generation=" + "0".repeat(16) + "\n";
+      fs.writeFileSync(osJsPath, Buffer.concat([original, Buffer.from(foreignStamp, "latin1")]));
+
+      const { stdout, stderr, exitCode } = await requireOsInChild();
+      expect(stderr).toContain(SKEW_MESSAGE);
+      expect(stdout).not.toContain("function");
+      expect(exitCode).not.toBe(0);
+    } finally {
+      fs.writeFileSync(osJsPath, original);
+    }
+  });
+
   test("a truncated file (codegen mid-write) is rejected, not misparsed", async () => {
     const original = fs.readFileSync(osJsPath);
     try {

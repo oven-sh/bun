@@ -1336,6 +1336,9 @@ pub struct H2FrameParser {
     /// nghttp2 servers reject a GOAWAY naming a client-initiated id with a connection
     /// PROTOCOL_ERROR (node's last_proc_stream_id semantics).
     last_peer_stream_id: Cell<u32>,
+    /// Highest locally-initiated stream id allocated (own parity: odd on a client, even on a
+    /// server). The parity-aware half of the engine's §5.1 idle-stream test.
+    last_local_stream_id: Cell<u32>,
     // Stream id whose header block is awaiting CONTINUATION frames
     // (RFC 9113 §4.3); 0 when none.
     expecting_continuation: Cell<u32>,
@@ -5316,10 +5319,12 @@ impl H2FrameParser {
             self.last_stream_id.set(stream_identifier);
         }
         let peer_parity: u32 = if self.is_server.get() { 1 } else { 0 };
-        if stream_identifier % 2 == peer_parity
-            && stream_identifier > self.last_peer_stream_id.get()
-        {
-            self.last_peer_stream_id.set(stream_identifier);
+        if stream_identifier % 2 == peer_parity {
+            if stream_identifier > self.last_peer_stream_id.get() {
+                self.last_peer_stream_id.set(stream_identifier);
+            }
+        } else if stream_identifier > self.last_local_stream_id.get() {
+            self.last_local_stream_id.set(stream_identifier);
         }
 
         // new stream open
@@ -6117,10 +6122,23 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.streams.get().contains_key(&stream_id)
     }
 
-    fn highest_started_stream_id(&self) -> u32 {
-        // handle_received_stream_id raises this for every stream registered on this side
-        // (including locally-initiated ones) and eviction never lowers it.
-        self.last_stream_id.get()
+    fn highest_local_stream_id(&self) -> u32 {
+        self.last_local_stream_id.get()
+    }
+
+    fn take_pending_stream_send_consumed(&self, stream_id: u32) -> u64 {
+        let mut total = 0u64;
+        self.pending_stream_send_consumed.with_mut(|v| {
+            v.retain(|&(id, n)| {
+                if id == stream_id {
+                    total += n;
+                    false
+                } else {
+                    true
+                }
+            });
+        });
+        total
     }
 
     fn is_stream_reading(&self, stream_id: u32) -> bool {
@@ -9775,6 +9793,7 @@ impl H2FrameParser {
             strict_single_value_fields: Cell::new(true),
             last_stream_id: Cell::new(0),
             last_peer_stream_id: Cell::new(0),
+            last_local_stream_id: Cell::new(0),
             expecting_continuation: Cell::new(0),
             is_server: Cell::new(false),
             preface_received_len: Cell::new(0),

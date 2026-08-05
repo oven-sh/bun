@@ -370,13 +370,6 @@ describe("CONTINUATION (checklist §3,§7)", () => {
 });
 
 describe("SETTINGS value ranges (checklist §6.5.2)", () => {
-  function settingsPayload(id: number, value: number): Buffer {
-    const b = Buffer.alloc(6);
-    b.writeUInt16BE(id, 0);
-    b.writeUInt32BE(value >>> 0, 2);
-    return b;
-  }
-
   test("ENABLE_PUSH with a value other than 0/1 is a PROTOCOL_ERROR", async () => {
     const c = await RawH2.connect(port);
     c.sendPreface();
@@ -1247,6 +1240,235 @@ describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
     );
     expect(dispatched).toBe(true);
     expect(frames.find(f => f.type === FrameType.RST_STREAM && f.streamId === 1)).toBeUndefined();
+  });
+});
+
+// A hostile server sends the violating frame(s) to a connected client; the helper returns what
+// the client put on the wire and every error it surfaced so each case can assert the RFC 9113
+// clause independently (verified against node v26.3.0).
+async function hostileServerProbe(
+  inject: (raw: RawH2Server) => void,
+  { requests = 1 }: { requests?: number } = {},
+): Promise<{
+  sessionError: NodeJS.ErrnoException | null;
+  streamError: NodeJS.ErrnoException | null;
+  streamRstCode: number | null;
+  gotResponse: Record<string, string> | null;
+  frames: Frame[];
+}> {
+  const raw = await RawH2Server.listen();
+  const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+  let sessionError: NodeJS.ErrnoException | null = null;
+  let streamError: NodeJS.ErrnoException | null = null;
+  let streamRstCode: number | null = null;
+  let gotResponse: Record<string, string> | null = null;
+  client.on("error", (e: NodeJS.ErrnoException) => (sessionError ??= e));
+  let req: http2.ClientHttp2Stream | undefined;
+  const reqClosed = Promise.withResolvers<void>();
+  for (let i = 0; i < requests; i++) {
+    req = client.request({ ":path": "/" });
+    req.on("response", h => (gotResponse = h as Record<string, string>));
+    req.on("error", (e: NodeJS.ErrnoException) => (streamError ??= e));
+    req.end();
+  }
+  if (req) {
+    req.on("close", () => {
+      streamRstCode = req!.rstCode ?? null;
+      reqClosed.resolve();
+    });
+  } else {
+    reqClosed.resolve();
+  }
+  try {
+    // Complete the handshake before injecting so the violation is unambiguously post-preface.
+    await raw.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+    raw.sendFrame(FrameType.SETTINGS, 0, 0);
+    raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+    if (requests > 0) await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 2 * requests - 1);
+    raw.frames.length = 0;
+    const rawSocketClosed = new Promise<null>(resolve => raw.socket!.on("close", () => resolve(null)));
+    inject(raw);
+    // PING barrier: once the ACK (or the GOAWAY/close that pre-empts it) arrives, the client has
+    // fully processed the injected frame(s) and emitted any error.
+    raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+    await Promise.race([
+      raw.waitFor(f => f.type === FrameType.GOAWAY || (f.type === FrameType.PING && (f.flags & 0x1) !== 0)),
+      rawSocketClosed,
+    ]);
+    await Promise.race([reqClosed.promise, rawSocketClosed, new Promise(r => setImmediate(r))]);
+    return { sessionError, streamError, streamRstCode, gotResponse, frames: raw.frames.slice() };
+  } finally {
+    client.destroy();
+    raw.close();
+  }
+}
+
+function settingsPayload(id: number, value: number): Buffer {
+  const b = Buffer.alloc(6);
+  b.writeUInt16BE(id, 0);
+  b.writeUInt32BE(value >>> 0, 2);
+  return b;
+}
+
+function u32be(v: number): Buffer {
+  const b = Buffer.alloc(4);
+  b.writeUInt32BE(v >>> 0, 0);
+  return b;
+}
+
+function hpackField(name: string, value: string): Buffer {
+  return Buffer.concat([Buffer.from([0x10]), hpackLiteral(name), hpackLiteral(value)]);
+}
+
+describe("client rejects server-side protocol violations (RFC 9113)", () => {
+  // Each `test.each` scenario is a connection-level violation the client must GOAWAY for
+  // (node surfaces ERR_HTTP2_ERROR via NghttpError, session is destroyed).
+  test.concurrent.each([
+    [
+      "SETTINGS_ENABLE_PUSH=1 from server (§8.4)",
+      { requests: 0 },
+      (raw: RawH2Server) => raw.sendFrame(FrameType.SETTINGS, 0, 0, settingsPayload(0x2, 1)),
+      ErrorCode.PROTOCOL_ERROR,
+    ],
+    [
+      "DATA on an idle stream (§5.1)",
+      {},
+      (raw: RawH2Server) => raw.sendFrame(FrameType.DATA, 0x1, 3, Buffer.from("x")),
+      ErrorCode.PROTOCOL_ERROR,
+    ],
+    [
+      "HEADERS on an idle odd stream the client never opened (§5.1)",
+      {},
+      (raw: RawH2Server) => raw.sendFrame(FrameType.HEADERS, 0x5, 3, Buffer.from([0x88])),
+      ErrorCode.PROTOCOL_ERROR,
+    ],
+    [
+      "HEADERS on an idle even stream never promised (§5.1)",
+      {},
+      (raw: RawH2Server) => raw.sendFrame(FrameType.HEADERS, 0x5, 2, Buffer.from([0x88])),
+      ErrorCode.PROTOCOL_ERROR,
+    ],
+    [
+      // Parity-aware idle: stream 2 is still idle even when it sits below the client's own
+      // highest odd id (nghttp2's session_detect_idle_stream compares per parity).
+      "HEADERS on idle even stream 2 with two open requests (§5.1)",
+      { requests: 2 },
+      (raw: RawH2Server) => raw.sendFrame(FrameType.HEADERS, 0x5, 2, Buffer.from([0x88])),
+      ErrorCode.PROTOCOL_ERROR,
+    ],
+    [
+      "RST_STREAM on idle even stream 2 with two open requests (§5.1)",
+      { requests: 2 },
+      (raw: RawH2Server) => raw.sendFrame(FrameType.RST_STREAM, 0, 2, u32be(ErrorCode.CANCEL)),
+      ErrorCode.PROTOCOL_ERROR,
+    ],
+    [
+      "WINDOW_UPDATE on an idle stream (§5.1)",
+      {},
+      (raw: RawH2Server) => raw.sendFrame(FrameType.WINDOW_UPDATE, 0, 3, u32be(1)),
+      ErrorCode.PROTOCOL_ERROR,
+    ],
+    [
+      "WINDOW_UPDATE overflowing a stream's send window (§6.9.1)",
+      {},
+      (raw: RawH2Server) => raw.sendFrame(FrameType.WINDOW_UPDATE, 0, 1, u32be(0x7fffffff)),
+      ErrorCode.FLOW_CONTROL_ERROR,
+    ],
+    [
+      "HPACK dynamic-table-size-update after the first field (RFC 7541 §4.2)",
+      {},
+      (raw: RawH2Server) =>
+        raw.sendFrame(
+          FrameType.HEADERS,
+          0x5,
+          1,
+          Buffer.concat([Buffer.from([0x88]), Buffer.from([0x20]), hpackField("x-a", "b")]),
+        ),
+      ErrorCode.COMPRESSION_ERROR,
+    ],
+  ] as const)("%s is a connection error", async (_, opts, inject, wireCode) => {
+    const { sessionError, gotResponse, frames } = await hostileServerProbe(inject, opts);
+    expect(sessionError?.code).toBe("ERR_HTTP2_ERROR");
+    expect(gotResponse).toBeNull();
+    const goaway = frames.find(f => f.type === FrameType.GOAWAY);
+    expect(goaway).toBeDefined();
+    expect(goaway!.payload.readUInt32BE(4)).toBe(wireCode);
+  });
+
+  // §8.3.2/§8.1: a response block is malformed (stream-level PROTOCOL_ERROR, RST_STREAM, no
+  // 'response' event) if :status is missing, a request pseudo-header is present, or a 1xx
+  // status carries END_STREAM.
+  test.concurrent.each([
+    ["missing :status", hpackField("x-only", "hi")],
+    ["with a request pseudo-header (:method)", Buffer.concat([Buffer.from([0x88]), hpackField(":method", "GET")])],
+    ["with a request pseudo-header (:path)", Buffer.concat([Buffer.from([0x88]), hpackField(":path", "/")])],
+    ["with a 1xx status and END_STREAM", hpackField(":status", "100")],
+  ] as const)("a response block %s is reset with PROTOCOL_ERROR and never delivered (§8.3.2)", async (_, block) => {
+    const { sessionError, streamError, streamRstCode, gotResponse, frames } = await hostileServerProbe(raw =>
+      raw.sendFrame(FrameType.HEADERS, 0x5, 1, block),
+    );
+    expect(gotResponse).toBeNull();
+    expect(streamRstCode).toBe(ErrorCode.PROTOCOL_ERROR);
+    expect(streamError?.code).toBe("ERR_HTTP2_STREAM_ERROR");
+    // The connection survives: no session error, no GOAWAY, just a stream RST.
+    expect(sessionError).toBeNull();
+    const rst = frames.find(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+    expect(rst?.payload.readUInt32BE(0)).toBe(ErrorCode.PROTOCOL_ERROR);
+    expect(frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+  });
+
+  // Positive control: none of the validation above rejects a well-formed response.
+  test.concurrent("a well-formed response is still delivered", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      const response = new Promise<any>(resolve => req.on("response", resolve));
+      req.end();
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      raw.sendFrame(FrameType.HEADERS, 0x5, 1, Buffer.concat([Buffer.from([0x88]), hpackField("x-a", "b")]));
+      const headers = await response;
+      expect(headers[":status"]).toBe(200);
+      expect(headers["x-a"]).toBe("b");
+      expect(raw.frames.find(f => f.type === FrameType.RST_STREAM || f.type === FrameType.GOAWAY)).toBeUndefined();
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  // §6.9.1 positive control: a WINDOW_UPDATE that brings a stream's send window to exactly
+  // 2^31-1 after the client has already sent body bytes is legal. The overflow check must
+  // account for those already-sent bytes (they are what the peer is replenishing).
+  test.concurrent("a stream WINDOW_UPDATE replenishing already-sent bytes to the 2^31-1 cap is accepted", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    let sessionError: unknown = null;
+    client.on("error", e => (sessionError = e));
+    try {
+      await raw.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+      // Advertise the maximum initial window so the overflow boundary is exactly the bytes sent.
+      raw.sendFrame(FrameType.SETTINGS, 0, 0, settingsPayload(0x4, 0x7fffffff));
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      const req = client.request({ ":path": "/", ":method": "POST" });
+      req.on("error", () => {});
+      req.write(Buffer.alloc(8000, 0x61));
+      await raw.waitFor(f => f.type === FrameType.DATA && f.streamId === 1);
+      raw.frames.length = 0;
+      // Replenish the 8000 bytes the server has received: peer window 2^31-1 - 8000 + 8000 = 2^31-1.
+      raw.sendFrame(FrameType.WINDOW_UPDATE, 0, 1, u32be(8000));
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      expect(sessionError).toBeNull();
+      expect(raw.frames.find(f => f.type === FrameType.GOAWAY || f.type === FrameType.RST_STREAM)).toBeUndefined();
+    } finally {
+      client.destroy();
+      raw.close();
+    }
   });
 });
 

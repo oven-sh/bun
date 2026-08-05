@@ -698,7 +698,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 111,
+    task_tag::COUNT == 112,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 

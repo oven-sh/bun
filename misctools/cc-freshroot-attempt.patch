@@ -1,0 +1,93 @@
+diff --git a/src/ink/ink.tsx b/src/ink/ink.tsx
+index e7c70573fcf..48e03185524 100644
+--- a/src/ink/ink.tsx
++++ b/src/ink/ink.tsx
+@@ -3645,6 +3645,26 @@ export default class Ink {
+     this.restoreStderr = undefined
+   }
+ 
++  /**
++   * Heap-image restore: stop driving the terminal but do NOT unmount the React tree — the imaged
++   * fiber/layout tree is simply abandoned (never written again) and a fresh root takes over.
++   */
++  abandonForImageRestore(): void {
++    if (this.isUnmounted) {
++      return
++    }
++    this.isExiting = true
++    this.isUnmounted = true
++    if (this.srStartupQuietTimer !== null) {
++      clearTimeout(this.srStartupQuietTimer)
++      this.srStartupQuietTimer = null
++    }
++    this.unsubscribeExit()
++    this.restoreConsolePatches()
++    this.unsubscribeTTYHandlers?.()
++    this.suspendStdin()
++  }
++
+   unmount(error?: Error | number | null): void {
+     if (this.isUnmounted) {
+       return
+diff --git a/src/ink/root.ts b/src/ink/root.ts
+index b70ba88222e..f31a61975f0 100644
+--- a/src/ink/root.ts
++++ b/src/ink/root.ts
+@@ -80,6 +80,8 @@ export type Instance = {
+  * can be reused for multiple sequential screens.
+  */
+ export type Root = {
++  /** Heap-image restore: detach from the terminal without unmounting (see Ink.abandonForImageRestore). */
++  abandonForImageRestore?: () => void
+   render: (node: ReactNode) => void
+   unmount: () => void
+   waitUntilExit: () => Promise<void>
+@@ -173,6 +175,10 @@ export async function createRoot({
+     render: node => instance.render(node),
+     unmount: () => instance.unmount(),
+     waitUntilExit: () => instance.waitUntilExit(),
++    abandonForImageRestore: () => {
++      instance.abandonForImageRestore()
++      if (instances.get(stdout) === instance) instances.delete(stdout)
++    },
+   }
+ }
+ 
+diff --git a/src/interactiveHelpers.tsx b/src/interactiveHelpers.tsx
+index 49e40cb0fd5..6475b2e2982 100644
+--- a/src/interactiveHelpers.tsx
++++ b/src/interactiveHelpers.tsx
+@@ -1,5 +1,7 @@
+ import { feature } from 'bun:bundle'
+ import { openSync, writeSync } from 'fs'
++import { createRoot } from './ink/root.js'
++import { snapshotEvents } from './utils/snapshot.js'
+ import type * as React from 'react'
+ import { logEvent } from 'src/services/analytics/index.js'
+ import { fromEnum } from 'src/services/analytics/safeString.js'
+@@ -355,7 +357,24 @@ export async function renderAndRun(
+ ): Promise<void> {
+   root.render(element)
+   startDeferredPrefetches()
+-  await root.waitUntilExit()
++  // Resumed from a heap image: abandon the imaged UI tree (never touched again, so its pages stay clean) and mount fresh.
++  let current = root
++  const exited = new Promise<void>(resolveExit => {
++    const follow = (r: Root) => void r.waitUntilExit().then(() => { if (current === r) resolveExit() })
++    follow(root)
++    if (!process.env.CLAUDE_CODE_SNAPSHOT_NO_REMOUNT) {
++      snapshotEvents.on('restore', () => {
++        void (async () => {
++          current.abandonForImageRestore?.()
++          const fresh = await createRoot(getBaseRenderOptions(false))
++          current = fresh
++          fresh.render(element)
++          follow(fresh)
++        })()
++      })
++    }
++  })
++  await exited
+   await gracefulShutdown(0)
+ }
+ 

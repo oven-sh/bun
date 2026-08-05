@@ -67,6 +67,7 @@ const {
   kOutHeaders,
   onDataIncomingMessage,
   validateMsecs,
+  http1ServerPipeline,
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
@@ -1722,28 +1723,7 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
     // Pipelined responses (and their requests) that were still queued behind
     // the in-flight response are aborted, like Node.js's socketOnClose
     // (abortIncoming + abortOutgoing).
-    const pipelined = this[kPipelinedResponses];
-    const pipelinedLength = pipelined ? pipelined.length : 0;
-    if (pipelinedLength) {
-      this[kPipelinedResponses] = undefined;
-      for (let i = 0; i < pipelinedLength; i++) {
-        const queuedRes = pipelined[i];
-        const queuedReq = queuedRes.req;
-        if (queuedReq && !queuedReq.destroyed) {
-          queuedReq[kHandle] = undefined;
-          if (queuedReq.listenerCount("error") > 0) {
-            queuedReq.destroy(new ConnResetException("aborted"));
-          } else {
-            queuedReq.destroy();
-          }
-        }
-        if (!queuedRes.destroyed) {
-          queuedRes.destroy();
-        } else if (!queuedRes._closed) {
-          process.nextTick(emitCloseNT, queuedRes);
-        }
-      }
-    }
+    abortQueuedPipelinedResponses(this);
 
     // Node's server connection socket emits 'close' whenever the TCP
     // connection closes, even with no request in flight (this also covers
@@ -2572,6 +2552,35 @@ function queuePipelinedResponse(socket, res, isAncient) {
     socket,
   };
   (socket[kPipelinedResponses] ??= []).push(res);
+}
+
+// When the connection dies with pipelined responses still queued behind the
+// in-flight one, abort them and their requests, like Node.js's socketOnClose
+// (abortIncoming). Runs from the native socket's close path and from the
+// http1 fallback's socket 'close' listener.
+function abortQueuedPipelinedResponses(socket) {
+  const pipelined = socket[kPipelinedResponses];
+  const pipelinedLength = pipelined ? pipelined.length : 0;
+  if (pipelinedLength) {
+    socket[kPipelinedResponses] = undefined;
+    for (let i = 0; i < pipelinedLength; i++) {
+      const queuedRes = pipelined[i];
+      const queuedReq = queuedRes.req;
+      if (queuedReq && !queuedReq.destroyed) {
+        queuedReq[kHandle] = undefined;
+        if (queuedReq.listenerCount("error") > 0) {
+          queuedReq.destroy(new ConnResetException("aborted"));
+        } else {
+          queuedReq.destroy();
+        }
+      }
+      if (!queuedRes.destroyed) {
+        queuedRes.destroy();
+      } else if (!queuedRes._closed) {
+        process.nextTick(emitCloseNT, queuedRes);
+      }
+    }
+  }
 }
 
 function advanceResponsePipeline(server, socket) {
@@ -4034,11 +4043,14 @@ function ensureReadableStreamController(run) {
   );
 }
 
+// Share the pipelining machinery with internal/http1_server_fallback through
+// internal/http instead of the user-visible module exports.
+http1ServerPipeline.queuePipelinedResponse = queuePipelinedResponse;
+http1ServerPipeline.advanceResponsePipeline = advanceResponsePipeline;
+http1ServerPipeline.abortQueuedPipelinedResponses = abortQueuedPipelinedResponses;
+
 export default {
   Server,
   ServerResponse,
   kConnectionsCheckingInterval,
-  // Pipelining internals shared with internal/http1_server_fallback.
-  queuePipelinedResponse,
-  advanceResponsePipeline,
 };

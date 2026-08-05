@@ -4217,3 +4217,31 @@ it("connectionListener queues pipelined responses like Node", async () => {
     expect(out.match(/HTTP\/1\.1 200/g)).toHaveLength(3);
   }
 });
+
+it("connectionListener aborts queued pipelined responses when the connection dies", async () => {
+  // Like Node's socketOnClose (abortIncoming) and the native socket's close
+  // path: a response still queued behind the in-flight one when the socket
+  // closes is destroyed together with its request, so both emit 'close'
+  // instead of hanging forever.
+  const closedEvents: string[] = [];
+  const { promise: aborted, resolve: onAborted } = Promise.withResolvers<void>();
+  let closesPending = 2;
+  const onQueuedClose = (tag: string) => {
+    closedEvents.push(tag);
+    if (--closesPending === 0) onAborted();
+  };
+  const server = createServer((req, res) => {
+    // /a never responds, so its response keeps the socket and /b stays queued.
+    if (req.url !== "/b") return;
+    req.on("close", () => onQueuedClose("reqB"));
+    res.on("close", () => onQueuedClose("resB"));
+    // Kill the connection while /b is queued behind /a.
+    serverSide.destroy();
+  });
+  const [clientSide, serverSide] = duplexPair();
+  server.emit("connection", serverSide);
+  clientSide.write("GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n");
+  await aborted;
+  expect(closedEvents.sort()).toEqual(["reqB", "resB"]);
+  clientSide.destroy();
+});

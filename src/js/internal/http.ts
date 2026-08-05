@@ -101,6 +101,18 @@ const kCloseCallback = Symbol("closeCallback");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
+// node:_http_server's pipelined-response machinery, registered onto this
+// object when that module initializes. internal/http1_server_fallback drives
+// the same per-connection queue over foreign duplex sockets through it,
+// without putting the helpers on the user-visible node:_http_server surface.
+// The fallback requires node:http (which loads _http_server) before reading
+// these, so they are always populated by then.
+const http1ServerPipeline: {
+  queuePipelinedResponse?: (socket: unknown, res: unknown, isAncient: boolean) => void;
+  advanceResponsePipeline?: (server: unknown, socket: unknown) => void;
+  abortQueuedPipelinedResponses?: (socket: unknown) => void;
+} = {};
+
 export const enum ClientRequestEmitState {
   socket = 1,
   prefinish = 2,
@@ -618,6 +630,7 @@ export {
   headerStateSymbol,
   headersSymbol,
   headersTuple,
+  http1ServerPipeline,
   isAbortError,
   isTlsSymbol,
   kAbortController,

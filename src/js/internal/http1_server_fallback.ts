@@ -235,8 +235,9 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
 function connectionListenerHTTP1(server, socket, options) {
   const http = require("node:http");
   const { HTTPParser, prepareError, calculateLenientFlags, continueExpression } = require("node:_http_common");
-  const { queuePipelinedResponse, advanceResponsePipeline } = require("node:_http_server");
-  const { kHandle: kHttp1ResponseHandle } = require("internal/http");
+  const { kHandle: kHttp1ResponseHandle, http1ServerPipeline } = require("internal/http");
+  // Populated by node:_http_server, which the require("node:http") above loads.
+  const { queuePipelinedResponse, advanceResponsePipeline, abortQueuedPipelinedResponses } = http1ServerPipeline;
   const { allMethods } = process.binding("http_parser");
 
   const http1Options = options.http1Options || {};
@@ -455,6 +456,10 @@ function connectionListenerHTTP1(server, socket, options) {
   socket.once("end", onHttp1SocketEnd);
   socket.once("close", () => {
     connections.delete(socket);
+    // Like the native socket's close path: responses (and their requests)
+    // still queued behind the in-flight one when the connection dies are
+    // aborted, so they emit 'close' instead of hanging forever.
+    abortQueuedPipelinedResponses(socket);
     try {
       parser.close();
     } catch {}

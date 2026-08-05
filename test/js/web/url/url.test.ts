@@ -258,6 +258,31 @@ describe("url", () => {
     expect(params.get("second")).toBe("replaced");
     expect(params.get("third")).toBeNull();
   });
+
+  it("URLSearchParams throws ERR_INVALID_TUPLE for non-pair sequence entries", () => {
+    const capture = (fn: () => void) => {
+      let err: any;
+      try {
+        fn();
+      } catch (e) {
+        err = e;
+      }
+      return err;
+    };
+
+    for (const init of [[[1]], [[]], [["a", "b", "c"]], [["a", "b"], ["c"]]] as any[]) {
+      const e = capture(() => new URLSearchParams(init));
+      expect(e).toBeInstanceOf(TypeError);
+      expect({ name: e.name, code: e.code, message: e.message }).toEqual({
+        name: "TypeError",
+        code: "ERR_INVALID_TUPLE",
+        message: "Each query pair must be an iterable [name, value] tuple",
+      });
+    }
+
+    // valid pair still works
+    expect(new URLSearchParams([["a", "b"]]).toString()).toBe("a=b");
+  });
 });
 
 describe("url.searchParams lazy href sync", () => {

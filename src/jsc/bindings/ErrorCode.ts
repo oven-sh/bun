@@ -151,6 +151,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_INVALID_RETURN_VALUE", TypeError],
   ["ERR_INVALID_STATE", Error, undefined, TypeError, RangeError],
   ["ERR_INVALID_THIS", TypeError],
+  ["ERR_INVALID_TUPLE", TypeError],
   ["ERR_INVALID_URI", URIError],
   ["ERR_INVALID_URL_SCHEME", TypeError],
   ["ERR_INVALID_URL", TypeError],

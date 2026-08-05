@@ -584,3 +584,26 @@ it("should run a bun-create postinstall task that starts with 'bun '", async () 
   expect(await Bun.file(join(String(dir), "dest", "marker.txt")).text()).toBe("ran");
   expect(exitCode).toBe(0);
 });
+
+// The synchronous git path (no dependencies) set skip_git to the git
+// *success* instead of its negation, so the final message was suppressed on
+// success and printed when git was missing.
+it("should print the git message for a template without dependencies", async () => {
+  using dir = tempDir("create-no-deps-git", {
+    "bun-create/tmpl/index.js": "// hi\n",
+    "bun-create/tmpl/package.json": JSON.stringify({ name: "tmpl", version: "1.0.0" }),
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "create", "tmpl", join(String(dir), "dest")],
+    cwd: String(dir),
+    env: { ...env, BUN_CREATE_DIR: join(String(dir), "bun-create") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).not.toContain("error:");
+  expect(out).toContain("A local git repository was created for you.");
+  expect(exitCode).toBe(0);
+});

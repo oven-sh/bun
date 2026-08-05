@@ -88,9 +88,8 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
     debug_assert_eq!(argv.len(), total);
 
     let mut argv: &[&[u8]] = &argv;
-    // A task starting with `bun ` runs with bun itself instead of `<exe> run`.
-    // The literal `bun` from the task string is display-only: posix spawn does
-    // no PATH lookup, so exec the absolute self path instead.
+    // `bun `-prefixed tasks run with bun itself; posix spawn does no PATH
+    // lookup, so exec the absolute self path (the printed argv keeps `bun`).
     let mut exec_argv0: Option<&[u8]> = None;
     if let Some(ref client) = npm_client {
         if strings::starts_with(task, b"bun ") {
@@ -1116,7 +1115,7 @@ impl CreateCommand {
                 if created {
                     GitHandler::print_timing();
                 }
-                create_options.skip_git = created;
+                create_options.skip_git = !created;
             }
         }
 
@@ -2456,9 +2455,8 @@ impl GitHandler {
         outcome
     }
 
-    // Printed from the main thread (inline for the synchronous path, after
-    // `wait()` for the concurrent path) so the timing line cannot interleave
-    // with a postinstall task's output.
+    // Always called from the main thread so the timing line cannot
+    // interleave with postinstall output.
     fn print_timing() {
         bun_core::pretty_error!("\n");
         Output::print_start_end(0, GIT_ELAPSED_NS.load(Ordering::Acquire) as i128);

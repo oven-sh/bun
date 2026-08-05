@@ -1523,6 +1523,19 @@ BuildArtifact (entry-point) {
 
 </CodeGroup>
 
+## Reproducible builds
+
+For a given version of Bun, `bun build` output is deterministic: building the same sources with the same configuration produces byte-identical bundles, sourcemaps, and assets on every run, no matter which directory the project is built from. This is what makes build outputs safe to cache and compare across machines, for example in remote caching systems or reproducible-build checks.
+
+The guarantee rests on a few properties of the output:
+
+- **No timestamps.** Build output never embeds wall-clock time, so there is no `SOURCE_DATE_EPOCH` equivalent to configure.
+- **No absolute paths.** Sourcemap `sources` are relative paths, and the metafile's `inputs` and `outputs` keys are relative to the build's working directory.
+- **Content-derived hashes.** `[hash]` placeholders in output filenames, artifact `hash` values, and the sourcemap `debugId` are computed from output content, not from the build environment.
+- **Deterministic ordering.** Chunks, sourcemap entries, and the metafile's `inputs` (sorted by path) are emitted in a stable order that does not depend on filesystem layout or parallel scheduling.
+
+Anything the build embeds from the environment is part of the input: `define` values, environment variables inlined via the `env` option, and `banner`/`footer` text all change the output when they change. Executables produced by `--compile` embed the Bun runtime itself and are outside this guarantee.
+
 ## Bytecode
 
 The `bytecode: boolean` option generates bytecode for any JavaScript/TypeScript entrypoints, which can greatly improve startup times for large applications. Requires `"target": "bun"` and a matching version of Bun.

@@ -229,14 +229,12 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
         }
     }
 
-    // Write inputs
-    let mut source_index: u32 = 0;
-    while (source_index as usize) < sources.len() {
-        // (defer-style increment moved to end of loop body)
-        let si = source_index;
-        source_index += 1;
-        let source_index = si;
-
+    // Write inputs sorted by pretty path. Source indices are assigned while
+    // draining a hash map keyed by absolute paths, so index order varies with
+    // the directory the project lives in; emitting in index order would make
+    // metafile bytes differ between checkouts of the same project.
+    let mut ordered_inputs: Vec<u32> = Vec::with_capacity(sources.len());
+    for source_index in 0..sources.len() as u32 {
         if !seen_sources.is_set(source_index as usize) {
             continue;
         }
@@ -247,14 +245,23 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
         }
 
         let source = &sources[source_index as usize];
-        if source.path.text.is_empty() {
+        if source.path.text.is_empty() || source.path.pretty.is_empty() {
             continue;
         }
 
+        ordered_inputs.push(source_index);
+    }
+    ordered_inputs.sort_unstable_by(|&a, &b| {
+        sources[a as usize]
+            .path
+            .pretty
+            .cmp(sources[b as usize].path.pretty)
+            .then(a.cmp(&b))
+    });
+
+    for &source_index in &ordered_inputs {
+        let source = &sources[source_index as usize];
         let path = source.path.pretty;
-        if path.is_empty() {
-            continue;
-        }
 
         if !first_input {
             j.push_static(b",");

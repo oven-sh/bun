@@ -35,11 +35,11 @@ void SecretKeyJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
     m_result = WTF::move(key);
 }
 
-extern "C" uint32_t Bun__SecretKeyJobCtx__takeCallbackArgs(SecretKeyJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, EncodedJSValue* args)
+extern "C" void Bun__SecretKeyJobCtx__runFromJS(SecretKeyJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSCallbackArgs* out)
 {
-    return ctx->takeCallbackArgs(lexicalGlobalObject, args);
+    *out = ctx->runFromJS(lexicalGlobalObject);
 }
-uint32_t SecretKeyJobCtx::takeCallbackArgs(JSGlobalObject* lexicalGlobalObject, EncodedJSValue* args)
+JSCallbackArgs SecretKeyJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
 {
     VM& vm = lexicalGlobalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
@@ -47,21 +47,18 @@ uint32_t SecretKeyJobCtx::takeCallbackArgs(JSGlobalObject* lexicalGlobalObject, 
 
     if (!m_result) {
         JSObject* err = createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "key generation failed"_s);
-        RETURN_IF_EXCEPTION(scope, 0);
-        args[0] = JSValue::encode(err);
-        return 1;
+        RETURN_IF_EXCEPTION(scope, {});
+        return { err };
     }
 
     KeyObject keyObject = KeyObject::create(WTF::move(*m_result));
 
     Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, 0);
+    RETURN_IF_EXCEPTION(scope, {});
     JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTF::move(keyObject));
-    RETURN_IF_EXCEPTION(scope, 0);
+    RETURN_IF_EXCEPTION(scope, {});
 
-    args[0] = JSValue::encode(jsNull());
-    args[1] = JSValue::encode(secretKey);
-    return 2;
+    return { jsNull(), secretKey };
 }
 
 extern "C" void Bun__SecretKeyJobCtx__deinit(SecretKeyJobCtx* ctx)

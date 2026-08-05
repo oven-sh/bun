@@ -57,17 +57,12 @@ pub unsafe fn dispatch_erased(ptr: *mut ()) -> JsResult<()> {
     entry(ptr)
 }
 
-/// Free a queued job at VM shutdown without running its completion. The ctx
-/// `Drop` releases what it owns (native resources, JSC handles) — it must run
-/// while the VM is still live, which is why
-/// `release_queued_tasks_for_shutdown` claims this tag instead of leaving the
-/// job parked in the queue (where a C++-side ctx would strand its resources
-/// past the leak check).
+/// Free a queued job at VM shutdown without running its completion; the ctx
+/// `Drop` needs the still-live VM to release its JSC handles and resources.
 ///
 /// # Safety
-/// `ptr` must be a live `*mut AnyTaskJob<C>` produced by [`AnyTaskJob::create`]
-/// whose task was popped from the event-loop queue (the work-pool phase is
-/// done, so the queue held exclusive ownership); the job is freed.
+/// `ptr` must be a live `*mut AnyTaskJob<C>` from [`AnyTaskJob::create`],
+/// popped from the event-loop queue (so it held exclusive ownership); frees it.
 pub unsafe fn release_erased(ptr: *mut ()) {
     // SAFETY: `AnyTaskJob<C>` is `#[repr(C)]` with `release_erased` second;
     // caller contract that `ptr` is such an allocation.
@@ -183,8 +178,7 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         this.ctx.then(vm.global())
     }
 
-    /// [`release_erased`]'s monomorphic body: free the job (running `Drop for
-    /// C`) without calling [`AnyTaskJobCtx::then`].
+    /// [`release_erased`]'s monomorphic body.
     fn release(this: *mut Self) {
         // SAFETY: `this` was produced by `heap::into_raw` in `create`; the
         // caller (the popped queue entry) held exclusive ownership.

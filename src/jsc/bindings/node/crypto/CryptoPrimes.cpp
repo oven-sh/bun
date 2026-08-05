@@ -33,15 +33,13 @@ void CheckPrimeJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
     m_result = res != 0;
 }
 
-extern "C" uint32_t Bun__CheckPrimeJobCtx__takeCallbackArgs(CheckPrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, EncodedJSValue* args)
+extern "C" void Bun__CheckPrimeJobCtx__runFromJS(CheckPrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSCallbackArgs* out)
 {
-    return ctx->takeCallbackArgs(lexicalGlobalObject, args);
+    *out = ctx->runFromJS(lexicalGlobalObject);
 }
-uint32_t CheckPrimeJobCtx::takeCallbackArgs(JSGlobalObject*, EncodedJSValue* args)
+JSCallbackArgs CheckPrimeJobCtx::runFromJS(JSGlobalObject*)
 {
-    args[0] = JSValue::encode(jsUndefined());
-    args[1] = JSValue::encode(jsBoolean(m_result));
-    return 2;
+    return { jsUndefined(), jsBoolean(m_result) };
 }
 
 extern "C" void Bun__CheckPrimeJobCtx__deinit(CheckPrimeJobCtx* ctx)
@@ -198,11 +196,11 @@ void GeneratePrimeJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
     });
 }
 
-extern "C" uint32_t Bun__GeneratePrimeJobCtx__takeCallbackArgs(GeneratePrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, EncodedJSValue* args)
+extern "C" void Bun__GeneratePrimeJobCtx__runFromJS(GeneratePrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSCallbackArgs* out)
 {
-    return ctx->takeCallbackArgs(lexicalGlobalObject, args);
+    *out = ctx->runFromJS(lexicalGlobalObject);
 }
-uint32_t GeneratePrimeJobCtx::takeCallbackArgs(JSGlobalObject* globalObject, EncodedJSValue* args)
+JSCallbackArgs GeneratePrimeJobCtx::runFromJS(JSGlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -210,16 +208,13 @@ uint32_t GeneratePrimeJobCtx::takeCallbackArgs(JSGlobalObject* globalObject, Enc
     JSValue result = GeneratePrimeJob::result(globalObject, scope, m_prime, m_bigint);
     EXCEPTION_ASSERT(result.isEmpty() == !!scope.exception());
     if (scope.exception()) [[unlikely]] {
-        // The thrown value, not the Exception cell (see KeyPairJobCtx).
+        // The thrown Error, not the Exception cell (node parity).
         JSValue err = scope.exception()->value();
         (void)scope.tryClearException();
-        args[0] = JSValue::encode(err);
-        return 1;
+        return { err };
     }
 
-    args[0] = JSValue::encode(jsUndefined());
-    args[1] = JSValue::encode(result);
-    return 2;
+    return { jsUndefined(), result };
 }
 
 extern "C" void Bun__GeneratePrimeJobCtx__deinit(GeneratePrimeJobCtx* ctx)

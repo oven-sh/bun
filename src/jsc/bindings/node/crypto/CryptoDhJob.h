@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "JSCallbackArgs.h"
 #include "KeyObject.h"
 #include "CryptoUtil.h"
 
@@ -30,7 +31,7 @@ public:
     static std::optional<DhJobCtx> fromJS(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* options);
 
     void runTask(JSC::JSGlobalObject*);
-    uint32_t takeCallbackArgs(JSC::JSGlobalObject*, JSC::EncodedJSValue* args);
+    JSCallbackArgs runFromJS(JSC::JSGlobalObject*);
     void deinit();
 
     RefPtr<KeyObjectData> m_privateKey;

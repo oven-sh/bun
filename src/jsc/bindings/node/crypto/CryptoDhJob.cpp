@@ -40,11 +40,11 @@ void DhJobCtx::runTask(JSGlobalObject* globalObject)
     m_result = ByteSource::allocated(dp.release());
 }
 
-extern "C" uint32_t Bun__DhJobCtx__takeCallbackArgs(DhJobCtx* ctx, JSGlobalObject* globalObject, EncodedJSValue* args)
+extern "C" void Bun__DhJobCtx__runFromJS(DhJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
 {
-    return ctx->takeCallbackArgs(globalObject, args);
+    *out = ctx->runFromJS(globalObject);
 }
-uint32_t DhJobCtx::takeCallbackArgs(JSGlobalObject* lexicalGlobalObject, EncodedJSValue* args)
+JSCallbackArgs DhJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
 {
     VM& vm = lexicalGlobalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
@@ -52,16 +52,13 @@ uint32_t DhJobCtx::takeCallbackArgs(JSGlobalObject* lexicalGlobalObject, Encoded
     if (!m_result) {
         // Same message as the synchronous path so callers observe identical errors either way.
         JSObject* err = createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "diffieHellman operation failed"_s);
-        RETURN_IF_EXCEPTION(scope, 0);
-        args[0] = JSValue::encode(err);
-        return 1;
+        RETURN_IF_EXCEPTION(scope, {});
+        return { err };
     }
 
     JSValue result = WebCore::createBuffer(lexicalGlobalObject, m_result.span());
-    RETURN_IF_EXCEPTION(scope, 0);
-    args[0] = JSValue::encode(jsNull());
-    args[1] = JSValue::encode(result);
-    return 2;
+    RETURN_IF_EXCEPTION(scope, {});
+    return { jsNull(), result };
 }
 
 extern "C" DhJob* Bun__DhJob__create(JSGlobalObject* globalObject, DhJobCtx* ctx, EncodedJSValue callback);

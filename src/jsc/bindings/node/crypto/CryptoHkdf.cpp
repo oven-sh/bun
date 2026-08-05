@@ -67,20 +67,19 @@ void HkdfJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
     m_result = ByteSource::allocated(dp.release());
 }
 
-extern "C" uint32_t Bun__HkdfJobCtx__takeCallbackArgs(HkdfJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, EncodedJSValue* args)
+extern "C" void Bun__HkdfJobCtx__runFromJS(HkdfJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSCallbackArgs* out)
 {
-    return ctx->takeCallbackArgs(lexicalGlobalObject, args);
+    *out = ctx->runFromJS(lexicalGlobalObject);
 }
-uint32_t HkdfJobCtx::takeCallbackArgs(JSGlobalObject* lexicalGlobalObject, EncodedJSValue* args)
+JSCallbackArgs HkdfJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
 {
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!m_result) {
         JSObject* err = createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "hkdf operation failed"_s);
-        RETURN_IF_EXCEPTION(scope, 0);
-        args[0] = JSValue::encode(err);
-        return 1;
+        RETURN_IF_EXCEPTION(scope, {});
+        return { err };
     }
 
     auto& result = m_result.value();
@@ -89,18 +88,15 @@ uint32_t HkdfJobCtx::takeCallbackArgs(JSGlobalObject* lexicalGlobalObject, Encod
     RefPtr<ArrayBuffer> buf = ArrayBuffer::tryCreateUninitialized(result.size(), 1);
     if (!buf) {
         JSObject* err = createOutOfMemoryError(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, 0);
-        args[0] = JSValue::encode(err);
-        return 1;
+        RETURN_IF_EXCEPTION(scope, {});
+        return { err };
     }
 
     memcpy(buf->data(), result.data(), result.size());
 
     JSValue resultBuffer = JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), buf.releaseNonNull());
-    RETURN_IF_EXCEPTION(scope, 0);
-    args[0] = JSValue::encode(jsNull());
-    args[1] = JSValue::encode(resultBuffer);
-    return 2;
+    RETURN_IF_EXCEPTION(scope, {});
+    return { jsNull(), resultBuffer };
 }
 
 extern "C" void Bun__HkdfJobCtx__deinit(HkdfJobCtx* ctx)

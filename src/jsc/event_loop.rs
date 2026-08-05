@@ -745,9 +745,7 @@ impl EventLoop {
     /// re-queued so they remain reachable from the static-rooted VM box (the
     /// pre-`532a5411961b` state). Consuming them without freeing unhooked that
     /// root and surfaced the boxes as direct leaks; the definer can't safely
-    /// dispatch every erased callback at shutdown. `AnyTaskJob` is claimed
-    /// with a real free (`release_erased`): parking it instead would strand
-    /// the C++ ctx's resources behind LSan-invisible memory.
+    /// dispatch every erased callback at shutdown.
     pub fn release_queued_tasks_for_shutdown(&mut self) {
         self.drop_concurrent_cpp_tasks();
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "JSCallbackArgs.h"
 #include "CryptoUtil.h"
 #include "KeyObject.h"
 
@@ -49,7 +50,7 @@ public:
         JSValue algorithmValue, JSValue dataValue, JSValue keyValue, JSValue signatureValue, JSValue callbackValue);
 
     void runTask(JSC::JSGlobalObject*);
-    uint32_t takeCallbackArgs(JSC::JSGlobalObject*, JSC::EncodedJSValue* args);
+    JSCallbackArgs runFromJS(JSC::JSGlobalObject*);
     void deinit();
 
     Mode m_mode;

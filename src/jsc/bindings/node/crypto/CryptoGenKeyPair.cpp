@@ -29,40 +29,33 @@ void KeyPairJobCtx::runTask(JSGlobalObject* globalObject, ncrypto::EVPKeyCtxPoin
     m_keyObj = KeyObject::create(CryptoKeyType::Private, WTF::move(key));
 }
 
-uint32_t KeyPairJobCtx::takeCallbackArgs(JSGlobalObject* lexicalGlobalObject, EncodedJSValue* args)
+JSCallbackArgs KeyPairJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
 {
     VM& vm = lexicalGlobalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
     if (!m_keyObj.data()) {
         JSValue err = createCryptoError(lexicalGlobalObject, scope, m_opensslError, "key generation failed"_s);
-        RETURN_IF_EXCEPTION(scope, 0);
-        args[0] = JSValue::encode(err);
-        return 1;
+        RETURN_IF_EXCEPTION(scope, {});
+        return { err };
     }
 
     JSValue publicKeyValue = m_keyObj.exportPublic(lexicalGlobalObject, scope, m_publicKeyEncoding);
     if (scope.exception()) [[unlikely]] {
-        // The thrown value, not the Exception cell: the callback's err
-        // argument must be the Error object (node parity).
+        // The thrown Error, not the Exception cell (node parity).
         JSValue exceptionValue = scope.exception()->value();
         (void)scope.tryClearException();
-        args[0] = JSValue::encode(exceptionValue);
-        return 1;
+        return { exceptionValue };
     }
 
     JSValue privateKeyValue = m_keyObj.exportPrivate(lexicalGlobalObject, scope, m_privateKeyEncoding);
     if (scope.exception()) [[unlikely]] {
         JSValue exceptionValue = scope.exception()->value();
         (void)scope.tryClearException();
-        args[0] = JSValue::encode(exceptionValue);
-        return 1;
+        return { exceptionValue };
     }
 
-    args[0] = JSValue::encode(jsNull());
-    args[1] = JSValue::encode(publicKeyValue);
-    args[2] = JSValue::encode(privateKeyValue);
-    return 3;
+    return { jsNull(), publicKeyValue, privateKeyValue };
 }
 
 KeyEncodingConfig parseKeyEncodingConfig(JSGlobalObject* globalObject, ThrowScope& scope, JSValue keyTypeValue, JSValue optionsValue)

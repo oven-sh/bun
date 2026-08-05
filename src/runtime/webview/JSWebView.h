@@ -115,6 +115,18 @@ public:
     ScreenshotFormat m_screenshotFormat = ScreenshotFormat::Png;
     ScreenshotEncoding m_screenshotEncoding = ScreenshotEncoding::Blob;
 
+    // Pointer state for low-level drag primitives (mouseDown/Up/Move).
+    // Last cursor position from mouseMove, used as the default for
+    // mouseDown/mouseUp (Playwright-compatible: down/up take no coords).
+    // m_mouseButtons is a bitmask of currently-held buttons:
+    //   bit 0 = left, bit 1 = right, bit 2 = middle.
+    // The mask determines whether a move dispatches a mouseMoved (no
+    // buttons) vs mouseDragged (any button) NSEvent, and which CDP
+    // `buttons` field we send.
+    float m_mouseX = 0.0f;
+    float m_mouseY = 0.0f;
+    uint8_t m_mouseButtons = 0;
+
     JSC::WriteBarrier<JSC::JSObject> m_onNavigated;
     JSC::WriteBarrier<JSC::JSObject> m_onNavigationFailed;
     // Console capture. If the user passed `console: globalThis.console`,
@@ -166,6 +178,14 @@ public:
     JSC::JSPromise* cdp(JSC::JSGlobalObject*, const WTF::String& method, const WTF::String& paramsJson);
     JSC::JSPromise* click(JSC::JSGlobalObject*, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount);
     JSC::JSPromise* clickSelector(JSC::JSGlobalObject*, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount);
+    // Low-level pointer primitives. down/up use m_mouseX/Y (set by
+    // prior mouseMove — defaults to 0,0 if never moved). mouseMove
+    // interpolates steps intermediate points from m_mouseX/Y to x,y
+    // before updating m_mouseX/Y; with a button pressed (m_mouseButtons
+    // != 0) each intermediate dispatches as a mouseDragged event.
+    JSC::JSPromise* mouseDown(JSC::JSGlobalObject*, uint8_t button, uint8_t modifiers, uint8_t clickCount);
+    JSC::JSPromise* mouseUp(JSC::JSGlobalObject*, uint8_t button, uint8_t modifiers, uint8_t clickCount);
+    JSC::JSPromise* mouseMove(JSC::JSGlobalObject*, float x, float y, uint32_t steps, uint8_t modifiers);
     JSC::JSPromise* type(JSC::JSGlobalObject*, const WTF::String& text);
     JSC::JSPromise* press(JSC::JSGlobalObject*, WebViewProto::VirtualKey, uint8_t modifiers, const WTF::String& character);
     JSC::JSPromise* scroll(JSC::JSGlobalObject*, double dx, double dy);

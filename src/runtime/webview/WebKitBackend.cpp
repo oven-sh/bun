@@ -593,6 +593,27 @@ JSPromise* clickSelector(JSGlobalObject* g, JSWebView* view, const WTF::String& 
         payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
+JSPromise* mouseDown(JSGlobalObject* g, JSWebView* view, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount, uint8_t buttonsMask)
+{
+    auto payload = encode(MouseDownPayload { x, y, button, modifiers, clickCount, buttonsMask });
+    return sendOp(g, view, view->m_pendingMisc, Op::MouseDown,
+        payload.span().data(), static_cast<uint32_t>(payload.size()));
+}
+
+JSPromise* mouseUp(JSGlobalObject* g, JSWebView* view, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount, uint8_t buttonsMask)
+{
+    auto payload = encode(MouseUpPayload { x, y, button, modifiers, clickCount, buttonsMask });
+    return sendOp(g, view, view->m_pendingMisc, Op::MouseUp,
+        payload.span().data(), static_cast<uint32_t>(payload.size()));
+}
+
+JSPromise* mouseMove(JSGlobalObject* g, JSWebView* view, float fromX, float fromY, float x, float y, uint32_t steps, uint8_t buttonsMask, uint8_t modifiers)
+{
+    auto payload = encode(MouseMovePayload { fromX, fromY, x, y, steps, buttonsMask, modifiers });
+    return sendOp(g, view, view->m_pendingMisc, Op::MouseMove,
+        payload.span().data(), static_cast<uint32_t>(payload.size()));
+}
+
 JSPromise* type(JSGlobalObject* g, JSWebView* view, const WTF::String& text)
 {
     auto payload = encodeStr(text);

@@ -677,6 +677,38 @@ describe("expect()", () => {
         expect(p1).toStrictEqual(p2);
       }
     });
+
+    // JSC::isArray() declares a throw scope on the Proxy path. expect.any(Array),
+    // toMatchObject, and toHaveProperty called it without checking, which aborts
+    // under BUN_JSC_validateExceptionChecks=1 (a no-op on release builds).
+    test("expect.any(Array)/toMatchObject/toHaveProperty check the isArray() exception for Proxy values", async () => {
+      const { bunEnv, bunExe } = require("harness");
+      const src = `
+        const { expect } = require("bun:test");
+        try { expect(new Proxy({}, {})).toEqual(expect.any(Array)); } catch {}
+        try { expect(new Proxy([], {})).toEqual(expect.any(Array)); } catch {}
+        try { expect(new Proxy([], {})).toMatchObject([]); } catch {}
+        try { expect([]).toMatchObject(new Proxy([], {})); } catch {}
+        try { expect(new Proxy([], {})).toMatchObject(new Proxy([], {})); } catch {}
+        try { expect({ a: 1 }).toHaveProperty(new Proxy(["a"], {})); } catch {}
+        try { expect({ a: 1 }).toHaveProperty(new Proxy(new Set(["a"]), {})); } catch {}
+        const rp = Proxy.revocable({}, {}); rp.revoke();
+        try { expect(rp.proxy).toEqual(expect.any(Array)); } catch {}
+        console.log("ok");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+        stdout: "ok\n",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
   }
 
   test("deepEquals works with sets/maps/dates/strings", () => {

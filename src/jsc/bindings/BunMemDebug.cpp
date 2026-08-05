@@ -1554,6 +1554,7 @@ static void imageDump(JSC::VM& vm, const char* path)
             uint64_t minB = UINT64_MAX, maxE = 0; for (auto& l : libs) { minB = std::min(minB, l.base); maxE = std::max(maxE, l.end); }
             for (auto& r : out) {
                 unsigned k = r.kind & 0xff; if (k == 2 || k == 3 || k == 4) continue;
+                if (k == 0 && getenv("BUN_IMAGE_FIXUPS_DATAONLY")) continue; // experiment: only rebase words in our own data segments
                 const uint64_t* w = (const uint64_t*)r.addr; size_t n = r.len / 8;
                 for (size_t i = 0; i < n; i++) { uint64_t v = w[i]; if (v < minB || v >= maxE) continue; for (size_t li = 0; li < libs.size(); li++) if (v >= libs[li].base && v < libs[li].end) { fixups.push_back({ r.addr + i * 8, li }); break; } }
             }

@@ -469,6 +469,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Args past the ones a modeled construct consumes: ignorable error params stay compiled, anything else defers to zod (pure) or bails (impure).
+    fn zod_extra_args(&mut self, args: &[Expr], consumed: usize) -> Option<Extracted> {
+        for extra in args.iter().skip(consumed) {
+            if !self.zod_is_ignorable_params(*extra) {
+                return Some(self.zod_opaque_or_bail(args));
+            }
+        }
+        None
+    }
+
     /// Child expression that is not a recognized zod call: allowed as a runtime ref when provably pure, otherwise the whole tree bails.
     fn zod_pure_ref(&mut self, expr: Expr, refs: &mut Vec<Expr>) -> Extracted {
         if !self.zod_is_pure_value(expr) {
@@ -639,13 +649,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     checks: vec![ZCheck::Int],
                 })
             }
-            b"undefined" => Extracted::Ir(Ir::Simple(Simple::Undefined)),
-            b"null" => Extracted::Ir(Ir::Simple(Simple::Null)),
-            b"any" => Extracted::Ir(Ir::Simple(Simple::Any)),
-            b"unknown" => Extracted::Ir(Ir::Simple(Simple::Unknown)),
-            b"never" => Extracted::Ir(Ir::Simple(Simple::Never)),
-            b"void" => Extracted::Ir(Ir::Simple(Simple::Void)),
-            b"nan" => Extracted::Ir(Ir::Simple(Simple::NaN)),
+            b"undefined" | b"null" | b"any" | b"unknown" | b"never" | b"void" | b"nan" => {
+                if !params_ok!(0) || args.len() > 1 {
+                    return self.zod_opaque_or_bail(args);
+                }
+                Extracted::Ir(Ir::Simple(match name {
+                    b"undefined" => Simple::Undefined,
+                    b"null" => Simple::Null,
+                    b"any" => Simple::Any,
+                    b"unknown" => Simple::Unknown,
+                    b"never" => Simple::Never,
+                    b"void" => Simple::Void,
+                    _ => Simple::NaN,
+                }))
+            }
             b"literal" => {
                 if args.is_empty() || !params_ok!(1) || args.len() > 2 {
                     return self.zod_opaque_or_bail(args);
@@ -804,24 +821,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             b"optional" => self.zod_wrap_ctor(WrapKind::Optional, args, refs),
             b"nullable" => self.zod_wrap_ctor(WrapKind::Nullable, args, refs),
-            b"nullish" => match args.first() {
-                Some(inner) => match self.zod_extract(*inner, refs, false) {
-                    Extracted::Ir(ir) => Extracted::Ir(Ir::Wrap {
-                        kind: WrapKind::Optional,
-                        inner: Box::new(Ir::Wrap {
-                            kind: WrapKind::Nullable,
-                            inner: Box::new(ir),
+            b"nullish" => {
+                if let Some(out) = self.zod_extra_args(args, 1) {
+                    return out;
+                }
+                match args.first() {
+                    Some(inner) => match self.zod_extract(*inner, refs, false) {
+                        Extracted::Ir(ir) => Extracted::Ir(Ir::Wrap {
+                            kind: WrapKind::Optional,
+                            inner: Box::new(Ir::Wrap {
+                                kind: WrapKind::Nullable,
+                                inner: Box::new(ir),
+                            }),
                         }),
-                    }),
-                    Extracted::Bail => Extracted::Bail,
-                },
-                None => self.zod_opaque_or_bail(args),
-            },
+                        Extracted::Bail => Extracted::Bail,
+                    },
+                    None => self.zod_opaque_or_bail(args),
+                }
+            }
             _ => self.zod_schema_valued_fallback(name, args),
         }
     }
 
     fn zod_wrap_ctor(&mut self, kind: WrapKind, args: &[Expr], refs: &mut Vec<Expr>) -> Extracted {
+        if let Some(out) = self.zod_extra_args(args, 1) {
+            return out;
+        }
         match args.first() {
             Some(inner) => match self.zod_extract(*inner, refs, false) {
                 Extracted::Ir(ir) => Extracted::Ir(Ir::Wrap {
@@ -975,23 +1000,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // `.brand()` returns `this`: purely type-level.
         if method == b"brand" {
+            if let Some(out) = self.zod_extra_args(args, 0) {
+                return out;
+            }
             return Extracted::Ir(base);
         }
 
         match method {
             b"optional" => {
+                if let Some(out) = self.zod_extra_args(args, 0) {
+                    return out;
+                }
                 return Extracted::Ir(Ir::Wrap {
                     kind: WrapKind::Optional,
                     inner: Box::new(base),
                 });
             }
             b"nullable" => {
+                if let Some(out) = self.zod_extra_args(args, 0) {
+                    return out;
+                }
                 return Extracted::Ir(Ir::Wrap {
                     kind: WrapKind::Nullable,
                     inner: Box::new(base),
                 });
             }
             b"nullish" => {
+                if let Some(out) = self.zod_extra_args(args, 0) {
+                    return out;
+                }
                 return Extracted::Ir(Ir::Wrap {
                     kind: WrapKind::Optional,
                     inner: Box::new(Ir::Wrap {
@@ -1001,6 +1038,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 });
             }
             b"default" | b"prefault" => {
+                if let Some(out) = self.zod_extra_args(args, 1) {
+                    return out;
+                }
                 let Some(arg) = args.first() else {
                     return self.zod_opaque_or_bail(args);
                 };
@@ -1022,6 +1062,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 });
             }
             b"catch" => {
+                if let Some(out) = self.zod_extra_args(args, 1) {
+                    return out;
+                }
                 let Some(arg) = args.first() else {
                     return self.zod_opaque_or_bail(args);
                 };
@@ -1034,6 +1077,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 });
             }
             b"refine" => {
+                if let Some(out) = self.zod_extra_args(args, 2) {
+                    return out;
+                }
                 let Some(arg) = args.first() else {
                     return self.zod_opaque_or_bail(args);
                 };
@@ -1063,12 +1109,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 });
             }
             b"array" => {
+                if let Some(out) = self.zod_extra_args(args, 0) {
+                    return out;
+                }
                 return Extracted::Ir(Ir::Array {
                     el: Box::new(base),
                     checks: Vec::new(),
                 });
             }
             b"or" => {
+                if let Some(out) = self.zod_extra_args(args, 1) {
+                    return out;
+                }
                 let Some(arg) = args.first() else {
                     return self.zod_opaque_or_bail(args);
                 };
@@ -1086,24 +1138,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Ir::Object { props, catchall } = base {
             match method {
                 b"strict" => {
+                    if let Some(out) = self.zod_extra_args(args, 0) {
+                        return out;
+                    }
                     return Extracted::Ir(Ir::Object {
                         props,
                         catchall: Some(Box::new(Ir::Simple(Simple::Never))),
                     });
                 }
                 b"passthrough" | b"loose" => {
+                    if let Some(out) = self.zod_extra_args(args, 0) {
+                        return out;
+                    }
                     return Extracted::Ir(Ir::Object {
                         props,
                         catchall: Some(Box::new(Ir::Simple(Simple::Unknown))),
                     });
                 }
                 b"strip" => {
+                    if let Some(out) = self.zod_extra_args(args, 0) {
+                        return out;
+                    }
                     return Extracted::Ir(Ir::Object {
                         props,
                         catchall: None,
                     });
                 }
                 b"catchall" => {
+                    if let Some(out) = self.zod_extra_args(args, 1) {
+                        return out;
+                    }
                     let Some(arg) = args.first() else {
                         return self.zod_opaque_or_bail(args);
                     };
@@ -1116,6 +1180,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
                 }
                 b"extend" => {
+                    if let Some(out) = self.zod_extra_args(args, 1) {
+                        return out;
+                    }
                     let Some(arg) = args.first() else {
                         return self.zod_opaque_or_bail(args);
                     };
@@ -1139,6 +1206,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
                 }
                 b"pick" | b"omit" => {
+                    if let Some(out) = self.zod_extra_args(args, 1) {
+                        return out;
+                    }
                     let Some(arg) = args.first() else {
                         return self.zod_opaque_or_bail(args);
                     };
@@ -1158,6 +1228,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     });
                 }
                 b"partial" => {
+                    if let Some(out) = self.zod_extra_args(args, 1) {
+                        return out;
+                    }
                     let mask = match args.first() {
                         Some(arg) => match self.zod_true_mask_keys(*arg) {
                             Some(keys) => Some(keys),
@@ -1189,6 +1262,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     });
                 }
                 b"required" => {
+                    if let Some(out) = self.zod_extra_args(args, 1) {
+                        return out;
+                    }
                     let mask = match args.first() {
                         Some(arg) => match self.zod_true_mask_keys(*arg) {
                             Some(keys) => Some(keys),
@@ -1297,6 +1373,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // z.number() is already finite-only in zod v4.
             b"finite" => {
                 if matches!(prim_kind, Some(Prim::Num)) {
+                    if let Some(out) = self.zod_extra_args(args, 0) {
+                        return out;
+                    }
                     return Extracted::Ir(base);
                 }
                 None
@@ -1384,12 +1463,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let Some(check) = check else {
             return self.zod_opaque_or_bail(args);
         };
+        // Zero-arg checks consume nothing, so their params slot is args[0], not args[1].
+        let consumed = usize::from(matches!(
+            method,
+            b"min"
+                | b"max"
+                | b"length"
+                | b"gt"
+                | b"gte"
+                | b"lt"
+                | b"lte"
+                | b"multipleOf"
+                | b"step"
+                | b"regex"
+                | b"startsWith"
+                | b"endsWith"
+                | b"includes"
+        ));
         // Extra args past the check value: a recognizable message/params object stays compiled, other pure args might change acceptance so the schema defers to zod, impure args bail.
-        for extra in args.iter().skip(1) {
-            if self.zod_is_ignorable_params(*extra) {
-                continue;
-            }
-            return self.zod_opaque_or_bail(args);
+        if let Some(out) = self.zod_extra_args(args, consumed) {
+            return out;
         }
 
         match base {

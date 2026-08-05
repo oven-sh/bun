@@ -546,6 +546,62 @@ function __zodOptOut(n) {
   }
 }
 
+// Whether a __zodFail from this node proves zod rejects the input; only past such failures may a union try its next option.
+function __zodConclusive(n) {
+  switch (n.k) {
+    case "str":
+    case "num":
+    case "bool":
+    case "big":
+    case "date": {
+      // Coercion wraps a possibly-throwing conversion in try/catch, masking throws zod would propagate.
+      if (n.co === 1) return false;
+      var cs = n.c;
+      if (cs) {
+        // A runtime regex ref may not be a real RegExp; zod calls whatever .test it has.
+        for (var ci = 0; ci < cs.length; ci++) if (cs[ci][0] === "rer") return false;
+      }
+      return true;
+    }
+    case "lit":
+    case "undef":
+    case "void":
+    case "null":
+    case "any":
+    case "unk":
+    case "never":
+    case "nan":
+      return true;
+    case "enum":
+      return n.r === undefined;
+    case "opt":
+    case "nul":
+    case "non":
+    case "def":
+      return __zodConclusive(n.i);
+    case "obj": {
+      for (var pi = 0; pi < n.p.length; pi++) if (!__zodConclusive(n.p[pi][1])) return false;
+      return n.ca === undefined || n.ca.k === "never" || __zodConclusive(n.ca);
+    }
+    case "arr":
+      return __zodConclusive(n.i);
+    case "tup": {
+      for (var ti = 0; ti < n.it.length; ti++) if (!__zodConclusive(n.it[ti])) return false;
+      return n.rest === undefined || __zodConclusive(n.rest);
+    }
+    case "rec":
+      return __zodConclusive(n.v);
+    case "uni":
+    case "dun": {
+      for (var ui = 0; ui < n.o.length; ui++) if (!__zodConclusive(n.o[ui])) return false;
+      return true;
+    }
+    default:
+      // catch (inner failure means zod succeeds), rfn (Promise), ref, opq: a failure proves nothing.
+      return false;
+  }
+}
+
 // Runtime optionality for ref children: wrappers answer from their IR, real schemas from _zod; materializes opaque wrappers.
 function __zodRefOpt(child, out) {
   if (child !== null && (typeof child === "object" || typeof child === "function")) {
@@ -835,6 +891,7 @@ function __zodCompile(n) {
       var optInner = __zodCompile(n.i);
       if (optInner === null) return null;
       var optInnerOptIn = __zodOptIn(n.i);
+      var optInnerConc = __zodConclusive(n.i);
       var optInnerNode = n.i;
       return (v, refs) => {
         var innerOptIn = optInnerOptIn;
@@ -842,9 +899,12 @@ function __zodCompile(n) {
           innerOptIn = optInnerNode.k === "ref" ? __zodRefOpt(refs[optInnerNode.r], false) : false;
         }
         if (innerOptIn) {
-          // Mirrors $ZodOptional handleOptionalResult: run the inner type first; a failure on undefined input collapses to undefined.
+          // Mirrors $ZodOptional handleOptionalResult: run the inner type first; a conclusive failure on undefined input collapses to undefined.
           var r = optInner(v, refs);
-          if (r === __zodFail) return v === undefined ? undefined : __zodFail;
+          if (r === __zodFail) {
+            if (!optInnerConc) return __zodFail;
+            return v === undefined ? undefined : __zodFail;
+          }
           return r;
         }
         if (v === undefined) return undefined;
@@ -1064,16 +1124,20 @@ function __zodCompile(n) {
     }
     case "uni": {
       var uniFns = [];
+      var uniConc = [];
       for (var ui = 0; ui < n.o.length; ui++) {
         var uFn = __zodCompile(n.o[ui]);
         if (uFn === null) return null;
         uniFns.push(uFn);
+        uniConc.push(__zodConclusive(n.o[ui]));
       }
       var uniLen = uniFns.length;
       return (v, refs) => {
         for (var i = 0; i < uniLen; i++) {
           var r = uniFns[i](v, refs);
           if (r !== __zodFail) return r;
+          // An inconclusive failure cannot rule out zod accepting this option, and zod returns the first success in order; delegate.
+          if (!uniConc[i]) return __zodFail;
         }
         return __zodFail;
       };

@@ -131,11 +131,21 @@ const SCHEMAS: Record<string, any> = {
   union: z.union([z.string(), z.number()]),
   unionOr: z.string().or(z.number()),
   unionOverlap: z.union([z.number().int(), z.number().positive()]),
-  unionObjs: z.union([
-    z.object({ t: z.literal("a"), x: z.string() }),
-    z.object({ t: z.literal("b"), y: z.number() }),
-  ]),
+  unionObjs: z.union([z.object({ t: z.literal("a"), x: z.string() }), z.object({ t: z.literal("b"), y: z.number() })]),
   unionOptional: z.union([z.string(), z.undefined()]),
+  // Inconclusive options placed before overlapping conclusive ones: the fast
+  // path must delegate instead of skipping to the later option.
+  unionOpaqueFirst: z.union([z.string().transform((s: string) => s.length), z.string()]),
+  unionCatchFirst: z.union([z.number().catch(0), z.string()]),
+  unionRefFirst: z.union([Inner, z.string()]),
+  unionRefineFirst: z.union([z.number().refine(isEven), z.string()]),
+  unionDefaultFirst: z.union([z.string().default("d"), z.number()]),
+  unionCoerceFirst: z.union([z.coerce.string(), z.number()]),
+  optionalAsyncRefine: z
+    .number()
+    .optional()
+    .refine(async () => true)
+    .optional(),
   dunion: z.discriminatedUnion("type", [
     z.object({ type: z.literal("a"), a: z.string() }),
     z.object({ type: z.literal("b"), b: z.number() }),

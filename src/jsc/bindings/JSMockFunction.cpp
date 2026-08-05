@@ -1513,6 +1513,28 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
     bool hasValue = object->getPropertySlot(globalObject, propertyKey, slot);
     RETURN_IF_EXCEPTION(scope, {});
 
+    // Jest installs spies via Object.defineProperty, which enforces [[DefineOwnProperty]]
+    // invariants; putDirect() bypasses them, so check explicitly. Module namespace objects
+    // are exempt (overrideExportValue() is the sanctioned write path for those).
+    if (!tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
+        JSC::PropertyDescriptor ownDescriptor;
+        bool hasOwn = object->getOwnPropertyDescriptor(globalObject, propertyKey, ownDescriptor);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (hasOwn) {
+            if (!ownDescriptor.configurable()) {
+                throwTypeError(globalObject, scope, makeString("Cannot spy on "_s, String(propertyKey.uid()), " because it is not configurable"_s));
+                return {};
+            }
+        } else {
+            bool extensible = object->isExtensible(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!extensible) {
+                throwTypeError(globalObject, scope, makeString("Cannot spy on "_s, String(propertyKey.uid()), " because the object is not extensible"_s));
+                return {};
+            }
+        }
+    }
+
     // easymode: regular property or missing property
     if (!hasValue || slot.isValue()) {
         JSValue value = jsUndefined();

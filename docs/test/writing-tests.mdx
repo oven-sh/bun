@@ -323,10 +323,12 @@ describe.each([
 
 ### Argument Passing
 
-How arguments are passed to your test function depends on the structure of your test cases:
+How arguments are passed to your test function depends on the shape of the table as a whole:
 
-- If a table row is an array (like `[1, 2, 3]`), each element is passed as an individual argument
-- If a row is not an array (like an object), it's passed as a single argument
+- If every row is an array (like `[[1, 2, 3], [4, 5, 9]]`), each row is spread and its elements are passed as individual arguments
+- Otherwise, each row is passed as a single argument, even if that row happens to be an array
+
+This matches Jest. If you need each row passed through unchanged regardless of its type, wrap every row in a one-element array (`[[a], [b], [c]]`).
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
 // Array items passed as individual arguments

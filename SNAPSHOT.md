@@ -47,6 +47,8 @@ Runtime contract (`src/bun_core/image.rs`, `run_command.rs`, `BunMemDebug.cpp`):
 - `fetch()` to the network rejects while building (`Bun.unsafe.snapshotState().building`).
 - Restore: `BUN_IMAGE_IN=<img>`; the process gets `process.on('restore')` before its first tick; `Bun.unsafe.snapshotState().epoch` > 0; `Bun.unsafe.recleanImagePages()` re-cleans transiently dirtied image pages (also runs automatically 2 s after restore).
 
+For Claude Code specifically: `CLAUDE_CODE_SNAPSHOT_OUT=<cli>.img <cli>` once (writes `<cli>.img` + `<cli>.img.zst`, ~28 MB); after that plain `<cli>` restores by itself (`bun drive.ts <cli> --bare` measures that: 36.7 MB at prompt on first run incl. inflate, 36.8 MB / 0.13 s CPU on cache hit).
+
 ## Run / measure a restored process
 
 ```sh

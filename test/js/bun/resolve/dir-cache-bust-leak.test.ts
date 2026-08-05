@@ -4,21 +4,32 @@
 // long-running process doing `try { require("optional-dep") } catch {}` from a
 // directory with a package.json leaked one full parsed copy per miss (~178 KB
 // per miss for a 26 KB package.json). The interner now reuses the existing
-// allocation when the file bytes are unchanged, so the arenas only grow when
-// contents actually change.
+// allocation when the file bytes (and, for tsconfig, the whole extends chain)
+// are unchanged, so the arenas only grow when contents actually change.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("dir cache busts don't re-intern unchanged package.json/tsconfig.json", async () => {
   const pkg = { name: "dir-cache-bust-fixture", version: "1.0.0" };
-  const tsconfig = (dir: string) => ({
-    compilerOptions: { baseUrl: ".", paths: { "@app/*": [`./${dir}/*`] } },
-  });
+  // The extends target does not exist at first; the recompute must notice
+  // when it appears.
+  const tsconfigWithPaths = {
+    extends: "./tsconfig.base.json",
+    compilerOptions: { baseUrl: ".", paths: { "@app/*": ["./a/*"] } },
+  };
+  const tsconfigNoPaths = {
+    extends: "./tsconfig.base.json",
+    compilerOptions: { baseUrl: "." },
+  };
+  const tsconfigBase = {
+    compilerOptions: { paths: { "@app/*": ["./b/*"], "@base/*": ["./c/*"] } },
+  };
   using dir = tempDir("dir-cache-bust-leak", {
     "package.json": JSON.stringify(pkg),
-    "tsconfig.json": JSON.stringify(tsconfig("a")),
+    "tsconfig.json": JSON.stringify(tsconfigWithPaths),
     "a/x.js": `module.exports = "a";`,
     "b/y.js": `module.exports = "b";`,
+    "c/z.js": `module.exports = "c";`,
     // The presence of node_modules keeps the runtime's auto-install out of
     // the failed resolves below (no registry traffic).
     "node_modules/.gitkeep": "",
@@ -45,13 +56,22 @@ test("dir cache busts don't re-intern unchanged package.json/tsconfig.json", asy
       // Real edits must still be picked up by the bust: one new interned copy
       // each, then flat again.
       writeFileSync("package.json", ${JSON.stringify(JSON.stringify({ ...pkg, description: "edited" }))});
-      writeFileSync("tsconfig.json", ${JSON.stringify(JSON.stringify(tsconfig("b")))});
+      writeFileSync("tsconfig.json", ${JSON.stringify(JSON.stringify(tsconfigNoPaths))});
       miss();
       const p2 = pkgLen(), t2 = tsLen();
       for (let i = 0; i < 25; i++) miss();
       const p3 = pkgLen(), t3 = tsLen();
+
+      // A previously-missing extends parent appearing must re-merge even
+      // though the root file itself is unchanged.
+      writeFileSync("tsconfig.base.json", ${JSON.stringify(JSON.stringify(tsconfigBase))});
+      miss();
+      const p4 = pkgLen(), t4 = tsLen();
       const after = require2("@app/y");
-      console.log(JSON.stringify({ before, after, p0, p1, p2, p3, t0, t1, t2, t3 }));
+      const viaBase = require2("@base/z");
+      for (let i = 0; i < 10; i++) miss();
+      const p5 = pkgLen(), t5 = tsLen();
+      console.log(JSON.stringify({ before, after, viaBase, p0, p1, p2, p3, p4, p5, t0, t1, t2, t3, t4, t5 }));
     `,
   });
 
@@ -72,7 +92,9 @@ test("dir cache busts don't re-intern unchanged package.json/tsconfig.json", asy
     // tsconfig paths resolve through the (re)parsed configs end to end.
     before: out.before,
     after: out.after,
-    // 25 misses over unchanged files retain nothing.
+    viaBase: out.viaBase,
+    // 25 misses over unchanged files retain nothing (including re-probing the
+    // still-missing extends parent).
     pkgMissGrowth: out.p1 - out.p0,
     tsMissGrowth: out.t1 - out.t0,
     // An edit is picked up as exactly one new interned copy.
@@ -81,15 +103,25 @@ test("dir cache busts don't re-intern unchanged package.json/tsconfig.json", asy
     // And misses after the edit are flat again.
     pkgPostEditGrowth: out.p3 - out.p2,
     tsPostEditGrowth: out.t3 - out.t2,
+    // The extends parent appearing re-merges the chain exactly once.
+    pkgBaseGrowth: out.p4 - out.p3,
+    tsBaseGrowth: out.t4 - out.t3,
+    pkgFinalGrowth: out.p5 - out.p4,
+    tsFinalGrowth: out.t5 - out.t4,
   }).toEqual({
     before: "a",
     after: "b",
+    viaBase: "c",
     pkgMissGrowth: 0,
     tsMissGrowth: 0,
     pkgEditGrowth: 1,
     tsEditGrowth: 1,
     pkgPostEditGrowth: 0,
     tsPostEditGrowth: 0,
+    pkgBaseGrowth: 0,
+    tsBaseGrowth: 1,
+    pkgFinalGrowth: 0,
+    tsFinalGrowth: 0,
   });
   expect(exitCode).toBe(0);
 });

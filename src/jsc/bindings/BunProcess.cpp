@@ -391,6 +391,84 @@ extern "C" void CrashHandler__setDlOpenAction(const char* action);
 extern "C" bool Bun__VM__allowAddons(void* vm);
 extern "C" int32_t Bun__addonNeedsGlibcOnMusl(const char* path, size_t len, char* soname_out, size_t soname_cap);
 
+#if OS(WINDOWS)
+// Rebind an addon's node.exe imports to this process: https://github.com/oven-sh/bun/issues/10690
+static void rebindThunks(BYTE* base, HMODULE host, PIMAGE_THUNK_DATA iat, PIMAGE_THUNK_DATA names)
+{
+    size_t count = 0;
+    for (auto* n = names; n->u1.AddressOfData != 0; ++n)
+        ++count;
+    if (count == 0) return;
+
+    DWORD oldProtect = 0;
+    if (!VirtualProtect(iat, count * sizeof(*iat), PAGE_READWRITE, &oldProtect)) return;
+
+    for (size_t i = 0; i < count; ++i) {
+        FARPROC proc;
+        if (IMAGE_SNAP_BY_ORDINAL(names[i].u1.Ordinal)) {
+            proc = GetProcAddress(host, reinterpret_cast<LPCSTR>(static_cast<uintptr_t>(IMAGE_ORDINAL(names[i].u1.Ordinal))));
+        } else {
+            auto* byName = reinterpret_cast<PIMAGE_IMPORT_BY_NAME>(base + names[i].u1.AddressOfData);
+            proc = GetProcAddress(host, reinterpret_cast<LPCSTR>(byName->Name));
+        }
+        if (proc) iat[i].u1.Function = reinterpret_cast<ULONGLONG>(proc);
+    }
+
+    DWORD ignore;
+    VirtualProtect(iat, count * sizeof(*iat), oldProtect, &ignore);
+}
+
+static void rebindNodeExeImports(HMODULE addon)
+{
+    // Serialize across workers so VirtualProtect windows on the shared IAT can't interleave.
+    static WTF::Lock rebindLock;
+    WTF::Locker locker { rebindLock };
+
+    auto* base = reinterpret_cast<BYTE*>(addon);
+    auto* dos = reinterpret_cast<PIMAGE_DOS_HEADER>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return;
+
+    auto* nt = reinterpret_cast<PIMAGE_NT_HEADERS>(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return;
+
+    HMODULE host = GetModuleHandleW(nullptr);
+    auto isHostName = [](const char* name) {
+        return _stricmp(name, "node.exe") == 0 || _stricmp(name, "bun.exe") == 0;
+    };
+
+    if (nt->OptionalHeader.NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_IMPORT) {
+        auto& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+        if (dir.VirtualAddress && dir.Size) {
+            auto* desc = reinterpret_cast<PIMAGE_IMPORT_DESCRIPTOR>(base + dir.VirtualAddress);
+            for (; desc->Name != 0; ++desc) {
+                if (!isHostName(reinterpret_cast<const char*>(base + desc->Name))) continue;
+                if (!desc->OriginalFirstThunk || !desc->FirstThunk) continue;
+                rebindThunks(base, host,
+                    reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->FirstThunk),
+                    reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->OriginalFirstThunk));
+            }
+        }
+    }
+
+    if (nt->OptionalHeader.NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT) {
+        auto& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT];
+        if (dir.VirtualAddress && dir.Size) {
+            auto* desc = reinterpret_cast<PIMAGE_DELAYLOAD_DESCRIPTOR>(base + dir.VirtualAddress);
+            for (; desc->DllNameRVA != 0; ++desc) {
+                // Old VC6 delayimp used VAs here; MSVC has emitted RVAs since 2002.
+                if (!desc->Attributes.RvaBased) continue;
+                if (!isHostName(reinterpret_cast<const char*>(base + desc->DllNameRVA))) continue;
+                rebindThunks(base, host,
+                    reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->ImportAddressTableRVA),
+                    reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->ImportNameTableRVA));
+                if (desc->ModuleHandleRVA)
+                    *reinterpret_cast<HMODULE*>(base + desc->ModuleHandleRVA) = host;
+            }
+        }
+    }
+}
+#endif
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(globalObject_);
@@ -605,6 +683,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
 #if OS(WINDOWS)
     tryToDeleteIfNecessary();
+    rebindNodeExeImports(handle);
 #endif
 
     if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {

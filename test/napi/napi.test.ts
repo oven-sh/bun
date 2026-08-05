@@ -13,7 +13,7 @@ import {
   nodeExeMatchingAbi,
   tempDir,
 } from "harness";
-import { join } from "path";
+import { delimiter, dirname, join } from "path";
 
 // The napi-app addons don't link against bun, so existing binaries stay valid
 // across bun builds. `bun install` runs a full `node-gyp rebuild` (clean + build
@@ -1325,6 +1325,24 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(bunStdout).not.toContain("ERROR: Did not crash");
     },
     25_000,
+  );
+
+  // https://github.com/oven-sh/bun/issues/10690 (Windows-only crash; on POSIX this is a plain load check)
+  it.each(["no_delay_load_hook_addon", "regular_node_exe_import_addon"])(
+    "loads an addon that imports node.exe without win_delay_load_hook (%s)",
+    async target => {
+      const addon = join(__dirname, `napi-app/build/Debug/${target}.node`);
+      const nodeDir = dirname(await nodeExeMatchingAbi());
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", `console.log(require(${JSON.stringify(addon)}).hello())`],
+        // LoadLibrary on the regular-import addon needs a node.exe on the DLL search path.
+        env: { ...bunEnv, PATH: `${bunEnv.PATH ?? process.env.PATH}${delimiter}${nodeDir}` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "hello\n", stderr: "", exitCode: 0 });
+    },
   );
 });
 

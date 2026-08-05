@@ -110,9 +110,10 @@ test.concurrent("piping a truncated upstream body into fetch rejects with the up
 
   const upRes = await fetch(`http://127.0.0.1:${upstream.port}/`);
   await closed.promise;
-  // One event-loop turn so the close usually lands before the sink wires
-  // (the EndedInline path); if it lands after, the rejection is the same.
-  await new Promise(resolve => setImmediate(resolve));
+  // An OS-scheduler yield (not a same-thread setImmediate) so the HTTP thread
+  // can observe the close before the sink wires, making the EndedInline path
+  // the common case; if the close lands after, the rejection is the same.
+  await Bun.sleep(1);
 
   const err = await fetch(postServer.url, { method: "POST", body: upRes.body }).then(
     () => null,

@@ -18,9 +18,9 @@ cd ~/code/claude-cli-internal   # branch claude/lowmem-snapshot
 BUN_BUILD_BIN=~/code/bun-lowmem/build/release-local/bun-profile ./scripts/native/build-ant-native.sh --force --local --out-dir build-img
 # -> build-img/@anthropic-ai/claude-cli-native-darwin-arm64/cli
 
-# ASLR-off launcher (image and binary must be at the same addresses)
-cc -o ~/code/tmp/noaslr/noaslr ~/code/tmp/noaslr/noaslr.c
 ```
+
+(No launcher needed: when building or restoring an image the process re-execs itself once with ASLR disabled if dyld slid it — `reexecWithoutASLRIfSlid`.)
 
 An image is only valid for the exact binary that produced it (`__DATA` layout). Rebuild bun => rebuild CC => rebuild the image.
 
@@ -28,7 +28,7 @@ An image is only valid for the exact binary that produced it (`__DATA` layout). 
 
 ```sh
 cd ~/code/tmp/ccmem
-./appdump.sh <cli> /tmp/cc-app.img          # runs CC under noaslr with CLAUDE_CODE_SNAPSHOT_OUT; CC calls Bun.unsafe.snapshot() after the REPL settles
+./appdump.sh <cli> /tmp/cc-app.img          # runs CC with CLAUDE_CODE_SNAPSHOT_OUT; CC calls Bun.unsafe.snapshot() after the REPL settles
 ```
 
 Env the scripts set for both build and restore: `MIMALLOC_DETERMINISTIC_HINT=1 BUN_IMAGE_JIT_ADDR=0x3c0000000 BUN_JSC_useConcurrentGC=0 BUN_JSC_useConcurrentJIT=0 BUN_JSC_useBaselineJIT=0 BUN_JSC_useFTLJIT=0` (generational + concurrent GC and concurrent JIT on; `GENGC=0` to disable generational). JSC options must be identical on both sides (they live in the image).
@@ -62,6 +62,6 @@ Restored or not, footprint grows ~10–25 MB per trivial turn over the first tur
 
 - `static`/`call_once`/function-local statics and env reads cached at boot carry the *build* process's values.
 - Anything holding an OS handle needs a restore path: done for TTY fds, log files (reopened O_APPEND), kqueue/mach ports, uWS loop TLS, mimalloc TLS/scavenger/profiler lock, WTF::Thread, HTTP thread + fs thread pool (epoch-aware Once), ICU break iterators (VM::imageEpoch). Not done: JSC AutomaticThreads (run with concurrent GC/JIT off), FSEvents, DNS-SD connection, sockets in general (they're refused during build instead).
-- Image is per-binary and needs ASLR off for the main binary (fixed addresses). Generational/concurrent GC and concurrent JIT work (AutomaticThreads are put in the timed-out state at restore and restart on demand).
+- Image is per-binary and the main binary must run unslid (handled by a one-time self re-exec with the private `_POSIX_SPAWN_DISABLE_ASLR` flag); heap/JIT regions are placed by explicit address hints. Generational/concurrent GC and concurrent JIT work (AutomaticThreads are put in the timed-out state at restore and restart on demand).
 - `BUN_IMAGE_IMMORTAL_MODE=7` elides ref/deref on RefCounted objects inside the image arenas (sound: refCount()/hasOneRef() report shared); measured neutral, off by default.
 - The WebKit worktree may have staged-but-uncommitted changes if commit signing was unavailable.

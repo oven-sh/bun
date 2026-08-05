@@ -48,6 +48,8 @@
 #include <fcntl.h>
 #if OS(DARWIN)
 #include <mach/mach.h>
+#include <crt_externs.h>
+#include <spawn.h>
 #include <termios.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -124,8 +126,31 @@ static int s_seq = 0;
 static void memdebugSignal(int sig) { s_requested.store(sig == SIGXCPU ? 3 : sig == SIGINFO ? 2 : 1); }
 
 static void imageRestoreAndRun(const char* path);
+extern "C" struct mach_header_64 _mh_execute_header;
+// Images (building or restoring one) need the executable at its link-time address. If dyld slid us, replace this process
+// with an unslid copy of ourselves (macOS private posix_spawn flag) — same argv/env, no external launcher needed.
+static void reexecWithoutASLRIfSlid()
+{
+#if OS(DARWIN)
+    constexpr uintptr_t linkBase = 0x100000000ull;
+    if ((uintptr_t)&_mh_execute_header == linkBase || getenv("BUN_IMAGE_REEXECED"))
+        return;
+    setenv("BUN_IMAGE_REEXECED", "1", 1);
+    char exe[4096]; uint32_t len = sizeof exe;
+    if (_NSGetExecutablePath(exe, &len) != 0)
+        return;
+    posix_spawnattr_t attr; posix_spawnattr_init(&attr);
+    short flags = 0; posix_spawnattr_getflags(&attr, &flags);
+    posix_spawnattr_setflags(&attr, flags | 0x0100 /* _POSIX_SPAWN_DISABLE_ASLR */ | POSIX_SPAWN_SETEXEC);
+    posix_spawn(nullptr, exe, nullptr, &attr, *_NSGetArgv(), *_NSGetEnviron()); // SETEXEC: only returns on failure
+    fprintf(stderr, "[image] could not re-exec without ASLR; continuing slid (image build/restore will not work)\n");
+#endif
+}
+
 extern "C" void Bun__imageMaybeRestore()
 {
+    if (getenv("BUN_IMAGE_IN") || getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT"))
+        reexecWithoutASLRIfSlid();
     if (const char* in = getenv("BUN_IMAGE_IN")) {
         char path[1024]; strlcpy(path, in, sizeof path);
         unsetenv("BUN_IMAGE_IN");

@@ -18,7 +18,7 @@ const env = {
   ...(img ? { BUN_IMAGE_IN: img } : {}), ...envs,
 };
 const pre = has("--setsid") ? ["/usr/bin/perl", "-e", "use POSIX; POSIX::setsid(); exec @ARGV", "--"] : [];
-const proc = Bun.spawn([...pre, `${process.env.HOME}/code/tmp/noaslr/noaslr`, cli], {
+const proc = Bun.spawn([...pre, ...(has("--noaslr-launcher") ? [`${process.env.HOME}/code/tmp/noaslr/noaslr`] : []), cli], {
   env, cwd: process.cwd(),
   terminal: { cols: 150, rows: 45, data: (_t, d) => { const s = new TextDecoder().decode(d); buf += s; out.push(s); } },
 });

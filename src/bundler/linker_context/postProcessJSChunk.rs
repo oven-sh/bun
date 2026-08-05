@@ -324,7 +324,6 @@ pub(crate) fn post_process_js_chunk(
                                         irp_id,
                                         default_id,
                                         local_name_id,
-                                        analyze_transpiled_module::ImportAttributes::None,
                                         false,
                                     );
                                 }
@@ -343,7 +342,6 @@ pub(crate) fn post_process_js_chunk(
                                         irp_id,
                                         alias_id,
                                         local_name_id,
-                                        analyze_transpiled_module::ImportAttributes::None,
                                         false,
                                     );
                                 }
@@ -357,11 +355,7 @@ pub(crate) fn post_process_js_chunk(
                                     let local_name = chunk.renamer.name_for_symbol(s.namespace_ref);
                                     mi.str(local_name)
                                 };
-                                mi.add_import_info_namespace(
-                                    irp_id,
-                                    local_name_id,
-                                    analyze_transpiled_module::ImportAttributes::None,
-                                );
+                                mi.add_import_info_namespace(irp_id, local_name_id);
                             }
                         }
                         _ => {}

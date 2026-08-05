@@ -37,6 +37,8 @@ test("dir cache busts don't re-intern unchanged package.json/tsconfig.json", asy
       import { resolverInternals } from "bun:internal-for-testing";
       import { createRequire } from "node:module";
       import { writeFileSync } from "node:fs";
+      import { join } from "node:path";
+      const here = import.meta.dir;
       const require2 = createRequire(import.meta.url);
       const miss = () => {
         try {
@@ -55,8 +57,8 @@ test("dir cache busts don't re-intern unchanged package.json/tsconfig.json", asy
 
       // Real edits must still be picked up by the bust: one new interned copy
       // each, then flat again.
-      writeFileSync("package.json", ${JSON.stringify(JSON.stringify({ ...pkg, description: "edited" }))});
-      writeFileSync("tsconfig.json", ${JSON.stringify(JSON.stringify(tsconfigNoPaths))});
+      writeFileSync(join(here, "package.json"), ${JSON.stringify(JSON.stringify({ ...pkg, description: "edited" }))});
+      writeFileSync(join(here, "tsconfig.json"), ${JSON.stringify(JSON.stringify(tsconfigNoPaths))});
       miss();
       const p2 = pkgLen(), t2 = tsLen();
       for (let i = 0; i < 25; i++) miss();
@@ -64,7 +66,7 @@ test("dir cache busts don't re-intern unchanged package.json/tsconfig.json", asy
 
       // A previously-missing extends parent appearing must re-merge even
       // though the root file itself is unchanged.
-      writeFileSync("tsconfig.base.json", ${JSON.stringify(JSON.stringify(tsconfigBase))});
+      writeFileSync(join(here, "tsconfig.base.json"), ${JSON.stringify(JSON.stringify(tsconfigBase))});
       miss();
       const p4 = pkgLen(), t4 = tsLen();
       const after = require2("@app/y");

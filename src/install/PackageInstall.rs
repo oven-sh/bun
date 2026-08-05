@@ -1135,11 +1135,20 @@ impl<'a> PackageInstall<'a> {
                                             bun_errno::SystemErrno::ENOENT,
                                         ));
                                     }
-                                    if let Ok(reopened) = destbase.make_open_path(
-                                        destpath.as_bytes(),
-                                        OpenDirOptions::default(),
-                                    ) {
-                                        *subdir = reopened;
+                                    match destbase
+                                        .make_open_path(destpath.as_bytes(), OpenDirOptions::default())
+                                    {
+                                        Ok(reopened) => *subdir = reopened,
+                                        // A peer can race the re-create
+                                        // itself; anything else will not
+                                        // heal with retries.
+                                        Err(e) => match e.get_errno() {
+                                            sys::E::ENOENT
+                                            | sys::E::EEXIST
+                                            | sys::E::ENOTDIR
+                                            | sys::E::EINVAL => {}
+                                            _ => return Err(e.into()),
+                                        },
                                     }
                                     let entry_dirname = bun_paths::resolve_path::dirname::<
                                         bun_paths::platform::Auto,
@@ -1801,14 +1810,24 @@ impl<'a> PackageInstall<'a> {
                                         // The held fd may be an unlinked dir
                                         // (peer renamed it aside and deleted
                                         // it); re-open by path.
-                                        if let Ok(reopened) = destbase.make_open_path(
+                                        match destbase.make_open_path(
                                             destpath.as_bytes(),
                                             OpenDirOptions {
                                                 iterate: true,
                                                 ..Default::default()
                                             },
                                         ) {
-                                            *destination_dir = reopened;
+                                            Ok(reopened) => *destination_dir = reopened,
+                                            // A peer can race the re-create
+                                            // itself; anything else will not
+                                            // heal with retries.
+                                            Err(e) => match e.get_errno() {
+                                                sys::E::ENOENT
+                                                | sys::E::EEXIST
+                                                | sys::E::ENOTDIR
+                                                | sys::E::EINVAL => {}
+                                                _ => return Err(e.into()),
+                                            },
                                         }
                                         let entry_dirname = bun_paths::resolve_path::dirname::<
                                             bun_paths::platform::Auto,

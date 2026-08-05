@@ -33,7 +33,7 @@ pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
             if let Some(idx) = slice.iter().position(|&b| b == token) {
                 // Check for even number of backslashes preceding the
                 // token to know that it's not escaped
-                let mut i = idx;
+                let mut i = potential_pattern.len() - slice.len() + idx;
                 let mut backslash_count: u16 = 0;
 
                 while i > 0 && potential_pattern[i - 1] == b'\\' {
@@ -52,4 +52,37 @@ pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::detect_glob_syntax;
+
+    #[test]
+    fn detects_unescaped_tokens() {
+        assert!(detect_glob_syntax(b"*.ts"));
+        assert!(detect_glob_syntax(b"a/{b,c}/d"));
+        assert!(detect_glob_syntax(b"a[bc]d"));
+        assert!(detect_glob_syntax(b"a?c"));
+        assert!(detect_glob_syntax(b"!foo"));
+    }
+
+    #[test]
+    fn ignores_escaped_tokens() {
+        assert!(!detect_glob_syntax(b"a\\*b"));
+        assert!(!detect_glob_syntax(b"a\\{b\\}c"));
+        assert!(!detect_glob_syntax(b"plain/path.txt"));
+        // even backslash count = escaped backslash, unescaped token
+        assert!(detect_glob_syntax(b"a\\\\*b"));
+    }
+
+    #[test]
+    fn detects_unescaped_token_after_escaped_one() {
+        // https://github.com/oven-sh/bun/pull/34275
+        assert!(detect_glob_syntax(b"\\*x*"));
+        assert!(detect_glob_syntax(b"\\{a\\}{b,c}"));
+        assert!(detect_glob_syntax(b"\\?a?"));
+        assert!(detect_glob_syntax(b"\\[a\\]b[cd]"));
+        assert!(!detect_glob_syntax(b"\\*x\\*"));
+    }
 }

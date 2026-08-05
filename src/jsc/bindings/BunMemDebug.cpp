@@ -63,6 +63,7 @@
 #include <pthread.h>
 #include <wtf/Threading.h>
 #include <JavaScriptCore/Completion.h>
+#include <zstd.h>
 #include <JavaScriptCore/SourceCode.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSLock.h>
@@ -194,6 +195,7 @@ static void reexecWithoutASLRIfSlid()
 }
 
 // `<executable>.img` next to the binary is used automatically (BUN_IMAGE=0 opts out; BUN_IMAGE_IN overrides).
+static bool imageInflateZstd(const char* zpath, const char* outPath);
 static bool findSiblingImage(char* out, size_t cap)
 {
     const char* off = getenv("BUN_IMAGE");
@@ -207,7 +209,21 @@ static bool findSiblingImage(char* out, size_t cap)
     ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1); if (n <= 0) return false; exe[n] = 0;
 #endif
     snprintf(out, cap, "%s.img", exe);
-    return access(out, R_OK) == 0;
+    if (access(out, R_OK) == 0)
+        return true;
+    char zpath[4300]; snprintf(zpath, sizeof zpath, "%s.img.zst", exe);
+    struct stat zst, est; if (stat(zpath, &zst) || stat(exe, &est)) return false;
+    // Inflate once into the user cache, keyed by the executable + compressed image identity.
+    const char* cacheHome = getenv("XDG_CACHE_HOME"); const char* home = getenv("HOME"); char dir[4200];
+    if (cacheHome && *cacheHome) snprintf(dir, sizeof dir, "%s/bun/images", cacheHome);
+    else if (home) snprintf(dir, sizeof dir, "%s/.cache/bun/images", home);
+    else return false;
+    { char partial[4200]; snprintf(partial, sizeof partial, "%s", dir); for (char* q = partial + 1; *q; q++) if (*q == '/') { *q = 0; mkdir(partial, 0755); *q = '/'; } mkdir(partial, 0755); }
+    snprintf(out, cap, "%s/%llx-%llx-%llx-%llx.img", dir, (unsigned long long)est.st_size, (unsigned long long)est.st_mtime, (unsigned long long)zst.st_size, (unsigned long long)zst.st_mtime);
+    if (access(out, R_OK) == 0)
+        return true;
+    if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] inflating %s -> %s\n", zpath, out);
+    return imageInflateZstd(zpath, out);
 }
 
 extern "C" void Bun__imageMaybeRestore()
@@ -1208,6 +1224,44 @@ static void imageTrapReport()
 
 static struct termios s_imageTermios; static int s_imageTermiosFd = -1; // lives in __DATA, so it travels inside the image
 static uint64_t s_imageOpenFds[16]; // fds 0..1023 open in the build process: the restored process parks /dev/null on them so stale closes are harmless and new fds never alias them
+// <img>.zst next to the image: what ships. Restoring inflates it once into a per-user cache (see findSiblingImage).
+static void imageWriteZstd(const char* path)
+{
+    int in = open(path, O_RDONLY); if (in < 0) return;
+    struct stat st; if (fstat(in, &st)) { close(in); return; }
+    void* src = mmap(nullptr, st.st_size, PROT_READ, MAP_PRIVATE, in, 0); close(in);
+    if (src == MAP_FAILED) return;
+    size_t cap = ZSTD_compressBound(st.st_size); void* dst = mmap(nullptr, cap, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    size_t n = ZSTD_compress(dst, cap, src, st.st_size, 3);
+    munmap(src, st.st_size);
+    if (!ZSTD_isError(n)) {
+        char zpath[1100]; snprintf(zpath, sizeof zpath, "%s.zst", path);
+        int out = open(zpath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (out >= 0) { if (write(out, dst, n) == (ssize_t)n) fprintf(stderr, "[image] wrote %s (%.1fMB)\n", zpath, n / 1048576.0); close(out); }
+    }
+    munmap(dst, cap);
+}
+static bool imageInflateZstd(const char* zpath, const char* outPath)
+{
+    int in = open(zpath, O_RDONLY); if (in < 0) return false;
+    struct stat st; if (fstat(in, &st)) { close(in); return false; }
+    void* src = mmap(nullptr, st.st_size, PROT_READ, MAP_PRIVATE, in, 0); close(in);
+    if (src == MAP_FAILED) return false;
+    unsigned long long full = ZSTD_getFrameContentSize(src, st.st_size);
+    bool ok = false;
+    if (full != ZSTD_CONTENTSIZE_ERROR && full != ZSTD_CONTENTSIZE_UNKNOWN) {
+        char tmp[1100]; snprintf(tmp, sizeof tmp, "%s.tmp.%d", outPath, getpid());
+        int out = open(tmp, O_RDWR | O_CREAT | O_TRUNC, 0600);
+        if (out >= 0 && !ftruncate(out, full)) {
+            void* dst = mmap(nullptr, full, PROT_READ | PROT_WRITE, MAP_SHARED, out, 0);
+            if (dst != MAP_FAILED) { size_t n = ZSTD_decompress(dst, full, src, st.st_size); ok = !ZSTD_isError(n) && n == full; munmap(dst, full); }
+        }
+        if (out >= 0) close(out);
+        if (ok) ok = !rename(tmp, outPath); else unlink(tmp);
+    }
+    munmap(src, st.st_size);
+    return ok;
+}
 struct ImageFileFd { int fd; int flags; char path[1000]; };
 static ImageFileFd s_imageFileFds[32]; static int s_imageFileFdCount = 0; // writable regular files (logs) get reopened O_APPEND at the same fd number
 static void imageDump(JSC::VM& vm, const char* path)
@@ -1343,6 +1397,8 @@ static void imageDump(JSC::VM& vm, const char* path)
     pwrite(fd, &hdr, sizeof hdr, 0);
     pwrite(fd, out.data(), out.size() * sizeof(ImageRegion), tableOff);
     close(fd);
+    if (const char* z = getenv("BUN_IMAGE_ZSTD"); !z || strcmp(z, "0"))
+        imageWriteZstd(path);
     fprintf(stderr, "[image] wrote %s: %zu regions, %.1fMB (vm=%p global=%p thread=%p text=%p)\n", path, out.size(), total / 1048576.0, (void*)hdr.vm, (void*)hdr.globalObject, (void*)hdr.mainThread, (void*)hdr.textBase);
 #endif
 }

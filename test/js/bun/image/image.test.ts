@@ -41,5 +41,16 @@ test.skipIf(!hasImages)("bun build --compile --compile-image writes <exe>.img an
   const plain = Bun.spawnSync({ cmd: [exe], env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, BUN_IMAGE: "0" }, stderr: "pipe", stdout: "pipe" });
   expect(plain.stdout.toString()).toContain("epoch 0");
   expect(plain.exitCode).toBe(0);
+  // Ship only the compressed image: first run inflates it into XDG_CACHE_HOME and restores from there.
+  expect(Bun.file(exe + ".img.zst").size).toBeGreaterThan(1024);
+  require("fs").unlinkSync(exe + ".img");
+  const cache = join(String(dir), "cache");
+  for (const run of [1, 2]) {
+    const z = Bun.spawnSync({ cmd: [exe], env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, XDG_CACHE_HOME: cache }, stderr: "pipe", stdout: "pipe" });
+    expect(z.stderr.toString()).toContain("[image] restored");
+    expect(z.stdout.toString()).toContain("epoch 1");
+    expect(z.exitCode).toBe(0);
+  }
+  expect(require("fs").readdirSync(join(cache, "bun", "images")).filter((f: string) => f.endsWith(".img")).length).toBe(1);
 });
 

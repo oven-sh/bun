@@ -31,7 +31,7 @@ cd ~/code/tmp/ccmem
 ./appdump.sh <cli> /tmp/cc-app.img          # runs CC under noaslr with CLAUDE_CODE_SNAPSHOT_OUT; CC calls Bun.unsafe.snapshot() after the REPL settles
 ```
 
-Env the scripts set for both build and restore: `MIMALLOC_DETERMINISTIC_HINT=1 BUN_IMAGE_JIT_ADDR=0x3c0000000 BUN_JSC_useConcurrentGC=0 BUN_JSC_useConcurrentJIT=0 BUN_JSC_useGenerationalGC=0`. JSC options must be identical on both sides (they live in the image).
+Env the scripts set for both build and restore: `MIMALLOC_DETERMINISTIC_HINT=1 BUN_IMAGE_JIT_ADDR=0x3c0000000 BUN_JSC_useConcurrentGC=0 BUN_JSC_useConcurrentJIT=0 BUN_JSC_useBaselineJIT=0 BUN_JSC_useFTLJIT=0` (generational GC on; `GENGC=0` to disable). JSC options must be identical on both sides (they live in the image).
 
 Runtime contract (`src/bun_core/image.rs`, `run_command.rs`, `BunMemDebug.cpp`):
 - `Bun.unsafe.snapshot(path, { cancelTimers })` throws an uncatchable termination; the outermost `EventLoop::tick` then waits until the process is quiet (no async tasks / HTTP in flight / pool work / armed timers — refuses with a list otherwise, `BUN_SNAPSHOT_QUIET_TIMEOUT`), stops pool workers + mimalloc scavenger, drops all compiled code, freezes the heap (`Heap::freezeCurrentHeapAsImmortalImage`), writes the image, exits.
@@ -52,7 +52,7 @@ Attribution commands (write the word into `~/code/tmp/ccmem/cmd.<pid>`; needs `B
 
 ## Numbers (Aug 4–5 2026, M-series, this stack)
 
-restored idle at prompt ~40–45 MB (image ~260 MB); after typing + slash menu ~52–57; after one model turn ~105–120, ~87–100 after GC+reclean. Booted normally: 215–230 idle.
+With LLInt+DFG only, borrowed bytecode and generational GC on (the current script defaults): restored idle at prompt **~34–36 MB** (image ~245 MB); after one turn ~100; after 4 turns ~112, ~106 after GC; CPU for restore+4 turns ~1.2 s. (Earlier all-tiers/gen-GC-off config: 40–45 idle, ~150 after 4 turns.) Booted normally: 215–230 idle (168 with LLInt+DFG only).
 
 ## Per-turn growth (not image-specific)
 

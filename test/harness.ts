@@ -74,6 +74,9 @@ export const bunEnv: NodeJS.Dict<string> = {
   CI: "1",
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
   BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+  // The `bun install` "Slow filesystem detected" warning is timing-dependent
+  // and flakes stderr assertions on slow CI filesystems.
+  BUN_DISABLE_SLOW_FILESYSTEM_WARNING: "1",
   // Tests drive `bun update --interactive` by writing keystrokes to a pipe;
   // the real command refuses on non-TTY stdin. Bypass that gate under test.
   BUN_INTERNAL_INTERACTIVE_ASSUME_TTY: "1",
@@ -1513,7 +1516,7 @@ export async function runBunInstall(
 
 // stderr with `slow filesystem` warning removed
 export function stderrForInstall(err: string) {
-  return err.replace(/warn: Slow filesystem.*/g, "");
+  return err.replace(/warn: Slow filesystem.*\r?\n?/g, "");
 }
 
 export async function runBunUpdate(

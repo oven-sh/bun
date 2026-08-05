@@ -127,8 +127,8 @@ for (const entry of await decompress(Buffer.from(buffer))) {
       BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
     },
   });
-  const err2 = await new Response(stderr2).text();
-  if (err2) throw new Error(err2);
+  const err2 = stderrForInstall(await new Response(stderr2).text());
+  expect(err2).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("decompress");
   expect(await readdirSorted(join(run_dir, ".cache", "decompress"))).toEqual(["4.2.1@@@1"]);

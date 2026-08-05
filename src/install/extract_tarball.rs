@@ -588,7 +588,9 @@ impl ExtractTarball {
                                 // from a concurrent install (entries only
                                 // appear via atomic rename): keep it rather
                                 // than deleting files a peer is copying out of
-                                // the cache. Incomplete leftovers are replaced.
+                                // the cache. Incomplete leftovers are replaced
+                                // (npm/tarball entries always have a
+                                // package.json; git deps may not).
                                 let mut folder_name_z_buf = PathBuffer::uninit();
                                 folder_name_z_buf[0..folder_name.len()]
                                     .copy_from_slice(folder_name);
@@ -596,7 +598,9 @@ impl ExtractTarball {
                                 let folder_name_z =
                                     ZStr::from_buf(&folder_name_z_buf, folder_name.len());
                                 let keep_existing = match self.resolution.tag {
-                                    ResolutionTag::Npm => {
+                                    ResolutionTag::Npm
+                                    | ResolutionTag::LocalTarball
+                                    | ResolutionTag::RemoteTarball => {
                                         let mut pkg_json_buf = PathBuffer::uninit();
                                         let pkg_json = path::resolve_path::join_z_buf::<
                                             path::platform::Auto,

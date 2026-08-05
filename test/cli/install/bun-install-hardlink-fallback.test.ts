@@ -167,10 +167,14 @@ describe("concurrent installs into the same destination", () => {
         expect(stdout).not.toContain("Failed to install");
         expect(exitCode).toBe(0);
       }
-      // The racing installs must still converge on a complete tree.
+      // The racing installs must still converge on a complete tree with
+      // intact contents.
       for (let p = 0; p < PKG_COUNT; p++) {
         const lib = join(String(dir), "node_modules", `many-files-${p}`, "lib");
         expect(readdirSync(lib)).toHaveLength(FILE_COUNT);
+        for (const f of [0, FILE_COUNT - 1]) {
+          expect(await Bun.file(join(lib, `file${f}.js`)).text()).toBe(`module.exports = ${f}; // ${filler}`);
+        }
       }
     }
   }, 120_000);

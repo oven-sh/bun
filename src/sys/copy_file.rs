@@ -22,7 +22,7 @@ static debug: bun_core::output::ScopedLogger =
 #[cfg(windows)]
 type InputType<'a> = &'a bun_core::WStr; // bun.OSPathSliceZ == [:0]const u16
 #[cfg(not(windows))]
-pub type InputType<'a> = Fd;
+type InputType<'a> = Fd;
 // lifetime param is unused on posix (Fd is Copy); kept so callers
 // can write `InputType<'_>` uniformly across platforms.
 

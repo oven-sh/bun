@@ -295,7 +295,7 @@ impl Default for Options {
 #[cfg(windows)]
 type hostent_int = c_short;
 #[cfg(not(windows))]
-pub type hostent_int = c_int;
+type hostent_int = c_int;
 
 #[repr(C)]
 pub struct struct_hostent {
@@ -996,9 +996,6 @@ unsafe extern "C" {
         afree: Option<unsafe extern "C" fn(*mut c_void)>,
         arealloc: Option<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void>,
     ) -> c_int;
-    // NOT safe: per ares_library_cleanup(3) this is not thread-safe — must only
-    // be called after all threads using c-ares have terminated; calling it while
-    // a Channel is live or another thread is in c-ares is UB.
     pub fn ares_version(version: *mut c_int) -> *const u8;
     pub fn ares_init(channelptr: *mut *mut Channel) -> c_int;
     pub fn ares_init_options(

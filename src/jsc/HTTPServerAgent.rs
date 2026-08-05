@@ -97,17 +97,9 @@ bun_opaque::opaque_ffi! {
     pub struct InspectorHTTPServerAgent;
 }
 
-// `safe fn`: `InspectorHTTPServerAgent` is an `opaque_ffi!` ZST handle
-// (`!Freeze` via `UnsafeCell`); `BunString` is `#[repr(C)]` and read-only
-// across the call. `&mut`/`&` are ABI-identical to non-null `*mut`/`*const`.
-// Remaining args are by-value scalars / `#[repr(u8)]` enums.
-unsafe extern "C" {
-
-    // `Bun__HTTPServerAgent__notifyServer{Started,Stopped,RoutesUpdated}` are
-    // `[[ZIG_EXPORT(nothrow)]]` — declared once in `crate::cpp::raw` (cppbind),
-    // called below with explicit casts to the codegen's opaque param types.
-}
-
+// `Bun__HTTPServerAgent__notifyServer{Started,Stopped,RoutesUpdated}` are
+// `[[ZIG_EXPORT(nothrow)]]` — declared once in `crate::cpp::raw` (cppbind),
+// called below with explicit casts to the codegen's opaque param types.
 impl InspectorHTTPServerAgent {
     /// # Safety
     /// `server_instance` is forwarded to C++ as an opaque token; caller must

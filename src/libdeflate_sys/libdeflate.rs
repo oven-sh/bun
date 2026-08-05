@@ -3,23 +3,6 @@ use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 use std::sync::Once;
 
-#[repr(C)]
-pub struct Options {
-    pub(crate) sizeof_options: usize,
-    pub(crate) malloc_func: Option<unsafe extern "C" fn(usize) -> *mut c_void>,
-    pub(crate) free_func: Option<unsafe extern "C" fn(*mut c_void)>,
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            sizeof_options: core::mem::size_of::<Options>(),
-            malloc_func: None,
-            free_func: None,
-        }
-    }
-}
-
 /// Valid `compression_level` range for `libdeflate_alloc_compressor`. Values
 /// outside this range make the allocator return NULL (indistinguishable from OOM),
 /// so callers must range-check first.
@@ -532,8 +515,6 @@ pub enum Encoding {
 
 unsafe extern "C" {
     pub(crate) safe fn libdeflate_alloc_decompressor() -> *mut Decompressor;
-    // NOT safe: `Options` carries caller-supplied `malloc_func`/`free_func`
-    // callbacks that libdeflate will invoke and write through.
 }
 
 const LIBDEFLATE_SUCCESS: c_uint = 0;

@@ -29,16 +29,23 @@ function headFile(p: string): string {
   const r = Bun.spawnSync({
     cmd: ["git", "-C", repoRoot, "show", `HEAD:${p}`],
     stdout: "pipe",
-    stderr: "ignore",
+    stderr: "pipe",
   });
-  return r.exitCode === 0 ? r.stdout.toString() : "";
+  if (r.exitCode !== 0) {
+    throw new Error(`git show HEAD:${p} failed: ${r.stderr.toString()}`);
+  }
+  return r.stdout.toString();
 }
 
 function headTree(): Set<string> {
   const r = Bun.spawnSync({
     cmd: ["git", "-C", repoRoot, "ls-tree", "-r", "--name-only", "-z", "HEAD"],
     stdout: "pipe",
+    stderr: "pipe",
   });
+  if (r.exitCode !== 0) {
+    throw new Error(`git ls-tree HEAD failed: ${r.stderr.toString()}`);
+  }
   return new Set(r.stdout.toString().split("\0").filter(Boolean));
 }
 

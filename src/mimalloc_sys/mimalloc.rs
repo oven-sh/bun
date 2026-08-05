@@ -96,21 +96,6 @@ unsafe extern "C" {
     ) -> *mut c_void;
 }
 
-bun_opaque::opaque_ffi! {
-    /// Opaque mimalloc v3 thread-local heap handle (`mi_theap_t`).
-    ///
-    /// A `THeap` is the per-thread allocation state belonging to a [`Heap`].
-    /// `mi_heap_*` entry points resolve `heap → theap` on every call via
-    /// `_mi_heap_theap`; the `mi_theap_*` entry points take the resolved
-    /// `THeap` directly and skip that lookup.
-    ///
-    /// **Do not cache across `Send`**: a `mi_theap_t*` is per-OS-thread, while
-    /// the `mi_heap_t*` it belongs to is `Send`.
-    /// See `MimallocArena.rs` PERF NOTE. The entry points below
-    /// are `#[deprecated]` for this reason.
-    struct THeap;
-}
-
 #[repr(C)]
 pub struct struct_mi_heap_area_s {
     pub blocks: *mut core::ffi::c_void,

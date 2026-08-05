@@ -179,3 +179,133 @@ describe("HTTP/3 header encoding", () => {
     expect(Object.keys(seen[0])).not.toContain("authorization");
   });
 });
+
+// A 0-RTT H3 request the server rejects must not reach it at 1-RTT, and
+// must not crash the client decoding a response on the destroyed stream.
+// lsquic's transparent stash-and-retransmit would deliver the request after
+// node:quic already tore the stream down; the server's HEADERS then hit
+// lsquic_qdh_header_in_begin's `!STREAM_U_READ_DONE` assert.
+describe("0-RTT rejected on HTTP/3", () => {
+  const H = (path: string) => ({ ":method": "GET", ":path": path, ":scheme": "https", ":authority": "localhost" });
+
+  const makeServer = async (paths: string[], tp: Record<string, number> = {}) => {
+    const ready = Promise.withResolvers<void>();
+    const ep = await listen(
+      async s => {
+        s.onstream = (st: any) => st.closed.catch(() => {});
+        await s.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1, ...tp },
+        onheaders(this: any, headers: Record<string, string>) {
+          paths.push(headers[":path"]);
+          this.sendHeaders({ ":status": "200" });
+          this.writer.endSync();
+          ready.resolve();
+        },
+      },
+    );
+    return { ep, ready, [Symbol.asyncDispose]: () => ep.close() };
+  };
+
+  async function getTicket(tp: Record<string, number> = {}) {
+    const gotTicket = Promise.withResolvers<Buffer>();
+    let token: Buffer | undefined;
+    await using a = await makeServer([], tp);
+    const ca = await connect(a.ep.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+      onsessionticket: (t: Buffer) => gotTicket.resolve(t),
+      onnewtoken: (t: Buffer) => (token = t),
+    });
+    await ca.opened;
+    const answered = Promise.withResolvers<void>();
+    await ca.createBidirectionalStream({ headers: H("/warm"), onheaders: () => answered.resolve() });
+    await answered.promise;
+    const ticket = await gotTicket.promise;
+    ca.close();
+    return { ticket, token };
+  }
+
+  test("a rejected early request is elided, not retransmitted at 1-RTT", async () => {
+    const { ticket, token } = await getTicket();
+
+    // Fresh server B: A's ticket keys are gone, so 0-RTT is rejected.
+    const paths: string[] = [];
+    await using b = await makeServer(paths);
+    const c = await connect(b.ep.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+      sessionTicket: ticket,
+      token,
+    });
+    c.closed.catch(() => {});
+
+    // The 0-RTT request: opened before the handshake is known rejected.
+    const early = await c.createBidirectionalStream({ headers: H("/early"), onheaders() {} });
+    const earlyClose = early.closed.catch((e: any) => e);
+
+    const info = await c.opened;
+    expect(info.earlyDataAttempted).toBe(true);
+    expect(info.earlyDataAccepted).toBe(false);
+
+    const err = await earlyClose;
+    expect(err?.code).toBe("ERR_QUIC_APPLICATION_ERROR");
+
+    // The documented re-open: this is the one request the server must see.
+    const retried = Promise.withResolvers<string>();
+    await c.createBidirectionalStream({
+      headers: H("/retry"),
+      onheaders: (h: Record<string, string>) => retried.resolve(h[":status"]),
+    });
+    expect(await retried.promise).toBe("200");
+
+    // /retry reached the server; any retransmitted /early headers that were
+    // going to arrive have arrived by now (same path, lower stream id).
+    await b.ready.promise;
+    expect(paths).toEqual(["/retry"]);
+    c.close();
+  });
+
+  // The second 0-RTT request exceeds the cached initial_max_streams_bidi
+  // budget, so lsquic defers creating it; the wrapper has raw==null and
+  // its headers sit in pending_headers when the rejection fires. bind_raw
+  // must propagate the cancel instead of sending the queued request when
+  // handshake_ok creates the delayed stream.
+  test("a delayed early request past the cached stream limit is also cancelled", async () => {
+    const { ticket, token } = await getTicket({ initialMaxStreamsBidi: 1 });
+
+    const paths: string[] = [];
+    await using b = await makeServer(paths, { initialMaxStreamsBidi: 4 });
+    const c = await connect(b.ep.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+      sessionTicket: ticket,
+      token,
+    });
+    c.closed.catch(() => {});
+
+    const a = await c.createBidirectionalStream({ headers: H("/a"), onheaders() {} });
+    const d = await c.createBidirectionalStream({ headers: H("/delayed"), onheaders() {} });
+    const [aErr, dErr] = await Promise.all([a.closed.catch((e: any) => e), d.closed.catch((e: any) => e)]);
+
+    const info = await c.opened;
+    expect(info.earlyDataAccepted).toBe(false);
+    expect(aErr?.code).toBe("ERR_QUIC_APPLICATION_ERROR");
+    expect(dErr?.code).toBe("ERR_QUIC_APPLICATION_ERROR");
+
+    const retried = Promise.withResolvers<string>();
+    await c.createBidirectionalStream({
+      headers: H("/retry"),
+      onheaders: (h: Record<string, string>) => retried.resolve(h[":status"]),
+    });
+    expect(await retried.promise).toBe("200");
+    await b.ready.promise;
+    expect(paths).toEqual(["/retry"]);
+    c.close();
+  });
+});

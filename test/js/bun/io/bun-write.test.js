@@ -943,4 +943,54 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
 
     expect(f.name).toBe(filePath);
   });
+
+  // On Windows all Bun.write() goes through uv_fs_write on the libuv thread pool, which has its
+  // own (different) reordering behaviour; this covers the POSIX synchronous fast path.
+  describe.skipIf(isWindows).each(["stdout", "stderr"])("Bun.write(Bun.%s, ...) ordering", stream => {
+    const otherStream = stream === "stdout" ? "stderr" : "stdout";
+    const script = `
+      const p = [];
+      for (let i = 0; i < 5; i++) p.push(Bun.write(Bun.${stream}, "C" + i + "\\n"));
+      const pending = p.filter(x => Bun.peek.status(x) === "pending").length;
+      await Promise.all(p);
+      process.${otherStream}.write("pending=" + pending + "\\n");
+    `;
+
+    it("writes in call order when redirected to a file", async () => {
+      using dir = tempDir("bun-write-stdio-order-file", {});
+      const outPath = join(String(dir), "out.txt");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: stream === "stdout" ? Bun.file(outPath) : "pipe",
+        stderr: stream === "stderr" ? Bun.file(outPath) : "pipe",
+      });
+      const other = stream === "stdout" ? proc.stderr : proc.stdout;
+      const [otherText, exitCode] = await Promise.all([other.text(), proc.exited]);
+      // Small writes to a regular-file stdio fd take the same synchronous path as pipes, so they
+      // land in call order and their promises are already settled when Bun.write() returns.
+      // Previously they were dispatched to the thread pool, whose LIFO run queue reversed them.
+      expect({ output: await Bun.file(outPath).text(), status: otherText }).toEqual({
+        output: "C0\nC1\nC2\nC3\nC4\n",
+        status: "pending=0\n",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    it("writes in call order when redirected to a pipe", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [target, other] = stream === "stdout" ? [stdout, stderr] : [stderr, stdout];
+      expect({ output: target, status: other }).toEqual({
+        output: "C0\nC1\nC2\nC3\nC4\n",
+        status: "pending=0\n",
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
 });

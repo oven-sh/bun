@@ -5039,12 +5039,13 @@ pub(crate) fn write_file_internal(
     #[cfg(not(windows))]
     {
         let mut needs_async = false;
+        // The fast path writes synchronously on the JS thread. Routing an fd through the thread
+        // pool instead would drain the pool's LIFO run queue out of submission order, so fd
+        // destinations always stay on this path; the blocking-pipe case falls through to the
+        // async path via `needs_async` on EAGAIN.
         let fast_path_ok = matches!(*path_or_blob, PathOrBlob::Path(_))
-            || (matches!(*path_or_blob, PathOrBlob::Blob(ref b)
-                if b.offset.get() == 0 && !b.is_s3()
-                    && !(b.store.get().is_some()
-                        && matches!(b.store().expect("infallible: store present").data, store::Data::File(ref f)
-                            if f.mode != 0 && bun_core::kind_from_mode(f.mode) == bun_core::FileKind::File))));
+            || matches!(*path_or_blob, PathOrBlob::Blob(ref b)
+                if b.offset.get() == 0 && !b.is_s3());
         if fast_path_ok {
             if data.is_string() {
                 let len = data.get_length(global_this)?;

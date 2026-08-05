@@ -79,26 +79,24 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
     /// (running `Drop for C`). The returned pointer is owned by the caller
     /// until handed to [`Self::schedule`].
     pub fn create(global: &JSGlobalObject, ctx: C) -> JsResult<*mut Self> {
-        let vm = bun_ptr::BackRef::new(global.bun_vm());
-        let job = bun_core::heap::into_raw(Box::new(Self {
+        Ok(bun_core::heap::into_raw(Self::create_box(global, ctx)?))
+    }
+
+    /// Owned construction: `ctx.init` may throw (e.g. CryptoJob<Scrypt>), and
+    /// the `Box` dropping on error runs `Drop for C`.
+    fn create_box(global: &JSGlobalObject, ctx: C) -> JsResult<Box<Self>> {
+        let mut job = Box::new(Self {
             run_from_js_erased: |p| Self::run_from_js(p.cast::<Self>()),
-            vm,
+            vm: bun_ptr::BackRef::new(global.bun_vm()),
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: Self::run_task,
             },
             poll: KeepAlive::default(),
             ctx,
-        }));
-        // `ctx.init` may throw (e.g. CryptoJob<Scrypt>); on error, reclaim the
-        // box so `Drop for C` releases any resources `ctx` already owns.
-        let mut guard = scopeguard::guard(job, |job| {
-            // SAFETY: `job` came from `heap::into_raw` above and was not consumed.
-            drop(unsafe { bun_core::heap::take(job) });
         });
-        // SAFETY: `job` is exclusively owned here.
-        unsafe { (**guard).ctx.init(global)? };
-        Ok(scopeguard::ScopeGuard::into_inner(guard))
+        job.ctx.init(global)?;
+        Ok(job)
     }
 
     /// `KeepAlive::ref_` the JS event loop and hand the intrusive task to the
@@ -127,11 +125,13 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         ctx: C,
         dispatch: impl FnOnce(*mut WorkPoolTask),
     ) -> JsResult<()> {
-        let this = Self::create(global, ctx)?;
-        // SAFETY: `this` is a freshly-created live pointer, handed off once.
-        unsafe { (*this).poll.ref_(bun_io::js_vm_ctx()) };
-        // SAFETY: nothing touches the job after the hand-off.
-        dispatch(unsafe { &raw mut (*this).task });
+        let mut job = Self::create_box(global, ctx)?;
+        job.poll.ref_(bun_io::js_vm_ctx());
+        // Single into_raw; the intrusive task pointer is derived after it so
+        // provenance covers the whole allocation (as `WorkPool::schedule_owned`).
+        let raw = bun_core::heap::into_raw(job);
+        // SAFETY: `raw` is a live allocation now owned by the executor.
+        dispatch(unsafe { &raw mut (*raw).task });
         Ok(())
     }
 

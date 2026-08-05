@@ -360,8 +360,9 @@ it("should preserve package.json indentation from the template", async () => {
     env: { ...env, BUN_CREATE_DIR: bunCreateDir },
   });
 
-  const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(err).not.toContain("error:");
+  expect(out).toContain("Created tabs-template project successfully");
   expect(exitCode).toBe(0);
 
   const packageJson = await Bun.file(join(x_dir, "dest", "package.json")).text();

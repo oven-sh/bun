@@ -4412,9 +4412,8 @@ impl<'a> HTTPClient<'a> {
         self.state.request_stage = RequestStage::Done;
         self.state.stage = Stage::Done;
         self.flags.proxy_tunneling = false;
-        // Pooled-socket reuse reaches here synchronously inside `start_` →
-        // `connect`, whose frames still use `self`; defer the clone-freeing
-        // dispatch to `complete_connecting_process`, as `fail()` does.
+        // Synchronous pooled-reuse path: `start_`/`connect` still use `self`,
+        // so the clone-freeing dispatch is deferred, as in `fail()`.
         if self.flags.defer_fail_until_connecting_is_complete {
             return;
         }

@@ -2632,12 +2632,11 @@ function advanceResponsePipeline(server, socket) {
       res.assignSocket(socket);
     }
   } else {
-    // internal/http1_server_fallback connection (a foreign duplex): each
-    // response's JS handle writes to the socket itself, so there is no native
-    // socket handle to switch. The prototype assignSocket also installs the
-    // 'close' listener a plain stream needs. Clear `finished` before the
-    // assignment: assignSocket's _flush would otherwise emit 'prefinish' for
-    // an already-ended queued response before its ops have been replayed.
+    // internal/http1_server_fallback connection (a foreign duplex): the
+    // response's JS handle writes to the socket itself (nothing to switch
+    // natively), and the prototype assignSocket installs the 'close' listener
+    // a plain stream needs. Clear `finished` first, or assignSocket's _flush
+    // emits 'prefinish' before the ops replay below.
     if (queued.ended) {
       res.finished = false;
     }

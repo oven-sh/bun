@@ -328,11 +328,10 @@ function connectionListenerHTTP1(server, socket, options) {
       }
     };
     res[kHttp1ResponseHandle] = handle;
-    // Node's parserOnIncoming outgoing queue: while the previous response is
-    // still assigned (its deferred 'finish' has not detached it yet -
-    // pipelined requests always land here), this response is queued and its
-    // write()/end() buffer until the finish path below assigns it the socket.
-    // assignSocket would throw ERR_HTTP_SOCKET_ASSIGNED.
+    // Node's parserOnIncoming outgoing queue: pipelined requests parse while
+    // the previous response is still assigned (its 'finish' detach is a tick
+    // away), so queue this response instead of letting assignSocket throw
+    // ERR_HTTP_SOCKET_ASSIGNED.
     if (socket._httpMessage) {
       queuePipelinedResponse(socket, res, versionMajor < 1 || versionMinor < 1);
     } else {
@@ -456,9 +455,8 @@ function connectionListenerHTTP1(server, socket, options) {
   socket.once("end", onHttp1SocketEnd);
   socket.once("close", () => {
     connections.delete(socket);
-    // Like the native socket's close path: responses (and their requests)
-    // still queued behind the in-flight one when the connection dies are
-    // aborted, so they emit 'close' instead of hanging forever.
+    // Like the native socket's close path: abort responses (and requests)
+    // still queued behind the in-flight one so they emit 'close'.
     abortQueuedPipelinedResponses(socket);
     try {
       parser.close();

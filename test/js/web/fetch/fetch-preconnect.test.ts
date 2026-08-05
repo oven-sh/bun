@@ -205,7 +205,9 @@ describe.concurrent.todoIf(isWindows)("fetch.preconnect", () => {
           fetch.preconnect(url);
           await Bun.sleep(25);
         }
+        const preconnectConnections = sockets.length;
         const response = await fetch(url);
+        console.log("connections:", preconnectConnections);
         console.log("status:", response.status);
         listener.stop(true);`,
       ],
@@ -216,6 +218,11 @@ describe.concurrent.todoIf(isWindows)("fetch.preconnect", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("AddressSanitizer");
     expect(stdout).toContain("status: 200");
+    // Same precondition proof as the test above: the loop must have reused
+    // the parked socket, or the deferred-dispatch path was never exercised.
+    const connections = Number(/connections: (\d+)/.exec(stdout)?.[1]);
+    expect(connections).toBeGreaterThanOrEqual(1);
+    expect(connections).toBeLessThan(10);
     expect(exitCode).toBe(0);
   });
 

@@ -582,6 +582,12 @@ impl FetchTasklet {
     /// `callback` and the JS-thread `on_progress_update`; the JS thread is
     /// parked in `wait_timeout_while` here, so the load is race-free.
     ///
+    /// The `offthread_job_begin` taken in `queue()` is deliberately not
+    /// released here: this path runs only at process exit, and the fence is
+    /// awaited only by `WebWorker::shutdown` — whose own fan-out already
+    /// produced the final `callback` (or timed out and leaked the VM) before
+    /// the HTTP daemon parks.
+    ///
     /// SAFETY: `this` is the live `*mut FetchTasklet` registered as
     /// `result_callback.ctx` in `get()`; HTTP-thread-only at this point.
     unsafe fn release_at_shutdown(this: *mut ()) {

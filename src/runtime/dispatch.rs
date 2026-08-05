@@ -1265,8 +1265,13 @@ unsafe fn __bun_tick_queue_with_count(
 /// `destructOnExit`. Releases the boxes and JSC handles the dispatch path
 /// would have dropped. Tags not yet listed leak their box at exit; add them
 /// as LSan surfaces them.
+///
+/// `offthread_drained` is `false` only on the worker fence-timeout leak path,
+/// where an off-thread job may still be mid-post; arms whose box the posting
+/// thread can touch again (the multi-post S3 streaming task) must requeue in
+/// that case.
 #[unsafe(no_mangle)]
-fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
+fn __bun_release_task_at_shutdown(task: bun_event_loop::Task, offthread_drained: bool) -> bool {
     use bun_event_loop::task_tag;
     match task.tag {
         // `callback` (HTTP thread) won the `has_schedule_callback` CAS and
@@ -1433,19 +1438,20 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             true
         }
         task_tag::S3HttpDownloadStreamingTask => {
-            let t = task.ptr.cast::<S3HttpDownloadStreamingTask>();
-            // SAFETY: tag identifies pointee; the queue owns this entry.
-            if unsafe { (*t).http_engagement_active() } {
-                // A queued non-final chunk whose HTTP engagement is still
-                // open (only reachable on the fence-timeout leak path, where
-                // the final callback never landed): requeue so the box stays
-                // allocated for the HTTP thread.
-                false
-            } else {
-                // SAFETY: engagement over, so the HTTP thread made its last
-                // access before the fence released; sole owner (see above).
-                drop(unsafe { bun_core::heap::take(t) });
+            // Unlike the single-post tags above, the streaming task posts per
+            // chunk and the HTTP thread keeps touching the box until its
+            // final callback's `offthread_job_end`. Only a drained fence
+            // proves that callback finished; otherwise requeue so the box
+            // stays allocated (it is then leaked with the VM).
+            if offthread_drained {
+                // SAFETY: tag identifies pointee; the fence drained, so the
+                // HTTP thread made its last access; sole owner (see above).
+                drop(unsafe {
+                    bun_core::heap::take(task.ptr.cast::<S3HttpDownloadStreamingTask>())
+                });
                 true
+            } else {
+                false
             }
         }
         // `cancelled` short-circuits `on_complete` right after the poll

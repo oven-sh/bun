@@ -1259,6 +1259,29 @@ mod _async_tasks {
             let owned = core::mem::replace(self, ret::Readdir::Files(Box::default()));
             owned.to_js(global)
         }
+
+        fn release_unrun(&mut self) {
+            // Entries own refcounts / byte buffers that `to_js` would have
+            // transferred to JS; mirror `ResultListEntryValue::deinit`.
+            match self {
+                ret::Readdir::WithFileTypes(items) => {
+                    for item in items.iter() {
+                        item.deref();
+                    }
+                }
+                ret::Readdir::Buffers(items) => {
+                    for item in items.iter_mut() {
+                        item.destroy();
+                    }
+                }
+                ret::Readdir::Files(items) => {
+                    for item in items.iter() {
+                        item.deref();
+                    }
+                }
+            }
+            *self = ret::Readdir::Files(Box::default());
+        }
     }
     impl FsReturn for StatOrNotFound {
         #[inline]

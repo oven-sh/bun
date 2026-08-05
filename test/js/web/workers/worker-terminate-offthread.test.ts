@@ -15,18 +15,19 @@ const env = {
 };
 
 // Lines of the one tolerated crash signature (see the assertNoException
-// comments below); returns whatever else stderr contained.
+// comments below); returns whatever else stderr contained. The filter only
+// engages when the exact known condition is present, so a different
+// assertion (even in the same file) fails the test.
 function onlyKnownTerminateAssert(stderr: string): string[] {
-  return stderr
-    .split("\n")
-    .filter(
-      line =>
-        line !== "" &&
-        !line.startsWith("ASSERTION FAILED") &&
-        line !== "!exception()" &&
-        !line.includes("ExceptionScope.h") &&
-        !line.includes("no stacktrace available"),
-    );
+  const lines = stderr.split("\n").filter(line => line !== "");
+  if (!stderr.includes("!exception()")) return lines;
+  return lines.filter(
+    line =>
+      line !== "ASSERTION FAILED: (null)" &&
+      line !== "!exception()" &&
+      !(line.includes("ExceptionScope.h") && line.includes("assertNoException")) &&
+      !line.includes("no stacktrace available"),
+  );
 }
 
 // Worker teardown must wait for every job the worker's VM handed to another
@@ -77,6 +78,11 @@ describe.skipIf(!isASAN)("worker teardown with off-thread jobs in flight does no
     "fs.promises.readdir recursive (AsyncReaddirRecursiveTask)": `
       const fs = require("node:fs/promises");
       lanes(2, () => fs.readdir(d.dir, { recursive: true }));`,
+    "fs.promises.readdir result modes (AsyncFSTask Readdir)": `
+      const fs = require("node:fs/promises");
+      lanes(1, () => fs.readdir(d.dir + "/tree/a"));
+      lanes(1, () => fs.readdir(d.dir + "/tree/a", { withFileTypes: true }));
+      lanes(1, () => fs.readdir(d.dir + "/tree/a", { encoding: "buffer" }));`,
     "fs.promises.cp recursive (AsyncCpTask)": `
       const fs = require("node:fs/promises");
       let i = 0;

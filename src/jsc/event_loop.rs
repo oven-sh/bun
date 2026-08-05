@@ -226,8 +226,9 @@ unsafe extern "Rust" {
     /// must be left in the queue (it stays reachable from the static-rooted
     /// VM box, which is the pre-`532a5411961b` behaviour for tags that don't
     /// own JSC handles or whose callback isn't safe to no-op-dispatch).
+    /// `offthread_drained`: see `release_queued_tasks_for_shutdown`.
     /// Defined in `bun_runtime::dispatch`. Link-time resolved.
-    fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool;
+    fn __bun_release_task_at_shutdown(task: bun_event_loop::Task, offthread_drained: bool) -> bool;
 }
 
 #[inline]
@@ -759,7 +760,12 @@ impl EventLoop {
     /// pre-`532a5411961b` state). Consuming them silently here unhooked that
     /// root and surfaced the boxes as direct leaks (e.g. `AnyTaskJob<_>`); the
     /// definer can't safely dispatch every erased callback at shutdown.
-    pub fn release_queued_tasks_for_shutdown(&mut self) {
+    /// `offthread_drained`: whether every off-thread job has released its
+    /// [`Self::outstanding_offthread`] count (`false` only on the worker
+    /// fence-timeout leak path). Arms whose safety depends on the posting
+    /// thread having finished (the multi-post S3 streaming task) requeue
+    /// instead of freeing when it is `false`.
+    pub fn release_queued_tasks_for_shutdown(&mut self, offthread_drained: bool) {
         self.drop_concurrent_cpp_tasks();
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
         while let Some(task) = self.tasks.read_item() {
@@ -767,7 +773,7 @@ impl EventLoop {
             // still live); definer in `bun_runtime::dispatch` matches the same
             // tag set `tick_queue_with_count` does. `false` ⇒ not handled.
             let consumed = task.tag != bun_event_loop::task_tag::ManagedTask
-                && unsafe { __bun_release_task_at_shutdown(task) };
+                && unsafe { __bun_release_task_at_shutdown(task, offthread_drained) };
             if !consumed {
                 requeue.push(task);
             }

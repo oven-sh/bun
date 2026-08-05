@@ -4,6 +4,7 @@ import {
   compileFunction,
   constants,
   createContext,
+  measureMemory,
   runInContext,
   runInNewContext,
   runInThisContext,
@@ -267,6 +268,23 @@ describe("vm", () => {
       } catch (e) {
         // Throwing is also acceptable
         expect(e).toBeTruthy();
+      }
+    });
+  });
+
+  describe("measureMemory()", () => {
+    test("result includes WebAssembly field in both summary and detailed modes", async () => {
+      const summary = (await measureMemory({ mode: "summary", execution: "eager" })) as any;
+      const detailed = (await measureMemory({ mode: "detailed", execution: "eager" })) as any;
+
+      expect(Object.keys(summary).sort()).toEqual(["WebAssembly", "total"]);
+      expect(Object.keys(detailed).sort()).toEqual(["WebAssembly", "current", "other", "total"]);
+
+      for (const result of [summary, detailed]) {
+        expect(result.WebAssembly).toEqual({
+          code: expect.any(Number),
+          metadata: expect.any(Number),
+        });
       }
     });
   });

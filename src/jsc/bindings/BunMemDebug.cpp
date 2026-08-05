@@ -50,10 +50,6 @@
 #include <mach/mach.h>
 #include <crt_externs.h>
 #include <spawn.h>
-#if OS(LINUX)
-#include <sys/personality.h>
-#include <dirent.h>
-#endif
 #include <termios.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -72,6 +68,16 @@
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/MachineStackMarker.h>
 #endif
+#if OS(LINUX)
+#include <sys/personality.h>
+#include <dirent.h>
+#include <ucontext.h>
+#endif
+#include <signal.h>
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <termios.h>
 #include <unistd.h>
 #if OS(DARWIN)
 extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength();
@@ -127,7 +133,11 @@ static std::atomic<int> s_requested { 0 };
 static const char* s_dir = nullptr;
 static int s_seq = 0;
 
-static void memdebugSignal(int sig) { s_requested.store(sig == SIGXCPU ? 3 : sig == SIGINFO ? 2 : 1); }
+static void memdebugSignal(int sig) { s_requested.store(sig == SIGXCPU ? 3 :
+#ifdef SIGINFO
+        sig == SIGINFO ? 2 :
+#endif
+        1); }
 
 static void imageRestoreAndRun(const char* path);
 extern "C" struct mach_header_64 _mh_execute_header;
@@ -171,7 +181,7 @@ extern "C" void Bun__imageMaybeRestore()
     if (getenv("BUN_IMAGE_IN") || getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT"))
         reexecWithoutASLRIfSlid();
     if (const char* in = getenv("BUN_IMAGE_IN")) {
-        char path[1024]; strlcpy(path, in, sizeof path);
+        char path[1024]; snprintf(path, sizeof path, "%s", in);
         unsetenv("BUN_IMAGE_IN");
         imageRestoreAndRun(path);
     }
@@ -237,7 +247,9 @@ extern "C" void Bun__memdebugInstall()
         return;
     }
     signal(SIGUSR1, memdebugSignal);
+#ifdef SIGINFO
     signal(SIGINFO, memdebugSignal);
+#endif
     signal(SIGXCPU, memdebugSignal);
 }
 
@@ -1112,20 +1124,26 @@ static void imageTrapHandler(int sig, siginfo_t* info, void* uctx)
     auto it = std::upper_bound(s_frozenRanges.begin(), s_frozenRanges.end(), std::make_pair(a, UINTPTR_MAX));
     bool ours = s_trapCap && it != s_frozenRanges.begin() && a < std::prev(it)->second;
     if (!ours) {
+#if OS(DARWIN) && CPU(ARM64)
         { // not an image page: real crash. Dump a raw backtrace we can atos, then chain.
             ucontext_t* uc = (ucontext_t*)uctx; char line[96]; int n = snprintf(line, sizeof line, "[imagecrash] sig=%d addr=%lx pc=%llx lr=%llx frames:", sig, (unsigned long)a, (unsigned long long)__darwin_arm_thread_state64_get_pc(uc->uc_mcontext->__ss), (unsigned long long)__darwin_arm_thread_state64_get_lr(uc->uc_mcontext->__ss)); write(2, line, n);
             uintptr_t fp = (uintptr_t)__darwin_arm_thread_state64_get_fp(uc->uc_mcontext->__ss);
             for (int k = 0; k < 40 && fp && !(fp & 7); k++) { uintptr_t* f = (uintptr_t*)fp; n = snprintf(line, sizeof line, " %lx", (unsigned long)f[1]); write(2, line, n); if (f[0] <= fp) break; fp = f[0]; }
             write(2, "\n", 1);
         }
+#endif
         struct sigaction* prev = sig == SIGBUS ? &s_prevBus : &s_prevSegv; if (prev->sa_flags & SA_SIGINFO) prev->sa_sigaction(sig, info, uctx); else if (prev->sa_handler == SIG_DFL || prev->sa_handler == SIG_IGN) { signal(sig, SIG_DFL); raise(sig); } else prev->sa_handler(sig); return; }
     mprotect((void*)page, pg, PROT_READ | PROT_WRITE);
     size_t i = s_trapCount.fetch_add(1);
     if (i < s_trapCap) {
         TrapRec& r = s_trapRecs[i]; r.page = page;
+#if OS(DARWIN) && CPU(ARM64)
         ucontext_t* uc = (ucontext_t*)uctx; r.pcs[0] = (uintptr_t)__darwin_arm_thread_state64_get_pc(uc->uc_mcontext->__ss); r.pcs[1] = (uintptr_t)__darwin_arm_thread_state64_get_lr(uc->uc_mcontext->__ss);
         uintptr_t fp = (uintptr_t)__darwin_arm_thread_state64_get_fp(uc->uc_mcontext->__ss);
         for (int k = 2; k < 10; k++) { if (!fp || (fp & 7)) { r.pcs[k] = 0; continue; } uintptr_t* f = (uintptr_t*)fp; r.pcs[k] = f[1]; uintptr_t next = f[0]; if (next <= fp) { fp = 0; continue; } fp = next; }
+#else
+        (void)uctx; memset(r.pcs, 0, sizeof r.pcs);
+#endif
     }
 }
 static void imageTrapArm()

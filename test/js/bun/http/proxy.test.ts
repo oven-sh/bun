@@ -380,6 +380,138 @@ test("unsupported protocol", async () => {
   );
 });
 
+describe("proxy option validation", () => {
+  test("rejects wrong-typed values instead of silently going direct", async () => {
+    const hits: string[] = [];
+    await using origin = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: req => {
+        hits.push(new URL(req.url).pathname);
+        return new Response("DIRECT");
+      },
+    });
+
+    const invalid: Array<[string, unknown]> = [
+      ["number", 42],
+      ["array", [httpProxyServer.url]],
+      ["boolean true", true],
+      ["boolean false", false],
+      ["object without url", { headers: {} }],
+      ["object with typo'd key", { proxyUrl: httpProxyServer.url }],
+      ["object with null url", { url: null }],
+    ];
+    for (const [label, value] of invalid) {
+      await expect(
+        fetch(`${origin.url}/${encodeURIComponent(label)}`, { proxy: value as any }),
+        label,
+      ).rejects.toThrowError(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+        }),
+      );
+    }
+    // The malformed-string and bad-url-in-object paths must keep failing closed.
+    for (const value of ["http//x", { url: 42 }]) {
+      await expect(fetch(`${origin.url}/bad-value`, { proxy: value as any })).rejects.toThrowError(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_VALUE",
+        }),
+      );
+    }
+    // None of the rejected shapes may have reached the origin.
+    expect(hits).toEqual([]);
+  });
+
+  test("null / empty string / undefined mean 'no proxy'", async () => {
+    const hits: string[] = [];
+    await using origin = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: req => {
+        hits.push(new URL(req.url).pathname);
+        return new Response("DIRECT");
+      },
+    });
+
+    for (const [label, value] of [
+      ["null", null],
+      ["empty", ""],
+      ["undef", undefined],
+    ] as const) {
+      const res = await fetch(`${origin.url}/${label}`, { proxy: value as any });
+      expect(await res.text()).toBe("DIRECT");
+    }
+    expect(hits).toEqual(["/null", "/empty", "/undef"]);
+  });
+
+  test("valid string / URL / {url} shapes are accepted (not rejected by validation)", async () => {
+    // Proxy routing for each shape is covered by the matrix tests and the
+    // "proxy as URL instance ..." / "proxy object with url string ..." tests
+    // elsewhere in this file; this check only guards against the new
+    // ERR_INVALID_ARG_TYPE validation over-rejecting valid shapes.
+    for (const value of [httpProxyServer.url, new URL(httpProxyServer.url), { url: httpProxyServer.url }]) {
+      const response = await fetch(httpServer.url, {
+        method: "POST",
+        proxy: value as any,
+        body: "shape-check",
+      });
+      expect(await response.text()).toBe("shape-check");
+    }
+  });
+
+  test("WebSocket: rejects wrong-typed values instead of silently going direct", async () => {
+    let directHits = 0;
+    await using origin = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("no", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          directHits++;
+          ws.close();
+        },
+        message() {},
+      },
+    });
+
+    const invalid: Array<[string, unknown]> = [
+      ["number", 42],
+      ["array", [httpProxyServer.url]],
+      ["boolean true", true],
+      ["boolean false", false],
+      ["object without url", { headers: {} }],
+      ["object with null url", { url: null }],
+    ];
+    for (const [label, value] of invalid) {
+      expect(() => new WebSocket(`ws://127.0.0.1:${origin.port}/`, { proxy: value } as any), label).toThrowError(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+        }),
+      );
+    }
+    expect(directHits).toBe(0);
+
+    // null / empty string / undefined remain the "no proxy" sentinels: the
+    // constructor must not throw and the socket must reach the origin directly.
+    for (const value of [null, "", undefined]) {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const ws = new WebSocket(`ws://127.0.0.1:${origin.port}/`, { proxy: value } as any);
+      ws.onopen = () => ws.close();
+      ws.onclose = () => resolve();
+      ws.onerror = ev => reject(new Error(`proxy: ${JSON.stringify(value)} errored: ${(ev as ErrorEvent).message}`));
+      await promise;
+    }
+    expect(directHits).toBe(3);
+  });
+});
+
 /**
  * Creates an HTTP proxy server that captures Proxy-Authorization headers.
  * The server forwards requests to their destination and pipes responses back.
@@ -1454,32 +1586,27 @@ describe.concurrent("proxy object format with headers", () => {
     }
   });
 
-  test("proxy object without url is ignored (regression #25413)", async () => {
-    // When proxy object doesn't have a 'url' property, it should be ignored
-    // This ensures compatibility with libraries that pass URL objects as proxy
-    const response = await fetch(httpServer.url, {
-      method: "GET",
-      proxy: {
-        headers: { "X-Test": "value" },
-      } as any,
-      keepalive: false,
-    });
-    expect(response.ok).toBe(true);
-    expect(response.status).toBe(200);
+  test("proxy object without url throws (was silently ignored for #25413)", async () => {
+    // #25413 was caused by the old node:http → native fetch() shim passing a
+    // junk object here; that shim no longer exists, so fail closed rather than
+    // silently connecting direct to the origin.
+    await expect(
+      fetch(httpServer.url, {
+        method: "GET",
+        proxy: { headers: { "X-Test": "value" } } as any,
+        keepalive: false,
+      }),
+    ).rejects.toThrowError(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
   });
 
-  test("proxy object with null url is ignored (regression #25413)", async () => {
-    // When proxy.url is null, the proxy object should be ignored
-    const response = await fetch(httpServer.url, {
-      method: "GET",
-      proxy: {
-        url: null,
-        headers: { "X-Test": "value" },
-      } as any,
-      keepalive: false,
-    });
-    expect(response.ok).toBe(true);
-    expect(response.status).toBe(200);
+  test("proxy object with null url throws (was silently ignored for #25413)", async () => {
+    await expect(
+      fetch(httpServer.url, {
+        method: "GET",
+        proxy: { url: null, headers: { "X-Test": "value" } } as any,
+        keepalive: false,
+      }),
+    ).rejects.toThrowError(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
   });
 
   test("proxy object with empty string url throws error", async () => {

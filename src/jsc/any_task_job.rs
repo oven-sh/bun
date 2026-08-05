@@ -119,17 +119,20 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         WorkPool::schedule(unsafe { &raw mut (*this).task });
     }
 
-    /// Like [`Self::schedule`], but `dispatch` receives the intrusive task
-    /// instead of the shared [`WorkPool`]; it must arrange for
+    /// Like [`Self::create_and_schedule`], but `dispatch` receives the
+    /// intrusive task instead of the shared [`WorkPool`]; it must arrange for
     /// `(task.callback)(task)` to run exactly once, like a pool worker.
-    ///
-    /// # Safety
-    /// Same contract as [`Self::schedule`].
-    pub unsafe fn schedule_with(this: *mut Self, dispatch: impl FnOnce(*mut WorkPoolTask)) {
-        // SAFETY: caller contract; see `schedule`.
+    pub fn create_and_schedule_with(
+        global: &JSGlobalObject,
+        ctx: C,
+        dispatch: impl FnOnce(*mut WorkPoolTask),
+    ) -> JsResult<()> {
+        let this = Self::create(global, ctx)?;
+        // SAFETY: `this` is a freshly-created live pointer, handed off once.
         unsafe { (*this).poll.ref_(bun_io::js_vm_ctx()) };
-        // SAFETY: `this` is live; nothing touches the job after the hand-off.
+        // SAFETY: nothing touches the job after the hand-off.
         dispatch(unsafe { &raw mut (*this).task });
+        Ok(())
     }
 
     /// [`Self::create`] + [`Self::schedule`]. For callers that don't need to

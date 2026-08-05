@@ -240,16 +240,10 @@ fn schedule(global: &JSGlobalObject, op: Op, request: RequestHandle) {
         outcome: None,
         request: Some(request),
     };
-    let Ok(job) = AnyTaskJob::create(global, ctx) else {
-        return;
-    };
-    // SAFETY: `job` is a freshly-created live pointer, scheduled exactly once.
-    unsafe {
-        AnyTaskJob::schedule_with(job, |task| {
-            // Fails only on OOM; the queue is never closed.
-            bun_core::handle_oom(serial_queue().write_item(QueuedTask(task)));
-        });
-    }
+    let _ = AnyTaskJob::create_and_schedule_with(global, ctx, |task| {
+        // Fails only on OOM; the queue is never closed.
+        bun_core::handle_oom(serial_queue().write_item(QueuedTask(task)));
+    });
 }
 
 /// # Safety

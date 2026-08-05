@@ -2022,11 +2022,11 @@ cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
         bunfig += `publicHoistPattern = [${opts.publicHoistPattern.map(p => `"${p}"`).join(", ")}]\n`;
       }
     }
-    if (opts.hoistPattern) {
+    if (opts.hoistPattern !== undefined) {
       if (typeof opts.hoistPattern === "string") {
-        bunfig += `hoistPattern = "${opts.hoistPattern}"\n`;
+        bunfig += `hoistPattern = ${JSON.stringify(opts.hoistPattern)}\n`;
       } else {
-        bunfig += `hoistPattern = [${opts.hoistPattern.map(p => `"${p}"`).join(", ")}]\n`;
+        bunfig += `hoistPattern = [${opts.hoistPattern.map(p => JSON.stringify(p)).join(", ")}]\n`;
       }
     }
     if (opts.hoist !== undefined) {

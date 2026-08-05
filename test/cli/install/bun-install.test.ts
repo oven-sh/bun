@@ -869,12 +869,12 @@ describe.concurrent("bun-install", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("cloning repository");
     expect(exitCode).toBe(1);
 
     const attempts = (await file(join(String(dir), "git-args.log")).text()).trim().split("\n");
-    const sshAttempt = attempts.find(a => a.includes(" ssh://"));
+    const sshAttempt = attempts.find(a => a.startsWith("clone ") && a.includes(" ssh://"));
     // The port must stay a port, not become a path segment
     // (ssh://git@localhost/52626/user/repo.git).
     expect(sshAttempt).toContain("ssh://git@localhost:52626/user/repo.git");

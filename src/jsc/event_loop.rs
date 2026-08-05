@@ -10,7 +10,7 @@
 //! poll deadline). See PORTING.md §Dispatch.
 
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
 
 use bun_io::{self as Async, Waker};
 use bun_uws as uws;
@@ -88,6 +88,17 @@ pub struct EventLoop {
 
     pub entered_event_loop_count: isize,
     pub concurrent_ref: AtomicI32,
+    /// Count of off-thread jobs (WorkPool, HTTP thread, bundler thread) whose
+    /// body can still dereference this `EventLoop`, the owning
+    /// `VirtualMachine`, or JSC-heap memory. `WebWorker::shutdown` waits for
+    /// zero before freeing any of those; without the wait every such job is a
+    /// use-after-free when `worker.terminate()` lands mid-flight. Bracket
+    /// with [`Self::offthread_job_begin`] / [`Self::offthread_job_end`].
+    pub outstanding_offthread: AtomicU32,
+    /// Set by `WebWorker::shutdown` before it waits on the count above. Job
+    /// bodies that can skip their (expensive) work check this first; the
+    /// unrun completion is reclaimed by the shutdown drain. Advisory only.
+    pub offthread_cancel: AtomicBool,
     /// Atomic nullable pointer to the next-due `WTFTimer`.
     ///
     /// Note (§Dispatch): payload is `*mut ()` — the real
@@ -128,6 +139,8 @@ impl Default for EventLoop {
             uws_loop: (),
             entered_event_loop_count: 0,
             concurrent_ref: AtomicI32::new(0),
+            outstanding_offthread: AtomicU32::new(0),
+            offthread_cancel: AtomicBool::new(false),
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
             #[cfg(unix)]
             signal_handler: None,
@@ -213,8 +226,9 @@ unsafe extern "Rust" {
     /// must be left in the queue (it stays reachable from the static-rooted
     /// VM box, which is the pre-`532a5411961b` behaviour for tags that don't
     /// own JSC handles or whose callback isn't safe to no-op-dispatch).
+    /// `offthread_drained`: see `release_queued_tasks_for_shutdown`.
     /// Defined in `bun_runtime::dispatch`. Link-time resolved.
-    fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool;
+    fn __bun_release_task_at_shutdown(task: bun_event_loop::Task, offthread_drained: bool) -> bool;
 }
 
 #[inline]
@@ -746,7 +760,12 @@ impl EventLoop {
     /// pre-`532a5411961b` state). Consuming them silently here unhooked that
     /// root and surfaced the boxes as direct leaks (e.g. `AnyTaskJob<_>`); the
     /// definer can't safely dispatch every erased callback at shutdown.
-    pub fn release_queued_tasks_for_shutdown(&mut self) {
+    /// `offthread_drained`: whether every off-thread job has released its
+    /// [`Self::outstanding_offthread`] count (`false` only on the worker
+    /// fence-timeout leak path). Arms whose safety depends on the posting
+    /// thread having finished (the multi-post S3 streaming task) requeue
+    /// instead of freeing when it is `false`.
+    pub fn release_queued_tasks_for_shutdown(&mut self, offthread_drained: bool) {
         self.drop_concurrent_cpp_tasks();
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
         while let Some(task) = self.tasks.read_item() {
@@ -754,7 +773,7 @@ impl EventLoop {
             // still live); definer in `bun_runtime::dispatch` matches the same
             // tag set `tick_queue_with_count` does. `false` ⇒ not handled.
             let consumed = task.tag != bun_event_loop::task_tag::ManagedTask
-                && unsafe { __bun_release_task_at_shutdown(task) };
+                && unsafe { __bun_release_task_at_shutdown(task, offthread_drained) };
             if !consumed {
                 requeue.push(task);
             }
@@ -1003,6 +1022,53 @@ impl EventLoop {
         }
         self.concurrent_tasks.push(task);
         self.wakeup();
+    }
+
+    /// JS-thread: call when handing a job to another thread whose body will
+    /// dereference this `EventLoop` / the VM / the JSC heap (rule of thumb:
+    /// every `KeepAlive::ref_` paired with an off-thread schedule). Paired
+    /// with exactly one [`Self::offthread_job_end`] on the off thread.
+    #[inline]
+    pub fn offthread_job_begin(&self) {
+        self.outstanding_offthread.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Off-thread: call after the job's last VM access (typically right after
+    /// the completion enqueue), through a pointer copied to a local first —
+    /// once the waiter observes zero it frees the VM. The `Release` store
+    /// pairs with [`Self::wait_for_offthread_jobs`]'s `Acquire` load.
+    #[inline]
+    pub fn offthread_job_end(&self) {
+        self.outstanding_offthread.fetch_sub(1, Ordering::Release);
+    }
+
+    #[inline]
+    pub fn offthread_cancel_requested(&self) -> bool {
+        self.offthread_cancel.load(Ordering::Acquire)
+    }
+
+    pub fn request_offthread_cancel(&self) {
+        self.offthread_cancel.store(true, Ordering::Release);
+    }
+
+    /// Worker-shutdown barrier: wait (bounded by `timeout_ms`) for the count
+    /// to reach zero. `true` ⇒ the VM may be freed; `false` (timeout) ⇒ the
+    /// caller must leak it. Polls with a short `Futex` timeout instead of a
+    /// wake from `offthread_job_end`, which must not touch `self` after its
+    /// `fetch_sub`.
+    pub fn wait_for_offthread_jobs(&self, timeout_ms: u64) -> bool {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+        loop {
+            let n = self.outstanding_offthread.load(Ordering::Acquire);
+            if n == 0 {
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            // 1ms re-check bounds the added terminate() latency.
+            let _ = bun_threading::Futex::wait(&self.outstanding_offthread, n, Some(1_000_000));
+        }
     }
 
     pub fn ref_concurrently(&self) {
@@ -1345,6 +1411,8 @@ bun_event_loop::link_impl_JsEventLoop! {
         exit() => (*this).exit(),
         enqueue_task(task) => (*this).enqueue_task(task),
         enqueue_task_concurrent(task) => (*this).enqueue_task_concurrent(task),
+        offthread_job_begin() => (*this).offthread_job_begin(),
+        offthread_job_end() => (*this).offthread_job_end(),
         env() => (*this).vm_ref().transpiler.env,
         top_level_dir() => core::ptr::from_ref::<[u8]>((*this).vm_ref().top_level_dir()),
         create_null_delimited_env_map() =>

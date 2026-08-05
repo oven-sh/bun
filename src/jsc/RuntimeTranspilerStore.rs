@@ -496,6 +496,9 @@ impl TranspilerJob {
         // SAFETY: vm outlives the job; event_loop() returns the live self-pointer.
         unsafe { &*(*vm).event_loop() }
             .enqueue_task_concurrent(ConcurrentTask::create_from(transpiler_store));
+        // Last VM access, via the local; releases the fence taken in `schedule`.
+        // SAFETY: the job's own `outstanding_offthread` count kept `vm` alive.
+        unsafe { (*vm).event_loop_shared() }.offthread_job_end();
     }
 
     fn run_from_js_thread(&mut self) -> JsResult<()> {
@@ -559,6 +562,9 @@ impl TranspilerJob {
         // `EventLoopCtx` vtable; resolve it via the `get_vm_ctx` hook (registered by
         // `bun_runtime::init`).
         self.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
+        // Paired with the `offthread_job_end` in `dispatch_to_main_thread`.
+        // SAFETY: `vm` is the live owning VM (BACKREF — the VM owns the store).
+        unsafe { (*self.vm).event_loop_shared() }.offthread_job_begin();
         WorkPool::schedule(&raw mut self.work_task);
     }
 

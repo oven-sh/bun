@@ -307,12 +307,18 @@ pub(crate) fn list_objects(
         concurrent_task: Default::default(),
         proxy_url: Box::default(),
         body: Box::default(),
+        signal_store: Default::default(),
+        signals: Default::default(),
         poll_ref: bun_io::KeepAlive::init(),
     }));
     // SAFETY: just allocated, non-null
     let task = unsafe { &mut *task_ptr };
 
     task.poll_ref.ref_(bun_io::js_vm_ctx());
+    // Wiring `aborted` gives the request a real `async_http_id` and an
+    // abort-tracker entry; the store lives in the heap task, so the derived
+    // pointers stay valid for the request's lifetime.
+    task.signals = task.signal_store.to();
 
     let proxy = proxy_url.unwrap_or(b"");
     task.proxy_url = if !proxy.is_empty() {
@@ -357,6 +363,7 @@ pub(crate) fn list_objects(
         bun_http::async_http::Options {
             http_proxy,
             verbose: Some(vm.get_verbose_fetch()),
+            signals: Some(task.signals),
             reject_unauthorized: Some(vm.get_tls_reject_unauthorized()),
             ..Default::default()
         },
@@ -366,7 +373,18 @@ pub(crate) fn list_objects(
     bun_http::http_thread::init(&Default::default());
     let mut batch = bun_threading::thread_pool::Batch::default();
     // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
+    let async_http_id = unsafe { task.http.assume_init_ref() }.async_http_id;
+    // SAFETY: as above.
     unsafe { task.http.assume_init_mut() }.schedule(&mut batch);
+    // Worker-shutdown fence, mirroring `execute_simple_s3_request`: held until
+    // the final `http_callback`'s `offthread_job_end`. The hook carries the id
+    // because the HTTP thread overwrites the on-task `http` storage.
+    vm.event_loop_shared().offthread_job_begin();
+    vm.as_mut().register_terminate_cancel_hook(
+        task_ptr.cast(),
+        u64::from(async_http_id),
+        crate::webcore::s3::simple_request::terminate_cancel_hook,
+    );
     bun_http::HTTPThread::schedule(batch);
     Ok(())
 }
@@ -1304,6 +1322,17 @@ fn download_stream(
     bun_http::http_thread::init(&Default::default());
     let mut batch = bun_threading::thread_pool::Batch::default();
     http.schedule(&mut batch);
+    // Worker-shutdown fence: held until the HTTP thread's final
+    // (`has_more == false`) callback — see `offthread_job_end` in
+    // `S3HttpDownloadStreamingTask::http_callback`. The cancel hook lets
+    // `WebWorker::shutdown` bound that wait by a socket shutdown; it carries
+    // the id (not the task) because `http` is overwritten on the HTTP thread.
+    vm.event_loop_shared().offthread_job_begin();
+    vm.as_mut().register_terminate_cancel_hook(
+        task_ptr.cast(),
+        u64::from(task.async_http_id),
+        crate::webcore::s3::download_stream::terminate_cancel_hook,
+    );
     bun_http::HTTPThread::schedule(batch);
     task_ptr
 }

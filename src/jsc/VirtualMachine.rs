@@ -68,6 +68,15 @@ pub type ExceptionList = Vec<crate::schema_api::JsException>;
 // VirtualMachine struct (file-level @This())
 // ──────────────────────────────────────────────────────────────────────────
 
+/// One entry in [`VirtualMachine::terminate_cancel_hooks`]. `data` carries
+/// payload the cancel fn must not read from `ptr` (e.g. an `async_http_id`
+/// whose on-task storage the HTTP thread mutates concurrently).
+pub struct TerminateCancelHook {
+    pub ptr: *mut (),
+    pub data: u64,
+    pub run: fn(*mut (), u64),
+}
+
 #[derive(Default)]
 pub struct EntryPointResult {
     pub value: crate::strong::Optional, // jsc.Strong.Optional
@@ -217,6 +226,11 @@ pub struct VirtualMachine {
     pub(crate) hide_bun_stackframes: bool,
 
     pub is_shutting_down: bool,
+    /// JS-thread-only registry of cancels for `WebWorker::shutdown` to run
+    /// before waiting on `EventLoop::outstanding_offthread` (fetch/S3 register
+    /// an abort here so the wait is bounded by socket shutdown, not by the
+    /// transfer). Keyed by `ptr`; owners unregister on JS-side release.
+    pub(crate) terminate_cancel_hooks: Vec<TerminateCancelHook>,
     /// Set once `on_exit()` has finished draining `RareData::cleanup_hooks`.
     /// After this point the cleanup-hook list is never iterated again, so
     /// pushing to it (e.g. from a deferred N-API finalizer scheduled during
@@ -989,6 +1003,49 @@ impl VirtualMachine {
         self.is_shutting_down
     }
 
+    /// See [`Self::terminate_cancel_hooks`]. JS thread only. No-op on the
+    /// main-thread VM: only `WebWorker::shutdown` runs the fan-out, so the
+    /// registry (and the O(n) unregister scan) would be dead weight on the
+    /// outbound-fetch hot path there.
+    pub fn register_terminate_cancel_hook(
+        &mut self,
+        ptr: *mut (),
+        data: u64,
+        run: fn(*mut (), u64),
+    ) {
+        if self.is_main_thread() {
+            return;
+        }
+        self.terminate_cancel_hooks
+            .push(TerminateCancelHook { ptr, data, run });
+    }
+
+    /// Remove the hook registered with `ptr`; no-op when absent (the fan-out
+    /// empties the list, and the main-thread VM never registers). JS thread
+    /// only.
+    pub fn unregister_terminate_cancel_hook(&mut self, ptr: *mut ()) {
+        if self.is_main_thread() {
+            return;
+        }
+        if let Some(i) = self
+            .terminate_cancel_hooks
+            .iter()
+            .position(|h| h.ptr == ptr)
+        {
+            self.terminate_cancel_hooks.swap_remove(i);
+        }
+    }
+
+    /// Worker-shutdown cancel fan-out: run every registered hook (each `run`
+    /// must be idempotent; the VM is torn down right after).
+    pub fn run_terminate_cancel_hooks(&mut self) {
+        // Moved out because hooks may re-enter `self`.
+        let hooks = core::mem::take(&mut self.terminate_cancel_hooks);
+        for hook in &hooks {
+            (hook.run)(hook.ptr, hook.data);
+        }
+    }
+
     pub fn has_run_cleanup_hooks(&self) -> bool {
         self.has_run_cleanup_hooks
     }
@@ -1610,7 +1667,10 @@ impl VirtualMachine {
             // without it the tasklet ⇄ `Box<AsyncHTTP>` cycle leaks. Must
             // precede `destructOnExit` so `FetchTasklet::deinit` can drop its
             // JSC `Strong`/`Weak` handles against a live heap.
-            self.event_loop_mut().release_queued_tasks_for_shutdown();
+            // `offthread_drained: true` — the HTTP daemon just parked, so
+            // every posting thread has made its last access.
+            self.event_loop_mut()
+                .release_queued_tasks_for_shutdown(true);
 
             if let Some(rare) = self.rare_data.as_deref_mut() {
                 rare.release_js_handles();
@@ -2112,6 +2172,7 @@ impl VirtualMachine {
             // their validity invariants even when len/cap are 0. Write the
             // canonical empty value via `ptr::write` (no Drop of zeroed bytes).
             addr_of_mut!((*vm).preload).write(Vec::new());
+            addr_of_mut!((*vm).terminate_cancel_hooks).write(Vec::new());
             addr_of_mut!((*vm).argv).write(Vec::new());
             addr_of_mut!((*vm).resolved_path_dups).write(Vec::new());
             addr_of_mut!((*vm).macros).write(Default::default());
@@ -4362,6 +4423,8 @@ impl VirtualMachine {
         // Drops all `Arc`-held
         // proxy strings; `ProxyEnvStorage: Default` so take()+drop suffices.
         drop(core::mem::take(&mut self.proxy_env_storage));
+
+        drop(core::mem::take(&mut self.terminate_cancel_hooks));
 
         // The VM box is `dealloc`'d raw by the worker (see `web_worker.rs`
         // section 5) so field `Drop`s never run; reclaim the boxed

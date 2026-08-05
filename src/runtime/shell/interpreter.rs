@@ -2628,6 +2628,10 @@ impl ShellTask {
         // `&mut ShellTask` across that call.
         unsafe {
             let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
+            // Paired with the `offthread_job_end` in `on_finish`. Recursive
+            // (pool-thread) schedules happen under the parent task's count, so
+            // the count never dips to zero mid-chain. No-op for a mini loop.
+            (*this).event_loop.offthread_job_begin();
             (*this).task.callback = shell_task_trampoline::<C>;
             WorkPool::schedule(&raw mut (*this).task);
         }
@@ -2644,6 +2648,20 @@ impl ShellTask {
     /// [`schedule`](Self::schedule); not touched again on the worker thread
     /// after this returns.
     pub(crate) unsafe fn on_finish<C: ShellTaskCtx>(ctx: *mut C) {
+        // SAFETY: caller contract.
+        let event_loop = unsafe { Self::on_finish_no_fence::<C>(ctx) };
+        // Last loop access, via the local copy (the main thread may free the task now).
+        event_loop.offthread_job_end();
+    }
+
+    /// [`Self::on_finish`] without the trailing `offthread_job_end`, for
+    /// callers whose fence was already released on the off thread (the cp
+    /// builtin, whose success completion is posted from the JS thread).
+    /// Returns the loop handle copied out before the enqueue.
+    ///
+    /// # Safety
+    /// Same contract as [`Self::on_finish`].
+    pub(crate) unsafe fn on_finish_no_fence<C: ShellTaskCtx>(ctx: *mut C) -> EventLoopHandle {
         use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTask, EventLoopTaskPtr};
         log!("ShellTask onFinish");
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
@@ -2672,6 +2690,7 @@ impl ShellTask {
             (event_loop, task_ptr)
         };
         event_loop.enqueue_task_concurrent(task_ptr);
+        event_loop
     }
 
     /// Unrefs the

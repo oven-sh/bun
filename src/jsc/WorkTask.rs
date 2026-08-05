@@ -120,6 +120,8 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
 
     pub fn schedule(this: &mut Self) {
         this.ref_.ref_(Async::js_vm_ctx());
+        // Paired with the `offthread_job_end` in `on_finish`.
+        this.event_loop.offthread_job_begin();
         this.async_task_tracker.did_schedule(this.global_this.get());
         WorkPool::schedule(&raw mut this.task);
     }
@@ -138,5 +140,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         // `task` is the inline `concurrent_task` field of the live
         // heap-allocated `*this`; `event_loop` is the JS-thread loop stored at init.
         event_loop.enqueue_task_concurrent(task);
+        // Last VM access, via the local copy (the JS thread may free `*this` now).
+        event_loop.offthread_job_end();
     }
 }

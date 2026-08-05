@@ -73,6 +73,12 @@ use crate::{self as jsc, JSGlobalObject, JSValue, JsError, LogJsc};
 
 bun_core::define_scoped_log!(log, Worker, hidden);
 
+/// How long `shutdown()` waits for `EventLoop::outstanding_offthread` to
+/// reach zero before leaking the VM instead. The cancel fan-out bounds the
+/// common cases; the deadline only fires for pathological jobs (a blocked
+/// filesystem op, an addon `execute` that never returns).
+const OFFTHREAD_JOB_WAIT_MS: u64 = 10_000;
+
 // ---- Immutable after `create()` (safe from any thread) ----------------------
 
 pub struct WebWorker {
@@ -1226,6 +1232,10 @@ impl WebWorker {
         let mut arena = self.arena.replace(None);
         let env_loader = self.worker_env_loader.replace(core::ptr::null_mut());
 
+        // `false` when the off-thread fence timed out: a job can still reach
+        // VM-owned memory, so every free past step 3 is skipped.
+        let mut drained = true;
+
         // ---- 1. Unpublish vm ------------------------------------------------
         self.vm_lock.lock();
         // vm_lock held; this is the unpublish point.
@@ -1303,6 +1313,26 @@ impl WebWorker {
             // or observes m_isShuttingDown under m_lock and drops. Idempotent;
             // teardownJSCVM sets it again.
             Bun__JSCTaskScheduler__markShuttingDown(vm.global());
+            // Off-thread job fence: jobs this VM handed to other threads
+            // (WorkPool bodies, HTTP-thread fetch/S3 callbacks, the bundler
+            // thread) hold raw pointers into the VM box / EventLoop / JSC
+            // heap, and the gates above only cover the C++ posters. Cancel
+            // what can be cancelled, then wait for `outstanding_offthread` to
+            // hit zero before anything below frees that memory. Completions
+            // posted during the wait are reclaimed unrun by the drain below,
+            // with JSC still alive. On timeout steps 3/5 leak the VM instead.
+            vm.event_loop_shared().request_offthread_cancel();
+            vm.run_terminate_cancel_hooks();
+            drained = vm
+                .event_loop_shared()
+                .wait_for_offthread_jobs(OFFTHREAD_JOB_WAIT_MS);
+            if !drained {
+                log!(
+                    "[{}] off-thread jobs outstanding after {}ms; leaking the worker VM",
+                    self.execution_context_id,
+                    OFFTHREAD_JOB_WAIT_MS
+                );
+            }
             // Reclaim queued CppTasks (the per-worker stdio/messaging
             // MessagePort drain tasks that can be in self.tasks mid-tick when
             // terminate() lands, and any Worker dispatchExit close task from a
@@ -1310,7 +1340,8 @@ impl WebWorker {
             // ~JSEventListener Weak<> handles, and after teardownJSCVM the
             // worker VM is dealloc'd-without-Drop so anything still in
             // self.tasks leaks. Mirrors the global_exit() ordering.
-            vm.event_loop_mut().release_queued_tasks_for_shutdown();
+            vm.event_loop_mut()
+                .release_queued_tasks_for_shutdown(drained);
             if let Some(rare) = vm.rare_data.as_deref_mut() {
                 rare.release_js_handles();
             }
@@ -1319,17 +1350,21 @@ impl WebWorker {
         }
 
         // ---- 3. JSC VM teardown --------------------------------------------
+        // Skipped on fence timeout: a straggler may still read JSC-heap
+        // memory, so the heap is leaked along with the VM box in step 5.
         if let Some(global) = global_object {
-            // `JSGlobalObject` is an opaque ZST handle; `opaque_ref` is the
-            // centralised non-null deref proof (JSC VM still alive here).
-            WebWorker__teardownJSCVM(JSGlobalObject::opaque_ref(global));
+            if drained {
+                // `JSGlobalObject` is an opaque ZST handle; `opaque_ref` is the
+                // centralised non-null deref proof (JSC VM still alive here).
+                WebWorker__teardownJSCVM(JSGlobalObject::opaque_ref(global));
+            }
         }
 
         // The finalizers JSC just ran close the sockets that `close_all_socket_groups` leaves
         // alone (a Listener owns its listen socket and closes it in `finalize`). `us_socket_close`
         // only queues onto `loop->data.closed_head`; step 5's `on_thread_exit()` frees the loop
         // out from under whatever is still queued, so drain it now, while the loop is alive.
-        if !vm_ptr.is_null() {
+        if !vm_ptr.is_null() && drained {
             // SAFETY: `vm_ptr` was unpublished under `vm_lock`; sole owner, `destroy()` is below.
             unsafe { (*vm_ptr).uws_loop_mut().drain_closed_sockets() };
         }
@@ -1356,12 +1391,17 @@ impl WebWorker {
             unsafe { (*loop_).internal_loop_data.jsc_vm = core::ptr::null_mut() };
         }
         #[cfg(windows)]
-        {
+        if drained {
             // Per-thread libuv loop teardown; closes any handles still open on
             // this worker's loop and drops the thread-local pointer.
             bun_sys::windows::libuv::Loop::shutdown();
         }
-        if !vm_ptr.is_null() {
+        if !vm_ptr.is_null() && !drained {
+            // Fence timeout: leak the VM box, loops, JSC heap, and cloned env;
+            // only clear the thread-local binding (the thread is exiting).
+            virtual_machine::VMHolder::set_vm(None);
+        }
+        if !vm_ptr.is_null() && drained {
             // SAFETY: vm_ptr valid; sole owner.
             unsafe { (*vm_ptr).destroy() };
             // Reclaim the boxes allocated on the global
@@ -1388,7 +1428,7 @@ impl WebWorker {
             }
         }
         // Reclaim the cloned env (`heap::alloc`'d in `start_vm()`; see field doc).
-        if !env_loader.is_null() {
+        if !env_loader.is_null() && drained {
             // SAFETY: `heap::alloc`'d in `start_vm`; sole owner; the VM is
             // gone so its raw `transpiler.env` borrow is dead.
             drop(unsafe { bun_core::heap::take(env_loader) });
@@ -1404,8 +1444,17 @@ impl WebWorker {
         // skipped on glibc; under BUN_DESTRUCT_VM_ON_EXIT it would also gate
         // on `!bun_is_exiting()`. Everything that registers polls on the loop
         // (gc_controller, sockets, timers) has been deinit'd above.
-        bun_uws::on_thread_exit();
-        drop(arena.take());
+        // Leak-path exception: a straggler's completion post still calls
+        // `wakeup()` through the leaked VM's loop pointer, and the arena backs
+        // VM-reachable allocations, so both must stay allocated.
+        if drained {
+            bun_uws::on_thread_exit();
+            drop(arena.take());
+        } else {
+            // Deliberate leak; `ManuallyDrop` rather than `mem::forget` for
+            // clippy::mem_forget.
+            let _leaked = core::mem::ManuallyDrop::new(arena.take());
+        }
 
         // We MUST NOT call `pthread_exit` here —
         // glibc's `pthread_exit` throws a `__forced_unwind`

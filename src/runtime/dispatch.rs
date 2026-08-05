@@ -1265,8 +1265,13 @@ unsafe fn __bun_tick_queue_with_count(
 /// `destructOnExit`. Releases the boxes and JSC handles the dispatch path
 /// would have dropped. Tags not yet listed leak their box at exit; add them
 /// as LSan surfaces them.
+///
+/// `offthread_drained` is `false` only on the worker fence-timeout leak path,
+/// where an off-thread job may still be mid-post; arms whose box the posting
+/// thread can touch again (the multi-post S3 streaming task) must requeue in
+/// that case.
 #[unsafe(no_mangle)]
-fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
+fn __bun_release_task_at_shutdown(task: bun_event_loop::Task, offthread_drained: bool) -> bool {
     use bun_event_loop::task_tag;
     match task.tag {
         // `callback` (HTTP thread) won the `has_schedule_callback` CAS and
@@ -1302,13 +1307,12 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
         }
         // `AsyncFSTask`s are `Box::leak`'d in `create()` and freed by
         // `destroy()` (called from `run_from_js_thread`'s scopeguard).
-        // `destroy()` resets `JSPromiseStrong` (touches the StrongRootBlock list)
-        // and unrefs the loop `KeepAlive`, both of which are still valid
-        // here — we're before `destructOnExit`. Before
-        // `release_queued_tasks_for_shutdown` existed these boxes stayed
-        // reachable via `concurrent_tasks` (rooted by the static `VMHolder`),
-        // so LSan didn't flag them; the drain unhooks that root and surfaces
-        // the real leak.
+        // `release_at_shutdown` first frees result heap that `fs_to_js`
+        // would have transferred to JS (a terminated worker's in-flight
+        // readFile otherwise strands its whole result buffer), then
+        // `destroy()` resets `JSPromiseStrong` (touches the StrongRootBlock
+        // list) and unrefs the loop `KeepAlive`, both of which are still
+        // valid here — we're before `destructOnExit`.
         for_each_fs_async_op!(__fs_pat) => {
             macro_rules! __fs_destroy {
                 ($($tag:ident $ty:ident;)*) => { match task.tag {
@@ -1317,7 +1321,7 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
                         // `AsyncFSTask::create`. The work-pool callback ran
                         // (it posted this entry) so the threadpool no longer
                         // holds the embedded `task` field.
-                        unsafe { fs_async::$ty::destroy(task.ptr.cast::<fs_async::$ty>()) };
+                        unsafe { fs_async::$ty::release_at_shutdown(task.ptr.cast::<fs_async::$ty>()) };
                     })*
                     // SAFETY: outer arm guard proves one of the table tags matched.
                     _ => unsafe { core::hint::unreachable_unchecked() },
@@ -1339,6 +1343,157 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             // `new JSCDeferredWorkTask` in JSCTaskScheduler::onScheduleWorkSoon;
             // we own it once popped.
             unsafe { Bun__deleteDeferredWorkTask(task.ptr.cast::<JSCDeferredWorkTask>()) };
+            true
+        }
+        task_tag::NapiAsyncWork => {
+            // SAFETY: tag identifies pointee; the pool-thread callback already
+            // posted this entry (`outstanding_offthread` barrier).
+            unsafe { napi_async_work::release_for_shutdown(task.ptr.cast::<napi_async_work>()) };
+            true
+        }
+        // Async `node:zlib` completion: release `write()`'s acquisitions
+        // (Strong handle, pinned buffers, poll_ref, +1 ref) without calling
+        // the JS write/error callbacks; JSC is still live here.
+        task_tag::NativeZlib | task_tag::NativeBrotli | task_tag::NativeZstd => {
+            macro_rules! release_compression {
+                ($T:ty) => {
+                    // SAFETY: tag identifies pointee; live m_ctx payload kept
+                    // alive by `write()`'s `ref_()`.
+                    unsafe {
+                        node_zlib_binding::CompressionStream::<$T>::release_unrun(
+                            task.ptr.cast::<$T>(),
+                        )
+                    }
+                };
+            }
+            match task.tag {
+                task_tag::NativeZlib => release_compression!(NativeZlib),
+                task_tag::NativeBrotli => release_compression!(NativeBrotli),
+                task_tag::NativeZstd => release_compression!(NativeZstd),
+                // SAFETY: outer arm guard proves one of the three tags matched.
+                _ => unsafe { core::hint::unreachable_unchecked() },
+            }
+            true
+        }
+        // `run_from_js` early-outs on `is_shutting_down` (already set on both
+        // drain paths) and frees the box, so the erased dispatch here is a
+        // pure release: poll unref + `Drop for C`, no user code.
+        task_tag::AnyTaskJob => {
+            // SAFETY: §Dispatch — `task.ptr` is a live heap `AnyTaskJob<C>`
+            // enqueued by `AnyTaskJob::run_task`; the erased entry frees it.
+            let _ = unsafe { bun_jsc::any_task_job::dispatch_erased(task.ptr) };
+            true
+        }
+        task_tag::PasswordHashResult => {
+            // SAFETY: tag identifies pointee; boxed by `PasswordJob::run_owned`.
+            unsafe {
+                crate::crypto::password_object::PasswordResult::<
+                    crate::crypto::password_object::HashOp,
+                >::release_unrun(task.ptr.cast())
+            };
+            true
+        }
+        task_tag::PasswordVerifyResult => {
+            // SAFETY: tag identifies pointee; boxed by `PasswordJob::run_owned`.
+            unsafe {
+                crate::crypto::password_object::PasswordResult::<
+                    crate::crypto::password_object::VerifyOp,
+                >::release_unrun(task.ptr.cast())
+            };
+            true
+        }
+        // `ConcurrentPromiseTask` completions: unref + `destroy` (drops the
+        // ctx box and the promise `Strong`; JSC still live, no JS runs).
+        task_tag::AsyncGlobWalkTask
+        | task_tag::AsyncImageTask
+        | task_tag::AsyncTransformTask
+        | task_tag::CopyFilePromiseTask => {
+            macro_rules! release_promise_task {
+                ($ty:ty) => {{
+                    let t = task.ptr.cast::<$ty>();
+                    // SAFETY: tag identifies pointee; the pool callback posted
+                    // this entry, so the pool no longer touches it.
+                    unsafe {
+                        (*t).ref_.unref(bun_io::js_vm_ctx());
+                        bun_jsc::concurrent_promise_task::ConcurrentPromiseTask::destroy(t);
+                    }
+                }};
+            }
+            match task.tag {
+                task_tag::AsyncGlobWalkTask => release_promise_task!(AsyncGlobWalkTask<'_>),
+                task_tag::AsyncImageTask => release_promise_task!(AsyncImageTask<'_>),
+                task_tag::AsyncTransformTask => release_promise_task!(AsyncTransformTask<'_>),
+                task_tag::CopyFilePromiseTask => release_promise_task!(CopyFilePromiseTask<'_>),
+                // SAFETY: outer arm guard proves one of the four tags matched.
+                _ => unsafe { core::hint::unreachable_unchecked() },
+            }
+            true
+        }
+        // The HTTP thread's final callback posted these and made its last
+        // access before the fence released; we own the box. `Drop` is
+        // JS-free (poll unref + `clear_data`).
+        task_tag::S3HttpSimpleTask => {
+            // SAFETY: tag identifies pointee; sole owner (see above).
+            drop(unsafe { bun_core::heap::take(task.ptr.cast::<S3HttpSimpleTask>()) });
+            true
+        }
+        task_tag::S3HttpDownloadStreamingTask => {
+            // Unlike the single-post tags above, the streaming task posts per
+            // chunk and the HTTP thread keeps touching the box until its
+            // final callback's `offthread_job_end`. Only a drained fence
+            // proves that callback finished; otherwise requeue so the box
+            // stays allocated (it is then leaked with the VM).
+            if offthread_drained {
+                // SAFETY: tag identifies pointee; the fence drained, so the
+                // HTTP thread made its last access; sole owner (see above).
+                drop(unsafe {
+                    bun_core::heap::take(task.ptr.cast::<S3HttpDownloadStreamingTask>())
+                });
+                true
+            } else {
+                false
+            }
+        }
+        // `cancelled` short-circuits `on_complete` right after the poll
+        // unref, so no JS runs; adopting the enqueue's +1 frees the box.
+        task_tag::JSBundleCompletionTask => {
+            let c = task
+                .ptr
+                .cast::<crate::api::js_bundle_completion_task::JSBundleCompletionTask>();
+            // SAFETY: tag identifies pointee; the bundle thread's last access
+            // ended when it posted this entry.
+            unsafe {
+                (*c).cancelled = true;
+                let _ =
+                    crate::api::js_bundle_completion_task::JSBundleCompletionTask::on_complete_anytask(c);
+            }
+            true
+        }
+        // `run_from_js`'s `is_shutting_down()` early-out is a pure release:
+        // `heap::take` + keep-alive unref + `Drop` for the ctx (which can
+        // hold the whole archive output) and the promise `Strong`; no JS.
+        task_tag::ArchiveExtractTask
+        | task_tag::ArchiveBlobTask
+        | task_tag::ArchiveWriteTask
+        | task_tag::ArchiveFilesTask => {
+            // Tag identifies each pointee; the pool callback posted this
+            // entry, so the pool no longer touches it.
+            let _ = match task.tag {
+                task_tag::ArchiveExtractTask => {
+                    ArchiveAsyncTask::run_from_js(task.ptr.cast::<ArchiveExtractTask>())
+                }
+                task_tag::ArchiveBlobTask => {
+                    ArchiveAsyncTask::run_from_js(task.ptr.cast::<ArchiveBlobTask>())
+                }
+                task_tag::ArchiveWriteTask => {
+                    ArchiveAsyncTask::run_from_js(task.ptr.cast::<ArchiveWriteTask>())
+                }
+                task_tag::ArchiveFilesTask => {
+                    ArchiveAsyncTask::run_from_js(task.ptr.cast::<ArchiveFilesTask>())
+                }
+                // SAFETY: outer arm guard proves one of the four tags matched.
+                _ => unsafe { core::hint::unreachable_unchecked() },
+            };
             true
         }
         // Same reclaim `drop_concurrent_cpp_tasks` performs, but for tasks

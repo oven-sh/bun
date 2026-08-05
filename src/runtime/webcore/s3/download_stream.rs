@@ -324,6 +324,12 @@ impl S3HttpDownloadStreamingTask {
         async_http: *mut AsyncHTTP<'static>,
         result: HTTPClientResult,
     ) {
+        let is_done = !result.has_more;
+        // Snapshot before the enqueue: once the final completion lands the JS
+        // thread may consume and free `*this`, and the `offthread_job_end`
+        // below must go through a local.
+        // SAFETY: `this` is live for the duration of this callback.
+        let vm = unsafe { (*this).vm.expect("vm set at task creation") };
         // SAFETY: `this` is live for the duration of the HTTP request; HTTPThread holds the only
         // concurrent reference and `mutex` serializes against `on_response`. `async_http` is the
         // live HTTP-thread copy, non-null for the callback's duration. Borrows scoped to the call.
@@ -331,21 +337,48 @@ impl S3HttpDownloadStreamingTask {
             // we are always unlocked here and its safe to enqueue
             // SAFETY: same exclusivity as above; `task` is the inline `concurrent_task` field of
             // this heap request and the queue takes ownership of its `next` link.
-            let (vm, task) = unsafe {
-                let task = core::ptr::NonNull::from(
+            let task = unsafe {
+                core::ptr::NonNull::from(
                     (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
-                );
-                ((*this).vm.expect("vm set at task creation"), task)
+                )
             };
             // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
             // is initialized for the request's lifetime and enqueue is thread-safe (`&self`).
             vm.event_loop_shared().enqueue_task_concurrent(task);
         }
+        if is_done {
+            // Final callback: last VM access, via the local.
+            vm.event_loop_shared().offthread_job_end();
+        }
     }
+}
+
+/// `TerminateCancelHook::run` for an in-flight streaming S3 request: set the
+/// task's abort signal (fails the request fast if it has not started yet),
+/// then ask the HTTP thread to shut the socket down by id; either path
+/// produces the final (`has_more == false`) callback that releases the fence.
+/// Only the signal store and the id captured at schedule time are touched;
+/// the `http` storage is HTTP-thread-owned here.
+pub(crate) fn terminate_cancel_hook(ptr: *mut (), async_http_id: u64) {
+    // SAFETY: `ptr` is the live heap task registered at schedule time; hooks
+    // and the task's free both run on the owning JS thread, so no race.
+    unsafe { &(*ptr.cast::<S3HttpDownloadStreamingTask>()).signal_store }
+        .aborted
+        .store(true, core::sync::atomic::Ordering::Release);
+    #[allow(clippy::cast_possible_truncation)]
+    bun_http::http_thread().schedule_shutdown_by_id(async_http_id as u32);
 }
 
 impl Drop for S3HttpDownloadStreamingTask {
     fn drop(&mut self) {
+        // Runs on the JS thread (the task is freed by `on_response` / the
+        // stream-cancel path); drop the terminate-cancel registration taken at
+        // schedule time. No-op when the shutdown fan-out consumed the list or
+        // the inert `Default` placeholder is being dropped (`vm: None`).
+        if let Some(vm) = self.vm {
+            vm.as_mut()
+                .unregister_terminate_cancel_hook(core::ptr::from_mut(self).cast());
+        }
         // KeepAlive::unref now takes an aio EventLoopCtx; the JS-loop ctx is fetched
         // via the global hook (registered by crate::init) — same pattern as
         // `S3HttpSimpleTask::drop` in simple_request.rs.

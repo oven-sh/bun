@@ -80,6 +80,8 @@ impl ConcurrentCppTask {
         unsafe { EventLoopTaskNoContext::run(cpp_task) };
         if let Some(vm) = maybe_vm {
             vm.event_loop_shared().unref_concurrently();
+            // Last VM access.
+            vm.event_loop_shared().offthread_job_end();
         }
     }
 }
@@ -91,6 +93,8 @@ extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNoCont
     // the centralised non-null deref proof. C++ just handed it over.
     if let Some(vm) = EventLoopTaskNoContext::opaque_ref(cpp_task).get_vm() {
         vm.event_loop_shared().ref_concurrently();
+        // Paired with the `offthread_job_end` in `run_owned`.
+        vm.event_loop_shared().offthread_job_begin();
     }
     WorkPool::schedule_new(ConcurrentCppTask {
         cpp_task,

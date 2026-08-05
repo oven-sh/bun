@@ -1015,6 +1015,20 @@ mod _async_tasks {
             // `bun_sys::Error` frees its path on Drop.
             task.r#ref.unref(bun_io::js_vm_ctx());
         }
+
+        /// Shutdown-drain release for a completion that never reaches
+        /// `run_from_js_thread`: free result heap that `fs_to_js` would have
+        /// transferred to JS, then [`Self::destroy`].
+        ///
+        /// SAFETY: same contract as [`Self::destroy`].
+        pub(crate) unsafe fn release_at_shutdown(this: *mut Self) {
+            // SAFETY: caller contract; the drain owns the queued task.
+            if let Ok(r) = unsafe { &mut (*this).result } {
+                r.release_unrun();
+            }
+            // SAFETY: caller contract.
+            unsafe { Self::destroy(this) };
+        }
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -1155,6 +1169,11 @@ mod _async_tasks {
     /// Each `ret::*` type implements this by forwarding to its inherent method.
     pub trait FsReturn {
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
+
+        /// Free heap that `fs_to_js` would have transferred to JS. Called only
+        /// by the shutdown drain for completions released unrun (the default
+        /// is right for types whose `Drop` already frees everything).
+        fn release_unrun(&mut self) {}
     }
     impl FsReturn for JSValue {
         #[inline]
@@ -1197,6 +1216,16 @@ mod _async_tasks {
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
             self.to_js(global)
         }
+
+        fn release_unrun(&mut self) {
+            // The `Buffer` variant's `Drop` is deliberately a no-op (ownership
+            // normally transfers to a JS ArrayBuffer in `to_js`); released
+            // unrun, the bytes must be freed here or a terminated worker
+            // leaks every in-flight read's result.
+            if let StringOrBuffer::Buffer(buffer) = self {
+                buffer.destroy();
+            }
+        }
     }
     impl FsReturn for StringOrUndefined {
         #[inline]
@@ -1229,6 +1258,29 @@ mod _async_tasks {
             // JS). Swap in an empty `Files` payload so `&mut self` stays valid.
             let owned = core::mem::replace(self, ret::Readdir::Files(Box::default()));
             owned.to_js(global)
+        }
+
+        fn release_unrun(&mut self) {
+            // Entries own refcounts / byte buffers that `to_js` would have
+            // transferred to JS; mirror `ResultListEntryValue::deinit`.
+            match self {
+                ret::Readdir::WithFileTypes(items) => {
+                    for item in items.iter() {
+                        item.deref();
+                    }
+                }
+                ret::Readdir::Buffers(items) => {
+                    for item in items.iter_mut() {
+                        item.destroy();
+                    }
+                }
+                ret::Readdir::Files(items) => {
+                    for item in items.iter() {
+                        item.deref();
+                    }
+                }
+            }
+            *self = ret::Readdir::Files(Box::default());
         }
     }
     impl FsReturn for StatOrNotFound {
@@ -1309,7 +1361,8 @@ mod _async_tasks {
             // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
             // event loop is the only one that owns AsyncFSTask/UVFSRequest.
             task.r#ref.ref_(bun_io::js_vm_ctx());
-            let _ = vm;
+            // Paired with the `offthread_job_end` in `work_pool_callback`.
+            vm.event_loop_shared().offthread_job_begin();
             task.tracker.did_schedule(global_object);
             let promise = task.promise.value();
             WorkPool::schedule(&raw mut bun_core::heap::release(task).task);
@@ -1320,28 +1373,38 @@ mod _async_tasks {
             // SAFETY: `task` points to `Self.task` (container-of).
             let this = unsafe { Self::from_task_ptr(task) };
 
-            let mut node_fs = NodeFS::default();
-            // SAFETY: `this` is the live Box-leaked task; the work-pool thread owns
-            // it exclusively until the enqueue below hands it to the JS thread.
-            // `args` and `result` are disjoint fields.
-            unsafe {
-                (*this).result =
-                    NodeFS::dispatch::<R, A, F>(&mut node_fs, &(*this).args, Flavor::Async);
-            }
-            // `sys::Error::path` is `Box<[u8]>` boxed at the
-            // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
-
             // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
             // documented accessor for off-thread (work-pool) callers; the
             // event-loop's concurrent queue is MPSC-safe.
-            // SAFETY: `this` is still exclusively owned here (see above).
+            // SAFETY: `this` is the live Box-leaked task; the work-pool thread owns
+            // it exclusively until the enqueue below hands it to the JS thread.
             let vm = unsafe { (*this).global_object().bun_vm_concurrently() };
+
+            // Teardown in progress: skip the op; the shutdown drain reclaims
+            // the task unrun with `result` still the sentinel.
+            // SAFETY: the job's own `outstanding_offthread` count keeps the VM
+            // alive for this read.
+            if !unsafe { (*vm).event_loop_shared() }.offthread_cancel_requested() {
+                let mut node_fs = NodeFS::default();
+                // SAFETY: `this` is exclusively owned here (see above); `args`
+                // and `result` are disjoint fields.
+                unsafe {
+                    (*this).result =
+                        NodeFS::dispatch::<R, A, F>(&mut node_fs, &(*this).args, Flavor::Async);
+                }
+                // `sys::Error::path` is `Box<[u8]>` boxed at the
+                // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
+            }
+
             // SAFETY: VirtualMachine and its event loop are process-static
             // (LIFETIMES.tsv); the concurrent queue is MPSC-safe. Ownership of
             // `this` transfers to the JS thread here — no use after this call.
             unsafe {
                 (*(*vm).event_loop()).enqueue_task_concurrent(ConcurrentTask::create_from(this));
             }
+            // SAFETY: `vm` stays alive until this end call releases the fence
+            // taken in `create` (last VM access; `this` is not touched).
+            unsafe { (*vm).event_loop_shared() }.offthread_job_end();
         }
 
         pub(crate) fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
@@ -1398,6 +1461,20 @@ mod _async_tasks {
             let mut task = unsafe { bun_core::heap::take(this) };
             // `bun_sys::Error` frees its path on Drop.
             task.r#ref.unref(bun_io::js_vm_ctx());
+        }
+
+        /// Shutdown-drain release for a completion that never reaches
+        /// `run_from_js_thread`: free result heap that `fs_to_js` would have
+        /// transferred to JS, then [`Self::destroy`].
+        ///
+        /// SAFETY: same contract as [`Self::destroy`].
+        pub(crate) unsafe fn release_at_shutdown(this: *mut Self) {
+            // SAFETY: caller contract; the drain owns the queued task.
+            if let Ok(r) = unsafe { &mut (*this).result } {
+                r.release_unrun();
+            }
+            // SAFETY: caller contract.
+            unsafe { Self::destroy(this) };
         }
     }
 
@@ -1620,6 +1697,9 @@ mod _async_tasks {
             if !IS_SHELL {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
             }
+            // Paired with the `offthread_job_end` in `on_subtask_done` (the
+            // copy tree finishes first by the `subtask_count` contract).
+            task.evtloop.offthread_job_begin();
             task.tracker.did_schedule(global_object);
 
             let raw = bun_core::heap::release(task);
@@ -1655,6 +1735,8 @@ mod _async_tasks {
             if !IS_SHELL {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
             }
+            // See `create_with_shell_task`; no-op for the mini loop.
+            task.evtloop.offthread_job_begin();
 
             let raw = bun_core::heap::release(task);
             WorkPool::schedule(&raw mut raw.task);
@@ -1720,8 +1802,12 @@ mod _async_tasks {
             // Count reached zero ⇒ exclusive access. `this` carries mutable
             // provenance from `Box::leak`, so the enqueued callback may safely
             // form `&mut *this` on the JS thread.
-            if matches!(this_ref.evtloop, EventLoopHandle::Js { .. }) {
-                this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
+            // Copy the handle out first: the JS thread may free `*this` as
+            // soon as the enqueue lands, and the fence release below must not
+            // touch it.
+            let evtloop = this_ref.evtloop;
+            if matches!(evtloop, EventLoopHandle::Js { .. }) {
+                evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
                     js: ConcurrentTask::from_callback(this, |p| {
                         // SAFETY: `p` is the `Box::leak`'d task; subtask count hit zero so this
                         // JS-thread callback holds the only live reference (exclusive `&mut`).
@@ -1730,7 +1816,7 @@ mod _async_tasks {
                     .as_ptr(),
                 });
             } else {
-                this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
+                evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
                     mini: AnyTaskWithExtraContext::from_callback_auto_deinit(
                         this,
                         |p: *mut Self, ctx| {
@@ -1740,6 +1826,8 @@ mod _async_tasks {
                     ),
                 });
             }
+            // Last loop access, via the local copy; no-op for the mini loop.
+            evtloop.offthread_job_end();
         }
 
         pub(crate) fn run_from_js_thread_mini(&mut self, _: *mut c_void) {
@@ -2394,6 +2482,9 @@ mod _async_tasks {
                 pending_err_mutex: bun_threading::Mutex::default(),
             });
             task.r#ref.ref_(bun_io::js_vm_ctx());
+            // Paired with the `offthread_job_end` in `finish_concurrently` (the
+            // scan tree finishes first by the `subtask_count` contract).
+            vm.event_loop_shared().offthread_job_begin();
             task.tracker.did_schedule(global_object);
             let promise = task.promise.value();
             WorkPool::schedule(&raw mut bun_core::heap::release(task).task);
@@ -2579,6 +2670,9 @@ mod _async_tasks {
                     std::ptr::from_mut::<Self>(self),
                 )));
             }
+            // SAFETY: `vm` stays alive until this end call (last VM access;
+            // `self` is not touched).
+            unsafe { (*vm).event_loop_shared() }.offthread_job_end();
         }
 
         fn clear_result_list(&mut self) {
@@ -2678,6 +2772,15 @@ mod _async_tasks {
             task.r#ref.unref(bun_io::js_vm_ctx());
             task.free_root_path();
             task.clear_result_list();
+        }
+
+        /// Shutdown-drain alias of [`Self::destroy`], which already releases
+        /// the result list (`clear_result_list`).
+        ///
+        /// SAFETY: same contract as [`Self::destroy`].
+        pub(crate) unsafe fn release_at_shutdown(this: *mut Self) {
+            // SAFETY: caller contract.
+            unsafe { Self::destroy(this) };
         }
     }
 

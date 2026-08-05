@@ -729,6 +729,9 @@ impl<C: TaskContext> AsyncTask<C> {
     }
 
     fn schedule(this: *mut Self) {
+        // Paired with the `offthread_job_end` in `run_callback`.
+        // SAFETY: `this` is alive; `vm` is the live owning VM (set in `create`).
+        unsafe { (*(*this).vm).event_loop_shared().offthread_job_begin() };
         // SAFETY: `this` is alive (owned by the task system) until run_from_js drops it;
         // task field is intrusive and stable since `this` is heap-allocated.
         WorkPool::schedule(unsafe { &raw mut (*this).task });
@@ -759,10 +762,14 @@ impl<C: TaskContext> AsyncTask<C> {
         unsafe { (*this).ctx.run() };
         // SAFETY: vm points to the live owning VM; concurrent_task is intrusive on the same allocation.
         unsafe {
+            // Snapshot: the JS thread may free `*this` once the enqueue lands.
+            let vm = (*this).vm;
             let ct = core::ptr::NonNull::from(
                 (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
             );
-            (*(*this).vm).enqueue_task_concurrent(ct);
+            (*vm).enqueue_task_concurrent(ct);
+            // Last VM access; releases the fence taken in `schedule`.
+            (*vm).event_loop_shared().offthread_job_end();
         }
     }
 

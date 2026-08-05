@@ -145,6 +145,11 @@ pub(crate) fn create_and_schedule_completion_task(
     // conditions from creating two
     let _ = WorkPool::get();
 
+    // Paired with the `offthread_job_end` in `complete_on_bundle_thread`: the
+    // bundle thread reads VM-owned state (`env`, transpiler, plugins) until then.
+    // SAFETY: `event_loop` is the live JS-thread loop (checked non-null above).
+    unsafe { (*event_loop).offthread_job_begin() };
+
     bun_bundler::bundle_v2::singleton::enqueue::<JSBundleCompletionTask>(completion);
 
     // SAFETY: `completion` is live (refcount==1); `vm` outlives this call.
@@ -995,9 +1000,11 @@ impl CompletionStruct for JSBundleCompletionTask {
         // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
         // `ConcurrentTask::create` heap-allocates a fresh task; the
         // queue takes ownership of it.
+        let jsc_event_loop = self.jsc_event_loop;
         let this = std::ptr::from_mut::<Self>(self);
-        self.jsc_event_loop
-            .enqueue_task_concurrent(jsc::ConcurrentTask::create(jsc::Task::init(this)));
+        jsc_event_loop.enqueue_task_concurrent(jsc::ConcurrentTask::create(jsc::Task::init(this)));
+        // Last VM access, via the local copy (the JS thread may free `*this` now).
+        jsc_event_loop.offthread_job_end();
     }
     fn set_result(&mut self, result: BundleV2Result) {
         self.result = result;

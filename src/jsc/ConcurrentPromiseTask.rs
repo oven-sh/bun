@@ -83,9 +83,15 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         // field, so `from_task_ptr` recovers the live heap `Self` parent,
         // exclusively owned by the work pool for this callback's duration.
         let this = unsafe { Self::from_task_ptr(task) };
-        // SAFETY: `this` is alive for the duration of the thread-pool callback;
-        // exclusively owned by the work pool at this point.
-        unsafe { (*this).ctx.run() };
+        // Teardown in progress: skip the compute; the shutdown drain reclaims
+        // the task unrun.
+        // SAFETY: `this` is alive (see above); the job's own
+        // `outstanding_offthread` count keeps the loop alive for this read.
+        if !unsafe { (*this).event_loop }.offthread_cancel_requested() {
+            // SAFETY: `this` is alive for the duration of the thread-pool
+            // callback; exclusively owned by the work pool at this point.
+            unsafe { (*this).ctx.run() };
+        }
         Self::on_finish(this);
     }
 
@@ -97,6 +103,8 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
     }
 
     pub fn schedule(&mut self) {
+        // Paired with the `offthread_job_end` in `on_finish`.
+        self.event_loop.offthread_job_begin();
         WorkPool::schedule(&raw mut self.task);
     }
 
@@ -115,6 +123,8 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         // `task` is the live `concurrent_task` field of the heap-allocated
         // job; the queue takes ownership of its intrusive `next` link.
         event_loop.enqueue_task_concurrent(task);
+        // Last VM access, via the local copy (the JS thread may free `*this` now).
+        event_loop.offthread_job_end();
     }
 
     /// Frees the heap allocation backing this task.

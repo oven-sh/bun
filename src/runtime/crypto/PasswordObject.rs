@@ -573,7 +573,16 @@ impl<Op: PasswordOp> PasswordJob<Op> {
     // is a false positive on this macro contract.
     #[allow(clippy::boxed_local)]
     fn run_owned(mut self: Box<Self>) {
-        let value = self.op.compute(&self.password);
+        let event_loop = self.event_loop;
+        // Teardown in progress: skip the deliberately-slow KDF; the shutdown
+        // drain reclaims the queued result unread via `release_unrun`.
+        // SAFETY: the fence taken in `JSPasswordObject::run` keeps the loop
+        // alive for this read.
+        let value = if unsafe { (*event_loop).offthread_cancel_requested() } {
+            Err(HashError::JSTerminated)
+        } else {
+            self.op.compute(&self.password)
+        };
         let result = Box::new(PasswordResult::<Op> {
             value,
             promise: core::mem::take(&mut self.promise),
@@ -583,10 +592,12 @@ impl<Op: PasswordOp> PasswordJob<Op> {
         // SAFETY: `event_loop` was stored from the JS-thread VM and outlives the
         // job; ownership of `result` transfers to the event loop here.
         unsafe {
-            (*self.event_loop).enqueue_task_concurrent(ConcurrentTask::create(
+            (*event_loop).enqueue_task_concurrent(ConcurrentTask::create(
                 bun_event_loop::Task::from_boxed(result),
             ));
         }
+        // SAFETY: `event_loop` outlives the job (fence still held). Last VM access.
+        unsafe { (*event_loop).offthread_job_end() };
         // `self: Box<Self>` drops here; Drop runs secure_zero on password (+op).
     }
 }
@@ -603,6 +614,18 @@ impl<Op: PasswordOp> bun_event_loop::Taskable for PasswordResult<Op> {
 }
 
 impl<Op: PasswordOp> PasswordResult<Op> {
+    /// Shutdown-drain counterpart of [`Self::run_from_js`]: unref the loop
+    /// keep-alive and free the box without settling the promise. No JS runs.
+    ///
+    /// # Safety
+    /// `this` must be the queued box from `PasswordJob::run_owned`; sole owner.
+    pub(crate) unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: caller contract.
+        let mut this = unsafe { bun_core::heap::take(this) };
+        this.r#ref.unref(bun_io::js_vm_ctx());
+        // promise Strong + value drop with the box.
+    }
+
     pub(crate) fn run_from_js(this: *mut Self) -> Result<(), jsc::JsTerminated> {
         // SAFETY: `this` was produced by heap::into_raw in `run_owned` and the
         // event loop hands sole ownership to this callback. Reclaim the Box once
@@ -668,6 +691,11 @@ impl JSPasswordObject {
             task: WorkPoolTask::default(),
         });
         job.r#ref.ref_(bun_io::js_vm_ctx());
+        // Paired with the `offthread_job_end` in `run_owned`.
+        global_object
+            .bun_vm()
+            .event_loop_shared()
+            .offthread_job_begin();
         WorkPool::schedule_owned(job);
 
         Ok(promise_value)

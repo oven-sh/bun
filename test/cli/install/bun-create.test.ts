@@ -525,6 +525,8 @@ echo PI_START >&2
 touch postinstall_started
 i=0
 while [ ! -f git_finished ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done
+# the worker's stderr write happens after the stub exits and is not observable
+# from here; give the unfixed binary time to print before the last line
 sleep 0.5
 echo PI_END >&2
 `,
@@ -567,6 +569,34 @@ it("should run a bun-create postinstall task that starts with 'bun '", async () 
       dependencies: { localdep: "file:./localdep" },
     }),
     "bun-create/tmpl/localdep/package.json": JSON.stringify({ name: "localdep", version: "1.0.0" }),
+    "bun-create/tmpl/scripts/marker.ts": `await Bun.write("marker.txt", "ran");`,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "create", "tmpl", join(String(dir), "dest"), "--no-git"],
+    cwd: String(dir),
+    env: { ...env, BUN_CREATE_DIR: join(String(dir), "bun-create") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(out).toContain("$ bun scripts/marker.ts");
+  expect(err).not.toContain("error:");
+  expect(await Bun.file(join(String(dir), "dest", "marker.txt")).text()).toBe("ran");
+  expect(exitCode).toBe(0);
+});
+
+// Same as above, but the template has no dependencies: postinstall then runs
+// without the npm client, and the bare `bun` argv[0] hit the same ENOENT.
+it("should run a bun-prefixed postinstall task for a template without dependencies", async () => {
+  using dir = tempDir("create-bun-postinstall-nodeps", {
+    "bun-create/tmpl/index.js": "// hi\n",
+    "bun-create/tmpl/package.json": JSON.stringify({
+      name: "tmpl",
+      version: "1.0.0",
+      "bun-create": { postinstall: "bun scripts/marker.ts" },
+    }),
     "bun-create/tmpl/scripts/marker.ts": `await Bun.write("marker.txt", "ran");`,
   });
 

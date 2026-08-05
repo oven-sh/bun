@@ -91,11 +91,11 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
     // `bun `-prefixed tasks run with bun itself; posix spawn does no PATH
     // lookup, so exec the absolute self path (the printed argv keeps `bun`).
     let mut exec_argv0: Option<&[u8]> = None;
-    if let Some(ref client) = npm_client {
-        if strings::starts_with(task, b"bun ") {
+    if strings::starts_with(task, b"bun ") {
+        if npm_client.is_some() {
             argv = &argv[2..];
-            exec_argv0 = Some(client.bin);
         }
+        exec_argv0 = bun_core::self_exe_path().ok().map(bun_core::ZStr::as_bytes);
     }
 
     pretty!("\n<r><d>$<b>");

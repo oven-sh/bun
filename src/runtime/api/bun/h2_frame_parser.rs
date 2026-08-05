@@ -6722,11 +6722,12 @@ impl H2FrameParser {
             if callframe.arguments_count() >= 3 {
                 if !opaque_data_arg.is_empty_or_undefined_or_null() {
                     if let Some(array_buffer) = opaque_data_arg.as_array_buffer(global_object) {
-                        let slice = array_buffer.byte_slice();
+                        // Own the bytes: write() re-enters JS on JS-backed sockets and can detach this.
+                        let copied = array_buffer.byte_slice().to_vec();
                         this.send_go_away(
                             0,
                             ErrorCode(error_code as u32),
-                            slice,
+                            &copied,
                             last_stream_id,
                             false,
                         );

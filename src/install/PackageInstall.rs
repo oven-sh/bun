@@ -1650,7 +1650,6 @@ impl<'a> PackageInstall<'a> {
                                 destination_dir.fd(),
                                 entry.path,
                             ) {
-
                                 if err.get_errno() == sys::E::EEXIST {
                                     let _ = sys::unlinkat(destination_dir, entry.path);
                                     sys::linkat(

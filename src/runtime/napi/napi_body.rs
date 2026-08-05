@@ -5055,7 +5055,6 @@ pub(crate) fn fix_dead_code_elimination() {
 
     // posix_platform_specific_v8_apis
     #[cfg(all(not(windows), target_os = "android"))]
-
     keep_symbols!(
         posix_platform_specific_v8_apis::_ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt6__ndk18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE,
         posix_platform_specific_v8_apis::_ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateENSt6__ndk18optionalImEE,
@@ -5083,7 +5082,6 @@ pub(crate) fn fix_dead_code_elimination() {
         posix_platform_specific_v8_apis::_ZN2v86BigInt3NewEPNS_7IsolateEl,
         posix_platform_specific_v8_apis::_ZN2v812HeapProfiler25StartSamplingHeapProfilerEmiNS0_13SamplingFlagsE,
     );
-
     #[cfg(all(
         not(windows),
         not(target_os = "android"),

@@ -1929,6 +1929,67 @@ it("http2 session.goaway() sends custom data", async done => {
   });
 });
 
+it("http2 session.goaway() opaqueData survives re-entrant buffer detach over a JS Duplex", async () => {
+  // The cork-flush path re-enters JS (onWrite → Duplex _write) when the transport is a JS
+  // stream. If that JS detaches the opaqueData ArrayBuffer mid-write, the GOAWAY payload must
+  // still be the bytes the caller passed, not whatever later occupies that heap block.
+  const fixture = `
+    const http2 = require("node:http2");
+    const { Duplex } = require("node:stream");
+    const N = 64 * 1024;
+    const GOAWAY_WIRE_SIZE = 9 + 8 + N;
+    let opaque = new Uint8Array(N).fill(0x41);
+    const spray = [], received = [];
+    let armed = false, fired = false, total = 0, onComplete;
+    const duplex = new Duplex({
+      read() {},
+      write(chunk, enc, cb) {
+        if (armed) {
+          received.push(Buffer.from(chunk));
+          total += chunk.length;
+          if (!fired && chunk.length >= 16384) {
+            fired = true;
+            opaque.buffer.transfer(0);
+            opaque = null;
+            Bun.gc(true);
+            for (let i = 0; i < 16; i++) spray.push(new Uint8Array(N).fill(0x5a));
+          }
+          if (total >= GOAWAY_WIRE_SIZE && onComplete) onComplete();
+        }
+        cb();
+      },
+    });
+    const session = http2.connect("http://127.0.0.1:1", { createConnection: () => duplex });
+    session.on("error", () => {});
+    await new Promise(r => session.once("connect", r));
+    await new Promise(r => setImmediate(r));
+    armed = true;
+    const complete = new Promise(r => (onComplete = r));
+    session.goaway(0, 0, opaque);
+    if (total < GOAWAY_WIRE_SIZE) await complete;
+    const all = Buffer.concat(received);
+    let off = 0;
+    while (off + 9 <= all.length && all[off + 3] !== 7) off += 9 + all.readUIntBE(off, 3);
+    const len = all.readUIntBE(off, 3);
+    const payload = all.subarray(off + 17, off + 9 + len);
+    let ok = 0;
+    for (const b of payload) if (b === 0x41) ok++;
+    console.log(JSON.stringify({ fired, declared: payload.length, ok }));
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const result = JSON.parse(stdout.trim());
+  expect(result).toEqual({ fired: true, declared: 64 * 1024, ok: 64 * 1024 });
+  expect(exitCode).toBe(0);
+}, 15_000);
+
 it("http2 server sends protocol-error GOAWAY on stream 0", async () => {
   // RFC 9113 section 6.8: GOAWAY frames MUST be sent with a stream identifier
   // of 0 in the frame header; the last processed stream id lives in the

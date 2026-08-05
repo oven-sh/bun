@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "name": "example-server",
+  "scripts": {
+    "start": "bun run index.ts"
+  }
+}

@@ -23,6 +23,7 @@ suite("VSCode extension", function () {
 
 export default defineConfig({
   workspaceFolder: join(workspacePath, "example"),
+  // workspaceFolder: join(workspacePath, "example-multi-root", "multiroot.code-workspace"),
   extensionDevelopmentPath: workspacePath,
   skipExtensionDependencies: true,
   files: vscodeTestPath,

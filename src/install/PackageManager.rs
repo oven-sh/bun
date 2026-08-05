@@ -487,6 +487,103 @@ impl Subcommand {
     pub(crate) fn should_chdir_to_root(self) -> bool {
         !matches!(self, Self::Link)
     }
+
+    /// Subcommands whose positionals may be folder specifiers like `.` or `./path`.
+    pub(crate) fn supports_folder_positionals(self) -> bool {
+        matches!(self, Self::Install | Self::Add | Self::Update)
+    }
+}
+
+/// Rewrite relative local-path positionals (`.`, `./x`, `file:x`, `./x.tgz`)
+/// to absolute paths for `-g` installs. Must run before [`init`] chdirs into
+/// the global dir. Returns `None` when nothing needed rewriting.
+pub(crate) fn absolutize_folder_positionals(
+    positionals: &'static [&'static [u8]],
+) -> Option<&'static [&'static [u8]]> {
+    use bun_install::dependency::DependencyExt as _;
+
+    let mut cwd_buf = PathBuffer::uninit();
+    let mut cwd: Option<&[u8]> = None;
+    let mut join_buf = PathBuffer::uninit();
+    let mut new_positionals: Option<Vec<&'static [u8]>> = None;
+
+    for (i, &positional) in positionals.iter().enumerate() {
+        if i == 0 {
+            continue;
+        }
+
+        let input = strings::trim(positional, b" \n\r\t");
+
+        // `name@<value>` alias form: isolate the value so `name@./pkg` is handled.
+        let (alias, mut value): (&[u8], &[u8]) = 'split: {
+            if input.len() > 1
+                && !(!Dependency::is_tarball(input) && strings::is_npm_package_name(input))
+            {
+                if let Some(at) = strings::index_of_char(&input[1..], b'@') {
+                    let at = at as usize + 1;
+                    let name = &input[..at];
+                    if strings::is_npm_package_name(name) {
+                        break 'split (&input[..at + 1], &input[at + 1..]);
+                    }
+                }
+            }
+            (b"", input)
+        };
+
+        let had_file_scheme = if let Some(rest) = value.strip_prefix(b"file:") {
+            // npa.js compat: `file://../foo` → `../foo` (dependency.rs strips
+            // up to three leading slashes when the remainder starts with `..`).
+            let mut i = 0;
+            while i < 3 && i < rest.len() && rest[i] == b'/' {
+                i += 1;
+            }
+            value = if i > 0 && rest[i..].starts_with(b"..") {
+                &rest[i..]
+            } else {
+                rest
+            };
+            true
+        } else {
+            false
+        };
+
+        if value.is_empty()
+            || !(had_file_scheme || value[0] == b'.')
+            || value.starts_with(b"~/")
+            || bun_paths::is_absolute(value)
+        {
+            continue;
+        }
+
+        let cwd = match cwd {
+            Some(c) => c,
+            None => match bun_sys::getcwd(&mut cwd_buf[..]) {
+                Ok(len) => {
+                    let c = &cwd_buf[..len];
+                    cwd = Some(c);
+                    c
+                }
+                Err(_) => return None,
+            },
+        };
+
+        let Some(abs) = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
+            cwd,
+            &mut join_buf[..],
+            &[value],
+        ) else {
+            continue;
+        };
+        let mut rewritten = Vec::with_capacity(alias.len() + abs.len());
+        rewritten.extend_from_slice(alias);
+        rewritten.extend_from_slice(abs);
+        let rewritten: &'static [u8] =
+            update_request::anchor_cli_bytes(rewritten.into_boxed_slice());
+
+        new_positionals.get_or_insert_with(|| positionals.to_vec())[i] = rewritten;
+    }
+
+    new_positionals.map(|v| &*update_request::anchor_cli_slices(v.into_boxed_slice()))
 }
 
 pub enum WorkspaceFilter {

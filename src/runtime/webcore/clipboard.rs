@@ -109,56 +109,55 @@ impl Drop for ClipboardCtx {
 impl AnyTaskJobCtx for ClipboardCtx {
     fn run(&mut self, _global: *mut JSGlobalObject) {
         let _guard = CLIPBOARD_LOCK.lock_guard();
-        self.outcome = Some(match &self.op {
-            Op::ReadText => match platform::read_type(Mime::TextPlain) {
-                Ok(Some(bytes)) => Outcome::Representations(vec![(Mime::TextPlain, bytes)]),
-                Ok(None) => Outcome::Representations(Vec::new()),
-                Err(unavailable) => Outcome::Failed(unavailable),
-            },
-            Op::Read => {
-                let mut present: Vec<(Mime, Vec<u8>)> = Vec::new();
-                let mut readable = false;
-                let mut unavailable = Unavailable::Platform;
-                for mime in SUPPORTED {
-                    // The whole read fails only when every type does.
-                    match platform::read_type(*mime) {
-                        Ok(Some(bytes)) => {
-                            readable = true;
-                            present.push((*mime, bytes));
+        self.outcome =
+            Some(match &self.op {
+                Op::ReadText => match platform::read_type(Mime::TextPlain) {
+                    Ok(Some(bytes)) => Outcome::Representations(vec![(Mime::TextPlain, bytes)]),
+                    Ok(None) => Outcome::Representations(Vec::new()),
+                    Err(unavailable) => Outcome::Failed(unavailable),
+                },
+                Op::Read => {
+                    let mut present: Vec<(Mime, Vec<u8>)> = Vec::new();
+                    let mut readable = false;
+                    let mut unavailable = Unavailable::Platform;
+                    for mime in SUPPORTED {
+                        // The whole read fails only when every type does.
+                        match platform::read_type(*mime) {
+                            Ok(Some(bytes)) => {
+                                readable = true;
+                                present.push((*mime, bytes));
+                            }
+                            Ok(None) => readable = true,
+                            Err(reason) => unavailable = reason,
                         }
-                        Ok(None) => readable = true,
-                        Err(reason) => unavailable = reason,
+                    }
+                    if readable {
+                        Outcome::Representations(present)
+                    } else {
+                        Outcome::Failed(unavailable)
                     }
                 }
-                if readable {
-                    Outcome::Representations(present)
-                } else {
-                    Outcome::Failed(unavailable)
-                }
-            }
-            Op::Write(items) => {
-                // A superseded write is cancelled on the JS thread; honoring it
-                // here, under the lock, keeps its AbortError honest (the write
-                // never reaches the OS). `then()` still runs; the settled
-                // promise ignores it.
-                // SAFETY: the handle's leaked ref keeps the request alive and
-                // the flag is atomic.
-                if self
-                    .request
-                    .as_ref()
-                    .is_some_and(|request| unsafe { Bun__Clipboard__requestIsCancelled(request.0) })
-                {
-                    Outcome::Representations(Vec::new())
-                } else {
-                    let borrowed: Vec<(Mime, &[u8])> =
-                        items.iter().map(|(m, b)| (*m, b.as_slice())).collect();
-                    match platform::write_types(&borrowed) {
-                        Ok(()) => Outcome::Representations(Vec::new()),
-                        Err(unavailable) => Outcome::Failed(unavailable),
+                Op::Write(items) => {
+                    // A superseded write is cancelled on the JS thread; honoring it
+                    // here, under the lock, keeps its AbortError honest (the write
+                    // never reaches the OS). `then()` still runs; the settled
+                    // promise ignores it.
+                    // SAFETY: the handle's leaked ref keeps the request alive and
+                    // the flag is atomic.
+                    if self.request.as_ref().is_some_and(|request| unsafe {
+                        Bun__Clipboard__requestIsCancelled(request.0)
+                    }) {
+                        Outcome::Representations(Vec::new())
+                    } else {
+                        let borrowed: Vec<(Mime, &[u8])> =
+                            items.iter().map(|(m, b)| (*m, b.as_slice())).collect();
+                        match platform::write_types(&borrowed) {
+                            Ok(()) => Outcome::Representations(Vec::new()),
+                            Err(unavailable) => Outcome::Failed(unavailable),
+                        }
                     }
                 }
-            }
-        });
+            });
     }
 
     fn then(&mut self, global: &JSGlobalObject) -> bun_jsc::JsResult<()> {

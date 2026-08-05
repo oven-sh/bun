@@ -17,22 +17,42 @@ use crate::bunfig::Bunfig;
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 
+/// Resolve a user-level config file (`.bunfig.toml`, `.npmrc`) to
+/// `$XDG_CONFIG_HOME/<name>` when it exists there, otherwise `$HOME/<name>`.
+///
+/// The existence probe is what makes this a fallback rather than an override:
+/// many Linux setups export `XDG_CONFIG_HOME` by default, so preferring it
+/// unconditionally hides a pre-existing `$HOME/.npmrc` from users who never
+/// opted into XDG.
+pub fn user_config_path<'a>(buf: &'a mut PathBuffer, name: &[u8]) -> Option<&'a ZStr> {
+    let paths: [&[u8]; 1] = [name];
+
+    let dir = match (env_var::XDG_CONFIG_HOME.get(), env_var::HOME.get()) {
+        (Some(xdg_dir), Some(home_dir)) => {
+            let mut probe = bun_paths::path_buffer_pool::get();
+            let candidate = resolve_path::join_abs_string_buf_z::<platform::Auto>(
+                xdg_dir,
+                &mut probe[..],
+                &paths,
+            );
+            if bun_sys::exists_z(candidate) {
+                xdg_dir
+            } else {
+                home_dir
+            }
+        }
+        (Some(xdg_dir), None) => xdg_dir,
+        (None, Some(home_dir)) => home_dir,
+        (None, None) => return None,
+    };
+
+    Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
+        dir, &mut **buf, &paths,
+    ))
+}
+
 fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
-    let paths: [&[u8]; 1] = [b".bunfig.toml"];
-
-    if let Some(data_dir) = env_var::XDG_CONFIG_HOME.get() {
-        return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
-            data_dir, &mut **buf, &paths,
-        ));
-    }
-
-    if let Some(home_dir) = env_var::HOME.get() {
-        return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
-            home_dir, &mut **buf, &paths,
-        ));
-    }
-
-    None
+    user_config_path(buf, b".bunfig.toml")
 }
 
 fn load_bunfig(

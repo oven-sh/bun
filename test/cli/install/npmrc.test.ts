@@ -1,6 +1,6 @@
 import { write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { rm } from "fs/promises";
+import { mkdir, rm } from "fs/promises";
 import { VerdaccioRegistry, bunExe, bunEnv as env, stderrForInstall, tempDir } from "harness";
 import { join } from "path";
 const { iniInternals } = require("bun:internal-for-testing");
@@ -198,6 +198,84 @@ registry = http://localhost:${registry.port}/
       })
       .cwd(packageDir)
       .throws(true);
+  });
+
+  // `.npmrc` and `.bunfig.toml` resolve through the same helper
+  // (`bun_bunfig::arguments::user_config_path`), so both are exercised here to
+  // keep their precedence rules from drifting apart. `bun pm cache` prints the
+  // resolved cache dir, which both file formats can set, so the assertion needs
+  // no registry or network.
+  async function pmCacheWith(homeFiles: Record<string, string>, xdgFiles: Record<string, string>) {
+    const { packageDir, packageJson } = await registry.createTestDir();
+
+    const homeDir = join(packageDir, "home_dir");
+    const xdgDir = join(packageDir, "xdg_dir");
+    await Promise.all([mkdir(homeDir, { recursive: true }), mkdir(xdgDir, { recursive: true })]);
+
+    await Promise.all([
+      ...Object.entries(homeFiles).map(([name, contents]) => write(join(homeDir, name), contents)),
+      ...Object.entries(xdgFiles).map(([name, contents]) => write(join(xdgDir, name), contents)),
+      write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0" })),
+      rm(join(packageDir, "bunfig.toml"), { force: true }),
+    ]);
+
+    const { BUN_INSTALL_CACHE_DIR, ...testEnv } = env;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "cache"],
+      cwd: packageDir,
+      // Bun's HOME env var reads USERPROFILE on Windows.
+      env: { ...testEnv, HOME: homeDir, USERPROFILE: homeDir, XDG_CONFIG_HOME: xdgDir },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [out, err, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text().then(stderrForInstall),
+      proc.exited,
+    ]);
+
+    return { out: out.trim(), err, exitCode };
+  }
+
+  const bunfig = (dir: string) => `[install]\ncache = "${dir}"\n`;
+
+  it("falls back to $HOME/.npmrc when $XDG_CONFIG_HOME has none", async () => {
+    const { out, err, exitCode } = await pmCacheWith({ ".npmrc": "cache=from-home-npmrc" }, {});
+
+    expect(err).toBeEmpty();
+    expect(out.endsWith("from-home-npmrc")).toBeTrue();
+    expect(exitCode).toBe(0);
+  });
+
+  it("prefers $XDG_CONFIG_HOME/.npmrc over $HOME/.npmrc", async () => {
+    const { out, err, exitCode } = await pmCacheWith(
+      { ".npmrc": "cache=from-home-npmrc" },
+      { ".npmrc": "cache=from-xdg-npmrc" },
+    );
+
+    expect(err).toBeEmpty();
+    expect(out.endsWith("from-xdg-npmrc")).toBeTrue();
+    expect(exitCode).toBe(0);
+  });
+
+  it("falls back to $HOME/.bunfig.toml when $XDG_CONFIG_HOME has none", async () => {
+    const { out, err, exitCode } = await pmCacheWith({ ".bunfig.toml": bunfig("from-home-bunfig") }, {});
+
+    expect(err).toBeEmpty();
+    expect(out.endsWith("from-home-bunfig")).toBeTrue();
+    expect(exitCode).toBe(0);
+  });
+
+  it("prefers $XDG_CONFIG_HOME/.bunfig.toml over $HOME/.bunfig.toml", async () => {
+    const { out, err, exitCode } = await pmCacheWith(
+      { ".bunfig.toml": bunfig("from-home-bunfig") },
+      { ".bunfig.toml": bunfig("from-xdg-bunfig") },
+    );
+
+    expect(err).toBeEmpty();
+    expect(out.endsWith("from-xdg-bunfig")).toBeTrue();
+    expect(exitCode).toBe(0);
   });
 
   it("default registry from env variable", async () => {

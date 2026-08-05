@@ -1701,8 +1701,11 @@ static void imageRestoreAndRun(const char* path)
     // pthread TLS keys created by the build process (WTF::ThreadSpecific etc.) must exist here too, or setspecific silently fails; burn keys up to the image's high-water mark.
     if (hdr.reserved[1]) { for (int i = 0; i < 1024; i++) { pthread_key_t k = 0; if (pthread_key_create(&k, nullptr)) break; if ((uint64_t)k + 1 >= hdr.reserved[1]) break; } }
     { // libc-free critical section: overwrite our data segments with the builder's, then rebase extern-library pointers. Plain loops only (no PLT calls).
+        // Process-owned libc globals that live in *our* data segment (copy relocations in a non-PIE executable): keep this process's values.
+        char** savedEnviron = environ;
         for (size_t di = 0; di < nDataSegs; di++) { DataSeg& d = dataSegs[di]; volatile uint64_t* dst = d.dst; const uint64_t* src = d.src; for (size_t k = 0; k < d.words; k++) dst[k] = src[k]; }
         if (haveFixups) for (size_t k = 0; k < nFixups; k++) { ImageFixup& f = fixups[k]; if (f.lib < nLibDelta && libDelta[f.lib]) *(volatile uint64_t*)f.addr += libDelta[f.lib]; }
+        environ = savedEnviron;
     }
     for (size_t di = 0; di < nDataSegs; di++) munmap((void*)dataSegs[di].src, dataSegs[di].words * 8);
     if (haveFixups && (verbose || nFixups)) fprintf(stderr, "[image] rebased %zu extern-library pointers\n", nFixups);

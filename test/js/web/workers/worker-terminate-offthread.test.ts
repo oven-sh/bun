@@ -177,13 +177,17 @@ describe.skipIf(!isASAN)("worker teardown with off-thread jobs in flight does no
                 await ready(w);
                 w.on("error", () => {});
                 const exited = new Promise(res => w.once("exit", res));
-                ${parentAction}
+                // t0 before the door fires: terminate() only resolves once
+                // the worker exited, so starting the clock after it would
+                // measure nothing.
                 const t0 = Date.now();
+                ${parentAction}
                 await exited;
                 // Teardown waits for in-flight jobs, which are a few seconds
                 // at worst here; hitting the fence's 10s deadline means an
-                // unbalanced outstanding_offthread count for this family.
-                const dt = Date.now() - t0;
+                // unbalanced outstanding_offthread count for this family. T
+                // is the intentional pre-door delay on every door.
+                const dt = Date.now() - t0 - T;
                 if (dt > 9000) throw new Error("teardown stalled " + dt + "ms (unbalanced off-thread fence?)");
               }
               console.log("OK");

@@ -214,8 +214,7 @@ impl Handlers {
     // corker: Corker = .{},
 
     pub(crate) fn resolve_promise(&self, value: JSValue) -> JsResult<()> {
-        let vm = self.vm;
-        if vm.is_shutting_down() {
+        if self.cannot_enter_js() {
             return Ok(());
         }
 
@@ -230,8 +229,7 @@ impl Handlers {
     }
 
     pub(crate) fn reject_promise(&self, value: JSValue) -> JsResult<bool> {
-        let vm = self.vm;
-        if vm.is_shutting_down() {
+        if self.cannot_enter_js() {
             return Ok(true);
         }
 
@@ -275,18 +273,23 @@ impl Handlers {
         false
     }
 
+    /// Whether a socket dispatch may enter JS. `is_shutting_down()` alone misses a
+    /// terminated worker, whose pending exception JSC will not clear; dispatching
+    /// again then asserts. Same guard as `H2FrameParser::read_bytes`.
+    #[inline]
+    pub(crate) fn cannot_enter_js(&self) -> bool {
+        self.vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running
+            || self.global_object.has_exception()
+    }
+
     pub(crate) fn call_error_handler(&self, this_value: JSValue, args: &[JSValue; 2]) -> bool {
-        let vm = self.vm;
-        if vm.is_shutting_down() {
+        // `take_error`/`take_exception` hand a termination back without clearing it,
+        // so it is still pending here.
+        if self.cannot_enter_js() {
             return false;
         }
 
         let global_object = self.global_object;
-        // Termination raised inside the preceding callback.call() cannot be
-        // cleared; entering JS again trips executeCallImpl's assertNoException.
-        if global_object.has_exception() {
-            return false;
-        }
         let on_error = self.on_error();
 
         if on_error.is_empty() {

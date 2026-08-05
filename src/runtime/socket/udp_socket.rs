@@ -100,7 +100,6 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int, is_errq
     // ICMP error (so_error) arrives. node:dgram must drop only the former on
     // unconnected sockets, and the errno namespaces overlap.
     let this: &UDPSocket = UDPSocket::from_uws(socket);
-    let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
     let global_this = this.global_this.get();
     // A callback earlier in the same poll dispatch may have left a
     // TerminationException pending: loop.c's Linux errqueue drain calls this
@@ -111,6 +110,7 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int, is_errq
     if global_this.has_exception() {
         return;
     }
+    let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
     let err_value = sys_err.to_js(global_this);
     if is_errqueue != 0 {
         err_value.put(global_this, b"errqueue", JSValue::TRUE);

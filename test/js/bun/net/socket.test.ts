@@ -3333,3 +3333,83 @@ describe("TLS handshake callback throw", () => {
     }
   });
 });
+
+it("terminating a Worker mid socket dispatch does not re-enter JS with the termination pending", async () => {
+  // A Worker's Bun.listen server is flooded across several sockets so a
+  // single poll tick queues multiple 'data' dispatches back-to-back, then the
+  // Worker is terminated from the parent while those dispatches are in
+  // flight. The termination exception cannot be cleared, so the next socket
+  // dispatch in that tick must observe it and bail instead of materialising a
+  // Buffer/error with it still pending (debug asserts, release wedges).
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+          const { Worker } = require("node:worker_threads");
+          const CONNS = 8;
+
+          async function once() {
+            const worker = new Worker(
+              \`
+                const { parentPort } = require("node:worker_threads");
+                let hits = 0;
+                const server = Bun.listen({
+                  hostname: "127.0.0.1",
+                  port: 0,
+                  socket: {
+                    open() {},
+                    data(s, buf) {
+                      if (hits++ === 0) parentPort.postMessage("hit");
+                      let n = 0;
+                      for (let i = 0; i < 256; i++) n += buf[i];
+                      globalThis.__sink = n;
+                    },
+                    close() {},
+                    drain() {},
+                    error() {},
+                  },
+                });
+                parentPort.postMessage(server.port);
+              \`,
+              { eval: true },
+            );
+
+            const port = await new Promise((resolve, reject) => {
+              worker.once("message", resolve);
+              worker.once("error", reject);
+            });
+
+            const socks = [];
+            for (let i = 0; i < CONNS; i++) {
+              socks.push(
+                await Bun.connect({
+                  hostname: "127.0.0.1",
+                  port,
+                  socket: { open() {}, data() {}, close() {}, drain() {}, error() {} },
+                }),
+              );
+            }
+
+            const payload = Buffer.alloc(16 * 1024, 0x61);
+            const hit = new Promise(r => worker.once("message", r));
+            for (let round = 0; round < 16; round++) for (const s of socks) s.write(payload);
+            await hit;
+            for (let round = 0; round < 16; round++) for (const s of socks) s.write(payload);
+            await worker.terminate();
+            for (const s of socks) s.end();
+          }
+
+          for (let i = 0; i < 8; i++) await once();
+          console.log("PASS");
+        `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({ stdout: "PASS", signalCode: null });
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+}, 30_000);

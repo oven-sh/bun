@@ -130,6 +130,21 @@ impl CronExpression {
     /// suitable for crontab. Returns the written slice of `buf`.
     pub(crate) fn format_numeric<'a>(&self, buf: &'a mut [u8; 512]) -> &'a [u8] {
         use std::io::Write;
+        // POSIX cron's DOM/DOW OR-vs-AND rule keys off the literal `*` token, and
+        // the normalized schedule must fire exactly when next() does:
+        //
+        //  - Only one of DOM/DOW restricted: AND semantics, the `*` field matches
+        //    all, so a full range on the other field already collapses to `*` via
+        //    format_bitfield.
+        //  - Both restricted but at least one covers its full range: OR semantics
+        //    make it fire *every day*, i.e. identical to `* … *`. Force both to `*`
+        //    so the crontab/launchd backends don't emit a giant OR-split product.
+        //  - Both restricted and neither is full (a genuine "15th OR Friday"):
+        //    neither field is all-bits-set, so format_bitfield keeps both explicit
+        //    and the backends apply the OR split.
+        let both_restricted = !self.days_is_wildcard && !self.weekdays_is_wildcard;
+        let fires_every_day =
+            both_restricted && (self.days == ALL_DAYS || self.weekdays == ALL_WEEKDAYS);
         let written = {
             let mut w: &mut [u8] = &mut buf[..];
             let start = w.len();
@@ -137,11 +152,19 @@ impl CronExpression {
             w.write_all(b" ").expect("unreachable");
             format_bitfield(&mut w, self.hours, 0, 23);
             w.write_all(b" ").expect("unreachable");
-            format_bitfield(&mut w, self.days, 1, 31);
+            if fires_every_day {
+                w.write_all(b"*").expect("unreachable");
+            } else {
+                format_bitfield(&mut w, self.days, 1, 31);
+            }
             w.write_all(b" ").expect("unreachable");
             format_bitfield(&mut w, self.months, 1, 12);
             w.write_all(b" ").expect("unreachable");
-            format_bitfield(&mut w, self.weekdays, 0, 6);
+            if fires_every_day {
+                w.write_all(b"*").expect("unreachable");
+            } else {
+                format_bitfield(&mut w, self.weekdays, 0, 6);
+            }
             start - w.len()
         };
         &buf[..written]

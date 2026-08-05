@@ -4846,10 +4846,12 @@ impl<'a> Resolver<'a> {
         }
         let imports_map = package_json.imports.as_ref().unwrap();
 
-        if import_path.len() == 1 || import_path.starts_with(b"#/") {
+        // Node.js v25.4.0 / v24.14.0 relaxed this rule: specifiers starting with
+        // "#/" are now accepted as long as they are longer than "#/" itself.
+        if import_path == b"#" || import_path == b"#/" {
             if let Some(debug) = self.debug_logs.as_mut() {
                 debug.add_note_fmt(format_args!(
-                    "The path \"{}\" must not equal \"#\" and must not start with \"#/\"",
+                    "The path \"{}\" must not equal \"#\" or \"#/\"",
                     bstr::BStr::new(import_path)
                 ));
             }

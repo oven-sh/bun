@@ -1835,6 +1835,29 @@ describe("bundler", () => {
       "/Users/user/project/src/entry.js": [`Could not resolve: "#/foo". Maybe you need to "bun install"?`],
     },
   });
+  // Node.js v25.4.0 / v24.14.0 lifted the ban on "#/"-prefixed subpath
+  // import keys. Only exactly "#" and "#/" remain invalid specifiers.
+  itBundled("packagejson/ImportsHashSlashPrefix", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import '#/config'
+        import '#/lib/util'
+      `,
+      "/Users/user/project/src/package.json": /* json */ `
+        {
+          "imports": {
+            "#/config": "./config.js",
+            "#/lib/*": "./lib/*.js"
+          }
+        }
+      `,
+      "/Users/user/project/src/config.js": `console.log('config.js')`,
+      "/Users/user/project/src/lib/util.js": `console.log('lib/util.js')`,
+    },
+    run: {
+      stdout: `config.js\nlib/util.js`,
+    },
+  });
   itBundled("packagejson/MainFieldsErrorMessageDefault", {
     files: {
       "/Users/user/project/src/entry.js": `import 'foo'`,

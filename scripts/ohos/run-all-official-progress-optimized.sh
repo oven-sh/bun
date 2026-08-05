@@ -23,6 +23,22 @@ BUN_TIMEOUT=${BUN_TIMEOUT:-600000}
 # Default to the app's private tmp dir, respecting explicit TMPDIR override.
 export TMPDIR="${TMPDIR:-/data/storage/el2/base/tmp}"
 
+# ── node-gyp 环境 ──
+# 必须用 harmonybrew 的 c++（llvm@21）：node-gyp 默认 clang++（llvm22.1.7）的
+# 隐式 include 路径含两个 libc++ 且顺序错误，触发 __functional/hash.h 编译失败。
+# bun install 重装 node_modules 会覆盖 addon.gypi 补丁（sysroot + FP_NAN），
+# 每次全量跑前重新应用。脚本不存在时跳过（不阻塞运行）。
+export CXX="${CXX:-/storage/Users/currentUser/.harmonybrew/bin/c++}"
+export CC="${CC:-/storage/Users/currentUser/.harmonybrew/bin/cc}"
+# 兼容从根目录或 scripts/ohos/ 下运行：先找同目录，再找 scripts/ohos/
+_OHOS_PATCH_SCRIPT="$(dirname "$0")/patch-node-gyp.sh"
+[ -f "$_OHOS_PATCH_SCRIPT" ] || _OHOS_PATCH_SCRIPT="$(dirname "$0")/scripts/ohos/patch-node-gyp.sh"
+[ -f "$_OHOS_PATCH_SCRIPT" ] || _OHOS_PATCH_SCRIPT="/storage/Users/currentUser/usr/local/bun-test/all-tests/scripts/ohos/patch-node-gyp.sh"
+if [ -f "$_OHOS_PATCH_SCRIPT" ]; then
+  echo "[node-gyp] Applying OHOS addon.gypi patches ($_OHOS_PATCH_SCRIPT)..."
+  bash "$_OHOS_PATCH_SCRIPT" 2>&1 | grep -E '\[OK\]|\[SKIP\]|完成' | head -8
+fi
+
 # 清理之前残留的 verdaccio 实例（每个占 ~35% CPU）
 pkill -f "verdaccio" 2>/dev/null || true
 
@@ -141,10 +157,24 @@ run_test() {
   esac
 
   case "$f" in
+    # ── 已知连续多日 600s 超时文件：快速失败（120s 就杀，不白等 600s）──
+    # 这些文件在 OHOS 上持续超时（repl/streams 连续 3+ 次全量），降低 WT
+    # 让失败尽早暴露，同时省下 ~480s/文件 的等待时间。
+    */js/node/tty.test.ts|*/cli/install/bun-pack.test.ts|*/cli/run/env.test.ts|\
+    */js/bun/repl/repl.test.ts|*/cli/install/bun-install-registry.test.ts|\
+    */js/web/streams/streams.test.js|*/js/bun/shell/shell-cmdsub-crash.test.ts)
+      WT=120
+      BT="--expose-internals --smol --timeout 120000"
+      ;;
     # ── 慢测试单独调大超时 ──
-    */bundler/transpiler/jsx-production.test.ts|*/udp/udp_socket.test.ts|*/terminal/terminal-platform-gaps.test.ts|*/spawn/spawn.test.ts|*/inspector/inspector.test.ts|*/run-extensionless.test.ts)
+    # spawn.test.ts 已连续超时（2400s 白等），降为 1200s 快速失败
+    */bundler/transpiler/jsx-production.test.ts|*/udp/udp_socket.test.ts|*/terminal/terminal-platform-gaps.test.ts|*/inspector/inspector.test.ts|*/run-extensionless.test.ts)
       WT=$((TMOUT * 4))       # 2400s
       BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
+      ;;
+    */spawn/spawn.test.ts)
+      WT=1200
+      BT="--expose-internals --smol --timeout 1200000"
       ;;
     */bake/dev/server-sourcemap.test.ts|*/web/fetch/fetch.test.ts|*/cli/create/create-jsx.test.ts|*/shell/bunshell.test.ts|*/terminal/terminal.test.ts)
       WT=$((TMOUT * 3))       # 1800s

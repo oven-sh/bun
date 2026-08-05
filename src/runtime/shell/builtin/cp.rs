@@ -512,10 +512,12 @@ impl ShellCpTask {
             let st = &raw mut (*this).task;
             (*st).task.callback = Self::work_pool_callback;
             (*st).keep_alive.ref_((*st).event_loop.as_event_loop_ctx());
-            // Paired with the `offthread_job_end` in `ShellTask::on_finish`
-            // (reached via `enqueue_to_event_loop` on both the error path and
-            // `cp_on_finish`); this custom scheduler bypasses
-            // `ShellTask::schedule`, which would otherwise take it.
+            // Released at the end of `work_pool_callback` on the pool thread
+            // (the success continuation is covered by `AsyncCpTask`'s own
+            // fence, and its completion only runs once the JS thread ticks —
+            // which the shutdown wait never does). This custom scheduler
+            // bypasses `ShellTask::schedule`, which would otherwise pair with
+            // `on_finish`'s release.
             (*st).event_loop.offthread_job_begin();
             WorkPool::schedule(&raw mut (*st).task);
         }
@@ -534,15 +536,25 @@ impl ShellCpTask {
                 task,
                 <Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET,
             );
+            // Copy the handle out first: on success `AsyncCpTask` may complete
+            // and free `*this` (via `cp_on_finish`) before the end call below.
+            let event_loop = (*this).task.event_loop;
             if let Some(e) = (*this).run_from_thread_pool_impl() {
                 (*this).err = Some(e);
                 Self::enqueue_to_event_loop(this);
             }
+            // Releases the fence taken in `schedule`. On success the
+            // `AsyncCpTask` created by `run_from_thread_pool_impl` already
+            // took its own count, so the chain stays covered.
+            event_loop.offthread_job_end();
         }
     }
 
     /// Post this task to the main-thread
     /// concurrent queue; routed by `dispatch.rs` → [`run_from_main_thread`].
+    /// Fence-neutral: the task's count is released at the end of
+    /// `work_pool_callback`, and the success path calls this from the JS
+    /// thread (`cp_on_finish`), where no count is held.
     ///
     /// # Safety
     /// `this` is the live `heap::alloc`'d task; not touched again on this
@@ -550,7 +562,7 @@ impl ShellCpTask {
     unsafe fn enqueue_to_event_loop(this: *mut ShellCpTask) {
         // Reuse the generic `ShellTask` post-back.
         // SAFETY: caller contract.
-        unsafe { ShellTask::on_finish::<ShellCpTask>(this) };
+        let _ = unsafe { ShellTask::on_finish_no_fence::<ShellCpTask>(this) };
     }
 
     fn has_trailing_sep(path: &[u8]) -> bool {

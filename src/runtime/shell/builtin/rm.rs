@@ -1393,6 +1393,11 @@ impl DirTask {
                 let will_queue_verbose = tm.opts.verbose && !me.deleted_entries.is_empty();
                 if will_queue_verbose {
                     tm.pending_main_callbacks.fetch_add(1, Ordering::SeqCst);
+                    // The verbose post's enqueue is a VM access that can run
+                    // AFTER the root completion releases the fence taken in
+                    // `schedule` (both arms below queue after cascading), so
+                    // it carries its own count, released in `queue_for_write`.
+                    tm.event_loop.offthread_job_begin();
                 }
 
                 // If we have a parent and we are the last child, now we can delete the parent.
@@ -1487,10 +1492,14 @@ impl DirTask {
                 // dropping the ShellRmTask drops the root DirTask, so for the
                 // root `me` may dangle immediately after.
                 let (tm, has_parent) = (me.task_manager, !me.parent_task.is_null());
+                let event_loop = (*tm).event_loop;
                 if has_parent {
                     Self::deinit(this);
                 }
                 ShellRmTask::decr_pending_and_maybe_deinit(tm);
+                // Releases the count taken with the pending bump in
+                // `post_run` (last loop access, via the local).
+                event_loop.offthread_job_end();
                 return;
             }
             let event_loop = (*me.task_manager).event_loop;
@@ -1508,6 +1517,9 @@ impl DirTask {
             },
         };
         event_loop.enqueue_task_concurrent(task_ptr);
+        // Releases the count taken with the pending bump in `post_run` (last
+        // loop access, via the local — the main thread may free the task now).
+        event_loop.offthread_job_end();
     }
 
     /// Flush verbose output.

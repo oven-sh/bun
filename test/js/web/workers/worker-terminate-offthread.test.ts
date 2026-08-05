@@ -91,7 +91,9 @@ describe.skipIf(!isASAN)("worker teardown with off-thread jobs in flight does no
       let i = 0;
       lanes(2, async () => {
         const n = "sh" + (i++ % 4);
-        await Bun.$\`mkdir -p \${n}/a/b && cp -R \${n} \${n}c && rm -rf \${n} \${n}c\`.cwd(d.dir).quiet();
+        // -v exercises the verbose DirTask posts, which carry their own
+        // fence counts.
+        await Bun.$\`mkdir -p \${n}/a/b && cp -R \${n} \${n}c && rm -rfv \${n} \${n}c\`.cwd(d.dir).quiet();
       });`,
     "crypto.subtle.digest (ConcurrentCppTask)": `
       const data = buf();

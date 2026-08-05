@@ -1469,6 +1469,33 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task, offthread_drained:
             }
             true
         }
+        // `run_from_js`'s `is_shutting_down()` early-out is a pure release:
+        // `heap::take` + keep-alive unref + `Drop` for the ctx (which can
+        // hold the whole archive output) and the promise `Strong`; no JS.
+        task_tag::ArchiveExtractTask
+        | task_tag::ArchiveBlobTask
+        | task_tag::ArchiveWriteTask
+        | task_tag::ArchiveFilesTask => {
+            // Tag identifies each pointee; the pool callback posted this
+            // entry, so the pool no longer touches it.
+            let _ = match task.tag {
+                task_tag::ArchiveExtractTask => {
+                    ArchiveAsyncTask::run_from_js(task.ptr.cast::<ArchiveExtractTask>())
+                }
+                task_tag::ArchiveBlobTask => {
+                    ArchiveAsyncTask::run_from_js(task.ptr.cast::<ArchiveBlobTask>())
+                }
+                task_tag::ArchiveWriteTask => {
+                    ArchiveAsyncTask::run_from_js(task.ptr.cast::<ArchiveWriteTask>())
+                }
+                task_tag::ArchiveFilesTask => {
+                    ArchiveAsyncTask::run_from_js(task.ptr.cast::<ArchiveFilesTask>())
+                }
+                // SAFETY: outer arm guard proves one of the four tags matched.
+                _ => unsafe { core::hint::unreachable_unchecked() },
+            };
+            true
+        }
         // Same reclaim `drop_concurrent_cpp_tasks` performs, but for tasks
         // that were already batch-moved into `self.tasks`. Must run before
         // JSC teardown: a Worker `dispatchExit` lambda's `~Ref<Worker>` walks

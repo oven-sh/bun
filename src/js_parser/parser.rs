@@ -268,8 +268,7 @@ pub mod Runtime {
         // is ported to the real predicate; defaults false and is otherwise inert.
         pub jsx_optimization_inline: bool,
 
-        /// Rewrite statically-analyzable zod v4 schema expressions into lazy
-        /// compiled wrappers. See `src/js_parser/zod.rs`.
+        /// Zod schema transform; see `src/js_parser/zod.rs`.
         pub zod_transform: bool,
     }
 

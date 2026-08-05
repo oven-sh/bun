@@ -344,9 +344,9 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
         std::optional<int> effective_salt_len = salt_len;
 
         // For PSS padding without explicit salt length, use RSA_PSS_SALTLEN_AUTO
-        // BoringSSL changed the default from AUTO to DIGEST in commit b01d7bbf7 (June 2025)
-        // for FIPS compliance, but Node.js expects the old AUTO behavior
-        if (padding == RSA_PKCS1_PSS_PADDING && !salt_len.has_value()) {
+        // (BoringSSL commit b01d7bbf7 changed its default to DIGEST; Node expects
+        // AUTO). An id-RSASSA-PSS key rejects any override; keep its restriction.
+        if (padding == RSA_PKCS1_PSS_PADDING && !salt_len.has_value() && pkey.id() != EVP_PKEY_RSA_PSS) {
             effective_salt_len = RSA_PSS_SALTLEN_AUTO;
         }
 
@@ -438,17 +438,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     auto outputEncoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, outputEncodingValue).value_or(BufferEncodingType::buffer);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Get RSA padding mode and salt length if applicable
-    int32_t padding = getPadding(lexicalGlobalObject, scope, options, {});
-    RETURN_IF_EXCEPTION(scope, {});
-
-    std::optional<int> saltLen = getSaltLength(lexicalGlobalObject, scope, options);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    // Get DSA signature encoding format
-    DSASigEnc dsaSigEnc = getDSASigEnc(lexicalGlobalObject, scope, options);
-    RETURN_IF_EXCEPTION(scope, {});
-
     auto prepareResult = KeyObject::preparePrivateKey(lexicalGlobalObject, scope, options);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -469,6 +458,19 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     }
 
     const ncrypto::EVPKeyPointer& keyPtr = keyObject.asymmetricKey();
+
+    // Get RSA padding mode and salt length if applicable. The default padding
+    // depends on the key type (an rsa-pss key defaults to PSS, not PKCS#1), so
+    // the key must be parsed first, matching jsVerifyProtoFuncVerify and Node.
+    int32_t padding = getPadding(lexicalGlobalObject, scope, options, keyPtr);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    std::optional<int> saltLen = getSaltLength(lexicalGlobalObject, scope, options);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Get DSA signature encoding format
+    DSASigEnc dsaSigEnc = getDSASigEnc(lexicalGlobalObject, scope, options);
+    RETURN_IF_EXCEPTION(scope, {});
 
     // Use the signWithKey function to perform the signing operation
     JSUint8Array* signature = signWithKey(lexicalGlobalObject, thisObject, keyPtr, dsaSigEnc, padding, saltLen);

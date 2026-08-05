@@ -75,6 +75,10 @@ First-writer attribution of dirtied *cell* pages over one turn (`BUN_IMAGE_TRAP=
 
 Time to interactive prompt (pty, `ttfp.ts`): normal boot ~505 ms / 0.52 s CPU; restored from image **~100–110 ms / 0.10 s CPU** — including the ASLR re-exec, mapping the image, the ~16 MB data-segment copy, restore handlers and repaint.
 
+## Interaction latency
+
+Keystroke → echo at the prompt (`keylat.ts`, pty): normal boot p50 ~4.6 ms; restored p50 ~3.4 ms. Only the very first keystroke after restore is slower (~14.7 vs ~8 ms: first re-link of the input path after code was dropped at snapshot); from the second key on the restored process is at or below normal.
+
 ## Image size
 
 ~243 MB file, of which roughly 100–140 MB is ever touched in a session (rest stays unmapped-clean). Compresses to **30 MB with zstd -3 (0.1 s)** / 24 MB with -19, so ship compressed and inflate once to a cache file.

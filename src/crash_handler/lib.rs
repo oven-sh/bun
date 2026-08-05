@@ -802,6 +802,11 @@ mod draft {
                 PANIC_STAGE.with(|s| s.set(1));
                 let _ = PANICKING.fetch_add(1, Ordering::SeqCst);
 
+                let thread_limit_reached = matches!(
+                    reason,
+                    CrashReason::Abort | CrashReason::Trap(_) | CrashReason::Panic(_)
+                ) && is_thread_limit_reached();
+
                 {
                     let _panic_guard = PANIC_MUTEX.lock();
 
@@ -1057,6 +1062,12 @@ mod draft {
                         // SAFETY: single-threaded mutation under panic_mutex
                         HAS_PRINTED_MESSAGE.store(true, Ordering::Relaxed);
 
+                        if thread_limit_reached {
+                            if writer.write_all(THREAD_LIMIT_MESSAGE).is_err() {
+                                abort();
+                            }
+                        }
+
                         dump_stack_trace(trace, WriteStackTraceLimits::default());
 
                         if write!(
@@ -1124,6 +1135,10 @@ mod draft {
                                 if writer.write_all(
                                 b"Bun has run out of memory.\n\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
                             ).is_err() { abort(); }
+                            } else if thread_limit_reached {
+                                if writer.write_all(THREAD_LIMIT_MESSAGE).is_err() {
+                                    abort();
+                                }
                             } else {
                                 if writer.write_all(
                                 b"Bun has crashed. This indicates a bug in Bun, not your code.\n\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
@@ -1733,6 +1748,57 @@ mod draft {
         std::panic::set_hook(Box::new(rust_panic_hook));
     }
 
+    /// Printed instead of "This indicates a bug in Bun" when a crash happened
+    /// while the system could not create more threads. WTF's `Thread::create`
+    /// release-asserts when `pthread_create` fails (e.g. JSC GC helper threads
+    /// under a low `RLIMIT_NPROC` or container pids limit), and bun's own
+    /// required thread spawns panic, so this is the message for both.
+    const THREAD_LIMIT_MESSAGE: &[u8] =
+        b"Bun was unable to create a new thread: the system's thread limit was reached.\n\
+        \n\
+        This is a resource limit, not a bug in Bun. To fix it, raise the limit\n\
+        (for example `ulimit -u`) or reduce concurrency. In containers, the pids\n\
+        limit (for example `docker run --pids-limit`) may also need to be raised.\n\n";
+
+    /// Best-effort probe for thread exhaustion. By the time the crash handler
+    /// runs, the failed `pthread_create` is long gone; the only evidence left
+    /// is that spawning a thread still fails with `EAGAIN`.
+    #[cfg(unix)]
+    fn is_thread_limit_reached() -> bool {
+        extern "C" fn probe_main(_: *mut core::ffi::c_void) -> *mut core::ffi::c_void {
+            core::ptr::null_mut()
+        }
+        let mut attr = core::mem::MaybeUninit::<libc::pthread_attr_t>::uninit();
+        // SAFETY: valid out-pointer; pthread_attr_init fully initializes it.
+        if unsafe { libc::pthread_attr_init(attr.as_mut_ptr()) } != 0 {
+            return false;
+        }
+        // SAFETY: attr was initialized above.
+        unsafe {
+            libc::pthread_attr_setdetachstate(attr.as_mut_ptr(), libc::PTHREAD_CREATE_DETACHED);
+            libc::pthread_attr_setstacksize(attr.as_mut_ptr(), 128 * 1024);
+        }
+        let mut thread = core::mem::MaybeUninit::<libc::pthread_t>::uninit();
+        // SAFETY: attr is initialized, probe_main matches the required
+        // signature, and a detached no-op thread needs no join.
+        let rc = unsafe {
+            libc::pthread_create(
+                thread.as_mut_ptr(),
+                attr.as_ptr(),
+                probe_main,
+                core::ptr::null_mut(),
+            )
+        };
+        // SAFETY: attr was initialized above.
+        unsafe { libc::pthread_attr_destroy(attr.as_mut_ptr()) };
+        rc == libc::EAGAIN
+    }
+
+    #[cfg(not(unix))]
+    fn is_thread_limit_reached() -> bool {
+        false
+    }
+
     /// `std::panic` hook: emit the same trace-string + auto-report as the fatal
     /// `crash_handler()` path, then **abort**.
     /// With `panic = "abort"` no unwind starts after this hook returns, so there
@@ -1813,6 +1879,12 @@ mod draft {
                 let _ = writeln!(writer, "Crashed while {}", action);
             }
 
+            let thread_limit_reached = is_thread_limit_reached();
+            if thread_limit_reached {
+                let _ = writer.write_all(b"\n");
+                let _ = writer.write_all(THREAD_LIMIT_MESSAGE);
+            }
+
             let mut addr_buf: [usize; 20] = [0; 20];
             let idx = debug::capture_stack_trace(debug::return_address(), &mut addr_buf);
             let trace = StackTrace {
@@ -1832,17 +1904,24 @@ mod draft {
                     }
                 );
             } else {
-                let _ = writer.write_all(b"oh no");
-                if enable_ansi_colors_stderr() {
-                    let _ = writer.write_all(&Output::pretty_fmt::<true>("<r><d>:<r> "));
+                if thread_limit_reached {
+                    let _ = writer.write_all(
+                        b"To send a redacted crash report to Bun's team,\n\
+                      please file a GitHub issue using the link below:\n\n ",
+                    );
                 } else {
-                    let _ = writer.write_all(b": ");
-                }
-                let _ = writer.write_all(
-                    b"Bun has crashed. This indicates a bug in Bun, not your code.\n\n\
+                    let _ = writer.write_all(b"oh no");
+                    if enable_ansi_colors_stderr() {
+                        let _ = writer.write_all(&Output::pretty_fmt::<true>("<r><d>:<r> "));
+                    } else {
+                        let _ = writer.write_all(b": ");
+                    }
+                    let _ = writer.write_all(
+                        b"Bun has crashed. This indicates a bug in Bun, not your code.\n\n\
                   To send a redacted crash report to Bun's team,\n\
                   please file a GitHub issue using the link below:\n\n ",
-                );
+                    );
+                }
                 if enable_ansi_colors_stderr() {
                     let _ = writer.write_all(&Output::pretty_fmt::<true>("<cyan>"));
                 }

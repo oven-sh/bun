@@ -79,6 +79,7 @@ const {
   8: _markAsUncloneable,
   9: _setEntryEvaluatedHook,
   10: _isNodeWorker,
+  11: _startParentPort,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
@@ -91,6 +92,7 @@ const {
   (value: unknown) => void,
   (hook: () => void) => void,
   boolean,
+  () => void,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -783,7 +785,10 @@ function fakeParentPort() {
   });
 
   Object.defineProperty(fake, "start", {
-    value() {},
+    // Starts the parent→worker inbox so buffered messages drain. The first
+    // 'message' listener on the worker global scope starts it implicitly, so
+    // this is only needed when draining without a listener (receiveMessageOnPort).
+    value: _startParentPort,
   });
 
   Object.defineProperty(fake, "unref", {

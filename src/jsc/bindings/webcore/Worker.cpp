@@ -106,6 +106,12 @@ Worker::Worker(ScriptExecutionContext& context, WorkerOptions&& options)
     , m_parentContextId(context.identifier())
     , m_clientIdentifier(ScriptExecutionContext::generateIdentifier())
 {
+    // The worker→parent inbox is always started (the parent-side Worker class
+    // unconditionally has a native 'message' listener; node-compat buffering
+    // lives in worker_threads.ts). The parent→worker inbox starts on the
+    // worker's first 'message' listener so a delayed parentPort.on() still
+    // observes every message.
+    m_toParent.started.store(true, std::memory_order_relaxed);
 }
 
 ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const String& urlInit, WorkerOptions&& options)
@@ -227,19 +233,42 @@ void Worker::enqueueToWorker(MessageWithMessagePorts&& message)
     {
         Locker locker { m_toWorker.lock };
         m_toWorker.queue.append(WTF::move(message));
-        // If the worker isn't Running yet, just buffer; fireEarlyMessages()
-        // drains the inbox on the worker thread once it is. If Closing/
-        // Closed, also buffer (dropped with the Worker) — postMessage()
-        // already rejects on Closed, so only the close-handler window lands
-        // here. If a drain is already scheduled, don't double-schedule.
-        // drainScheduled is only set/cleared under the lock so the
-        // load/store pair is not a race.
-        if (m_state.load() != State::Running || m_toWorker.drainScheduled.load(std::memory_order_relaxed))
+        // Buffer until the worker inbox is started (first 'message' listener
+        // on the worker global scope). startWorkerInbox() schedules the first
+        // drain. Gating on `started` rather than State::Running also delivers
+        // to a listener registered before an entry-module top-level await
+        // while that await is pending (node ordering). If Closing/Closed,
+        // postTaskTo returns false below and the message is dropped with the
+        // Worker. drainScheduled/started are only written under the lock so
+        // the load/store pairs are not races.
+        if (!m_toWorker.started.load(std::memory_order_relaxed) || m_toWorker.drainScheduled.load(std::memory_order_relaxed))
             return;
         m_toWorker.drainScheduled.store(true, std::memory_order_relaxed);
     }
     bool posted = ScriptExecutionContext::postTaskTo(m_clientIdentifier, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
         protectedThis->drainToWorker(context);
+    });
+    if (!posted) {
+        Locker locker { m_toWorker.lock };
+        m_toWorker.drainScheduled.store(false, std::memory_order_relaxed);
+    }
+}
+
+void Worker::startWorkerInbox()
+{
+    {
+        Locker locker { m_toWorker.lock };
+        if (m_toWorker.started.load(std::memory_order_relaxed))
+            return;
+        m_toWorker.started.store(true, std::memory_order_relaxed);
+        if (m_toWorker.queue.isEmpty() || m_toWorker.drainScheduled.load(std::memory_order_relaxed))
+            return;
+        m_toWorker.drainScheduled.store(true, std::memory_order_relaxed);
+    }
+    // Post (not call): this runs from inside addEventListener(), so draining
+    // synchronously would dispatch before the add call has returned.
+    bool posted = ScriptExecutionContext::postTaskTo(m_clientIdentifier, [protectedThis = Ref { *this }](ScriptExecutionContext& ctx) {
+        protectedThis->drainToWorker(ctx);
     });
     if (!posted) {
         Locker locker { m_toWorker.lock };
@@ -477,43 +506,30 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
     }
     RELEASE_ASSERT(&thisContext->vm() == &workerGlobalObject->vm());
     RELEASE_ASSERT(thisContext == workerGlobalObject->globalEventScope->scriptExecutionContext());
-}
 
-// Kick off the first drain of messages that arrived before the worker was
-// online. A parent enqueue that observed State::Running (set in
-// dispatchOnline, which runs just before fireEarlyMessages) may have already
-// scheduled one — drainScheduled, set under the inbox lock, arbitrates.
-static inline void workerScheduleInitialDrain(Worker& worker, Worker::MessageInbox& inbox, ScriptExecutionContext& ctx)
-{
-    {
-        Locker locker { inbox.lock };
-        if (inbox.queue.isEmpty() || inbox.drainScheduled.load(std::memory_order_relaxed))
-            return;
-        inbox.drainScheduled.store(true, std::memory_order_relaxed);
-    }
-    worker.drainToWorker(ctx);
+    // Web workers: the dedicated worker's implicit port is enabled after the
+    // worker script has evaluated (HTML "run a worker"), not on the first
+    // listener. Starting here keeps a listener-less Web worker from
+    // accumulating the parent's postMessage() calls unboundedly.
+    // Node workers start on the first listener (onDidChangeListenerImpl).
+    if (m_options.kind == WorkerOptions::Kind::Web)
+        startWorkerInbox();
 }
 
 void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
 {
+    // Tasks queued against the worker while it was Pending (getHeapSnapshot
+    // etc). Message delivery is NOT driven here: the inbox buffers until
+    // startWorkerInbox() flips m_toWorker.started (first 'message' listener
+    // for Node workers; dispatchOnline for Web) and schedules the first drain
+    // itself.
     auto tasks = [&]() {
         Locker lock(m_pendingTasksMutex);
         return std::exchange(m_pendingTasks, {});
     }();
     auto* thisContext = workerGlobalObject->scriptExecutionContext();
-
-    if (workerGlobalObject->globalEventScope->hasActiveEventListeners(eventNames().messageEvent)) {
-        for (auto& task : tasks) {
-            task(*thisContext);
-        }
-        workerScheduleInitialDrain(*this, m_toWorker, *thisContext);
-    } else {
-        thisContext->postTask([tasks = WTF::move(tasks), protectedThis = Ref { *this }](auto& ctx) mutable {
-            for (auto& task : tasks) {
-                task(ctx);
-            }
-            workerScheduleInitialDrain(protectedThis.get(), protectedThis->m_toWorker, ctx);
-        });
+    for (auto& task : tasks) {
+        task(*thisContext);
     }
 }
 
@@ -825,6 +841,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetEntryEvaluatedHook, (JSC::JSGlobalObject *
     return JSC::JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionStartParentPort, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM()))
+        worker->startWorkerInbox();
+    return JSC::JSValue::encode(jsUndefined());
+}
+
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -882,7 +906,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM()))
         isNodeWorker = worker->options().kind == WorkerOptions::Kind::Node;
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 11);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 12);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
@@ -895,6 +919,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     array->putDirectIndex(globalObject, 8, JSFunction::create(vm, globalObject, 1, "markAsUncloneable"_s, jsFunctionMarkAsUncloneable, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 9, JSFunction::create(vm, globalObject, 1, "setEntryEvaluatedHook"_s, jsFunctionSetEntryEvaluatedHook, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 10, jsBoolean(isNodeWorker));
+    array->putDirectIndex(globalObject, 11, JSFunction::create(vm, globalObject, 0, "startParentPort"_s, jsFunctionStartParentPort, ImplementationVisibility::Public, NoIntrinsic));
     return array;
 }
 

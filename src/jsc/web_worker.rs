@@ -1093,8 +1093,15 @@ impl WebWorker {
         let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
             Ok(p) => p,
             Err(_) => {
-                // process.exit() may have run during load; don't clobber its code.
-                if !self.exit_called.load(Ordering::Relaxed) {
+                // process.exit() or an uncaught exception during load may have
+                // already set exit_code (the worker's process.on('exit') handler
+                // runs inside `on_unhandled_rejection` before
+                // `set_requested_terminate` lands us here, and can change it to
+                // any value including 0). Overwrite only if nothing has.
+                if !self.exit_called.load(Ordering::Relaxed)
+                    && vm.unhandled_error_counter == 0
+                    && vm.exit_handler.exit_code == 0
+                {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
                 self.flush_logs(vm);

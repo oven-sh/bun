@@ -153,14 +153,25 @@ public:
     // task on the receiver, which loops dispatching + draining microtasks.
     // This avoids N× (global-contexts-lock + HashMap lookup + lambda alloc)
     // per burst.
+    //
+    // `started` is MessagePort semantics for the parent→worker inbox: messages
+    // buffer (no drain scheduled) until the first 'message' listener add on
+    // the worker global scope, so a listener registered after entry eval still
+    // observes every message the parent sent (node:worker_threads parentPort).
+    // Always true for m_toParent.
     struct MessageInbox {
         WTF::Lock lock;
         WTF::Deque<MessageWithMessagePorts> queue WTF_GUARDED_BY_LOCK(lock);
         std::atomic<bool> drainScheduled { false };
+        std::atomic<bool> started { false };
     };
 
     void enqueueToParent(MessageWithMessagePorts&&);
     void drainToWorker(ScriptExecutionContext&);
+    // Worker thread only. Flips m_toWorker.started and schedules the first
+    // drain if the inbox is non-empty. Called from WorkerGlobalScope's
+    // listener-change hook (first 'message' listener) and parentPort.start().
+    void startWorkerInbox();
 
 private:
     Worker(ScriptExecutionContext&, WorkerOptions&&);

@@ -139,6 +139,52 @@ describe("hash", () => {
         ).toThrow();
       });
 
+      test("cost values are range-checked before ToInt32 narrowing", () => {
+        // These used to wrap modulo 2^32 (cost: 2^32 + 4 hashed with cost 4)
+        // or truncate (cost: 4.5 hashed with cost 4) instead of throwing.
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "bcrypt",
+            cost: 2 ** 32 + 4,
+          }),
+        ).toThrow("Rounds must be an integer between 4 and 31");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "bcrypt",
+            cost: 4.5,
+          }),
+        ).toThrow("Rounds must be an integer between 4 and 31");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            timeCost: 2 ** 32 + 2,
+          }),
+        ).toThrow("Time cost must be an integer between 1 and 4294967295");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            timeCost: 1.5,
+          }),
+        ).toThrow("Time cost must be an integer between 1 and 4294967295");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            memoryCost: 2 ** 32 + 4608,
+          }),
+        ).toThrow("Memory cost must be an integer between 8 and 4294967295");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            memoryCost: 8.5,
+          }),
+        ).toThrow("Memory cost must be an integer between 8 and 4294967295");
+      });
+
       test("coercion throwing doesn't crash", () => {
         // @ts-expect-error
         expect(() => hash(Symbol())).toThrow();

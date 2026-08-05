@@ -89,17 +89,17 @@ impl AlgorithmValue {
                                     .throw_invalid_argument_type("hash", "cost", "number"));
                             }
 
-                            let rounds = rounds_value.coerce_to_i32(global_object)?;
+                            // Range-check the double before narrowing: ToInt32's
+                            // modular wrap would accept e.g. 4294967300 as 4.
+                            let rounds = rounds_value.as_number();
 
-                            if rounds < 4 || rounds > 31 {
+                            if rounds.fract() != 0.0 || !(4.0..=31.0).contains(&rounds) {
                                 return Err(global_object.throw_invalid_arguments(format_args!(
-                                    "Rounds must be between 4 and 31"
+                                    "Rounds must be an integer between 4 and 31"
                                 )));
                             }
 
-                            algorithm = AlgorithmValue::Bcrypt(
-                                u8::try_from(rounds).expect("int cast") & 0x3F,
-                            );
+                            algorithm = AlgorithmValue::Bcrypt(rounds as u8);
                         }
 
                         return Ok(algorithm);
@@ -113,15 +113,24 @@ impl AlgorithmValue {
                                     .throw_invalid_argument_type("hash", "timeCost", "number"));
                             }
 
-                            let time_cost = time_value.coerce_to_i32(global_object)?;
+                            let time_cost = time_value.as_number();
 
-                            if time_cost < 1 {
+                            // NaN fails the `>= 1.0` comparison, so it lands here too.
+                            if !(time_cost >= 1.0) {
                                 return Err(global_object.throw_invalid_arguments(format_args!(
                                     "Time cost must be greater than 0"
                                 )));
                             }
 
-                            argon.time_cost = u32::try_from(time_cost).expect("int cast");
+                            // Range-check the double before narrowing: ToInt32's
+                            // modular wrap would accept e.g. 4294967298 as 2.
+                            if time_cost.fract() != 0.0 || time_cost > f64::from(u32::MAX) {
+                                return Err(global_object.throw_invalid_arguments(format_args!(
+                                    "Time cost must be an integer between 1 and 4294967295"
+                                )));
+                            }
+
+                            argon.time_cost = time_cost as u32;
                         }
 
                         if let Some(memory_value) = value.get_truthy(global_object, "memoryCost")? {
@@ -133,18 +142,27 @@ impl AlgorithmValue {
                                 ));
                             }
 
-                            let memory_cost = memory_value.coerce_to_i32(global_object)?;
+                            let memory_cost = memory_value.as_number();
 
                             // argon2 requires `memoryCost >= 8 * parallelism`;
                             // Bun hard-codes `parallelism = 1` (see
                             // `Argon2Params::to_params`), so the floor is 8.
-                            if memory_cost < 8 {
+                            // NaN fails the `>= 8.0` comparison, so it lands here too.
+                            if !(memory_cost >= 8.0) {
                                 return Err(global_object.throw_invalid_arguments(format_args!(
                                     "Memory cost must be at least 8"
                                 )));
                             }
 
-                            argon.memory_cost = u32::try_from(memory_cost).expect("int cast");
+                            // Range-check the double before narrowing: ToInt32's
+                            // modular wrap would accept e.g. 4294971904 as 4608.
+                            if memory_cost.fract() != 0.0 || memory_cost > f64::from(u32::MAX) {
+                                return Err(global_object.throw_invalid_arguments(format_args!(
+                                    "Memory cost must be an integer between 8 and 4294967295"
+                                )));
+                            }
+
+                            argon.memory_cost = memory_cost as u32;
                         }
 
                         return Ok(match algo {

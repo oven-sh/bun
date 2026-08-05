@@ -62,6 +62,10 @@ Time to interactive prompt (pty, `ttfp.ts`): normal boot ~505 ms / 0.52 s CPU; r
 
 ~243 MB file, of which roughly 100–140 MB is ever touched in a session (rest stays unmapped-clean). Compresses to **30 MB with zstd -3 (0.1 s)** / 24 MB with -19, so ship compressed and inflate once to a cache file.
 
+## Borrowed bytecode (not image-specific)
+
+`Options::useBorrowedBytecodeFromCache` (default on): instruction streams and `ExpressionInfo` payloads decoded from the executable's embedded bytecode cache alias the cache bytes instead of copying. Normal boot idle 184 → 174 MB in a paired run; also shrinks the image.
+
 ## Per-turn growth (not image-specific)
 
 Restored or not, footprint grows ~10–25 MB per trivial turn over the first turns (4 "pong" turns: 122 → 152 MB). Live JS cells grow only ~1.3 MB/turn; the growth is JSC tiering artifacts in malloc (baseline JIT `JITData`/IC stubs/`JIT::link`, DFG/FTL OSR-exit vectors, MetadataTables) as each turn executes more not-yet-compiled code. Measured over restore + 4 turns: `BUN_JSC_useBaselineJIT=0 BUN_JSC_useFTLJIT=0` (LLInt → DFG only) → idle 37 vs 44 MB, after 4 turns **114 vs 150 MB**, CPU 1.67 s vs 1.94 s. FTL off alone or higher DFG thresholds don't help.

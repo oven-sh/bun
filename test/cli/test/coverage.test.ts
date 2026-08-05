@@ -57,6 +57,100 @@ export class Y {
   );
 });
 
+// https://github.com/oven-sh/bun/issues/5307
+// The text reporter showed the wrong (or no) uncovered lines for an unreached
+// statement after an `if { return }` inside a nested function: the enclosing
+// function's executed basic block was remapped onto the inner function's last
+// statement through a line-start sourcemap mapping, so `return result` was
+// marked as hit; and the run-collapsing loop dropped the trailing single-line
+// run, leaving "% Lines" < 100 with an empty "Uncovered Line #s" column.
+test("coverage reports unreached fall-through in a nested function", () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+    "table.ts": `export function make() {
+  const cache: Record<number, number> = {}
+  return {
+    get(n: number) {
+      const result = cache[n]
+      if (result === undefined) {
+        const v = n * 2
+        cache[n] = v
+        return v
+      }
+      return result
+    },
+  }
+}
+export const table = make()
+`,
+    "table.test.ts": `import { test, expect } from "bun:test";
+import { table } from "./table";
+test("get", () => {
+  expect(table.get(1)).toBe(2);
+  expect(table.get(2)).toBe(4);
+});
+`,
+  });
+  const result = Bun.spawnSync(
+    [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", "--coverage-dir=."],
+    {
+      cwd: String(dir),
+      env: bunEnv,
+      stdio: [null, null, "pipe"],
+    },
+  );
+  const stderr = result.stderr.toString("utf-8");
+
+  const tableRow = stderr.split("\n").find(l => l.includes("table.ts") && l.includes(" | "));
+  expect(tableRow).toBeDefined();
+  // The cache is always empty for a fresh key so the `return result` on line 11
+  // (and the closing brace of the if block on line 10) are never reached.
+  expect(tableRow).toMatch(/\b10-11\s*$/);
+  // `return result` must not be counted as a hit.
+  expect(tableRow!.includes("100.00 | 100.00")).toBe(false);
+
+  const lcov = readFileSync(path.join(String(dir), "lcov.info"), "utf-8");
+  const da = Object.fromEntries(
+    lcov
+      .split("\n")
+      .filter(l => l.startsWith("DA:"))
+      .map(l => l.slice(3).split(",").map(Number) as [number, number]),
+  );
+  expect(da[11]).toBe(0);
+  expect(da[10]).toBe(0);
+  expect(da[7]).toBeGreaterThan(0);
+  expect(result.exitCode).toBe(0);
+});
+
+// When only one source line is uncovered (or the last uncovered run is a single
+// line) the text reporter must still print it.
+test("coverage text reporter prints a lone trailing uncovered line", () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+    "one.ts": `export function only(n: number): string {
+  if (n < 0) {
+    throw new Error("negative");
+  }
+  return "ok";
+}
+`,
+    "demo.test.ts": `import { test, expect } from "bun:test";
+import { only } from "./one";
+test("only", () => { expect(only(1)).toBe("ok"); });
+`,
+  });
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
+    cwd: String(dir),
+    env: bunEnv,
+    stdio: [null, null, "pipe"],
+  });
+  const stderr = result.stderr.toString("utf-8");
+  const row = stderr.split("\n").find(l => l.includes("one.ts") && l.includes(" | "));
+  expect(row).toBeDefined();
+  expect(row).toMatch(/\|\s*3\s*$/);
+  expect(result.exitCode).toBe(0);
+});
+
 test("coverage excludes node_modules directory", () => {
   using dir = tempDir("cov", {
     "node_modules/pi/index.js": `
@@ -192,8 +286,8 @@ test("should call only some functions", () => {
 ---------------|---------|---------|-------------------
 File           | % Funcs | % Lines | Uncovered Line #s
 ---------------|---------|---------|-------------------
-All files      |   75.00 |   83.33 |
- include-me.ts |   50.00 |   66.67 | 
+All files      |   75.00 |   75.00 |
+ include-me.ts |   50.00 |   50.00 | 6-7
  test.test.ts  |  100.00 |  100.00 | 
 ---------------|---------|---------|-------------------
 
@@ -385,7 +479,7 @@ test("should call both functions", () => {
 SF:include-me.ts
 FNF:1
 FNH:1
-DA:2,11
+DA:2,10
 DA:3,17
 LF:2
 LH:2
@@ -397,8 +491,8 @@ FNH:1
 DA:2,40
 DA:3,41
 DA:4,39
-DA:6,42
-DA:7,39
+DA:6,41
+DA:7,38
 DA:8,36
 DA:9,2
 LF:7

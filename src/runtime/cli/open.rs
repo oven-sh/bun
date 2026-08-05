@@ -517,11 +517,9 @@ impl EditorContext {
         }
 
         // Don't know, so we will just guess based on what exists
-        if let Some((editor_, bin)) = Editor::by_fallback(
-            env,
-            &mut buf,
-            Fs::FileSystem::instance().top_level_dir,
-        ) {
+        if let Some((editor_, bin)) =
+            Editor::by_fallback(env, &mut buf, Fs::FileSystem::instance().top_level_dir)
+        {
             self.editor = Some(editor_);
             self.path = Fs::FileSystem::instance()
                 .dirname_store

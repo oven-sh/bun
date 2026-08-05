@@ -1421,27 +1421,32 @@ impl CssImportOrder {
             CssImportOrderKind::SourceIndex(_) => 2,
         };
         bun_core::write_any_to_hasher(hasher, tag);
+        // Length-prefix every count and byte string below: unescaped CSS
+        // identifiers can contain any byte, so separators can't delimit.
         match &self.kind {
             CssImportOrderKind::Layers(layers) => {
-                // Join each layer's parts with "." and NUL-terminate each
-                // layer, so distinct layer lists can't hash identically.
-                for layer in layers.inner().slice() {
-                    for (i, layer_name) in layer.v.slice().iter().enumerate() {
-                        if i > 0 {
-                            hasher.update(b".");
-                        }
+                let layer_list = layers.inner().slice();
+                bun_core::write_any_to_hasher(hasher, layer_list.len());
+                for layer in layer_list {
+                    let parts = layer.v.slice();
+                    bun_core::write_any_to_hasher(hasher, parts.len());
+                    for layer_name in parts.iter() {
+                        bun_core::write_any_to_hasher(hasher, layer_name.len());
                         hasher.update(layer_name);
                     }
-                    hasher.update(b"\x00");
                 }
             }
-            CssImportOrderKind::ExternalPath(path) => hasher.update(path.text),
+            CssImportOrderKind::ExternalPath(path) => {
+                bun_core::write_any_to_hasher(hasher, path.text.len());
+                hasher.update(path.text);
+            }
             // Hash the file's pretty path, not its source index: these hashes
             // decide CSS chunk identity and output order, and source indices
             // are assigned in a scheduling-dependent order.
             CssImportOrderKind::SourceIndex(idx) => {
-                hasher.update(sources[idx.get() as usize].path.pretty);
-                hasher.update(b"\x00");
+                let pretty = sources[idx.get() as usize].path.pretty;
+                bun_core::write_any_to_hasher(hasher, pretty.len());
+                hasher.update(pretty);
             }
         }
     }

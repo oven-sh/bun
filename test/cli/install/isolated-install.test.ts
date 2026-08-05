@@ -2451,6 +2451,8 @@ describe("store layout contract", () => {
   // entry naming (including the peer-set hash derivation), the inner
   // `node_modules` layout, symlink targets, and `.bin` placement. A failure here
   // is a breaking change to that format; update the docs together with the code.
+  // CI runners create real symlinks, so these tests pin the symlink mode; the
+  // Windows junction fallback (absolute targets) is documented but not pinned.
 
   test("entry naming, inner layout, and bin placement", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
@@ -2458,6 +2460,20 @@ describe("store layout contract", () => {
     await write(
       join(packageDir, "vendor", "local-pkg", "package.json"),
       JSON.stringify({ name: "local-pkg", version: "3.2.1" }),
+    );
+    // A folder-resolved package with a folder-resolved peer: the peer hash
+    // input uses the bare path (`vendor/local-pkg`), not the `file:` prefixed
+    // form that bun.lock displays. The peer is optional because resolving a
+    // required peer range consults the registry for the name, which does not
+    // exist there; the resolved peer still joins the peer set either way.
+    await write(
+      join(packageDir, "vendor", "dep-with-peer", "package.json"),
+      JSON.stringify({
+        name: "dep-with-peer",
+        version: "1.0.0",
+        peerDependencies: { "local-pkg": "*" },
+        peerDependenciesMeta: { "local-pkg": { optional: true } },
+      }),
     );
     // `bar-0.0.2.tgz` contains the package `bar@0.0.2`.
     await cp(join(import.meta.dir, "bar-0.0.2.tgz"), join(packageDir, "bar-0.0.2.tgz"));
@@ -2482,6 +2498,7 @@ describe("store layout contract", () => {
           "uses-what-bin": "1.0.0",
           "what-bin": "1.0.0",
           "local-pkg": "file:./vendor/local-pkg",
+          "dep-with-peer": "file:./vendor/dep-with-peer",
           "bar-tarball": "file:./bar-0.0.2.tgz",
         },
       }),
@@ -2497,12 +2514,15 @@ describe("store layout contract", () => {
     // the real package name from the tarball, not the alias. An entry with
     // resolved peers appends `+` and 16 lowercase hex digits of
     // wyhash(seed 0, concat of `<peer name><peer resolution>` sorted by name):
-    // here wyhash("a-dep1.0.10no-deps1.0.0") == 0xeadc6a10a694605e.
+    // here wyhash("a-dep1.0.10no-deps1.0.0") == 0xeadc6a10a694605e, and for
+    // the folder peer wyhash("local-pkgvendor/local-pkg") == 0x41721fadd4146e10
+    // (bare path, no `file:` prefix).
     expect(await readdirSorted(bun)).toEqual([
       "2-peer-deps-c@1.0.0+eadc6a10a694605e",
       "@types+is-number@1.0.0",
       "a-dep@1.0.10",
       "bar@.+bar-0.0.2.tgz",
+      "dep-with-peer@file+vendor+dep-with-peer+41721fadd4146e10",
       "local-pkg@file+vendor+local-pkg",
       "no-deps@1.0.0",
       "node_modules",
@@ -2535,6 +2555,11 @@ describe("store layout contract", () => {
     expect(readlinkSync(join(bun, "two-range-deps@1.0.0", "node_modules", "@types", "is-number"))).toBe(
       join("..", "..", "..", "@types+is-number@1.0.0", "node_modules", "@types", "is-number"),
     );
+    expect(
+      readlinkSync(
+        join(bun, "dep-with-peer@file+vendor+dep-with-peer+41721fadd4146e10", "node_modules", "local-pkg"),
+      ),
+    ).toBe(join("..", "..", "local-pkg@file+vendor+local-pkg", "node_modules", "local-pkg"));
 
     // The project's own node_modules is the root entry: a relative symlink per
     // direct dependency, named by the alias and pointing into the store.
@@ -2545,6 +2570,7 @@ describe("store layout contract", () => {
       "@types",
       "a-dep",
       "bar-tarball",
+      "dep-with-peer",
       "local-pkg",
       "no-deps",
       "two-range-deps",
@@ -2694,5 +2720,68 @@ describe("store layout contract", () => {
     } else {
       expect(readlinkSync(join(wsA, ".bin", "what-bin"))).toBe(join("..", "what-bin", "what-bin.js"));
     }
+  });
+
+  test("global store keeps entry names; only the physical location changes", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", globalStore: true },
+    });
+
+    await write(
+      join(packageDir, "vendor", "local-pkg", "package.json"),
+      JSON.stringify({ name: "local-pkg", version: "3.2.1" }),
+    );
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "store-layout-global-store",
+        dependencies: {
+          "peer-deps-fixed": "1.0.0",
+          "no-deps": "1.0.0",
+          "local-pkg": "file:./vendor/local-pkg",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const bun = join(packageDir, "node_modules", ".bun");
+
+    // Entry names under `node_modules/.bun/` (including the peer-set suffix)
+    // are identical to the project-local mode.
+    expect(await readdirSorted(bun)).toEqual([
+      "local-pkg@file+vendor+local-pkg",
+      "no-deps@1.0.0",
+      "node_modules",
+      "peer-deps-fixed@1.0.0+7347ae2d86f1441a",
+    ]);
+
+    // Eligible entries become symlinks into `<cache>/links/<entry>-<hash>`;
+    // the 16-hex global hash is an internal cache key, not part of the format.
+    expect(lstatSync(join(bun, "no-deps@1.0.0")).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(join(bun, "no-deps@1.0.0"))).toMatch(/links[\/\\]no-deps@1\.0\.0-[0-9a-f]{16}$/);
+    expect(lstatSync(join(bun, "peer-deps-fixed@1.0.0+7347ae2d86f1441a")).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(join(bun, "peer-deps-fixed@1.0.0+7347ae2d86f1441a"))).toMatch(
+      /links[\/\\]peer-deps-fixed@1\.0\.0\+7347ae2d86f1441a-[0-9a-f]{16}$/,
+    );
+
+    // Folder-resolved packages always stay project-local.
+    expect(lstatSync(join(bun, "local-pkg@file+vendor+local-pkg")).isSymbolicLink()).toBe(false);
+    expect(lstatSync(join(bun, "local-pkg@file+vendor+local-pkg")).isDirectory()).toBe(true);
+
+    // Dep symlinks inside a global entry point at sibling global entries, so
+    // their relative targets carry the `-<hash>` suffix; the shape matches the
+    // project-local form once that suffix is stripped.
+    const globalPeerTarget = readlinkSync(
+      join(bun, "peer-deps-fixed@1.0.0+7347ae2d86f1441a", "node_modules", "no-deps"),
+    );
+    expect(globalPeerTarget).toMatch(/^\.\.[\/\\]\.\.[\/\\]no-deps@1\.0\.0-[0-9a-f]{16}[\/\\]node_modules[\/\\]no-deps$/);
+    expect(withoutEntryHash(globalPeerTarget)).toBe(join("..", "..", "no-deps@1.0.0", "node_modules", "no-deps"));
+
+    // The project side is unchanged: root links still go through the
+    // project-local `.bun/<entry>` indirection.
+    expect(readlinkSync(join(packageDir, "node_modules", "no-deps"))).toBe(
+      join(".bun", "no-deps@1.0.0", "node_modules", "no-deps"),
+    );
   });
 });

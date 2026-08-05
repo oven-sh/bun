@@ -146,7 +146,7 @@ The suffix is derived from the entry's resolved peers:
 
 1. Collect every peer dependency of the package that resolved to a package in the graph (required, optional, and auto-installed peers alike). Peers that did not resolve are excluded; a package whose peers resolved to nothing gets no suffix at all.
 2. Sort them by package name (byte order).
-3. Concatenate `<name><resolution>` for each, with no separator. The resolution text is the resolved version for registry packages; in general it is the same text that follows `<name>@` in `bun.lock`.
+3. Concatenate `<name><resolution>` for each, with no separator. The resolution text is the resolved version for registry packages; for peers from other sources it is the text that follows `<name>@` in `bun.lock`, with one exception: a folder-resolved peer hashes the bare path (for example `vendor/local-pkg`) without the `file:` prefix that `bun.lock` shows.
 4. Hash the bytes with 64-bit wyhash (the original "v1" variant with 32-byte rounds and five 64-bit primes), seed `0`, and format the result as 16 lowercase, zero-padded hex digits.
 
 Worked example: `peer-deps-fixed@1.0.0` declares a peer on `no-deps@^1.0.0`. Where that peer resolves to `1.0.0`, the hashed input is the bytes `no-deps1.0.0` and the entry is `peer-deps-fixed@1.0.0+7347ae2d86f1441a`; where it resolves to `1.1.0`, the input is `no-deps1.1.0` and the entry is `peer-deps-fixed@1.0.0+7ff199101204a65d`. Both entries coexist in the store, each linking its own `no-deps`.
@@ -164,7 +164,7 @@ node_modules/.bun/two-range-deps@1.0.0/node_modules/
 ```
 
 - The link is named after the **alias** the package depends on; the target uses the dependency's **real** package name.
-- Targets are relative: `../../<dep entry>/node_modules/<dep name>`, with one extra `../` when the alias is scoped (the link lives inside the alias's `@scope/` directory).
+- Targets are relative: `../../<dep entry>/node_modules/<dep name>`, with one extra `../` when the alias is scoped (the link lives inside the alias's `@scope/` directory). See [Windows fallback behavior](#windows-fallback-behavior) for the one case where targets are absolute.
 - A dependency on a workspace links to the workspace directory outside the store.
 - If a package depends on an alias equal to its own name, the link nests inside the package directory itself (`<entry>/node_modules/<name>/node_modules/<name>`) instead of colliding with it.
 
@@ -175,6 +175,10 @@ Node.js resolution walks real directories, so a package can only resolve the dep
 Each store entry's `node_modules/.bin` contains the executables of the package itself and of its resolved dependencies. The links are relative and resolve through the entry's own `node_modules`, e.g. `.bin/what-bin -> ../what-bin/what-bin.js`. On Windows, `.bin` entries are `.exe`/`.bunx` shims instead of symlinks.
 
 The project root and each workspace get the same treatment: bins of their direct dependencies land in `<project>/node_modules/.bin` and `<workspace>/node_modules/.bin`.
+
+### Windows fallback behavior
+
+Bun creates the links described here as symbolic links on every platform, including Windows when symbolic link creation is available (Developer Mode, or an elevated process). When it is not, Bun falls back to NTFS junctions for directory links. Junction targets are necessarily absolute paths, so in that mode link targets are not relative (reading one returns the absolute target, possibly with a trailing separator) and the installed tree is not relocatable. Re-running `bun install` accepts either form for an existing link. `.bin` entries on Windows are shims rather than links in both modes, as noted above.
 
 ### Project and workspace `node_modules`
 
@@ -204,7 +208,9 @@ Workspace packages are not linked into the root `node_modules` unless the root p
 
 Lifecycle scripts run with the store entry as their working directory (`<entry>/node_modules/<name>`), so a package that mutates its own files affects only that entry.
 
-When [`install.globalStore`](/runtime/bunfig#install-globalstore) is enabled, eligible entries are materialized in the shared [global virtual store](/pm/global-store) and `node_modules/.bun/<entry>` becomes a symlink to `<cache>/links/<entry>-<hash>`. The entry names and the layout inside each entry are unchanged; only the physical location moves.
+When [`install.globalStore`](/runtime/bunfig#install-globalstore) is enabled, eligible entries (npm, git, and tarball packages; folder, symlink, patched, root, and workspace packages always stay project-local) are materialized in the shared [global virtual store](/pm/global-store) and `node_modules/.bun/<entry>` becomes a symlink to `<cache>/links/<entry>-<hash>`. The entry names under `node_modules/.bun/` (including the peer-set suffix), the link names, the package directory, and the `.bin` shape are all the same as above, with two differences: the entry itself is a symlink rather than a directory, and dependency symlinks inside a global entry point at sibling global entries, so their relative targets carry the global `-<hash>` suffix (`../../<dep entry>-<hash>/node_modules/<dep name>`).
+
+The 16-hex `-<hash>` suffix is an internal cache key derived from the package's tarball integrity and its resolved dependency closure. It is **not part of this format** and is not reproducible externally; treat names under `<cache>/links/` as opaque and address entries through `node_modules/.bun/<entry>`.
 
 ## Comparison with hoisted installs
 

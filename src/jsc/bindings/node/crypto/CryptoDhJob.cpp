@@ -51,12 +51,16 @@ uint32_t DhJobCtx::takeCallbackArgs(JSGlobalObject* lexicalGlobalObject, Encoded
 
     if (!m_result) {
         // Same message as the synchronous path so callers observe identical errors either way.
-        args[0] = JSValue::encode(createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "diffieHellman operation failed"_s));
+        JSObject* err = createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "diffieHellman operation failed"_s);
+        RETURN_IF_EXCEPTION(scope, 0);
+        args[0] = JSValue::encode(err);
         return 1;
     }
 
+    JSValue result = WebCore::createBuffer(lexicalGlobalObject, m_result.span());
+    RETURN_IF_EXCEPTION(scope, 0);
     args[0] = JSValue::encode(jsNull());
-    args[1] = JSValue::encode(WebCore::createBuffer(lexicalGlobalObject, m_result.span()));
+    args[1] = JSValue::encode(result);
     return 2;
 }
 

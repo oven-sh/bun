@@ -35,7 +35,9 @@ uint32_t KeyPairJobCtx::takeCallbackArgs(JSGlobalObject* lexicalGlobalObject, En
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
     if (!m_keyObj.data()) {
-        args[0] = JSValue::encode(createCryptoError(lexicalGlobalObject, scope, m_opensslError, "key generation failed"_s));
+        JSValue err = createCryptoError(lexicalGlobalObject, scope, m_opensslError, "key generation failed"_s);
+        RETURN_IF_EXCEPTION(scope, 0);
+        args[0] = JSValue::encode(err);
         return 1;
     }
 

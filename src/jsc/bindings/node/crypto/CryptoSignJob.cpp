@@ -230,6 +230,7 @@ uint32_t SignJobCtx::takeCallbackArgs(JSGlobalObject* lexicalGlobalObject, Encod
             JSValue err = m_unsupportedContext
                 ? createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Context parameter is unsupported"_s)
                 : createCryptoError(lexicalGlobalObject, scope, m_opensslError, "sign operation failed"_s);
+            RETURN_IF_EXCEPTION(scope, 0);
             args[0] = JSValue::encode(err);
             return 1;
         }
@@ -250,6 +251,7 @@ uint32_t SignJobCtx::takeCallbackArgs(JSGlobalObject* lexicalGlobalObject, Encod
             JSValue err = m_unsupportedContext
                 ? createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Context parameter is unsupported"_s)
                 : createCryptoError(lexicalGlobalObject, scope, m_opensslError, "verify operation failed"_s);
+            RETURN_IF_EXCEPTION(scope, 0);
             args[0] = JSValue::encode(err);
             return 1;
         }

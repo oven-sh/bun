@@ -46,14 +46,18 @@ uint32_t SecretKeyJobCtx::takeCallbackArgs(JSGlobalObject* lexicalGlobalObject, 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     if (!m_result) {
-        args[0] = JSValue::encode(createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "key generation failed"_s));
+        JSObject* err = createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "key generation failed"_s);
+        RETURN_IF_EXCEPTION(scope, 0);
+        args[0] = JSValue::encode(err);
         return 1;
     }
 
     KeyObject keyObject = KeyObject::create(WTF::move(*m_result));
 
     Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, 0);
     JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTF::move(keyObject));
+    RETURN_IF_EXCEPTION(scope, 0);
 
     args[0] = JSValue::encode(jsNull());
     args[1] = JSValue::encode(secretKey);

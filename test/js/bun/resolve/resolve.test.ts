@@ -1214,7 +1214,8 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     expect(stdout).toContain('from "."');
     expect(exitCode).toBe(0);
   });

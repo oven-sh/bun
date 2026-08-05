@@ -1099,6 +1099,7 @@ impl VirtualMachine {
         self.is_event_loop_alive_excluding_immediates()
             || !el.immediate_tasks.is_empty()
             || !el.next_immediate_tasks.is_empty()
+            || bun_core::image::snapshot_requested() // keep turning until the outermost tick takes the snapshot
     }
 
     pub fn wakeup(&mut self) {

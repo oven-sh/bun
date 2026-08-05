@@ -13,8 +13,51 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
             ("arrayBufferToString", __jsc_host_array_buffer_to_string, 1),
             ("mimallocDump", __jsc_host_dump_mimalloc, 1),
             ("memoryFootprint", __jsc_host_memory_footprint, 1),
+            ("snapshot", __jsc_host_snapshot, 1),
+            ("snapshotState", __jsc_host_snapshot_state, 0),
         ],
     )
+}
+
+/// `Bun.unsafe.snapshot(path)`: the caller has quiesced the app; leave JS via an uncatchable termination and write a heap image
+/// from the top of the event loop, then exit. A process started from that image resumes in the event loop and gets
+/// `process.emit("restore")` before its first tick. Never returns normally.
+#[bun_jsc::host_fn]
+fn snapshot(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [path] = frame.arguments_as_array::<1>();
+    if !path.is_string() {
+        return Err(
+            global.throw_invalid_arguments(format_args!("snapshot(path) expects a file path"))
+        );
+    }
+    let path = path.to_bun_string(global)?.to_owned_slice();
+    let cpath = std::ffi::CString::new(path)
+        .map_err(|_| global.throw_invalid_arguments(format_args!("path contains NUL")))?;
+    crate::cli::run_command::Bun__requestSnapshot(global.vm(), cpath.as_ptr());
+    // Unwind every JS frame right now; the outermost EventLoop::tick sees the request and writes the image.
+    JSC__VM__throwTerminationExceptionNow(global);
+    Err(jsc::JsError::Thrown)
+}
+
+unsafe extern "C" {
+    safe fn JSC__VM__throwTerminationExceptionNow(global: &JSGlobalObject) -> JSValue;
+}
+
+/// `Bun.unsafe.snapshotState()` -> `{ building: boolean, epoch: number }` (epoch 0 = normal boot, N = resumed from an image N times).
+#[bun_jsc::host_fn]
+fn snapshot_state(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    let obj = JSValue::create_empty_object(global, 2);
+    obj.put(
+        global,
+        b"building",
+        JSValue::from(bun_core::image::building()),
+    );
+    obj.put(
+        global,
+        b"epoch",
+        JSValue::js_number(bun_core::image::epoch() as f64),
+    );
+    Ok(obj)
 }
 
 #[bun_jsc::host_fn]

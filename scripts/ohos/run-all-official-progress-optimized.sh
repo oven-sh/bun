@@ -317,8 +317,10 @@ run_test() {
   if [ -f "$PDIR/progress" ]; then . "$PDIR/progress"; else DONE=0 PASS=0 FAIL=0 CP=0 CF=0; fi
   if [ "$FILE_RESULT" = PASS ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); fi
   CP=$((CP + _np)); CF=$((CF + _nf)); DONE=$((DONE + 1))
-  echo "DONE=$DONE PASS=$PASS FAIL=$FAIL CP=$CP CF=$CF" > "$PDIR/progress.tmp"
-  mv "$PDIR/progress.tmp" "$PDIR/progress" 2>>"$REPORT"
+  # 原子更新进度：唯一临时文件名避免并发 worker 互相截断 progress.tmp，
+  # 否则 mv 可能读到被他人截断/移走的文件 → "No such file" → 计数丢失
+  echo "DONE=$DONE PASS=$PASS FAIL=$FAIL CP=$CP CF=$CF" > "$PDIR/progress.$$"
+  mv "$PDIR/progress.$$" "$PDIR/progress" 2>>"$REPORT"
   # 释放串行锁
   if [ "$_serial" -eq 1 ]; then
     rmdir "$PDIR/serial.lock" 2>/dev/null || true
@@ -455,11 +457,11 @@ _ohos_force_result() {
     echo "TIMEOUT=1"
   } > "$PDIR/result_${_idx}.tmp"
   mv "$PDIR/result_${_idx}.tmp" "$PDIR/result_${_idx}"
-  # 更新进度计数
+  # 更新进度计数（原子写，唯一临时名避免并发截断）
   if [ -f "$PDIR/progress" ]; then . "$PDIR/progress"; else DONE=0 PASS=0 FAIL=0 CP=0 CF=0; fi
   FAIL=$((FAIL + 1)); DONE=$((DONE + 1))
-  echo "DONE=$DONE PASS=$PASS FAIL=$FAIL CP=$CP CF=$CF" > "$PDIR/progress.tmp"
-  mv "$PDIR/progress.tmp" "$PDIR/progress" 2>>"$REPORT"
+  echo "DONE=$DONE PASS=$PASS FAIL=$FAIL CP=$CP CF=$CF" > "$PDIR/progress.$$"
+  mv "$PDIR/progress.$$" "$PDIR/progress" 2>>"$REPORT"
 }
 
 show_progress &
@@ -564,6 +566,22 @@ while true; do
     kill -0 "$_pid" 2>/dev/null && continue   # PID 还活着 → 跳过
     # PID 死了但 running 还在 → 清理
     rm -f "$PDIR/running_$_idx" "$PDIR/pid_$_idx" "$PDIR/wt_$_idx" 2>/dev/null
+  done
+  # ZOMBIE 检测（等待阶段）：subshell 已死但没写 result → 补写 TIMEOUT。
+  # 主循环的 ZOMBIE 检测在分派阶段有效，最后一批 worker 只在这里被兜底。
+  # 否则 result 永远缺失 → _results < TOTAL_FILES → 卡死直到 60m 超时。
+  for _pf in "$PDIR"/pid_*; do
+    [ -f "$_pf" ] || continue
+    _idx="${_pf##*/pid_}"
+    [ -f "$PDIR/result_$_idx" ] && continue
+    [ -f "$PDIR/running_$_idx" ] || continue
+    _pid=$(cat "$_pf" 2>/dev/null || echo 0)
+    if [ "$_pid" -gt 0 ] 2>/dev/null && ! kill -0 "$_pid" 2>/dev/null; then
+      _test_path=$(cat "$PDIR/running_$_idx" 2>/dev/null || echo "unknown")
+      echo "[ZOMBIE] $_test_path (subshell $_pid died without result, wait-stage)" >> "$REPORT"
+      _ohos_force_result "$_idx" "$_test_path" "0"
+      rm -f "$PDIR/running_$_idx" "$PDIR/pid_$_idx" "$PDIR/wt_$_idx" 2>/dev/null
+    fi
   done
 
   _running=$(ls "$PDIR"/running_* 2>/dev/null | wc -l)

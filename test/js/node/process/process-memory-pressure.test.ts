@@ -72,6 +72,42 @@ describe.concurrent("process.on('memoryPressure')", () => {
     expect(exitCode).toBe(0);
   });
 
+  // An Identifier is compared against the "memoryPressure" literal by
+  // characters, so a Symbol of the same description used to enter the branch
+  // and drive the watcher off this event's own, separately keyed, listeners.
+  test("a Symbol of the same description does not arm or disarm the watcher", async () => {
+    const { stdout, stderr, exitCode } = await run(/* js */ `
+      const { emitMemoryPressure, isMemoryPressureWatcherInstalled } = require("bun:internal-for-testing");
+      const sym = Symbol("memoryPressure");
+      const seen = [];
+      const installed = [];
+      const real = level => seen.push(level);
+      const onSymbol = () => seen.push("symbol listener fired");
+
+      installed.push(isMemoryPressureWatcherInstalled()); // false: no listeners yet
+      process.on(sym, onSymbol);
+      installed.push(isMemoryPressureWatcherInstalled()); // false: a Symbol arms nothing
+      process.on("memoryPressure", real);
+      installed.push(isMemoryPressureWatcherInstalled()); // true: the real listener armed it
+      process.off(sym, onSymbol);
+      installed.push(isMemoryPressureWatcherInstalled()); // true: removing the Symbol must not disarm
+
+      // The real listener is still wired up to the event.
+      emitMemoryPressure("warning");
+
+      process.stdout.write(JSON.stringify({ seen, installed, symbolCount: process.listenerCount(sym) }));
+    `);
+    expect({ stdout, stderr: stderr.trim() }).toEqual({
+      stdout: JSON.stringify({
+        seen: ["warning"],
+        installed: [false, false, true, true],
+        symbolCount: 0,
+      }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("process.once works", async () => {
     const { stdout, exitCode } = await run(/* js */ `
       const { emitMemoryPressure } = require("bun:internal-for-testing");

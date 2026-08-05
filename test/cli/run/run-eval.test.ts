@@ -176,9 +176,9 @@ describe("--print for cjs/esm", () => {
 });
 
 describe.concurrent("-e builtin module globals", () => {
-  async function runEval(code: string) {
+  async function runEval(code: string, flag: "-e" | "-p" = "-e") {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", code],
+      cmd: [bunExe(), flag, code],
       env: bunEnv,
       stderr: "pipe",
     });
@@ -211,6 +211,41 @@ describe.concurrent("-e builtin module globals", () => {
       expect(exitCode).toBe(0);
     });
   }
+
+  test("fetching a global's property descriptor does not load the module", async () => {
+    const { stdout, stderr, exitCode } = await runEval(
+      'const d = Object.getOwnPropertyDescriptor(globalThis, "zlib");' +
+        "Object.getOwnPropertyDescriptors(globalThis);" +
+        'const b = require("node:buffer"); b.kMaxLength = 64;' +
+        'const z = require("node:zlib");' +
+        'try { z.inflateSync(Buffer.from("789c4b4c1c58000039743081", "hex")); console.log("no-throw"); }' +
+        "catch (e) { console.log(e.constructor.name); }" +
+        "console.log(typeof d.get, typeof d.set, d.enumerable, d.configurable);",
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("RangeError\nfunction function true true\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("--print gets the same lazy globals", async () => {
+    const { stdout, stderr, exitCode } = await runEval(
+      'const b = require("node:buffer"); b.kMaxLength = 64;' +
+        'const zlib = require("node:zlib");' +
+        'try { zlib.inflateSync(Buffer.from("789c4b4c1c58000039743081", "hex")); console.log("no-throw"); }' +
+        "catch (e) { console.log(e.constructor.name); }",
+      "-p",
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("RangeError\nundefined\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("--print resolves module globals on access", async () => {
+    const { stdout, stderr, exitCode } = await runEval("typeof zlib", "-p");
+    expect(stderr).toBe("");
+    expect(stdout).toBe("object\n");
+    expect(exitCode).toBe(0);
+  });
 
   test("the same script behaves identically with top-level await", async () => {
     const { stdout, stderr, exitCode } = await runEval(
@@ -252,6 +287,21 @@ describe.concurrent("-e builtin module globals", () => {
     );
     expect(stderr).toBe("");
     expect(stdout).toBe("true 5 object true 6 object\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("assignment honors receiver extensibility and proxy traps", async () => {
+    const { stdout, stderr, exitCode } = await runEval(
+      "const o = Object.create(globalThis); Object.preventExtensions(o);" +
+        "try { o.zlib = 5; } catch {}" +
+        'console.log("nonext", Object.hasOwn(o, "zlib"));' +
+        "let trapped = false;" +
+        "const p = new Proxy({}, { defineProperty(t, k, d) { trapped = true; return Reflect.defineProperty(t, k, d); } });" +
+        'Reflect.set(globalThis, "util", 6, p);' +
+        'console.log("proxy", trapped, Object.hasOwn(p, "util"), p.util);',
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("nonext false\nproxy true true 6\n");
     expect(exitCode).toBe(0);
   });
 });

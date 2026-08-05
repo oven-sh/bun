@@ -57,16 +57,14 @@ Ref<CustomEvent> CustomEvent::create(const AtomString& type, const Init& initial
     return adoptRef(*new CustomEvent(type, initializer, isTrusted));
 }
 
-void CustomEvent::initCustomEvent(const AtomString& type, bool canBubble, bool cancelable, JSC::JSValue detail)
+void CustomEvent::initCustomEvent(JSC::VM& vm, const JSC::JSCell* owner, const AtomString& type, bool canBubble, bool cancelable, JSC::JSValue detail)
 {
     if (isBeingDispatched())
         return;
 
     initEvent(type, canBubble, cancelable);
 
-    // FIXME: This code is wrong: we should emit a write-barrier. Otherwise, GC can collect it.
-    // https://bugs.webkit.org/show_bug.cgi?id=236353
-    m_detail.setWeakly(detail);
+    m_detail.set(vm, owner, detail);
     m_cachedDetail.clear();
 }
 

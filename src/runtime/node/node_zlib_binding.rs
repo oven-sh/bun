@@ -500,10 +500,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             NonNull::new(global_this.bun_vm_concurrently()).expect("bun_vm_concurrently"),
         );
 
-        // Skip the (possibly multi-second) compression block when the worker
-        // is already tearing down: `WebWorker::shutdown` sets the cancel flag
-        // before waiting on the fence, and the completion enqueued below is
-        // released by the shutdown drain without running JS.
+        // Skip the possibly multi-second compression block on teardown; the
+        // completion enqueued below is released by the shutdown drain.
         if !vm.event_loop_shared().offthread_cancel_requested() {
             this_ref.stream().with_mut(|s| s.do_work());
         }

@@ -72,3 +72,78 @@ error: error inside long minified file!
       at [dir]/inspect-error-fixture.min.js:26:2890
       at [dir]/inspect-error.test.js:79:5"
 `;
+
+exports[`SuppressedError Bun.inspect shows .error and .suppressed 1`] = `
+"1 | const m1 = ["dispose", "error"].join(" ");
+2 | const m2 = ["original", "error"].join(" ");
+3 | const se = new SuppressedError(new Error(m1), new Error(m2), "An error was suppressed during disposal");
+               ^
+SuppressedError: An error was suppressed during disposal
+      at <cwd>/[eval]:3:12
+
+1 | const m1 = ["dispose", "error"].join(" ");
+2 | const m2 = ["original", "error"].join(" ");
+3 | const se = new SuppressedError(new Error(m1), new Error(m2), "An error was suppressed during disposal");
+                                       ^
+error: dispose error
+      at <cwd>/[eval]:3:36
+
+1 | const m1 = ["dispose", "error"].join(" ");
+2 | const m2 = ["original", "error"].join(" ");
+3 | const se = new SuppressedError(new Error(m1), new Error(m2), "An error was suppressed during disposal");
+                                                      ^
+error: original error
+      at <cwd>/[eval]:3:51"
+`;
+
+exports[`SuppressedError uncaught SuppressedError shows .error and .suppressed 1`] = `
+"1 | const m1 = ["dispose", "error"].join(" ");
+2 | const m2 = ["original", "error"].join(" ");
+3 | throw new SuppressedError(new Error(m1), new Error(m2), "An error was suppressed during disposal");
+          ^
+SuppressedError: An error was suppressed during disposal
+      at <cwd>/[eval]:3:7
+
+1 | const m1 = ["dispose", "error"].join(" ");
+2 | const m2 = ["original", "error"].join(" ");
+3 | throw new SuppressedError(new Error(m1), new Error(m2), "An error was suppressed during disposal");
+                                  ^
+error: dispose error
+      at <cwd>/[eval]:3:31
+
+1 | const m1 = ["dispose", "error"].join(" ");
+2 | const m2 = ["original", "error"].join(" ");
+3 | throw new SuppressedError(new Error(m1), new Error(m2), "An error was suppressed during disposal");
+                                                 ^
+error: original error
+      at <cwd>/[eval]:3:46
+
+Bun v<bun-version>"
+`;
+
+exports[`SuppressedError uncaught SuppressedError from \`using\` shows both thrown errors 1`] = `
+"1 | const m1 = ["error", "thrown", "from", "dispose"].join(" ");
+    ^
+SuppressedError: 
+      at <cwd>/[eval]:1:1
+
+1 | const m1 = ["error", "thrown", "from", "dispose"].join(" ");
+2 | const m2 = ["error", "thrown", "from", "body"].join(" ");
+3 | {
+4 |   using r = { [Symbol.dispose]() { throw new Error(m1); } };
+                                                 ^
+error: error thrown from dispose
+    at [Symbol.dispose] (file:NN:NN)
+      at <cwd>/[eval]:1:1
+
+1 | const m1 = ["error", "thrown", "from", "dispose"].join(" ");
+2 | const m2 = ["error", "thrown", "from", "body"].join(" ");
+3 | {
+4 |   using r = { [Symbol.dispose]() { throw new Error(m1); } };
+5 |   throw new Error(m2);
+                ^
+error: error thrown from body
+      at <cwd>/[eval]:5:13
+
+Bun v<bun-version>"
+`;

@@ -72,21 +72,21 @@ note: "duplicateConstDecl" was originally declared here
 });
 
 const normalizeError = str => {
-  // remove debug-only stack trace frames
-  // like "at require (:1:21)"
-  if (str.includes(" (:")) {
-    const splits = str.split("\n");
-    for (let i = 0; i < splits.length; i++) {
-      if (splits[i].includes(" (:")) {
-        splits.splice(i, 1);
-        i--;
-      }
-    }
-    return splits.join("\n");
-  }
-
-  return str;
+  // remove debug-only stack trace frames like "at require (:1:21)" or "at require (51:24)"
+  return str
+    .split("\n")
+    .filter(line => !/ \(:?\d*:\d+\)$/.test(line.replace(/(\x1b\[[0-9;]*m)+$/, "")))
+    .join("\n");
 };
+// These blank lines keep the inline snapshots below (which encode source line
+// numbers) stable across edits to `normalizeError`.
+//
+//
+//
+//
+//
+//
+//
 
 test("Error inside minified file (no color) ", () => {
   try {
@@ -187,4 +187,126 @@ test("error.stack throwing an error doesn't lead to a crash", () => {
   expect(() => {
     throw err;
   }).toThrow();
+});
+
+import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+
+// https://github.com/oven-sh/bun/issues/10336
+describe("SuppressedError", () => {
+  // Build the error message strings at runtime so they do not appear in the
+  // source-line preview that Bun.inspect includes, otherwise `toContain` would
+  // match the preview rather than the nested-error output.
+  const disposeMsg = ["dispose", "error"].join(" ");
+  const originalMsg = ["original", "error"].join(" ");
+
+  test("Bun.inspect shows .error and .suppressed", async () => {
+    const code = [
+      `const m1 = ["dispose", "error"].join(" ");`,
+      `const m2 = ["original", "error"].join(" ");`,
+      `const se = new SuppressedError(new Error(m1), new Error(m2), "An error was suppressed during disposal");`,
+      `process.stdout.write(Bun.inspect(se));`,
+    ].join("\n");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-addons", "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("An error was suppressed during disposal");
+    expect(stdout).toContain(disposeMsg);
+    expect(stdout).toContain(originalMsg);
+    expect(normalizeBunSnapshot(stdout)).toMatchSnapshot();
+    expect(exitCode).toBe(0);
+  });
+
+  test("uncaught SuppressedError shows .error and .suppressed", async () => {
+    const code =
+      [
+        `const m1 = ["dispose", "error"].join(" ");`,
+        `const m2 = ["original", "error"].join(" ");`,
+        `throw new SuppressedError(new Error(m1), new Error(m2), "An error was suppressed during disposal");`,
+      ].join("\n") + "\n";
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-addons", "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("An error was suppressed during disposal");
+    expect(stderr).toContain(disposeMsg);
+    expect(stderr).toContain(originalMsg);
+    expect(normalizeBunSnapshot(stderr)).toMatchSnapshot();
+    expect(exitCode).toBe(1);
+  });
+
+  test("uncaught SuppressedError from `using` shows both thrown errors", async () => {
+    const code =
+      [
+        `const m1 = ["error", "thrown", "from", "dispose"].join(" ");`,
+        `const m2 = ["error", "thrown", "from", "body"].join(" ");`,
+        `{`,
+        `  using r = { [Symbol.dispose]() { throw new Error(m1); } };`,
+        `  throw new Error(m2);`,
+        `}`,
+      ].join("\n") + "\n";
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-addons", "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("error thrown from dispose");
+    expect(stderr).toContain("error thrown from body");
+    expect(normalizeBunSnapshot(stderr)).toMatchSnapshot();
+    expect(exitCode).toBe(1);
+  });
+
+  test("uncaught SuppressedError from `using` shows non-Error thrown values", async () => {
+    const code =
+      [
+        `const m = ["body", "threw", "a", "string"].join(" ");`,
+        `{`,
+        `  using r = { [Symbol.dispose]() { throw { code: "ERR_FROM_DISPOSE" }; } };`,
+        `  throw m;`,
+        `}`,
+      ].join("\n") + "\n";
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-addons", "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("ERR_FROM_DISPOSE");
+    expect(stderr).toContain("body threw a string");
+    expect(exitCode).toBe(1);
+  });
+
+  test("util.inspect matches Node: .error/.suppressed only with showHidden", () => {
+    const se = new SuppressedError(new Error(disposeMsg), new Error(originalMsg), "wrapper message");
+    const plain = require("util").inspect(se);
+    expect(plain).not.toContain(disposeMsg);
+    expect(plain).not.toContain(originalMsg);
+    const hidden = require("util").inspect(se, { showHidden: true });
+    expect(hidden).toContain(disposeMsg);
+    expect(hidden).toContain(originalMsg);
+  });
+
+  test("Bun.inspect handles circular SuppressedError chains", () => {
+    const se = new SuppressedError(new Error(disposeMsg), undefined, "msg");
+    Object.defineProperty(se, "suppressed", { value: se, writable: true, enumerable: false, configurable: true });
+    const out = Bun.inspect(se);
+    expect(out).toContain(disposeMsg);
+    expect(out).toContain("[Circular]");
+  });
+
+  test("enumerable non-Error .error property is not printed twice", () => {
+    const e = new Error("boom");
+    e.error = ["payload", "string"].join(" ");
+    const out = Bun.inspect(e);
+    expect([...out.matchAll(/payload string/g)].length).toBe(1);
+  });
 });

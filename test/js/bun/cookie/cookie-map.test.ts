@@ -466,3 +466,59 @@ describe("invalid delete usage", () => {
     }).toThrow("Cookie name is required");
   });
 });
+
+describe("CookieMap.delete argument handling", () => {
+  test.each([undefined, null] as const)("delete(name, %p) treats the options argument as omitted", nothing => {
+    const map = new Bun.CookieMap("a=1; b=2");
+    // @ts-expect-error
+    map.delete("a", nothing);
+    expect(map.has("a")).toBe(false);
+    expect(map.has("b")).toBe(true);
+    expect(map.toSetCookieHeaders()).toEqual(["a=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax"]);
+  });
+
+  test("delete(name, options) honours the options when a non-nullish object is passed", () => {
+    const map = new Bun.CookieMap("a=1");
+    map.delete("a", { path: "/foo", domain: "example.com" });
+    expect(map.toSetCookieHeaders()).toEqual([
+      "a=; Domain=example.com; Path=/foo; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
+    ]);
+  });
+
+  test("delete(name, primitive) still rejects a non-nullish non-object options argument", () => {
+    for (const bad of [42, "x", true]) {
+      const map = new Bun.CookieMap("a=1");
+      // @ts-expect-error
+      expect(() => map.delete("a", bad)).toThrow("Options must be an object");
+      expect(map.has("a")).toBe(true);
+    }
+  });
+
+  test("delete coerces a non-string name the same way get/has/set do", () => {
+    const map = new Bun.CookieMap("5=x; true=y");
+    expect(map.get(5 as any)).toBe("x");
+    expect(map.has(5 as any)).toBe(true);
+
+    // @ts-expect-error
+    map.delete(5);
+    expect(map.has("5")).toBe(false);
+
+    // @ts-expect-error
+    map.delete(true);
+    expect(map.has("true")).toBe(false);
+
+    expect(map.size).toBe(0);
+  });
+
+  test("delete({ name }) coerces a non-string name property", () => {
+    const map = new Bun.CookieMap("5=x");
+    map.delete({ name: 5 as any });
+    expect(map.has("5")).toBe(false);
+  });
+
+  test("delete with a missing or nullish name still throws", () => {
+    expect(() => new Bun.CookieMap("a=1").delete(undefined as any)).toThrow("Cookie name is required");
+    expect(() => new Bun.CookieMap("a=1").delete(null as any)).toThrow("Cookie name is required");
+    expect(() => new Bun.CookieMap("a=1").delete({} as any)).toThrow("Cookie name is required");
+  });
+});

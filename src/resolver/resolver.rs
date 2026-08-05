@@ -4221,9 +4221,12 @@ impl<'a> Resolver<'a> {
                         // SAFETY: slot was written immediately above.
                         let slot = unsafe { queue[i].assume_init_mut() };
                         slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
-                        // A stale entry's stored fd is at EOF from its previous
-                        // iteration; leave it INVALID so the re-scan opens fresh.
-                        if !entries.stale {
+                        // An entry due for a re-scan (stale or outdated
+                        // generation) has its stored fd at EOF from the
+                        // previous iteration (`getdents64` resumes at the
+                        // descriptor offset); leave it INVALID so the re-scan
+                        // opens fresh. Seed it only for cache hits.
+                        if !entries.stale && entries.generation >= self.generation {
                             slot.fd = entries.fd;
                         }
                     }
@@ -4262,7 +4265,8 @@ impl<'a> Resolver<'a> {
                             // SAFETY: slot was written immediately above.
                             let slot = unsafe { queue[i].assume_init_mut() };
                             slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
-                            if !entries.stale {
+                            // See the EOF note on the seed above.
+                            if !entries.stale && entries.generation >= self.generation {
                                 slot.fd = entries.fd;
                             }
                         }

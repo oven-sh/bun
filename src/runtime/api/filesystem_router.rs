@@ -100,7 +100,7 @@ pub struct FileSystemRouter {
     // Interned `RefString`s; each `OwnedRefString` releases its reference on
     // drop (`finalize`).
     pub(crate) origin: Option<OwnedRefString>,
-    pub(crate) base_dir: Option<OwnedRefString>,
+    pub(crate) base_dir: OwnedRefString,
     pub(crate) router: JsCell<Router::Router>,
     // Router borrows slices from this arena across calls;
     // kept as boxed arena per LIFETIMES.tsv (OWNED). `bun_alloc::Arena` (mimalloc heap) is
@@ -314,7 +314,7 @@ impl FileSystemRouter {
             } else {
                 None
             },
-            base_dir: Some(vm.ref_counted_string::<true>(base_dir_str, None)),
+            base_dir: vm.ref_counted_string::<true>(base_dir_str, None),
             asset_prefix: if !asset_prefix_slice.slice().is_empty() {
                 Some(vm.ref_counted_string::<true>(asset_prefix_slice.slice(), None))
             } else {
@@ -325,11 +325,9 @@ impl FileSystemRouter {
         });
 
         // RouteConfig::dir is an owned `Box<[u8]>`, so copy the bytes.
-        // `base_dir` was just set to Some above.
-        let base_dir = fs_router.base_dir.as_ref().unwrap();
         fs_router
             .router
-            .with_mut(|r| r.config.dir = Box::from(base_dir.get().leak()));
+            .with_mut(|r| r.config.dir = Box::from(fs_router.base_dir.get().leak()));
 
         Ok(fs_router)
     }
@@ -626,7 +624,7 @@ impl FileSystemRouter {
             path,
             this.origin.clone(),
             this.asset_prefix.clone(),
-            this.base_dir.as_ref().unwrap().clone(),
+            this.base_dir.clone(),
         )
         .expect("unreachable");
 
@@ -711,7 +709,7 @@ pub struct MatchedRoute {
     pub(crate) origin: Option<OwnedRefString>,
     pub(crate) asset_prefix: Option<OwnedRefString>,
     pub(crate) needs_deinit: bool,
-    pub(crate) base_dir: Option<OwnedRefString>,
+    pub(crate) base_dir: OwnedRefString,
 }
 
 impl MatchedRoute {
@@ -778,7 +776,7 @@ impl MatchedRoute {
             route: core::ptr::null(),
             asset_prefix,
             origin,
-            base_dir: Some(base_dir),
+            base_dir,
             query_string_map: JsCell::new(None),
             param_map: JsCell::new(None),
             params_list_holder: UnsafeCell::new(params_list),
@@ -898,11 +896,7 @@ impl MatchedRoute {
         };
         bun_object::get_public_path_with_asset_prefix(
             this.route().file_path,
-            if let Some(ref base_dir) = this.base_dir {
-                base_dir.get().leak()
-            } else {
-                Fs::FileSystem::get().top_level_dir
-            },
+            this.base_dir.get().leak(),
             &origin_url,
             if let Some(ref prefix) = this.asset_prefix {
                 prefix.get().leak()

@@ -72,8 +72,7 @@ describe("bun <file.md>", () => {
   test("skips a leading front-matter block", async () => {
     const out = await runMd(["---", "title: Hello", "draft: true", "---", "", "# Heading", "", "body", ""].join("\n"));
     expect(out).not.toContain("title");
-    expect(out).toContain("Heading");
-    expect(out).toContain("body");
+    expect(out).toMatchSnapshot();
   });
 
   test("renders fenced code block with JS syntax highlighting", async () => {

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 const { frontmatter, html, ansi, render, react } = Bun.markdown;
 
@@ -221,5 +222,22 @@ describe("renderers skip front matter by default", () => {
     expect(el.props.children.map((c: any) => c.type)).toEqual(["h1"]);
     const off = react(doc, undefined, { frontmatter: false }) as any;
     expect(off.props.children.map((c: any) => c.type)).toEqual(["hr", "h2", "h1"]);
+  });
+
+  test("the .md import loader skips front matter", async () => {
+    using dir = tempDir("md-loader-fm-", {
+      "post.md": "---\ntitle: Hello\n---\n# Heading\n",
+      "main.ts": `import html from "./post.md";\nconsole.log(JSON.stringify(html));`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe('"<h1>Heading</h1>\\n"\n');
+    expect(exitCode).toBe(0);
   });
 });

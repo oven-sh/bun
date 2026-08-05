@@ -19,7 +19,7 @@ use crate::webcore::{
 use ::bstr::BStr;
 use bun_collections::HashMap;
 use bun_core::{Output, fmt as bun_fmt};
-use bun_core::{String as BunString, ZigString, strings};
+use bun_core::{String as BunString, StringPointer, ZigString, strings};
 use bun_http::{self as http, Method, MimeType};
 use bun_jsc::Debugger::DebuggerId;
 use bun_jsc::ZigStringJsc as _;
@@ -1269,6 +1269,77 @@ fn fetch_headers_from_js(value: JSValue, global: &JSGlobalObject) -> Option<*mut
     FetchHeaders::cast_(value, global.vm()).map(|p| p.as_ptr())
 }
 
+fn render_early_hints(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Vec<u8>>> {
+    if let Some(headers) = FetchHeaders::cast_(value, global.vm()) {
+        return Ok(render_early_hints_from_headers(
+            bun_opaque::opaque_deref_mut(headers.as_ptr()),
+        ));
+    }
+
+    let Some(headers) = FetchHeaders::create_from_js(global, value)? else {
+        return Ok(None);
+    };
+
+    let result = render_early_hints_from_headers(bun_opaque::opaque_deref_mut(headers.as_ptr()));
+    bun_opaque::opaque_deref_mut(headers.as_ptr()).deref();
+    Ok(result)
+}
+
+fn render_early_hints_from_headers(headers: &mut FetchHeaders) -> Option<Vec<u8>> {
+    let mut header_count = 0;
+    let mut buffer_len = 0;
+    headers.count(&mut header_count, &mut buffer_len);
+    if header_count == 0 {
+        return None;
+    }
+
+    let header_count = usize::try_from(header_count).expect("header count fits usize");
+    let buffer_len = usize::try_from(buffer_len).expect("header length fits usize");
+    let mut names = Vec::with_capacity(header_count);
+    let mut values = Vec::with_capacity(header_count);
+    for _ in 0..header_count {
+        names.push(StringPointer {
+            offset: 0,
+            length: 0,
+        });
+        values.push(StringPointer {
+            offset: 0,
+            length: 0,
+        });
+    }
+    let mut buffer = vec![0; buffer_len];
+    headers.copy_to(names.as_mut_ptr(), values.as_mut_ptr(), buffer.as_mut_ptr());
+
+    let mut response = Vec::with_capacity(
+        b"HTTP/1.1 103 Early Hints\r\n".len()
+            + buffer_len
+            + header_count * b": \r\n".len()
+            + b"\r\n".len(),
+    );
+    response.extend_from_slice(b"HTTP/1.1 103 Early Hints\r\n");
+
+    for (name, value) in names.into_iter().zip(values) {
+        let name = name.slice(&buffer);
+        let value = value.slice(&buffer);
+        if name.is_empty()
+            || name
+                .iter()
+                .chain(value)
+                .any(|byte| matches!(byte, b'\r' | b'\n' | 0))
+        {
+            return None;
+        }
+
+        response.extend_from_slice(name);
+        response.extend_from_slice(b": ");
+        response.extend_from_slice(value);
+        response.extend_from_slice(b"\r\n");
+    }
+
+    response.extend_from_slice(b"\r\n");
+    Some(response)
+}
+
 /// Per-process latch for the dev-mode idle-timeout warning. The
 /// warning is gated on `DEBUG && !silent` and only fires once globally, so a
 /// single shared `AtomicBool` matches user-visible behavior.
@@ -1564,6 +1635,31 @@ where
             global.throw_invalid_arguments(format_args!("Expected Request object"))
         })?;
         self.request_ip(request)
+    }
+
+    /// Sends an HTTP 103 informational response for a live `Bun.serve()` request.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn write_early_hints(
+        &mut self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let arguments = callframe.arguments();
+        if arguments.len() < 2 || arguments[0].is_empty_or_undefined_or_null() {
+            return Err(global.throw_not_enough_arguments("writeEarlyHints", 2, arguments.len()));
+        }
+
+        let request = arguments[0].as_class_ref::<Request>().ok_or_else(|| {
+            global.throw_invalid_arguments(format_args!("Expected Request object"))
+        })?;
+
+        let Some(data) = render_early_hints(global, arguments[1])? else {
+            return Ok(JSValue::FALSE);
+        };
+
+        Ok(JSValue::js_boolean(
+            request.request_context.write_informational(&data),
+        ))
     }
 
     /// `pub const doReload = onReload`

@@ -2336,6 +2336,14 @@ static JSC::EncodedJSValue systemErrorToErrorInstance(const SystemError* arg0, J
 
     JSC::JSObject* result = createError(globalObject, errorType, message);
 
+    if (auto* instance = dynamicDowncast<JSC::ErrorInstance>(result)) {
+        auto* trace = instance->stackTrace();
+        if (!trace || trace->isEmpty()) {
+            auto* zigGlobal = defaultGlobalObject(globalObject);
+            instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, zigGlobal->m_lazyStackCustomGetterSetter.get(zigGlobal), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor | 0);
+        }
+    }
+
     auto clientData = WebCore::clientData(vm);
 
     if (err.code.tag != BunStringTag::Empty) {

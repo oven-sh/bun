@@ -218,7 +218,10 @@ test.concurrent("--offline --tarball-dir rejects a tarball that fails the lockfi
   // wrong bytes: no-deps 2.0.0 masquerading as 1.0.1
   await addTarball(tarballDirBadIntegrity, "no-deps", "2.0.0", "no-deps@1.0.1.tgz");
 
-  const { err, exitCode } = await runInstall(tarballDirBadIntegrity.packageDir, ["--offline", "--tarball-dir=tarballs"]);
+  const { err, exitCode } = await runInstall(tarballDirBadIntegrity.packageDir, [
+    "--offline",
+    "--tarball-dir=tarballs",
+  ]);
   expect(err).toContain("Integrity check failed for tarball: no-deps");
   expect(exitCode).toBe(1);
 });
@@ -286,7 +289,9 @@ test.concurrent("--offline fails to resolve a package with no cached manifest", 
   await registry.writeBunfig(String(dir));
 
   const { err, exitCode } = await runInstall(String(dir), ["--offline"]);
-  expect(err).toMatch(/error: no cached manifest for package .*basic-1.* and network requests are disabled \(--offline\)/);
+  expect(err).toMatch(
+    /error: no cached manifest for package .*basic-1.* and network requests are disabled \(--offline\)/,
+  );
   expect(err).not.toContain("ConnectionRefused");
   expect(exitCode).toBe(1);
 });

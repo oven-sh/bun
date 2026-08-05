@@ -1250,12 +1250,16 @@ impl<'a> Parser<'a> {
         &mut self,
         map: &mut Map,
     ) -> Result<(), AllocError> {
-        let mut count = map.map.count();
+        let count = map.map.count();
+        let mut expand_indices = Vec::new();
         while self.pos < self.src.len() {
             let Some(key) = self.parse_key::<true>() else {
                 self.skip_line();
                 continue;
             };
+            self.skip_whitespaces();
+            let should_expand =
+                EXPAND && self.pos < self.src.len() && !matches!(self.src[self.pos], b'\'' | b'"');
             let value = self.parse_value::<IS_PROCESS>()?;
             // reshaped for borrowck — value borrows self.value_buffer; copy before map mut.
             let value_owned: Box<[u8]> = Box::from(value);
@@ -1271,26 +1275,29 @@ impl<'a> Parser<'a> {
                 // else: previous value freed by Drop on assignment below
             }
             *entry.value_ptr = HashTableValue { value: value_owned };
+            if should_expand {
+                if !expand_indices.contains(&entry.index) {
+                    expand_indices.push(entry.index);
+                }
+            } else if let Some(i) = expand_indices
+                .iter()
+                .position(|&index| index == entry.index)
+            {
+                expand_indices.swap_remove(i);
+            }
         }
         if !IS_PROCESS && EXPAND {
-            // borrowck — index-based iteration: clone the value bytes, run
-            // expansion against an immutable `&Map`, then write back via
-            // `values_mut()`. Values are dupe'd by `parse` above, so length
-            // is bounded by file size.
-            let total = map.map.count();
-            let mut idx = count;
-            while idx < total {
+            // Clone the value bytes so expansion can read the complete map
+            // before writing the expanded value back through `values_mut()`.
+            for idx in expand_indices {
                 let current: Box<[u8]> = Box::from(&*map.map.values()[idx].value);
                 if let Some(expanded) = self.expand_value(map, &current)? {
                     map.map.values_mut()[idx] = HashTableValue {
                         value: Box::from(expanded),
                     };
                 }
-                idx += 1;
             }
-            count = 0;
         }
-        let _ = count;
         Ok(())
     }
 

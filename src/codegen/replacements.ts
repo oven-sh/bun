@@ -40,20 +40,17 @@ for (let id = 0; id < jsclasses.length; id++) {
   });
 }
 
-/** The `$makeErrorWithCode(<error_i>, ...)` and `$inherits(<id>, ...)` ID
- * orderings baked in by the rules above, for the generation stamp
- * bundle-modules.ts writes into hot-reloadable JS files. */
+/** The replacement rules that bake a numeric ID into builtin JS
+ * (`$makeErrorWithCode(<error_i>, ...` and `$inherits(<id>, ...`), for the
+ * generation stamp bundle-modules.ts writes into hot-reloadable JS files.
+ * Derived from the built rules themselves so the signature cannot drift from
+ * the numbering the rules actually emit. */
 export function getNumericReplacementsSignature(): string {
-  const errorCtors: string[] = [];
-  for (let i = 0; i < NodeErrors.length; i++) {
-    const [code, _constructor, _name, ...other_constructors] = NodeErrors[i];
-    errorCtors.push(code as string);
-    for (const con of other_constructors) {
-      if (con == null) continue;
-      errorCtors.push(`${code}_${con.name}`);
-    }
-  }
-  return JSON.stringify({ errorCtors, classes: jsclasses.map(c => c[0]) });
+  return JSON.stringify(
+    replacements
+      .filter(rule => rule.to !== undefined && /\(\d+, $/.test(rule.to))
+      .map(rule => [rule.from.source, rule.to]),
+  );
 }
 
 // These rules are run on the entire file, including within strings.

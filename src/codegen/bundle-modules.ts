@@ -249,13 +249,15 @@ mark("Bundle modules");
 // stamp doesn't match the binary's, so a renumbering rebuild can't make
 // $lazy(N) dispatch to the wrong native code. Content isn't hashed: editing
 // JS never invalidates the stamp.
+const js2nativeSignature = getJS2NativeSignature();
 const generation = new Bun.CryptoHasher("sha256")
   .update(JSON.stringify([moduleList, nativeStartIndex]))
-  .update(getJS2NativeSignature())
+  .update(js2nativeSignature)
   .update(getNumericReplacementsSignature())
   .digest("hex")
   .slice(0, 16);
 const generationStamp = `// @bun-internal-module-generation=${generation}\n`;
+const stampedNativeCallCount = (JSON.parse(js2nativeSignature) as unknown[]).length;
 
 const outputs = new Map();
 
@@ -291,6 +293,19 @@ for (const entrypoint of bundledEntryPoints) {
   const errors = [...captured.matchAll(/@bundleError\((.*)\)/g)];
   if (errors.length) {
     throw new Error(`Errors in ${entrypoint}:\n${errors.map(x => x[1]).join("\n")}`);
+  }
+
+  // Guard rail: the stamp is only sound if every $lazy ID this file bakes was
+  // registered before the stamp was computed. Registration happens during
+  // module preprocessing, so this can only fire if the stamp computation gets
+  // moved above it.
+  for (const match of captured.matchAll(/@lazy\((\d+)\)/g)) {
+    if (Number(match[1]) >= stampedNativeCallCount) {
+      throw new Error(
+        `${file_path} bakes $lazy ID ${match[1]}, but only ${stampedNativeCallCount} native calls were ` +
+          `registered when the generation stamp was computed.`,
+      );
+    }
   }
 
   const outputPath = path.join(JS_DIR, file_path);

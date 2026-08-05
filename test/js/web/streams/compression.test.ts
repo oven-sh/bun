@@ -720,10 +720,8 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
 // error, cancel), not left to the cell's finalizer. Finalizers run late, so a
 // busy loop of pipelines whose SOURCE errors otherwise retains every context:
 // Bun.gc(true) cannot reclaim them and RSS grows by ~280 KiB per iteration.
-test(
-  "errored pipeline releases the compression coder eagerly",
-  async () => {
-    const src = `
+test("errored pipeline releases the compression coder eagerly", async () => {
+  const src = `
       const N = 512, WARM = 64;
       const rss = () => { Bun.gc(true); return process.memoryUsage().rss; };
       async function run() {
@@ -743,30 +741,28 @@ test(
       console.log(JSON.stringify({ deltaMiB: (rss() - before) / 1048576 }));
     `;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", src],
-      env: {
-        ...bunEnv,
-        // Under ASAN the freed contexts land in the allocator quarantine
-        // (default quarantine_size_mb=256) instead of being returned, so the
-        // RSS delta over-reports by far more than the retention this guards
-        // against even when nothing leaks.
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: {
+      ...bunEnv,
+      // Under ASAN the freed contexts land in the allocator quarantine
+      // (default quarantine_size_mb=256) instead of being returned, so the
+      // RSS delta over-reports by far more than the retention this guards
+      // against even when nothing leaks.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
-    const { deltaMiB } = JSON.parse(stdout.trim());
-    // 448 retained gzip contexts measure ~130 MiB (bun 1.3.14, whose
-    // node:zlib-backed implementation freed them only via finalizer); eager
-    // release measures 7 MiB release / 8 MiB debug+ASAN.
-    expect(deltaMiB).toBeLessThan(64);
-    expect(exitCode).toBe(0);
-  },
-  // A debug/ASAN child running 512 pipelines plus per-iteration full GCs
-  // outlives the default per-test timeout.
-  60_000,
-);
+  expect(stderr).toBe("");
+  const { deltaMiB } = JSON.parse(stdout.trim());
+  // 448 retained gzip contexts measure ~130 MiB (bun 1.3.14, whose
+  // node:zlib-backed implementation freed them only via finalizer); eager
+  // release measures 7 MiB release / 8 MiB debug+ASAN.
+  expect(deltaMiB).toBeLessThan(64);
+  expect(exitCode).toBe(0);
+}, // A debug/ASAN child running 512 pipelines plus per-iteration full GCs
+// outlives the default per-test timeout.
+60_000);

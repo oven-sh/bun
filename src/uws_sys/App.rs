@@ -126,7 +126,7 @@ impl<const SSL: bool> App<SSL> {
         &mut self,
         require_host_header: bool,
         use_strict_method_validation: bool,
-        use_insecure_http_parser: bool,
+        lenient_http_flags: u8,
         http_allow_half_open: bool,
     ) {
         c::uws_app_set_flags(
@@ -134,7 +134,7 @@ impl<const SSL: bool> App<SSL> {
             self.as_raw(),
             require_host_header,
             use_strict_method_validation,
-            use_insecure_http_parser,
+            lenient_http_flags,
             http_allow_half_open,
         )
     }
@@ -363,6 +363,7 @@ impl<const SSL: bool> App<SSL> {
         &mut self,
         hostname_pattern: &core::ffi::CStr,
         opts: &BunSocketContextOptions,
+        apply_client_cert_policy: bool,
     ) -> Result<(), AddServerNameError> {
         // SAFETY: self is a valid app; hostname_pattern is NUL-terminated.
         let rc = unsafe {
@@ -371,6 +372,7 @@ impl<const SSL: bool> App<SSL> {
                 std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 hostname_pattern.as_ptr(),
                 *opts,
+                i32::from(apply_client_cert_policy),
             )
         };
         if rc != 0 {
@@ -503,7 +505,7 @@ pub mod c {
             app: &mut uws_app_t,
             require_host_header: bool,
             use_strict_method_validation: bool,
-            use_insecure_http_parser: bool,
+            lenient_http_flags: u8,
             http_allow_half_open: bool,
         );
         pub(crate) safe fn uws_app_set_max_http_header_size(
@@ -640,6 +642,7 @@ pub mod c {
             app: *mut uws_app_t,
             hostname_pattern: *const c_char,
             options: BunSocketContextOptions,
+            apply_client_cert_policy: c_int,
         ) -> i32;
         pub(crate) safe fn uws_filter(
             ssl: i32,

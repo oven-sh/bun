@@ -79,8 +79,6 @@ pub enum Status {
     Connected,
 }
 
-pub use super::valkey_command_body as Command_;
-
 /// Valkey protocol types (standalone, TLS, Unix socket)
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Protocol {

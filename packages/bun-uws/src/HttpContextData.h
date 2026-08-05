@@ -84,7 +84,10 @@ private:
     void clearRoutes() {
         this->router = HttpRouter<RouterData>{};
         this->currentRouter = &router;
-        filterHandlers.clear();
+        /* Not filterHandlers: filters are per-context open/close hooks, not
+         * routes. server.reload() never re-registers them, so wiping them here
+         * leaves Bun's active_connection_count (and node:http's 'connection'
+         * event) decoupled for the rest of the server's life. */
     }
 
 public:

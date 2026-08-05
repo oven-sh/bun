@@ -1978,11 +1978,12 @@ export class VerdaccioRegistry {
 
   async authBunfig(user: string) {
     const authToken = await this.generateUser(user, user);
-    return `
-        [install]
-        cache = false
-        registry = { url = "http://localhost:${this.port}/", token = "${authToken}" }
-        `;
+    return Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: { url: `http://localhost:${this.port}/`, token: authToken },
+      },
+    });
   }
 
   async createTestDir(
@@ -2001,31 +2002,21 @@ export class VerdaccioRegistry {
   }
 
   async writeBunfig(dir: string, opts: BunfigOpts = {}) {
-    let bunfig = `
-[install]
-cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
-`;
-    if ("saveTextLockfile" in opts) {
-      bunfig += `saveTextLockfile = ${opts.saveTextLockfile}
-`;
-    }
-    if (!opts.npm) {
-      bunfig += `registry = "${this.registryUrl()}"\n`;
-    }
-    if (opts.linker) {
-      bunfig += `linker = "${opts.linker}"\n`;
-    }
-    if (opts.globalStore !== undefined) {
-      bunfig += `globalStore = ${opts.globalStore}\n`;
-    }
-    if (opts.publicHoistPattern) {
-      if (typeof opts.publicHoistPattern === "string") {
-        bunfig += `publicHoistPattern = "${opts.publicHoistPattern}"`;
-      } else {
-        bunfig += `publicHoistPattern = [${opts.publicHoistPattern.map(p => `"${p}"`).join(", ")}]`;
-      }
-    }
-    await write(join(dir, "bunfig.toml"), bunfig);
+    await write(
+      join(dir, "bunfig.toml"),
+      Bun.TOML.stringify({
+        install: {
+          cache: join(dir, ".bun-cache"),
+          saveTextLockfile: opts.saveTextLockfile,
+          registry: opts.npm ? undefined : this.registryUrl(),
+          linker: opts.linker,
+          globalStore: opts.globalStore,
+          publicHoistPattern: opts.publicHoistPattern,
+          hoistPattern: opts.hoistPattern,
+          hoist: opts.hoist,
+        },
+      }),
+    );
   }
 }
 
@@ -2035,6 +2026,8 @@ type BunfigOpts = {
   linker?: "isolated" | "hoisted";
   globalStore?: boolean;
   publicHoistPattern?: string | string[];
+  hoistPattern?: string | string[];
+  hoist?: boolean;
 };
 
 export async function readdirSorted(path: string): Promise<string[]> {
@@ -2132,10 +2125,10 @@ export function exampleSite(protocol: "https" | "http" = "https") {
     ca: protocol === "https" ? tls.cert : undefined,
     server,
     stop() {
-      return server.stop();
+      return server.stop(true);
     },
     async [Symbol.asyncDispose]() {
-      await server.stop();
+      await server.stop(true);
     },
   };
 }

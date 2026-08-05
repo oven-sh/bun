@@ -59,6 +59,19 @@ function withExtraProperty<T extends object>(value: T): T {
   return Object.assign(value, { extra: 1 });
 }
 
+function errorWithEnumerableStack(stack: string) {
+  const e = new Error("m");
+  Object.defineProperty(e, "stack", { value: stack, enumerable: true, writable: true, configurable: true });
+  return e;
+}
+
+function errorWithRecapturedStack() {
+  const e = new Error("m");
+  void e.stack;
+  Error.captureStackTrace(e);
+  return e;
+}
+
 function selfReferencingObject() {
   const object: Record<string, unknown> = {};
   object.self = object;
@@ -394,6 +407,37 @@ const cases: Case[] = [
     b: () => new Error("x", { cause: 2 }),
     strict: false,
     loose: false,
+  },
+  {
+    // An own enumerable `stack` is compared like any other own enumerable key.
+    name: "errors with differing own enumerable stack properties",
+    a: () => errorWithEnumerableStack("S1"),
+    b: () => errorWithEnumerableStack("S2"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "errors with matching own enumerable stack properties",
+    a: () => errorWithEnumerableStack("S1"),
+    b: () => errorWithEnumerableStack("S1"),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "an error with an own enumerable stack vs one without",
+    a: () => errorWithEnumerableStack("S1"),
+    b: () => new Error("m"),
+    strict: false,
+    loose: false,
+  },
+  {
+    // Error.captureStackTrace installs .stack as non-enumerable, so two such
+    // errors remain deep-equal even though their stack strings differ.
+    name: "two errors after Error.captureStackTrace with materialized info",
+    a: errorWithRecapturedStack,
+    b: errorWithRecapturedStack,
+    strict: true,
+    loose: true,
   },
 
   // Map and Set.

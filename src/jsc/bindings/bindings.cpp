@@ -1297,7 +1297,9 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 return false;
             }
 
-            // check arbitrary enumerable properties. `.stack` is not checked.
+            // Check arbitrary own enumerable properties. The engine-installed `.stack` is
+            // non-enumerable, so DontEnumPropertiesMode::Exclude already skips it. A user-defined
+            // enumerable `stack` is compared like any other own enumerable key (matches Node.js).
             left->materializeErrorInfoIfNeeded(vm);
             RETURN_IF_EXCEPTION(scope, {});
             right->materializeErrorInfoIfNeeded(vm);
@@ -1321,7 +1323,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             size_t i;
             for (i = 0; i < propertyArrayLength1; i++) {
                 Identifier i1 = a1[i];
-                if (i1 == vm.propertyNames->stack) continue;
                 PropertyName propertyName1 = PropertyName(i1);
 
                 JSValue prop1 = left->get(globalObject, propertyName1);
@@ -1351,7 +1352,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             // for the remaining properties in the other object, make sure they are undefined
             for (; i < propertyArrayLength2; i++) {
                 Identifier i2 = a2[i];
-                if (i2 == vm.propertyNames->stack) continue;
                 PropertyName propertyName2 = PropertyName(i2);
 
                 JSValue prop2 = right->getIfPropertyExists(globalObject, propertyName2);

@@ -14,7 +14,7 @@ use crate::webcore::BlobExt as _;
 use crate::webcore::blob::ZigStringBlobExt as _;
 use crate::webcore::body::{self, BodyHiveHandle, BodyMixin, Value as BodyValue};
 use crate::webcore::jsc::{
-    self as jsc, CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult,
+    self as jsc, CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsResult, RawJsRef,
 };
 use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
 use bun_alloc::AllocError;
@@ -59,7 +59,7 @@ const _: () = {
         fn to_js(self, global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
             // Route through the inherent `Request::to_js` so generic
             // `<T: JsClass>::to_js` callers also run `calculate_estimated_byte_size`,
-            // `js_ref = .init_weak(...)`, and `check_body_stream_ref` —
+            // `js_ref = RawJsRef::init(...)`, and `check_body_stream_ref` —
             // otherwise the wrapper reports size 0 and any Locked-body
             // ReadableStream is never migrated into the GC slot.
             let ptr = bun_core::heap::into_raw(Box::new(self));
@@ -97,7 +97,7 @@ pub struct Request {
     /// `finalize()` decouples from `Box` and must release this handle exactly
     /// once before `Box::from_raw().drop()` (which would otherwise re-run it).
     body: ManuallyDrop<BodyHiveHandle>,
-    js_ref: JsCell<JsRef>,
+    js_ref: JsCell<RawJsRef>,
     pub method: Method,
     pub(crate) flags: Flags,
     pub(crate) request_context: AnyRequestContext,
@@ -440,9 +440,9 @@ impl Request {
     ) {
         // `JSBunRequest::create` bypasses `to_js`, so seed the still-empty
         // `js_ref` for `check_body_stream_ref`; guarded so a pre-populated
-        // Strong is never downgraded.
+        // slot is never overwritten.
         if cloned.js_ref.get().is_empty() {
-            cloned.js_ref.set(JsRef::init_weak(js_wrapper));
+            cloned.js_ref.set(RawJsRef::init(js_wrapper));
         }
         cloned.check_body_stream_ref(global_this);
         self.sync_cloned_body_stream_caches(this_value, js_wrapper, global_this);
@@ -466,7 +466,7 @@ impl Request {
             headers: JsCell::new(headers),
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
-            js_ref: JsCell::new(JsRef::empty()),
+            js_ref: JsCell::new(RawJsRef::empty()),
             method,
             flags: Flags::default(),
             request_context: AnyRequestContext::NULL,
@@ -523,7 +523,7 @@ impl Request {
             global_object,
             std::ptr::from_ref::<Request>(self).cast_mut().cast::<()>(),
         );
-        self.js_ref.set(JsRef::init_weak(js_value));
+        self.js_ref.set(RawJsRef::init(js_value));
 
         self.check_body_stream_ref(global_object);
         js_value
@@ -1032,7 +1032,7 @@ impl Request {
             headers: JsCell::new(None),
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
-            js_ref: JsCell::new(JsRef::init_weak(this_value)),
+            js_ref: JsCell::new(RawJsRef::init(this_value)),
             method: Method::GET,
             flags: Flags::default(),
             request_context: AnyRequestContext::NULL,
@@ -1574,8 +1574,8 @@ impl Request {
         };
 
         // `ptr::write` is a raw bit-overwrite — no destructors run on the old
-        // `*req`, so Drop impls on `JsRef` / `strong::Optional` don't fire on
-        // the caller's sentinel.
+        // `*req`, so Drop impls on `strong::Optional` don't fire on the
+        // caller's sentinel (`RawJsRef` has no Drop).
         // The old `req.body` hive ref is intentionally NOT unref'd here:
         // `clone()` seeds it with a dangling sentinel, and `construct_into`
         // releases its seed via the ptr-equality arm of its `cleanup`.
@@ -1591,7 +1591,7 @@ impl Request {
                     headers: JsCell::new(headers),
                     signal: JsCell::new(None),
                     body: ManuallyDrop::new(body),
-                    js_ref: JsCell::new(JsRef::empty()),
+                    js_ref: JsCell::new(RawJsRef::empty()),
                     method: self.method,
                     flags: self.flags,
                     request_context: AnyRequestContext::NULL,
@@ -1624,7 +1624,7 @@ impl Request {
             body: ManuallyDrop::new(unsafe {
                 BodyHiveHandle::from_raw(NonNull::dangling().as_ptr())
             }),
-            js_ref: JsCell::new(JsRef::empty()),
+            js_ref: JsCell::new(RawJsRef::empty()),
             method: Method::GET,
             flags: Flags::default(),
             request_context: AnyRequestContext::NULL,
@@ -1693,7 +1693,7 @@ impl Request {
             headers: JsCell::new(None),
             signal: JsCell::new(signal),
             body: ManuallyDrop::new(body),
-            js_ref: JsCell::new(JsRef::empty()),
+            js_ref: JsCell::new(RawJsRef::empty()),
             method,
             flags: Flags {
                 https,

@@ -250,6 +250,63 @@ impl Default for JsRef {
     }
 }
 
+/// Non-registering sibling of [`JsRef`] for wrapper back-pointers that are
+/// only read synchronously while the wrapper is rooted by the caller (the
+/// receiver of a host fn, or a value just created / passed in on the JS
+/// stack).
+///
+/// Holds the bare `JSValue` with no GC registration, so it costs nothing per
+/// object — a [`JsRef::Weak`] allocates a `JSC::Weak` handle, and for
+/// precise-allocated wrapper cells that means a `WeakBlock` in the cell's own
+/// `WeakSet` (1 KB each), which is too heavy to pay on every `Request` /
+/// `Response` construction. In exchange `try_get()` says nothing about
+/// liveness: a read after the wrapper dies hands back a dangling value.
+/// Deferred readers (event-loop callbacks, queued tasks, socket/timer
+/// dispatch) must use [`JsRef`], whose weak read goes dead the moment GC
+/// reaps the referent.
+pub enum RawJsRef {
+    Value(JSValue),
+    Finalized,
+}
+
+impl RawJsRef {
+    pub fn init(value: JSValue) -> Self {
+        debug_assert!(!value.is_empty_or_undefined_or_null());
+        RawJsRef::Value(value)
+    }
+
+    pub fn empty() -> Self {
+        RawJsRef::Value(JSValue::UNDEFINED)
+    }
+
+    pub fn try_get(&self) -> Option<JSValue> {
+        match self {
+            RawJsRef::Value(value) => {
+                if value.is_empty_or_undefined_or_null() {
+                    None
+                } else {
+                    Some(*value)
+                }
+            }
+            RawJsRef::Finalized => None,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.try_get().is_none()
+    }
+
+    pub fn finalize(&mut self) {
+        *self = RawJsRef::Finalized;
+    }
+}
+
+impl Default for RawJsRef {
+    fn default() -> Self {
+        RawJsRef::empty()
+    }
+}
+
 /// Forwarding accessors for the common `JsCell<JsRef>` field shape, so call
 /// sites read `field.try_get()` / `field.get_or_undefined()` instead of the
 /// double-step `field.get().try_get()` / `field.get().get()`.

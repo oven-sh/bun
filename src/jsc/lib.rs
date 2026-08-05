@@ -382,7 +382,7 @@ pub use self::counters::Counters;
 pub use self::decoded_js_value::DecodedJSValue;
 pub use self::deprecated_strong::DeprecatedStrong;
 pub use self::js_array::JSArray;
-pub use self::js_ref::JsRef;
+pub use self::js_ref::{JsRef, RawJsRef};
 pub use self::string_builder::StringBuilder;
 pub use self::uuid::{UUID, UUID5, UUID7};
 

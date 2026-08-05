@@ -1096,19 +1096,25 @@ test("late keep-alive request to a node:http server after close() still dispatch
 
 test("request on a connection surviving graceful stop() never reaches a collected handler", async () => {
   // Stress sibling of the late-keep-alive tests above. Each round parks two
-  // pooled keep-alive connections on a server, stops it gracefully, drops the
-  // only binding, then churns the heap and forces GC before sending late
-  // requests on the surviving connections (interleaved across rounds so the
-  // fetches run from a different frame than the one whose conservative stack
-  // scan could still see the wrapper).
+  // keep-alive connections on a server, stops it gracefully, drops the only
+  // binding, then churns the heap and forces GC before sending late requests
+  // on the parked connections (interleaved across rounds so the requests run
+  // from a different frame than the one whose conservative stack scan could
+  // still see the wrapper).
   //
-  // Invariant: a late request is answered by the original handler ("ok <tag>")
-  // or refused -- never by a server whose wrapper was already collected
-  // (FinalizationRegistry fired) and never with a foreign body. Before the
-  // open-connection gate on the `js_value` downgrade, the churn closures here
-  // could reuse the swept handler cell and run AS the fetch handler (wrong
-  // bodies, "Expected a Response object, but received ...", or a swept-cell
-  // call that crashes outright under ASAN).
+  // Late requests are written to the sockets parked before stop(), never to a
+  // fresh dial: stop() closes the listener, so the OS can hand the freed port
+  // to a later round's server and a reconnect would legitimately reach that
+  // foreign server, indistinguishable from the bug on the client side.
+  //
+  // Invariant: a late request on a parked connection is answered by the
+  // original handler ("ok <tag>") or the connection closes -- never with a
+  // foreign body and never by a server whose wrapper was already collected
+  // (FinalizationRegistry fired). Before the open-connection gate on the
+  // `js_value` downgrade, the churn closures here could reuse the swept
+  // handler cell and run AS the fetch handler (wrong bodies, "Expected a
+  // Response object, but received ...", or a swept-cell call that crashes
+  // outright under ASAN).
   //
   // Rounds alternate between a plain `fetch` handler and a `routes:` server
   // with a param route: the route dispatch path reads the collected wrapper's
@@ -1120,6 +1126,7 @@ test("request on a connection surviving graceful stop() never reaches a collecte
       // builds hit the round floor, release builds the time floor), hard-capped
       // so the pass case stays bounded on any build speed. The floor is 40
       // rounds so each of the two server kinds gets at least 20.
+      const net = require("net");
       const MIN_ROUNDS = 40, MAX_ROUNDS = 400, MIN_MS = 8000, MAX_MS = 45000;
       let sink;
       function churn() {
@@ -1129,9 +1136,54 @@ test("request on a connection surviving graceful stop() never reaches a collecte
         for (let j = 0; j < 40000; j++) sink = function () { return j; };
         for (let j = 0; j < 200; j++) sink = new Response("x");
       }
+      // One parked keep-alive connection. request() writes a GET on the
+      // already-established socket and resolves { status, body } using
+      // Content-Length framing, or null once the socket is gone.
+      function park(port, path) {
+        const sock = net.connect(port, "127.0.0.1");
+        sock.setNoDelay(true);
+        sock.on("error", () => {});
+        let buf = "", pending = null, closed = false;
+        function flush() {
+          if (!pending) return;
+          const he = buf.indexOf("\\r\\n\\r\\n");
+          if (he < 0) return;
+          const head = buf.slice(0, he);
+          const status = +(/^HTTP\\/1\\.[01] (\\d{3})/.exec(head)?.[1] ?? 0);
+          const len = +(/\\r\\ncontent-length: *(\\d+)/i.exec(head)?.[1] ?? 0);
+          if (buf.length < he + 4 + len) return;
+          const body = buf.slice(he + 4, he + 4 + len);
+          buf = buf.slice(he + 4 + len);
+          const p = pending;
+          pending = null;
+          p({ status, body });
+        }
+        sock.on("data", d => { buf += d.toString("latin1"); flush(); });
+        sock.on("close", () => {
+          closed = true;
+          if (pending) { const p = pending; pending = null; p(null); }
+        });
+        return {
+          connected: new Promise((res, rej) => { sock.on("connect", res); sock.on("error", rej); }),
+          request() {
+            if (closed || sock.destroyed) return Promise.resolve(null);
+            return new Promise(resolve => {
+              pending = resolve;
+              try {
+                sock.write("GET " + path + " HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
+              } catch {
+                pending = null;
+                resolve(null);
+              }
+              flush();
+            });
+          },
+          destroy() { sock.destroy(); },
+        };
+      }
       const dead = new Set();
       const fr = new FinalizationRegistry(u => dead.add(u));
-      const urls = [];
+      const entries = [];
       const fails = [];
       const t0 = Date.now();
       for (let round = 1; !fails.length; round++) {
@@ -1153,16 +1205,24 @@ test("request on a connection surviving graceful stop() never reaches a collecte
                 routes: { "/r/:id": req => new Response("ok " + tag + " " + req.params.id) },
                 fetch() { return new Response("ok " + tag + " fallback"); },
               });
-        const url = "http://127.0.0.1:" + server.port + (kind === "fetch" ? "/" : "/r/7");
+        const path = kind === "fetch" ? "/" : "/r/7";
         const want = kind === "fetch" ? "ok " + tag : "ok " + tag + " 7";
-        fr.register(server, url);
-        // Two pooled keep-alive connections that outlive the server binding.
-        await Promise.all([1, 2].map(() => fetch(url).then(r => r.text())));
+        const token = server.port + ":" + tag;
+        fr.register(server, token);
+        // Two parked keep-alive connections that outlive the server binding,
+        // one served request each so both are accepted and counted pre-stop.
+        const parks = [park(server.port, path), park(server.port, path)];
+        await Promise.all(parks.map(p => p.connected));
+        const first = await Promise.all(parks.map(p => p.request()));
+        if (first.some(r => !r || r.status !== 200 || r.body !== want)) {
+          fails.push(kind + " round " + round + ": bad initial response " + JSON.stringify(first));
+          break;
+        }
         await new Promise(r => setImmediate(r));
-        server.stop(); // graceful: pooled connections stay open
+        server.stop(); // graceful: parked connections stay open
         server = null;
-        urls.push({ u: url, kind, want });
-        if (urls.length > 6) urls.shift();
+        entries.push({ parks, kind, want, token });
+        if (entries.length > 6) for (const p of entries.shift().parks) p.destroy();
         churn();
         Bun.gc(false);
         churn();
@@ -1171,19 +1231,19 @@ test("request on a connection surviving graceful stop() never reaches a collecte
         for (let i = 0; i < 3; i++) decoys.push(Bun.serve({ port: 0, fetch() { return new Response("decoy"); } }));
         churn();
         const rs = await Promise.all(
-          urls.map(({ u, kind, want }) => {
-            const wasCollected = dead.has(u);
-            return fetch(u).then(
-              async r => ({ kind, want, wasCollected, status: r.status, body: await r.text() }),
-              () => ({ kind, want, wasCollected, status: 0, body: "" }),
-            );
-          }),
+          entries.flatMap(({ parks, kind, want, token }) =>
+            parks.map(p => {
+              const wasCollected = dead.has(token);
+              return p.request().then(r => ({ kind, want, wasCollected, r }));
+            }),
+          ),
         );
         for (const d of decoys) d.stop(true);
-        for (const { kind, want, status, body, wasCollected } of rs) {
-          if (status === 200 && body !== want) {
-            fails.push(kind + " round " + round + ": wrong body " + JSON.stringify(body.slice(0, 16)));
-          } else if (status === 200 && wasCollected) {
+        for (const { kind, want, wasCollected, r } of rs) {
+          if (!r) continue; // connection closed: acceptable
+          if (r.status === 200 && r.body !== want) {
+            fails.push(kind + " round " + round + ": wrong body " + JSON.stringify(r.body.slice(0, 16)));
+          } else if (r.status === 200 && wasCollected) {
             fails.push(kind + " round " + round + ": collected server answered");
           }
         }

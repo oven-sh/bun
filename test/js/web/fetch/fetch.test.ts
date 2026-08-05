@@ -89,7 +89,7 @@ describe("fetch data urls", () => {
 
     var blob = await res.blob();
     expect(blob.size).toBe(13);
-    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.type).toBe("text/plain");
     expect(blob.text()).resolves.toBe("Hello, World!");
   });
   it("percent encoded (invalid)", async () => {
@@ -107,7 +107,7 @@ describe("fetch data urls", () => {
 
     var blob = await res.blob();
     expect(blob.size).toBe(13);
-    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.type).toBe("text/plain;charset=US-ASCII");
     expect(blob.text()).resolves.toBe("Hello, World!");
 
     url = "data:,helloworld!";
@@ -118,7 +118,7 @@ describe("fetch data urls", () => {
 
     blob = await res.blob();
     expect(blob.size).toBe(11);
-    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.type).toBe("text/plain;charset=US-ASCII");
     expect(blob.text()).resolves.toBe("helloworld!");
   });
   it("unstrict parsing of invalid URL characters", async () => {
@@ -130,7 +130,7 @@ describe("fetch data urls", () => {
 
     var blob = await res.blob();
     expect(blob.size).toBe(4);
-    expect(blob.type).toBe("application/json;charset=utf-8");
+    expect(blob.type).toBe("application/json");
     expect(blob.text()).resolves.toBe("{{}}");
   });
   it("unstrict parsing of double percent characters", async () => {
@@ -142,7 +142,7 @@ describe("fetch data urls", () => {
 
     var blob = await res.blob();
     expect(blob.size).toBe(9);
-    expect(blob.type).toBe("application/json;charset=utf-8");
+    expect(blob.type).toBe("application/json");
     expect(blob.text()).resolves.toBe("{%{}%%}%%");
   });
   it("data url (invalid)", async () => {
@@ -161,7 +161,7 @@ describe("fetch data urls", () => {
 
     var blob = await res.blob();
     expect(blob.size).toBe(4);
-    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.type).toBe("text/plain;charset=US-ASCII");
     expect(blob.text()).resolves.toBe("😀");
   });
   it("should work with Request", async () => {
@@ -173,7 +173,7 @@ describe("fetch data urls", () => {
 
     var blob = await res.blob();
     expect(blob.size).toBe(13);
-    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.type).toBe("text/plain;charset=US-ASCII");
     expect(blob.text()).resolves.toBe("Hello, World!");
 
     req = new Request("data:,😀");
@@ -184,7 +184,7 @@ describe("fetch data urls", () => {
 
     blob = await res.blob();
     expect(blob.size).toBe(4);
-    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.type).toBe("text/plain;charset=US-ASCII");
     expect(blob.text()).resolves.toBe("😀");
   });
   it("should work with Request (invalid)", async () => {

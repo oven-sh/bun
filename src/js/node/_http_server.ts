@@ -663,7 +663,10 @@ Server.prototype.listen = function () {
 
     if (cluster === undefined) cluster = require("node:cluster");
 
-    server.once("listening", () => {
+    // Named so every failure path can unregister it: a dangling once-listener
+    // from a failed listen() would fire again on a later retry's success and
+    // notify the primary twice with this call's captured port/host.
+    const notifyListening = () => {
       cluster.worker.state = "listening";
       const address = server.address();
       const isObjectAddress = address !== null && typeof address === "object";
@@ -677,33 +680,40 @@ Server.prototype.listen = function () {
         addressType: socketPath ? -1 : boundHost && boundHost.family === "IPv6" ? 6 : 4,
       };
       cluster._sendInternal(message);
-    });
+    };
+    server.once("listening", notifyListening);
 
-    // listen({fd}) in a worker: share the primary-inherited fd over SCM_RIGHTS.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2065-L2096 (listenInCluster)
-    if (typeof fd === "number" && fd >= 0 && process.connected) {
-      if (process.platform === "win32") {
-        const UV_EINVAL_WIN = -4071;
-        process.nextTick(emitListenErrorNT, server, new ExceptionWithHostPort(UV_EINVAL_WIN, "listen", null, 0));
+    try {
+      // listen({fd}) in a worker: share the primary-inherited fd over SCM_RIGHTS.
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2065-L2096 (listenInCluster)
+      if (typeof fd === "number" && fd >= 0 && process.connected) {
+        if (process.platform === "win32") {
+          server.removeListener("listening", notifyListening);
+          const UV_EINVAL_WIN = -4071;
+          process.nextTick(emitListenErrorNT, server, new ExceptionWithHostPort(UV_EINVAL_WIN, "listen", null, 0));
+          return this;
+        }
+        cluster._sendInternal(
+          { act: "shareListenFd", fd, addressType: 4 },
+          onShareListenFdReply.bind(null, server, notifyListening, tls, port, host, socketPath, onListen),
+        );
         return this;
       }
-      cluster._sendInternal(
-        { act: "shareListenFd", fd, addressType: 4 },
-        onShareListenFdReply.bind(null, server, tls, port, host, socketPath, onListen),
-      );
-      return this;
-    }
 
-    // Bun-specific: workers self-bind with SO_REUSEPORT; the primary probe-binds
-    // to surface EADDRINUSE like Node's listenInCluster->queryServer path.
-    const askPrimary = typeof port === "number" && port > 0 && !socketPath && process.connected;
-    if (askPrimary) {
-      cluster._sendInternal(
-        { act: "probePort", address: host ?? null, port, addressType: 4 },
-        onProbePortReply.bind(null, server, tls, port, host, socketPath, onListen, fd),
-      );
-    } else {
-      server[kRealListen](tls, port, host, socketPath, true, onListen, fd);
+      // Bun-specific: workers self-bind with SO_REUSEPORT; the primary probe-binds
+      // to surface EADDRINUSE like Node's listenInCluster->queryServer path.
+      const askPrimary = typeof port === "number" && port > 0 && !socketPath && process.connected;
+      if (askPrimary) {
+        cluster._sendInternal(
+          { act: "probePort", address: host ?? null, port, addressType: 4 },
+          onProbePortReply.bind(null, server, notifyListening, tls, port, host, socketPath, onListen, fd),
+        );
+      } else {
+        server[kRealListen](tls, port, host, socketPath, true, onListen, fd);
+      }
+    } catch (err) {
+      server.removeListener("listening", notifyListening);
+      throw err;
     }
   } catch (err) {
     setTimeout(() => server.emit("error", err), 1);
@@ -723,10 +733,11 @@ function emitListenErrorNT(server, err) {
   server.emit("error", err);
 }
 
-function onShareListenFdReply(server, tls, port, host, socketPath, onListen, reply, receivedFd) {
+function onShareListenFdReply(server, notifyListening, tls, port, host, socketPath, onListen, reply, receivedFd) {
   const sharedFd = typeof receivedFd === "number" && receivedFd >= 0 ? receivedFd : undefined;
   const replyErrno = reply.errno;
   if (replyErrno || sharedFd === undefined) {
+    server.removeListener("listening", notifyListening);
     if (sharedFd !== undefined) closeSharedFd(sharedFd);
     server.emit("error", new ExceptionWithHostPort(replyErrno || ebadfErrorCode(), "listen", null, 0));
     return;
@@ -734,14 +745,16 @@ function onShareListenFdReply(server, tls, port, host, socketPath, onListen, rep
   try {
     server[kRealListen](tls, port, host, socketPath, true, onListen, sharedFd);
   } catch (err) {
+    server.removeListener("listening", notifyListening);
     closeSharedFd(sharedFd);
     server.emit("error", err);
   }
 }
 
-function onProbePortReply(server, tls, port, host, socketPath, onListen, fd, reply) {
+function onProbePortReply(server, notifyListening, tls, port, host, socketPath, onListen, fd, reply) {
   const replyErrno = reply.errno;
   if (replyErrno) {
+    server.removeListener("listening", notifyListening);
     server.emit("error", new ExceptionWithHostPort(replyErrno, "bind", host ?? null, port));
     return;
   }
@@ -750,6 +763,7 @@ function onProbePortReply(server, tls, port, host, socketPath, onListen, fd, rep
   try {
     server[kRealListen](tls, port, host, socketPath, true, onListen, fd);
   } catch (err) {
+    server.removeListener("listening", notifyListening);
     // Release the primary's claim now; a server that never listened owes no close().
     server[kClusterProbeKey] = undefined;
     cluster._sendInternal({ act: "close", key: reply.key });

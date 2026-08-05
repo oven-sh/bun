@@ -952,6 +952,8 @@ describe("production headers and import.meta.env", () => {
         catch (e) { evalError = String(e); }
         console.log(JSON.stringify({
           jsContainsImportMetaEnv: js.includes("import.meta.env"),
+          jsHasSourceMapURL: js.includes("sourceMappingURL"),
+          jsHasDebugId: js.includes("debugId"),
           evalError,
           result: globalThis.result ?? null,
           htmlETag,
@@ -985,6 +987,8 @@ describe("production headers and import.meta.env", () => {
     }
     return JSON.parse(stdout) as {
       jsContainsImportMetaEnv: boolean;
+      jsHasSourceMapURL: boolean;
+      jsHasDebugId: boolean;
       evalError: string | null;
       result: Record<string, unknown> | null;
       htmlETag: string | null;
@@ -1020,10 +1024,12 @@ describe("production headers and import.meta.env", () => {
     expect(out.jsETag).toMatch(/^"[0-9a-f]{16}"$/);
     expect(out.cssETag).toMatch(/^"[0-9a-f]{16}"$/);
     expect(out.svgETag).toMatch(/^"[0-9a-f]{16}"$/);
-    expect(out.mapStatus).toBe(200);
-    expect(out.mapETag).toMatch(/^"[0-9a-f]{16}"$/);
-    expect(out.mapETag).not.toBe('"0000000000000000"');
-    expect(out.mapETag).not.toBe(out.jsETag);
+
+    // Production must not emit sourcemap comments or serve .map files;
+    // they contain the original source code.
+    expect(out.jsHasSourceMapURL).toBe(false);
+    expect(out.jsHasDebugId).toBe(false);
+    expect(out.mapStatus).toBe(404);
 
     // Production: HTML revalidates via ETag; content-hashed assets cache forever.
     expect({
@@ -1031,13 +1037,11 @@ describe("production headers and import.meta.env", () => {
       js: out.jsCacheControl,
       css: out.cssCacheControl,
       svg: out.svgCacheControl,
-      map: out.mapCacheControl,
     }).toEqual({
       html: "no-cache",
       js: "public, max-age=31536000, immutable",
       css: "public, max-age=31536000, immutable",
       svg: "public, max-age=31536000, immutable",
-      map: "public, max-age=31536000, immutable",
     });
 
     // A conditional request with the HTML ETag returns 304.
@@ -1053,8 +1057,11 @@ describe("production headers and import.meta.env", () => {
 
     expect(out.htmlETag).toMatch(/^"[0-9a-f]{16}"$/);
     expect(out.jsETag).toMatch(/^"[0-9a-f]{16}"$/);
+    expect(out.jsHasSourceMapURL).toBe(true);
+    expect(out.mapStatus).toBe(200);
     expect(out.mapETag).toMatch(/^"[0-9a-f]{16}"$/);
     expect(out.mapETag).not.toBe('"0000000000000000"');
+    expect(out.mapETag).not.toBe(out.jsETag);
 
     // Dev mode should not set aggressive Cache-Control.
     expect(out.htmlCacheControl).toBeNull();
@@ -1077,6 +1084,8 @@ describe("production headers and import.meta.env", () => {
         "index.html": `<!DOCTYPE html><html><body><script type="module" src="./app.ts"></script></body></html>`,
         "app.ts": appBody,
         "serve.ts": serveTs,
+        // Production serves no sourcemaps by default; opt in to exercise map ETags.
+        "bunfig.toml": `[serve.static]\nsourcemap = "linked"`,
       });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "serve.ts"],
@@ -1095,5 +1104,50 @@ describe("production headers and import.meta.env", () => {
     expect(a).toMatch(/^"[0-9a-f]{16}"$/);
     expect(b).toMatch(/^"[0-9a-f]{16}"$/);
     expect(a).not.toBe(b);
+  });
+
+  test("bunfig [serve.static] sourcemap overrides the per-mode default", async () => {
+    const run = async (development: string, bunfig: string) => {
+      const dir = tempDirWithFiles("html-sourcemap-override", {
+        "index.html": `<!DOCTYPE html><html><body><script type="module" src="./app.ts"></script></body></html>`,
+        "app.ts": `console.log("hello" as string);`,
+        "bunfig.toml": bunfig,
+        "serve.ts": /*js*/ `
+          import index from "./index.html";
+          const server = Bun.serve({ port: 0, development: ${development}, routes: { "/": index } });
+          const base = server.url.href;
+          const html = await (await fetch(base)).text();
+          const jsPath = html.match(/src="([^"]+\\.js)"/)[1];
+          const js = await (await fetch(new URL(jsPath, base))).text();
+          const mapRes = await fetch(new URL(jsPath + ".map", base));
+          console.log(JSON.stringify({
+            hasMapComment: js.includes("sourceMappingURL"),
+            mapStatus: mapRes.status,
+          }));
+          await server.stop(true);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "serve.ts"],
+        env: { ...bunEnv, NODE_ENV: undefined },
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) throw new Error(stdout + "\n" + stderr);
+      return JSON.parse(stdout) as { hasMapComment: boolean; mapStatus: number };
+    };
+
+    // Opt back into linked sourcemaps in production.
+    expect(await run("false", `[serve.static]\nsourcemap = "linked"`)).toEqual({
+      hasMapComment: true,
+      mapStatus: 200,
+    });
+    // Opt out of sourcemaps in development.
+    expect(await run("{ hmr: false }", `[serve.static]\nsourcemap = false`)).toEqual({
+      hasMapComment: false,
+      mapStatus: 404,
+    });
   });
 });

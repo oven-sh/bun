@@ -496,7 +496,16 @@ impl Route {
             config.force_node_env = bundler_options::ForceNodeEnv::Development;
             config.jsx.development = true;
         }
-        config.source_map = bundler_options::SourceMapOption::Linked;
+        // Development defaults to linked sourcemaps; production defaults to
+        // none so original sources are not served publicly. `[serve.static]
+        // sourcemap` in bunfig overrides either default.
+        config.source_map = if let Some(mode) = cli.args.serve_sourcemap {
+            bundler_options::SourceMapOption::from_api(Some(mode))
+        } else if is_development {
+            bundler_options::SourceMapOption::Linked
+        } else {
+            bundler_options::SourceMapOption::None
+        };
 
         let completion_task =
             create_and_schedule_completion_task(config, plugins, global, vm.event_loop())?;

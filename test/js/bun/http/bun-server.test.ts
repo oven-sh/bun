@@ -8,6 +8,7 @@ import {
   normalizeBunSnapshot,
   rejectUnauthorizedScope,
   tempDir,
+  tempDirWithFiles,
   tls,
 } from "harness";
 import path from "path";

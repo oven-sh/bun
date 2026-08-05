@@ -70,7 +70,9 @@ describe("subprocess.kill", () => {
       expect(err.message).toContain("'SIGHUP'");
       expect(err.message).toContain("'SIGTERM'");
       expect(err.message).toContain("'SIGKILL'");
-      expect(err.message).toContain("or 'SIGSYS'");
+      // The list is ordered by signal number, so the last entry is
+      // platform-specific: 31 is SIGSYS on Linux but SIGUSR2 on Darwin.
+      expect(err.message).toContain(process.platform === "darwin" ? "or 'SIGUSR2'" : "or 'SIGSYS'");
       expect(err.message).not.toContain("the SignalCode names");
 
       const { promise, resolve, reject } = Promise.withResolvers();

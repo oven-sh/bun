@@ -968,8 +968,6 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstruct, (JSGlobalObject * lexicalGloba
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Ordinary-function [[Construct]]: create `this` from newTarget.prototype,
-    // return the implementation's result only when it is an object.
     JSObject* thisObject = nullptr;
     if (JSObject* newTarget = callframe->newTarget().getObject()) {
         JSGlobalObject* functionGlobalObject = JSC::getFunctionRealm(lexicalGlobalObject, newTarget);

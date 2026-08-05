@@ -1368,10 +1368,6 @@ pub struct H2FrameParser {
     /// Where the bytes emitted through `write()` over a JS-backed transport stand relative to
     /// frame and header-block boundaries.
     tx_tracker: Cell<TxFrameTracker>,
-    /// JS-backed transport only: a frame (or header block) that overflowed the cork part-way
-    /// through its serialization is assembled here (corked prefix + its chunks) and handed to
-    /// the transport whole once its last byte arrives. Empty between frames.
-    tx_spill: JsCell<Vec<u8>>,
     ref_count: bun_ptr::RefCount<Self>, // intrusive — bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
     /// Number of live `Keepalive` guards: the `+1`s held by native frames currently on the stack.
     /// Read only by `release_refs_stranded_by_exit()`.
@@ -3600,16 +3596,18 @@ impl H2FrameParser {
     /// `_write` synchronously, and user code there can serialize another frame (ping(),
     /// settings(), goaway(), request()) or flush before it returns. Bytes are therefore only
     /// handed over where another frame may legally follow: at a frame boundary outside a header
-    /// block. A frame or HEADERS..CONTINUATION run that does not fit in the cork is assembled in
-    /// `tx_spill` and written whole once its last chunk arrives (always synchronously, the
-    /// producers emit those chunks back to back), so a frame serialized re-entrantly corks up
-    /// behind it instead of landing inside it.
+    /// block. A unit that overflows the cork is assembled in the (empty at this point) batch
+    /// scratch and written whole once its last chunk arrives; the producers emit those chunks
+    /// back to back, so no JS can run while the scratch holds a partial unit, and a frame
+    /// serialized re-entrantly corks up behind the unit instead of landing inside it.
     fn write_to_js_transport(&self, bytes: &[u8]) -> bool {
         let mut tracker = self.tx_tracker.get();
         tracker.advance(bytes);
         self.tx_tracker.set(tracker);
         let at_boundary = tracker.at_boundary();
-        if self.tx_spill.get().is_empty() {
+        // A non-empty batch scratch here is the partial unit from this write's earlier chunks
+        // (send_data's multi-frame batching never re-enters write()).
+        if BATCH_BUFFER.with_borrow(|batch| batch.is_empty()) {
             let off = CORK_OFFSET.with(|c| c.get()) as usize;
             if bytes.len() <= H2_CORK_BUFFER_SIZE - off {
                 CORK_OFFSET.with(|c| c.set((off + bytes.len()) as u16));
@@ -3623,25 +3621,28 @@ impl H2FrameParser {
                 return self._write(bytes);
             }
         }
-        self.tx_spill.with_mut(|spill| {
-            if spill.is_empty() {
-                spill.reserve(H2_CORK_BUFFER_SIZE + bytes.len());
-                self.drain_cork_into(spill);
+        BATCH_BUFFER.with_borrow_mut(|batch| {
+            if batch.is_empty() {
+                // The corked prefix precedes this unit on the wire.
+                self.drain_cork_into(batch);
             }
-            spill.extend_from_slice(bytes);
+            batch.extend_from_slice(bytes);
         });
         if !at_boundary {
             return true;
         }
-        let mut data = self.tx_spill.with_mut(core::mem::take);
+        // The unit is complete: hand it over whole. Take the scratch out first, _write
+        // re-enters JS and a nested send_data must find the batch empty.
+        let mut data = BATCH_BUFFER.with_borrow_mut(core::mem::take);
         let ok = self._write(&data);
         data.clear();
-        if data.capacity() > MAX_BUFFER_SIZE as usize {
-            data.shrink_to(MAX_BUFFER_SIZE as usize);
+        const BATCH_CAPACITY_CAP: usize = 1 << 20;
+        if data.capacity() > BATCH_CAPACITY_CAP {
+            data.shrink_to(BATCH_CAPACITY_CAP);
         }
-        self.tx_spill.with_mut(|spill| {
-            if spill.is_empty() {
-                *spill = data;
+        BATCH_BUFFER.with_borrow_mut(|b| {
+            if b.capacity() == 0 {
+                *b = data;
             }
         });
         ok
@@ -7368,7 +7369,6 @@ impl H2FrameParser {
     fn get_session_memory_usage_bytes(&self) -> usize {
         let stream_count = self.streams.get().len();
         self.write_buffer.get().len_u32() as usize
-            + self.tx_spill.get().len()
             + self.queued_data_size.get() as usize
             + stream_count * core::mem::size_of::<Stream>()
     }
@@ -9752,7 +9752,6 @@ impl H2FrameParser {
             engine_frames_received: Cell::new(0),
             engine_frames_sent: Cell::new(0),
             tx_tracker: Cell::new(TxFrameTracker::default()),
-            tx_spill: JsCell::new(Vec::new()),
             auto_flusher: JsCell::new(AutoFlusher::default()),
             padding_strategy: Cell::new(PaddingStrategy::None),
             engine: core::cell::RefCell::new(None),
@@ -9974,7 +9973,6 @@ impl H2FrameParser {
         // capacity must be released here. Drop-and-replace = free.
         self.read_buffer.set(MutableString::default());
         self.write_buffer.with_mut(|wb| wb.clear_and_free());
-        self.tx_spill.with_mut(|s| s.clear_and_free());
         self.tx_tracker.set(TxFrameTracker::default());
         // Drop every per-stream JS context root; the parser is detaching.
         self.sctx.with_mut(|m| m.clear());

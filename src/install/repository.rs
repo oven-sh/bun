@@ -558,10 +558,8 @@ impl RepositoryExt for Repository {
         }
 
         if url.starts_with(b"ssh://") {
-            // A URL that already parses (e.g. with a numeric port,
-            // ssh://git@host:2222/user/repo) must pass through untouched. npm's
-            // hosted-git-info only applies correctUrl after URL parsing fails, so
-            // only scp-style colons (ssh://git@host:user/repo) get rewritten.
+            // npm's hosted-git-info only rewrites scp-style colons when URL parsing
+            // fails, so a URL that already parses (e.g. a numeric port) passes through.
             if bun_url::origin_from_slice(url).is_some() {
                 return Some(url);
             }

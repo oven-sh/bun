@@ -1000,9 +1000,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstruct, (JSGlobalObject * lexicalGloba
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Match the behavior of constructing an ordinary JS function, which is what
-    // mock functions are in Jest: create `this` from newTarget.prototype, run the
-    // mock as a call with that `this`, and return the result only if it is an object.
+    // Ordinary-function [[Construct]] semantics, matching jest's plain JS mocks.
     JSC::JSObject* newTarget = asObject(callframe->newTarget());
     JSC::JSGlobalObject* functionGlobalObject = JSC::getFunctionRealm(lexicalGlobalObject, newTarget);
     RETURN_IF_EXCEPTION(scope, {});

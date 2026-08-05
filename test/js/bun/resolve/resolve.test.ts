@@ -1109,26 +1109,23 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     "lib/index.ts": `export const fromIndex = "index";`,
   };
 
-  it.each([".", "./", "./."])(
-    "import %j from lib/run.ts ignores sibling lib.ts",
-    async (specifier: string) => {
-      using dir = tempDir("resolve-dot-dir", {
-        ...conflictFixture,
-        "lib/run.ts": `import { fromIndex } from ${JSON.stringify(specifier)}; console.log(fromIndex);`,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "lib/run.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(stdout).toBe("index\n");
-      expect(exitCode).toBe(0);
-    },
-  );
+  it.each([".", "./", "./."])("import %j from lib/run.ts ignores sibling lib.ts", async (specifier: string) => {
+    using dir = tempDir("resolve-dot-dir", {
+      ...conflictFixture,
+      "lib/run.ts": `import { fromIndex } from ${JSON.stringify(specifier)}; console.log(fromIndex);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "lib/run.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("index\n");
+    expect(exitCode).toBe(0);
+  });
 
   it('require(".") ignores sibling lib.cjs', async () => {
     using dir = tempDir("resolve-dot-dir-cjs", {

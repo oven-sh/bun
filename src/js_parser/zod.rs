@@ -1223,6 +1223,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let Some(keys) = self.zod_true_mask_keys(*arg) else {
                         return self.zod_opaque_or_bail(args);
                     };
+                    // zod throws Unrecognized key from its lazy shape getter on first parse; defer so it does.
+                    if !keys.iter().all(|m| props.iter().any(|(k, _)| k == m)) {
+                        return self.zod_opaque_or_bail(args);
+                    }
                     let picked: Vec<(String, Ir)> = props
                         .into_iter()
                         .filter(|(k, _)| {
@@ -1246,6 +1250,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         },
                         None => None,
                     };
+                    if let Some(keys) = &mask {
+                        if !keys.iter().all(|m| props.iter().any(|(k, _)| k == m)) {
+                            return self.zod_opaque_or_bail(args);
+                        }
+                    }
                     let wrapped: Vec<(String, Ir)> = props
                         .into_iter()
                         .map(|(k, ir)| {
@@ -1280,6 +1289,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         },
                         None => None,
                     };
+                    if let Some(keys) = &mask {
+                        if !keys.iter().all(|m| props.iter().any(|(k, _)| k == m)) {
+                            return self.zod_opaque_or_bail(args);
+                        }
+                    }
                     let wrapped: Vec<(String, Ir)> = props
                         .into_iter()
                         .map(|(k, ir)| {

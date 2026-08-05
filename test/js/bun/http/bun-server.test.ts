@@ -1108,12 +1108,18 @@ test("request on a connection surviving graceful stop() never reaches a collecte
   // could reuse the swept handler cell and run AS the fetch handler (wrong
   // bodies, "Expected a Response object, but received ...", or a swept-cell
   // call that crashes outright under ASAN).
+  //
+  // Rounds alternate between a plain `fetch` handler and a `routes:` server
+  // with a param route: the route dispatch path reads the collected wrapper's
+  // ServerRouteList cell too (paramsObjectForRoute on a swept cell), so both
+  // trampolines are driven.
   const dir = tempDirWithFiles("stop-keepalive-gc", {
     "churn-fixture.js": `
       // Run at least MIN_ROUNDS rounds and at least MIN_MS of wall time (debug
       // builds hit the round floor, release builds the time floor), hard-capped
-      // so the pass case stays bounded on any build speed.
-      const MIN_ROUNDS = 30, MAX_ROUNDS = 400, MIN_MS = 8000, MAX_MS = 45000;
+      // so the pass case stays bounded on any build speed. The floor is 40
+      // rounds so each of the two server kinds gets at least 20.
+      const MIN_ROUNDS = 40, MAX_ROUNDS = 400, MIN_MS = 8000, MAX_MS = 45000;
       let sink;
       function churn() {
         let a = [];
@@ -1132,19 +1138,28 @@ test("request on a connection surviving graceful stop() never reaches a collecte
         if (round > MAX_ROUNDS || elapsed > MAX_MS) break;
         if (round > MIN_ROUNDS && elapsed > MIN_MS) break;
         const tag = round;
-        let server = Bun.serve({
-          port: 0,
-          idleTimeout: 60,
-          fetch() { return new Response("ok " + tag); },
-        });
-        const url = "http://127.0.0.1:" + server.port + "/";
+        const kind = round % 2 ? "fetch" : "routes";
+        let server =
+          kind === "fetch"
+            ? Bun.serve({
+                port: 0,
+                idleTimeout: 60,
+                fetch() { return new Response("ok " + tag); },
+              })
+            : Bun.serve({
+                port: 0,
+                idleTimeout: 60,
+                routes: { "/r/:id": req => new Response("ok " + tag + " " + req.params.id) },
+                fetch() { return new Response("ok " + tag + " fallback"); },
+              });
+        const url = "http://127.0.0.1:" + server.port + (kind === "fetch" ? "/" : "/r/7");
         fr.register(server, url);
         // Two pooled keep-alive connections that outlive the server binding.
         await Promise.all([1, 2].map(() => fetch(url).then(r => r.text())));
         await new Promise(r => setImmediate(r));
         server.stop(); // graceful: pooled connections stay open
         server = null;
-        urls.push(url);
+        urls.push({ u: url, kind });
         if (urls.length > 6) urls.shift();
         churn();
         Bun.gc(false);
@@ -1154,20 +1169,20 @@ test("request on a connection surviving graceful stop() never reaches a collecte
         for (let i = 0; i < 3; i++) decoys.push(Bun.serve({ port: 0, fetch() { return new Response("decoy"); } }));
         churn();
         const rs = await Promise.all(
-          urls.map(u => {
+          urls.map(({ u, kind }) => {
             const wasCollected = dead.has(u);
             return fetch(u).then(
-              async r => ({ u, wasCollected, status: r.status, body: await r.text() }),
-              () => ({ u, wasCollected, status: 0, body: "" }),
+              async r => ({ kind, wasCollected, status: r.status, body: await r.text() }),
+              () => ({ kind, wasCollected, status: 0, body: "" }),
             );
           }),
         );
         for (const d of decoys) d.stop(true);
-        for (const { status, body, wasCollected } of rs) {
+        for (const { kind, status, body, wasCollected } of rs) {
           if (status === 200 && !body.startsWith("ok ")) {
-            fails.push("round " + round + ": wrong body " + JSON.stringify(body.slice(0, 16)));
+            fails.push(kind + " round " + round + ": wrong body " + JSON.stringify(body.slice(0, 16)));
           } else if (status === 200 && wasCollected) {
-            fails.push("round " + round + ": collected server answered");
+            fails.push(kind + " round " + round + ": collected server answered");
           }
         }
       }

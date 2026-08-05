@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
 import { isASAN, isDebug } from "harness";
 
-const asanIsSlowMultiplier = isASAN ? 0.2 : 1;
-const count = Math.floor(10000 * asanIsSlowMultiplier);
+// Debug and ASAN builds are much slower than release, so scale the workload
+// down on the same predicate the timeouts below use.
+const slowBuildMultiplier = isDebug || isASAN ? 0.2 : 1;
+const count = Math.floor(10000 * slowBuildMultiplier);
 
 test(
   `load the same file ${count} times`,

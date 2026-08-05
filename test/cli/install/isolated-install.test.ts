@@ -2556,9 +2556,7 @@ describe("store layout contract", () => {
       join("..", "..", "..", "@types+is-number@1.0.0", "node_modules", "@types", "is-number"),
     );
     expect(
-      readlinkSync(
-        join(bun, "dep-with-peer@file+vendor+dep-with-peer+41721fadd4146e10", "node_modules", "local-pkg"),
-      ),
+      readlinkSync(join(bun, "dep-with-peer@file+vendor+dep-with-peer+41721fadd4146e10", "node_modules", "local-pkg")),
     ).toBe(join("..", "..", "local-pkg@file+vendor+local-pkg", "node_modules", "local-pkg"));
 
     // The project's own node_modules is the root entry: a relative symlink per
@@ -2775,7 +2773,9 @@ describe("store layout contract", () => {
     const globalPeerTarget = readlinkSync(
       join(bun, "peer-deps-fixed@1.0.0+7347ae2d86f1441a", "node_modules", "no-deps"),
     );
-    expect(globalPeerTarget).toMatch(/^\.\.[\/\\]\.\.[\/\\]no-deps@1\.0\.0-[0-9a-f]{16}[\/\\]node_modules[\/\\]no-deps$/);
+    expect(globalPeerTarget).toMatch(
+      /^\.\.[\/\\]\.\.[\/\\]no-deps@1\.0\.0-[0-9a-f]{16}[\/\\]node_modules[\/\\]no-deps$/,
+    );
     expect(withoutEntryHash(globalPeerTarget)).toBe(join("..", "..", "no-deps@1.0.0", "node_modules", "no-deps"));
 
     // The project side is unchanged: root links still go through the

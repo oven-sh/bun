@@ -31,16 +31,20 @@ test(
     Bun.gc(true);
     Bun.unsafe.gcAggressionLevel(prev);
   },
-  isDebug || isASAN ? 20_000 : 5000,
+  isDebug || isASAN ? 60_000 : 5000,
 );
 
-test(`load the same empty JS file ${count} times`, async () => {
-  const prev = Bun.unsafe.gcAggressionLevel();
-  Bun.unsafe.gcAggressionLevel(0);
-  for (let i = 0; i < count; i++) {
-    const { default: obj } = await import("./load-same-empty-js-file-a-lot.js?i=" + i);
-    expect(obj).toEqual({});
-  }
-  Bun.gc(true);
-  Bun.unsafe.gcAggressionLevel(prev);
-});
+test(
+  `load the same empty JS file ${count} times`,
+  async () => {
+    const prev = Bun.unsafe.gcAggressionLevel();
+    Bun.unsafe.gcAggressionLevel(0);
+    for (let i = 0; i < count; i++) {
+      const { default: obj } = await import("./load-same-empty-js-file-a-lot.js?i=" + i);
+      expect(obj).toEqual({});
+    }
+    Bun.gc(true);
+    Bun.unsafe.gcAggressionLevel(prev);
+  },
+  isDebug || isASAN ? 60_000 : 5000,
+);

@@ -1748,11 +1748,9 @@ mod draft {
         std::panic::set_hook(Box::new(rust_panic_hook));
     }
 
-    /// Printed instead of "This indicates a bug in Bun" when a crash happened
-    /// while the system could not create more threads. WTF's `Thread::create`
-    /// release-asserts when `pthread_create` fails (e.g. JSC GC helper threads
-    /// under a low `RLIMIT_NPROC` or container pids limit), and bun's own
-    /// required thread spawns panic, so this is the message for both.
+    /// Printed instead of "This indicates a bug in Bun" when the crash
+    /// happened while the system could not create more threads (low
+    /// `RLIMIT_NPROC` or container pids limit).
     const THREAD_LIMIT_MESSAGE: &[u8] =
         b"Bun was unable to create a new thread: the system's thread limit was reached.\n\
         \n\
@@ -1760,9 +1758,9 @@ mod draft {
         (for example `ulimit -u`) or reduce concurrency. In containers, the pids\n\
         limit (for example `docker run --pids-limit`) may also need to be raised.\n\n";
 
-    /// Best-effort probe for thread exhaustion. By the time the crash handler
-    /// runs, the failed `pthread_create` is long gone; the only evidence left
-    /// is that spawning a thread still fails with `EAGAIN`.
+    /// Best-effort probe for thread exhaustion: the `pthread_create` failure
+    /// that caused the crash is gone, but a fresh spawn still failing with
+    /// `EAGAIN` means the limit is still hit.
     #[cfg(unix)]
     fn is_thread_limit_reached() -> bool {
         extern "C" fn probe_main(_: *mut core::ffi::c_void) -> *mut core::ffi::c_void {

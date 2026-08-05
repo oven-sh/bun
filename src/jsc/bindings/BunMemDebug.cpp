@@ -735,6 +735,30 @@ static void dumpDirtyMap(JSC::VM& vm)
 #endif
 }
 
+// Live sampled malloc blocks allocated after restore (outside every image range), with their allocation stacks -> TSV for owners3.ts-style bucketing.
+static void dumpNewPayload(JSC::VM& vm)
+{
+    JSC::JSLockHolder lock(vm);
+    vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+    mi_collect(true);
+    char path[512]; snprintf(path, sizeof path, "%s/new-payload.%d.tsv", s_dir ? s_dir : "/tmp", getpid());
+    struct Ctx { FILE* f; size_t n, bytes; }; Ctx ctx { fopen(path, "w"), 0, 0 };
+    if (!ctx.f) return;
+    static char obuf[1 << 20]; setvbuf(ctx.f, obuf, _IOFBF, sizeof obuf);
+    mi_prof_visit_live([](uintptr_t addr, size_t size, const uintptr_t* frames, uint8_t nframes, void* arg) -> bool {
+        Ctx* c = static_cast<Ctx*>(arg);
+        auto it = std::upper_bound(s_frozenRanges.begin(), s_frozenRanges.end(), std::make_pair(addr, UINTPTR_MAX));
+        if (it != s_frozenRanges.begin() && addr < std::prev(it)->second) return true; // image block
+        c->n++; c->bytes += size;
+        fprintf(c->f, "%zu\t1\t0\t", size); // same columns as payload-owners.tsv (size, changedWords, firstOff, frames)
+        for (uint8_t k = 0; k < nframes && k < 14; k++) fprintf(c->f, "%s0x%lx", k ? ";" : "", (unsigned long)frames[k]);
+        fprintf(c->f, "\n");
+        return true;
+    }, &ctx);
+    fclose(ctx.f);
+    fprintf(stderr, "[newpayload] %zu live sampled post-restore blocks (each ~%s bytes of allocation volume) -> %s\n", ctx.n, getenv("MIMALLOC_PROF_SAMPLE_RATE") ? getenv("MIMALLOC_PROF_SAMPLE_RATE") : "?", path);
+}
+
 // Census of cells allocated after the image was made (mortal blocks + non-immortal precise allocations), by class.
 static void dumpNewCells(JSC::VM& vm)
 {
@@ -1212,6 +1236,7 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
         else if (!strncmp(buf, "imagedump", 9)) req = 8;
         else if (!strncmp(buf, "trapreport", 10)) req = 9;
         else if (!strncmp(buf, "newcells", 8)) req = 10;
+        else if (!strncmp(buf, "newpayload", 10)) req = 11;
         else if (!strncmp(buf, "shrink", 6)) req = 3;
         else if (!strncmp(buf, "gc", 2)) req = 2;
         else req = 1;
@@ -1237,6 +1262,7 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
     }
     if (req == 9) { imageTrapReport(); return; }
     if (req == 10) { dumpNewCells(*vm); return; }
+    if (req == 11) { dumpNewPayload(*vm); return; }
     if (req == 8) {
         Bun__requestSnapshot(vm, getenv("BUN_IMAGE_OUT") ? getenv("BUN_IMAGE_OUT") : "/tmp/bun.img"); // unwinds JS via termination; the run loop takes it at top level and exits
         return;

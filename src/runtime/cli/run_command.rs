@@ -1810,8 +1810,9 @@ impl RunCommand {
     pub(crate) fn bun_node_file_utf8() -> crate::Result<&'static ZStr> {
         #[cfg(not(windows))]
         {
-            const BUN_NODE_DIR_Z: &str = const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0");
-            Ok(ZStr::from_static(BUN_NODE_DIR_Z.as_bytes()))
+            const BUN_NODE_FILE_Z: &str =
+                const_format::concatcp!(RunCommand::BUN_NODE_DIR, "/node\0");
+            Ok(ZStr::from_static(BUN_NODE_FILE_Z.as_bytes()))
         }
         #[cfg(windows)]
         {
@@ -1835,15 +1836,8 @@ impl RunCommand {
                 &temp_path_buffer[..len as usize],
             );
 
-            const FILE_NAME: &str = const_format::concatcp!(
-                "bun-node",
-                if Environment::GIT_SHA_SHORT.len() > 0 {
-                    const_format::concatcp!("-", Environment::GIT_SHA_SHORT)
-                } else {
-                    ""
-                },
-                "\\node.exe"
-            );
+            const FILE_NAME: &str =
+                const_format::concatcp!(bun_install::RunCommand::BUN_NODE_DIR_NAME, "\\node.exe");
             let conv_len = converted.len();
             let total = conv_len + FILE_NAME.len();
             target_path_buffer[conv_len..total].copy_from_slice(FILE_NAME.as_bytes());
@@ -1941,18 +1935,18 @@ impl RunCommand {
         let bun_node_exe = Self::bun_node_file_utf8()?;
         let bun_node_dir_win =
             bun_paths::dirname(bun_node_exe.as_bytes()).ok_or(crate::Error::FailedToGetTempPath)?;
-        let found_node = env_loader
-            .load_node_js_config(
-                bun_paths::fs::FileSystem::instance(),
-                if force_using_bun {
-                    bun_node_exe.as_bytes()
-                } else {
-                    b""
-                },
-            )
-            .unwrap_or(false);
+        let found_node = !force_using_bun
+            && env_loader
+                .load_node_js_config(bun_paths::fs::FileSystem::instance(), b"")
+                .unwrap_or(false);
 
-        let mut needs_to_force_bun = force_using_bun || !found_node;
+        // Our own shim in `NODE` (written by a prior --filter iteration) is not a real node.
+        let found_real_node = found_node
+            && env_loader
+                .get(b"NODE")
+                .is_some_and(|n| n != bun_node_exe.as_bytes());
+
+        let mut needs_to_force_bun = force_using_bun || !found_real_node;
         let mut optional_bun_self_path: &[u8] = b"";
 
         let mut new_path_len: usize = path.len() + 2;
@@ -1994,7 +1988,8 @@ impl RunCommand {
                 ),
             }
 
-            if !force_using_bun {
+            // Non-empty <=> the shim dir passed the ownership check and was prepended.
+            if !new_path.is_empty() {
                 let env_mut = this_transpiler.env_mut();
                 env_mut
                     .map
@@ -2004,10 +1999,12 @@ impl RunCommand {
                     .map
                     .put(b"npm_node_execpath", bun_node_exe.as_bytes())
                     .unwrap_or_oom();
-                env_mut
-                    .map
-                    .put(b"npm_execpath", optional_bun_self_path)
-                    .unwrap_or_oom();
+                if !force_using_bun && !optional_bun_self_path.is_empty() {
+                    env_mut
+                        .map
+                        .put(b"npm_execpath", optional_bun_self_path)
+                        .unwrap_or_oom();
+                }
             }
 
             needs_to_force_bun = false;
@@ -2047,10 +2044,20 @@ impl RunCommand {
     fn basename_or_bun(str: &[u8]) -> &[u8] {
         // The full path is not used here, because on windows it is dependant on the
         // username. Before windows we checked bun_node_dir, but this is not allowed on Windows.
-        let suffix_posix =
-            const_format::concatcp!("/bun-node/node", std::env::consts::EXE_SUFFIX).as_bytes();
-        let suffix_win =
-            const_format::concatcp!("\\bun-node\\node", std::env::consts::EXE_SUFFIX).as_bytes();
+        let suffix_posix = const_format::concatcp!(
+            "/",
+            bun_install::RunCommand::BUN_NODE_DIR_NAME,
+            "/node",
+            std::env::consts::EXE_SUFFIX
+        )
+        .as_bytes();
+        let suffix_win = const_format::concatcp!(
+            "\\",
+            bun_install::RunCommand::BUN_NODE_DIR_NAME,
+            "\\node",
+            std::env::consts::EXE_SUFFIX
+        )
+        .as_bytes();
         if str.ends_with(suffix_posix) || (cfg!(windows) && str.ends_with(suffix_win)) {
             return b"bun";
         }

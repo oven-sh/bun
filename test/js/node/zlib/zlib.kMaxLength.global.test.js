@@ -15,27 +15,19 @@ const data = {
   unzip: ["1f8b08000000000000034b4c1c5800008c362bf180000000", "unzip", "unzipSync"],
 };
 
-async function expectFixturePasses(fnName, encodedHex, mode) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), fixture, fnName, encodedHex, mode],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout).toBe("ok\n");
-  expect(exitCode).toBe(0);
-}
-
 for (const method in data) {
   const [encodedHex, asyncName, syncName] = data[method];
 
-  it.concurrent(`decompress synchronous ${method}`, async () => {
-    await expectFixturePasses(syncName, encodedHex, "sync");
-  });
-
-  it.concurrent(`decompress asynchronous ${method}`, async () => {
-    await expectFixturePasses(asyncName, encodedHex, "async");
+  it.concurrent(`decompress ${method} beyond kMaxLength throws RangeError (sync and async)`, async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), fixture, encodedHex, asyncName, syncName],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
   });
 }

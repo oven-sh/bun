@@ -7,21 +7,18 @@ const assert = require("node:assert");
 const util = require("node:util");
 const zlib = require("node:zlib");
 
-const [fnName, encodedHex, mode] = process.argv.slice(2);
+const [encodedHex, asyncName, syncName] = process.argv.slice(2);
 const encoded = Buffer.from(encodedHex, "hex");
 
-if (mode === "sync") {
-  assert.throws(() => zlib[fnName](encoded), RangeError);
-  console.log("ok");
-} else {
-  util.promisify(zlib[fnName])(encoded).then(
-    () => {
-      console.error(`expected ${fnName} to reject`);
-      process.exit(1);
-    },
-    err => {
-      assert.ok(err instanceof RangeError, `expected RangeError, got ${err}`);
-      console.log("ok");
-    },
-  );
-}
+assert.throws(() => zlib[syncName](encoded), RangeError, `${syncName} should throw RangeError`);
+
+util.promisify(zlib[asyncName])(encoded).then(
+  () => {
+    console.error(`expected ${asyncName} to reject`);
+    process.exit(1);
+  },
+  err => {
+    assert.ok(err instanceof RangeError, `expected ${asyncName} to reject with RangeError, got ${err}`);
+    console.log("ok");
+  },
+);

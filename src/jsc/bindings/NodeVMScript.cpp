@@ -607,10 +607,12 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
     JSValue contextArg = args.at(0);
     NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, contextArg, true);
     RETURN_IF_EXCEPTION(scope, {});
-    JSObject* context = asObject(contextArg);
     ASSERT(nodeVmGlobalObject != nullptr);
 
-    RELEASE_AND_RETURN(scope, runInContext(nodeVmGlobalObject, script, context, args.at(1)));
+    // Use the sandbox registered at createContext time: contextArg may be this
+    // global's own proxy, which as m_sandbox makes getOwnPropertySlot recurse
+    // into itself.
+    RELEASE_AND_RETURN(scope, runInContext(nodeVmGlobalObject, script, nodeVmGlobalObject->contextifiedObject(), args.at(1)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, CallFrame* callFrame))

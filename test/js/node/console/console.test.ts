@@ -63,6 +63,50 @@ describe("console.Console", () => {
     expect(await outValue()).toBe("hello world!\n");
     expect(await errValue()).toBe("uh oh!\n");
   });
+
+  describe("table", () => {
+    test("pads cells on the right", async () => {
+      const [stream, value] = writable();
+      const c = new Console({ stdout: stream, stderr: stream, colorMode: false });
+      c.table([
+        { aaaaa: 1, b: "x" },
+        { aaaaa: 22222, c: true },
+      ]);
+      c.table({ a: 1, bbbb: "two" });
+      stream.end();
+      expect(await value()).toMatchInlineSnapshot(`
+        "┌─────────┬───────┬─────┬──────┐
+        │ (index) │ aaaaa │ b   │ c    │
+        ├─────────┼───────┼─────┼──────┤
+        │ 0       │ 1     │ 'x' │      │
+        │ 1       │ 22222 │     │ true │
+        └─────────┴───────┴─────┴──────┘
+        ┌─────────┬────────┐
+        │ (index) │ Values │
+        ├─────────┼────────┤
+        │ a       │ 1      │
+        │ bbbb    │ 'two'  │
+        └─────────┴────────┘
+        "
+      `);
+    });
+
+    test("pads by visible width, not string length", async () => {
+      const [stream, value] = writable();
+      const c = new Console({ stdout: stream, stderr: stream, colorMode: false });
+      c.table([{ name: "日本語" }, { name: "ab" }]);
+      stream.end();
+      expect(await value()).toMatchInlineSnapshot(`
+        "┌─────────┬──────────┐
+        │ (index) │ name     │
+        ├─────────┼──────────┤
+        │ 0       │ '日本語' │
+        │ 1       │ 'ab'     │
+        └─────────┴──────────┘
+        "
+      `);
+    });
+  });
 });
 
 test("console._stdout", () => {

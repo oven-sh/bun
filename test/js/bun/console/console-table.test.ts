@@ -363,3 +363,38 @@ console.log("calls=" + calls);`,
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: box("1") + "calls=1\n", stderr: "", exitCode: 0 });
   });
 });
+
+// Every line of the table frame must carry the current console.group indent,
+// matching Node. Previously only the cell-value formatter received the indent,
+// so the frame rendered at column 0 while sibling console.log lines indented.
+test("console.table inside console.group indents every line", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `console.table([{ a: 0 }]);
+console.group("G1");
+console.log("marker");
+console.table([{ a: 1 }, { a: 2 }]);
+console.group("G2");
+console.table([{ a: 3 }]);
+console.groupEnd();
+console.groupEnd();
+console.table([{ a: 4 }]);`,
+    ],
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const box = (indent: string, vals: number[]) =>
+    ["┌───┬───┐", "│   │ a │", "├───┼───┤", ...vals.map((v, i) => `│ ${i} │ ${v} │`), "└───┴───┘"]
+      .map(l => indent + l + "\n")
+      .join("");
+
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: box("", [0]) + "G1\n" + "  marker\n" + box("  ", [1, 2]) + "  G2\n" + box("    ", [3]) + box("", [4]),
+    stderr: "",
+    exitCode: 0,
+  });
+});

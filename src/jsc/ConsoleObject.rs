@@ -500,7 +500,7 @@ fn message_with_type_and_level_(
                 JSValue::UNDEFINED
             };
             let mut table_printer = TablePrinter::init(global, level, tabular_data, properties)?;
-            table_printer.value_formatter.indent += u32::from(default_indent);
+            table_printer.group_indent = u32::from(default_indent);
 
             if enable_colors {
                 let _ = table_printer.print_table::<true>(writer);
@@ -568,6 +568,8 @@ pub struct TablePrinter<'a> {
     /// Per-cell value formatter. Public so callers (e.g. `Bun.inspect.table`)
     /// can override `depth` / `ordered_properties` / `single_line` after init.
     pub value_formatter: Formatter<'a>,
+    /// `console.group` indent level, written as a prefix on every emitted line.
+    pub group_indent: u32,
 
     tabular_data: JSValue,
     properties: JSValue,
@@ -671,6 +673,7 @@ impl<'a> TablePrinter<'a> {
             properties,
             is_iterable: tabular_data.is_iterable(global_object)?,
             jstype: tabular_data.js_type(),
+            group_indent: 0,
             value_formatter: {
                 // `Formatter` has a `Drop` impl, so struct-update
                 // from a temporary is rejected (E0509).
@@ -830,6 +833,10 @@ impl<'a> TablePrinter<'a> {
         Ok(())
     }
 
+    fn write_group_indent(&self, writer: &mut dyn bun_io::Write) {
+        formatter::write_indent_n(self.group_indent, writer).ok();
+    }
+
     fn print_row(
         &self,
         writer: &mut dyn bun_io::Write,
@@ -837,6 +844,7 @@ impl<'a> TablePrinter<'a> {
         row: &CollectedRow,
         cell_text: &[u8],
     ) {
+        self.write_group_indent(writer);
         writer.write_all("│".as_bytes()).ok();
         {
             let needed = columns[0].width.saturating_sub(row.key.width());
@@ -1027,6 +1035,7 @@ impl<'a> TablePrinter<'a> {
                 );
             }
 
+            self.write_group_indent(writer);
             writer.write_all("┌".as_bytes()).ok();
             for (i, col) in columns.iter().enumerate() {
                 if i > 0 {
@@ -1040,7 +1049,9 @@ impl<'a> TablePrinter<'a> {
                 .ok();
             }
 
-            writer.write_all("┐\n│".as_bytes()).ok();
+            writer.write_all("┐\n".as_bytes()).ok();
+            self.write_group_indent(writer);
+            writer.write_all("│".as_bytes()).ok();
 
             for (i, col) in columns.iter().enumerate() {
                 if i > 0 {
@@ -1059,7 +1070,9 @@ impl<'a> TablePrinter<'a> {
                 writer.splat_byte_all(b' ', needed + PADDING as usize).ok();
             }
 
-            writer.write_all("│\n├".as_bytes()).ok();
+            writer.write_all("│\n".as_bytes()).ok();
+            self.write_group_indent(writer);
+            writer.write_all("├".as_bytes()).ok();
             for (i, col) in columns.iter().enumerate() {
                 if i > 0 {
                     writer.write_all("┼".as_bytes()).ok();
@@ -1081,6 +1094,7 @@ impl<'a> TablePrinter<'a> {
 
         // print the table bottom border
         {
+            self.write_group_indent(writer);
             writer.write_all("└".as_bytes()).ok();
             Self::write_string_n_times(
                 writer,

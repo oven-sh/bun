@@ -2502,6 +2502,38 @@ describe("hoist", () => {
     expect(() => fromADep.resolve("no-deps/package.json")).toThrow(
       expect.objectContaining({ code: "MODULE_NOT_FOUND" }),
     );
+
+    // packages linked at the project root (here: a direct dependency) remain
+    // reachable because `.bun` lives inside node_modules, matching pnpm
+    expect(fromADep.resolve("two-range-deps/package.json")).toEndWith(
+      join(".bun", "two-range-deps@1.0.0", "node_modules", "two-range-deps", "package.json"),
+    );
+  });
+
+  test("hoist = false keeps publicHoistPattern working", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", hoist: false, publicHoistPattern: "*types*" },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-public",
+        dependencies: {
+          "two-range-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    // the transitive @types/is-number is still publicly hoisted to the root
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "@types", "two-range-deps"]);
+    expect(readlinkSync(join(packageDir, "node_modules", "@types", "is-number"))).toBe(
+      join("..", ".bun", "@types+is-number@2.0.0", "node_modules", "@types", "is-number"),
+    );
+    // while the hidden fallback is not created
+    expect(existsSync(join(packageDir, "node_modules", ".bun", "node_modules"))).toBeFalse();
   });
 
   test("hoist = false removes a stale fallback directory from a previous install", async () => {

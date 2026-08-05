@@ -126,7 +126,7 @@ The directory name includes both the package version and its peer dependency ver
 
 ### Strict resolution with `install.hoist = false`
 
-By default, Bun creates `node_modules/.bun/node_modules`, a fallback directory with a symlink to every installed package. Because it is an ancestor of every store entry, a package in the store can resolve dependencies it never declared. Set [`install.hoist = false`](/runtime/bunfig#install-hoist) (or `hoist=false` in `.npmrc`, matching pnpm) to skip creating this directory, so undeclared imports fail instead of depending on what else happens to be installed:
+By default, Bun creates `node_modules/.bun/node_modules`, a fallback directory with a symlink to every installed package. Because it is an ancestor of every store entry, a package in the store can resolve dependencies it never declared. Set [`install.hoist = false`](/runtime/bunfig#install-hoist) (or `hoist=false` in `.npmrc`, matching pnpm) to skip creating this directory, so undeclared imports fail instead of depending on what else happens to be installed. One caveat, shared with pnpm: the root `node_modules` also sits above the store, so packages linked there (your direct dependencies, `publicHoistPattern` matches, and workspace packages) stay resolvable from any store package:
 
 ```toml bunfig.toml icon="settings"
 [install]

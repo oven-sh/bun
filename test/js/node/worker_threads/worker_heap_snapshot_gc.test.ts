@@ -19,7 +19,8 @@ import { join } from "node:path";
 // in 18k iterations, vs ~60% per process before #35356). With no scheduling
 // coincidence left to amplify, the loop is kept as a functional check of the
 // cross-VM round-trip under concurrent processes and explicit parent GCs:
-// promises settle, streams drain intact, workers terminate cleanly.
+// promises settle, every stream delivers a non-empty payload (parsed as JSON
+// once per process), workers terminate cleanly.
 //
 // The ASAN lane keeps a larger iteration count: ASAN can catch ordinary
 // memory bugs in the round-trip/stream machinery that the plain-release
@@ -63,5 +64,9 @@ test.skipIf(isWindows || isIntelMacOS)(
       });
     }
   },
-  isDebug || isASAN ? 60_000 : 120_000,
+  // One explicit ceiling for every lane: the debug/ASAN run needs more than
+  // the local 5s default (~20s), and a regression of the guarded race can
+  // present as a livelock, so the timeout is the time-to-red for hangs. The
+  // old 120s release arm was sized for the 15x300 workload.
+  60_000,
 );

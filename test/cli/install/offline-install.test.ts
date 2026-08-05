@@ -40,7 +40,14 @@ async function runInstall(dir: string, args: string[] = [], env: Record<string, 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "install", ...args],
     cwd: dir,
-    env: { ...bunEnv, ...env },
+    env: {
+      ...bunEnv,
+      // The CI runner exports a shared BUN_INSTALL_CACHE_DIR, which takes
+      // precedence over the bunfig cache path; pin the cache into the fixture
+      // so cold-cache setups are actually cold.
+      BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache"),
+      ...env,
+    },
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
@@ -51,9 +58,10 @@ async function runInstall(dir: string, args: string[] = [], env: Record<string, 
 
 async function seed(fixture: Fixture, packageJson: object) {
   await write(fixture.packageJson, JSON.stringify(packageJson));
-  const { err, exitCode } = await runInstall(fixture.packageDir);
-  expect(err).not.toContain("error:");
-  expect(exitCode).toBe(0);
+  const { out, err, exitCode } = await runInstall(fixture.packageDir);
+  if (exitCode !== 0 || err.includes("error:")) {
+    throw new Error(`seed install failed (exit ${exitCode})\nstderr: ${err}\nstdout: ${out}`);
+  }
 }
 
 /** Copy a published tarball from verdaccio's storage into `<dir>/tarballs`

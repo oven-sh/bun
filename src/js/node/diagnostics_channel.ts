@@ -255,6 +255,14 @@ class TracingChannel {
   asyncEnd;
   error;
 
+  get hasSubscribers() {
+    return this.start.hasSubscribers ||
+           this.end.hasSubscribers ||
+           this.asyncStart.hasSubscribers ||
+           this.asyncEnd.hasSubscribers ||
+           this.error.hasSubscribers;
+  }
+
   constructor(nameOrChannels) {
     if (typeof nameOrChannels === "string") {
       this.start = channel(`tracing:${nameOrChannels}:start`);

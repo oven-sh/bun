@@ -2611,15 +2611,15 @@ impl Package<u64> {
                         .get_or_put(semver::string::Builder::string_hash(&entry.name)
                             as TruncatedPackageNameHash)?;
                     if gop.found_existing {
-                        // this path does alot of extra work to format the error message
-                        // but this is ok because the install is going to fail anyways, so this
-                        // has zero effect on the happy path.
-                        let mut cwd_buf = PathBuffer::uninit();
-                        // `bun_sys::getcwd` returns the byte length — slice
-                        // the buffer ourselves.
-                        let cwd_len = bun_sys::getcwd(&mut cwd_buf.0[..])?;
-                        let cwd: &[u8] = &cwd_buf.0[..cwd_len];
-
+                        // `seen_workspace_names` is keyed by a TRUNCATED (u32)
+                        // name hash, so a bucket hit means either a true
+                        // duplicate workspace name or a u32 collision between
+                        // two distinct names (oven-sh/bun#36386). Confirm with
+                        // a real string comparison before erroring: `entry` is
+                        // itself one of `workspace_names.values()`, so a true
+                        // duplicate exists iff at least two entries (self
+                        // included) carry an equal name. The count doubles as
+                        // `num_notes` for the error below, exactly as before.
                         let num_notes = 'count: {
                             let mut i: usize = 0;
                             for value in workspace_names.values() {
@@ -2629,81 +2629,108 @@ impl Package<u64> {
                             }
                             break 'count i;
                         };
-                        let notes = 'notes: {
-                            let mut notes: Vec<bun_ast::Data> = Vec::with_capacity(num_notes);
-                            let mut i: usize = 0;
-                            for (value, note_path) in workspace_names
-                                .values()
-                                .iter()
-                                .zip(workspace_names.keys().iter())
-                            {
-                                if note_path.as_ptr() == path_.as_ptr() {
-                                    continue;
+                        if num_notes > 1 {
+                            // this path does alot of extra work to format the error message
+                            // but this is ok because the install is going to fail anyways, so this
+                            // has zero effect on the happy path.
+                            let mut cwd_buf = PathBuffer::uninit();
+                            // `bun_sys::getcwd` returns the byte length — slice
+                            // the buffer ourselves.
+                            let cwd_len = bun_sys::getcwd(&mut cwd_buf.0[..])?;
+                            let cwd: &[u8] = &cwd_buf.0[..cwd_len];
+
+                            let notes = 'notes: {
+                                let mut notes: Vec<bun_ast::Data> = Vec::with_capacity(num_notes);
+                                let mut i: usize = 0;
+                                for (value, note_path) in workspace_names
+                                    .values()
+                                    .iter()
+                                    .zip(workspace_names.keys().iter())
+                                {
+                                    if note_path.as_ptr() == path_.as_ptr() {
+                                        continue;
+                                    }
+                                    if strings::eql_long(&value.name, &entry.name, true) {
+                                        let note_abs_path =
+                                            bun_core::ZBox::from_bytes(
+                                                resolve_path::join_abs_string_z::<
+                                                    path::platform::Auto,
+                                                >(
+                                                    cwd, &[note_path, b"package.json"]
+                                                )
+                                                .as_bytes(),
+                                            );
+
+                                        let note_src = match bun_ast::to_source(
+                                            &note_abs_path,
+                                            Default::default(),
+                                        ) {
+                                            Ok(s) => s,
+                                            Err(_) => bun_ast::Source::init_empty_file(
+                                                note_abs_path.as_bytes(),
+                                            ),
+                                        };
+
+                                        // `Location::init_or_null` borrows `file` from
+                                        // `note_src.path.text`, which itself borrows
+                                        // `note_abs_path`; both drop before the log is
+                                        // printed. `Location::clone` deep-copies `file`
+                                        // into a `Cow::Owned`.
+                                        notes.push(bun_ast::Data {
+                                            text: b"Package name is also declared here"
+                                                .to_vec()
+                                                .into(),
+                                            location: bun_ast::Location::init_or_null(
+                                                Some(&note_src),
+                                                note_src.range_of_string(value.name_loc),
+                                            )
+                                            .as_ref()
+                                            .cloned(),
+                                            ..Default::default()
+                                        });
+                                        i += 1;
+                                    }
                                 }
-                                if strings::eql_long(&value.name, &entry.name, true) {
-                                    let note_abs_path = bun_core::ZBox::from_bytes(
-                                        resolve_path::join_abs_string_z::<path::platform::Auto>(
-                                            cwd,
-                                            &[note_path, b"package.json"],
-                                        )
-                                        .as_bytes(),
-                                    );
+                                notes.truncate(i);
+                                break 'notes notes;
+                            };
 
-                                    let note_src = match bun_ast::to_source(
-                                        &note_abs_path,
-                                        Default::default(),
-                                    ) {
-                                        Ok(s) => s,
-                                        Err(_) => bun_ast::Source::init_empty_file(
-                                            note_abs_path.as_bytes(),
-                                        ),
-                                    };
+                            let abs_path = bun_core::ZBox::from_bytes(
+                                resolve_path::join_abs_string_z::<path::platform::Auto>(
+                                    cwd,
+                                    &[path_, b"package.json"],
+                                )
+                                .as_bytes(),
+                            );
 
-                                    // `Location::init_or_null` borrows `file` from
-                                    // `note_src.path.text`, which itself borrows
-                                    // `note_abs_path`; both drop before the log is
-                                    // printed. `Location::clone` deep-copies `file`
-                                    // into a `Cow::Owned`.
-                                    notes.push(bun_ast::Data {
-                                        text: b"Package name is also declared here".to_vec().into(),
-                                        location: bun_ast::Location::init_or_null(
-                                            Some(&note_src),
-                                            note_src.range_of_string(value.name_loc),
-                                        )
-                                        .as_ref()
-                                        .cloned(),
-                                        ..Default::default()
-                                    });
-                                    i += 1;
-                                }
-                            }
-                            notes.truncate(i);
-                            break 'notes notes;
-                        };
+                            let src = match bun_ast::to_source(&abs_path, Default::default()) {
+                                Ok(s) => s,
+                                Err(_) => bun_ast::Source::init_empty_file(abs_path.as_bytes()),
+                            };
 
-                        let abs_path = bun_core::ZBox::from_bytes(
-                            resolve_path::join_abs_string_z::<path::platform::Auto>(
-                                cwd,
-                                &[path_, b"package.json"],
-                            )
-                            .as_bytes(),
-                        );
-
-                        let src = match bun_ast::to_source(&abs_path, Default::default()) {
-                            Ok(s) => s,
-                            Err(_) => bun_ast::Source::init_empty_file(abs_path.as_bytes()),
-                        };
-
-                        let _ = log.add_range_error_fmt_with_notes(
-                            Some(&src),
-                            src.range_of_string(entry.name_loc),
-                            notes.into(),
-                            format_args!(
-                                "Workspace name \"{}\" already exists",
-                                bstr::BStr::new(&entry.name),
-                            ),
-                        );
-                        return Err(crate::Error::InstallFailed);
+                            let _ = log.add_range_error_fmt_with_notes(
+                                Some(&src),
+                                src.range_of_string(entry.name_loc),
+                                notes.into(),
+                                format_args!(
+                                    "Workspace name \"{}\" already exists",
+                                    bstr::BStr::new(&entry.name),
+                                ),
+                            );
+                            return Err(crate::Error::InstallFailed);
+                        }
+                        // Distinct name whose truncated hash collides with an
+                        // earlier name's bucket: not a duplicate — fall
+                        // through and process this workspace normally. The
+                        // bucket stays in the map (`get_or_put` inserted it
+                        // for its first holder), which is sufficient: the map
+                        // value is `()` and cannot say which name owns the
+                        // bucket, so it only ROUTES names into the string
+                        // scan above — every later name with this truncated
+                        // hash (including a true duplicate of this colliding
+                        // name, or of the first holder) takes this
+                        // `found_existing` path and is judged by that scan,
+                        // the source of truth for duplicates.
                     }
 
                     let external_name = string_builder.append::<ExternalString>(&entry.name);

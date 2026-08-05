@@ -26,10 +26,11 @@ async function makeWorker() {
   return w;
 }
 
-let worker = await makeWorker();
-
 const iters = Number(process.env.ITERS);
-if (!Number.isInteger(iters) || iters <= 0) throw new Error(`invalid ITERS: ${JSON.stringify(process.env.ITERS)}`);
+if (!Number.isSafeInteger(iters) || iters <= 0)
+  throw new Error(`invalid ITERS (expected a positive integer): ${JSON.stringify(process.env.ITERS)}`);
+
+let worker = await makeWorker();
 
 let completed = 0;
 let firstPayloadChecked = false;

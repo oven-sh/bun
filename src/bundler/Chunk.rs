@@ -1423,18 +1423,17 @@ impl CssImportOrder {
         bun_core::write_any_to_hasher(hasher, tag);
         match &self.kind {
             CssImportOrderKind::Layers(layers) => {
+                // Join each layer's parts with "." and NUL-terminate each
+                // layer, so distinct layer lists can't hash identically.
                 for layer in layers.inner().slice() {
                     for (i, layer_name) in layer.v.slice().iter().enumerate() {
-                        let is_last = i == layers.inner().len() as usize - 1;
-                        if is_last {
-                            hasher.update(layer_name);
-                        } else {
-                            hasher.update(layer_name);
+                        if i > 0 {
                             hasher.update(b".");
                         }
+                        hasher.update(layer_name);
                     }
+                    hasher.update(b"\x00");
                 }
-                hasher.update(b"\x00");
             }
             CssImportOrderKind::ExternalPath(path) => hasher.update(path.text),
             // Hash the file's pretty path, not its source index: these hashes

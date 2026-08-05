@@ -1534,7 +1534,7 @@ The guarantee rests on a few properties of the output:
 - **Content-derived hashes.** `[hash]` placeholders in output filenames, artifact `hash` values, and the sourcemap `debugId` are computed from output content, not from the build environment.
 - **Deterministic ordering.** Chunks, sourcemap entries, and the metafile's `inputs` (sorted by path) are emitted in a stable order that does not depend on filesystem layout or parallel scheduling.
 
-Anything the build embeds from the environment is part of the input: `define` values, environment variables inlined via the `env` option, and `banner`/`footer` text all change the output when they change. Two outputs fall outside the guarantee: `--format=cjs` inlines the absolute path of any source file that uses `import.meta.url` (ESM output keeps it symbolic), and executables produced by `--compile` embed the Bun runtime itself. Bytecode artifacts from `--bytecode` are not covered either.
+Anything the build embeds from the environment is part of the input: `define` values, environment variables inlined via the `env` option, and `banner`/`footer` text all change the output when they change. Two outputs fall outside the guarantee: `--format=cjs` inlines the absolute path of any source file that uses `import.meta.url`, `.path`, `.dir`, or `.dirname` (ESM output keeps them symbolic), and executables produced by `--compile` embed the Bun runtime itself. Bytecode artifacts from `--bytecode` are not covered either.
 
 ## Bytecode
 

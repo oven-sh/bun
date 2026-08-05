@@ -372,11 +372,12 @@ it("deserialize rejects a RegExp record whose pattern does not parse", async () 
   expect(exitCode).toBe(0);
 });
 
-it("serialize rejects a CryptoKey created with extractable set to false", async () => {
+it("serialize rejects CryptoKey regardless of extractability", async () => {
   // bun:jsc serialize() (and node:v8 serialize(), which wraps it) hands the raw
-  // structured-clone buffer to the caller, so a key imported with
-  // extractable: false must not be serializable through it. Keys marked
-  // extractable still serialize, and the non-extractable key remains usable.
+  // structured-clone buffer to the caller. Node.js refuses every CryptoKey there;
+  // Bun does the same so raw key material cannot reach a byte sink the caller
+  // stores verbatim. The rejected keys stay usable, and structuredClone (the
+  // in-process clone path) still carries them.
   const script = `
     import { serialize } from "bun:jsc";
     const secret = "THIS-IS-SECRET-KEY-MATERIAL-32B!";
@@ -388,16 +389,6 @@ it("serialize rejects a CryptoKey created with extractable set to false", async 
       false,
       ["sign"],
     );
-    let outcome;
-    try {
-      const bytes = new Uint8Array(serialize(nonExtractable));
-      const text = Array.from(bytes, b => String.fromCharCode(b)).join("");
-      outcome = text.includes(secret) ? "serialized with key material" : "serialized without key material";
-    } catch {
-      outcome = "rejected";
-    }
-    console.log(outcome);
-    // A key the caller marked extractable still serializes.
     const extractable = await crypto.subtle.importKey(
       "raw",
       secretBytes,
@@ -405,10 +396,23 @@ it("serialize rejects a CryptoKey created with extractable set to false", async 
       true,
       ["sign"],
     );
-    console.log(serialize(extractable).byteLength > 0);
-    // The non-extractable key is still usable for its intended purpose.
-    const signature = await crypto.subtle.sign("HMAC", nonExtractable, secretBytes);
-    console.log(signature.byteLength);
+    for (const [label, key] of [["nonExtractable", nonExtractable], ["extractable", extractable]]) {
+      let outcome;
+      try {
+        const bytes = new Uint8Array(serialize(key));
+        const text = Array.from(bytes, b => String.fromCharCode(b)).join("");
+        outcome = text.includes(secret) ? "serialized with key material" : "serialized without key material";
+      } catch (err) {
+        outcome = "rejected " + err.name;
+      }
+      console.log(label, outcome);
+    }
+    // Both keys are still usable for their intended purpose.
+    console.log((await crypto.subtle.sign("HMAC", nonExtractable, secretBytes)).byteLength);
+    console.log((await crypto.subtle.sign("HMAC", extractable, secretBytes)).byteLength);
+    // structuredClone (SerializationForStorage::No) still carries the key.
+    const cloned = structuredClone(extractable);
+    console.log(cloned instanceof CryptoKey, cloned.algorithm.name);
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
@@ -418,78 +422,63 @@ it("serialize rejects a CryptoKey created with extractable set to false", async 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout).toBe("rejected\ntrue\n32\n");
+  expect(stdout).toBe(
+    ["nonExtractable rejected DataCloneError", "extractable rejected DataCloneError", "32", "32", "true HMAC", ""].join(
+      "\n",
+    ),
+  );
   expect(exitCode).toBe(0);
 });
 
-it("deserialize rejects a CryptoKey whose named curve does not match its algorithm", async () => {
-  const script = `
-    import { serialize, deserialize } from "bun:jsc";
-    const { publicKey } = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
-    const bytes = new Uint8Array(serialize(publicKey));
-    const pattern = [5, 22, 1, 32, 0, 0, 0];
-    const offsets = [];
-    for (let i = 0; i + pattern.length <= bytes.length; i++) {
-      if (pattern.every((byte, j) => bytes[i + j] === byte)) offsets.push(i);
-    }
-    console.log(offsets.length);
-    const mutated = bytes.slice();
-    mutated[offsets[0] + 2] = 0;
-    let outcome;
-    try {
-      outcome = deserialize(mutated) instanceof CryptoKey ? "accepted" : "rejected";
-    } catch {
-      outcome = "rejected";
-    }
-    console.log(outcome);
-    const roundTripped = deserialize(bytes);
-    console.log(roundTripped instanceof CryptoKey, roundTripped.algorithm.name);
-  `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
+// serialize() no longer emits CryptoKey bytes, so the deserializer corruption
+// tests run against records captured from a build that predates that gate.
+const frozenEd25519PublicKey = Buffer.from(
+  "DgAAACE4AAAADgAAAAEAAAABAAAAAQAAAAMFFgEgAAAA2D0jBddySeu2kPeQNwjXqXxleqjLRdoeheXsYdbKZO8=",
+  "base64",
+);
+const frozenRsaOaepPublicKey = Buffer.from(
+  "DgAAACEkAQAADgAAAAEAAAABAAAAAQAAAAACAwEAAAAQAAABAADDin23FvsGxGcc2pDpAIBKOU172cD2PwMwFRHXXtU8J/TDv32L+4mkJnpFG5kx5c+L98j0a4XrlqkziylK8ER7tXvt/D+kvUiC0ZevGEWUML2EwSIwr8nAPHM7/Uvbn9sj14QpM0iop8gGhyp/ggZLvNbChp2624EIBiCQUnWEbhx53Y27teJ4zqUKw87X3fQ7nLpbRLcVRVoQk3SreIu0cPcXGDBQf6o5z0+n4iYQgCrtvcCcq8nadxIn5Ffvyas1UZjuvwiaNL34lIYdk37J1owIroxZfXnvWnghAjj55HnJOeGlHJbh0suWOsYnXU2x1mllRhWYNtIOdyizuLX3AwAAAAEAAQ==",
+  "base64",
+);
+
+function indexOfPattern(bytes: Uint8Array, pattern: number[]): number {
+  outer: for (let i = 0; i + pattern.length <= bytes.length; i++) {
+    for (let j = 0; j < pattern.length; j++) if (bytes[i + j] !== pattern[j]) continue outer;
+    return i;
+  }
+  return -1;
+}
+
+it("deserialize rejects a CryptoKey whose named curve does not match its algorithm", () => {
+  const bytes = new Uint8Array(frozenEd25519PublicKey);
+  const offset = indexOfPattern(bytes, [5, 22, 1, 32, 0, 0, 0]);
+  expect(offset).toBeGreaterThanOrEqual(0);
+
+  const roundTripped = deserialize(bytes);
+  expect({ isCryptoKey: roundTripped instanceof CryptoKey, algorithm: roundTripped.algorithm.name }).toEqual({
+    isCryptoKey: true,
+    algorithm: "Ed25519",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({ stdout: "1\nrejected\ntrue Ed25519\n", exitCode: 0 });
+
+  const mutated = bytes.slice();
+  mutated[offset + 2] = 0;
+  expect(() => deserialize(mutated)).toThrow(expect.objectContaining({ name: "TypeError" }));
 });
 
-it("deserialize rejects a CryptoKey whose algorithm does not belong to its key class", async () => {
-  const script = `
-    import { serialize, deserialize } from "bun:jsc";
-    const { publicKey } = await crypto.subtle.generateKey(
-      { name: "RSA-OAEP", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
-      true,
-      ["encrypt", "decrypt"],
-    );
-    const bytes = new Uint8Array(serialize(publicKey));
-    const pattern = [2, 3, 1, 0, 0, 0, 16];
-    const offsets = [];
-    for (let i = 0; i + pattern.length <= bytes.length; i++) {
-      if (pattern.every((byte, j) => bytes[i + j] === byte)) offsets.push(i);
-    }
-    console.log(offsets.length);
-    const mutated = bytes.slice();
-    mutated[offsets[0] + 1] = 20;
-    let outcome;
-    try {
-      outcome = deserialize(mutated) instanceof CryptoKey ? "accepted" : "rejected";
-    } catch {
-      outcome = "rejected";
-    }
-    console.log(outcome);
-    const roundTripped = deserialize(bytes);
-    console.log(roundTripped instanceof CryptoKey, roundTripped.algorithm.name);
-  `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
+it("deserialize rejects a CryptoKey whose algorithm does not belong to its key class", () => {
+  const bytes = new Uint8Array(frozenRsaOaepPublicKey);
+  const offset = indexOfPattern(bytes, [2, 3, 1, 0, 0, 0, 16]);
+  expect(offset).toBeGreaterThanOrEqual(0);
+
+  const roundTripped = deserialize(bytes);
+  expect({ isCryptoKey: roundTripped instanceof CryptoKey, algorithm: roundTripped.algorithm.name }).toEqual({
+    isCryptoKey: true,
+    algorithm: "RSA-OAEP",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({ stdout: "1\nrejected\ntrue RSA-OAEP\n", exitCode: 0 });
+
+  const mutated = bytes.slice();
+  mutated[offset + 1] = 20;
+  expect(() => deserialize(mutated)).toThrow(expect.objectContaining({ name: "TypeError" }));
 });
 
 it("deserialize rejects a CryptoKey record with no key bytes", async () => {
@@ -505,8 +494,10 @@ it("deserialize rejects a CryptoKey record with no key bytes", async () => {
       outcome = "rejected";
     }
     console.log(outcome);
+    // structuredClone is the remaining path that emits a CryptoKey record; it
+    // round-trips so the non-empty decode path is still covered.
     const { publicKey } = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
-    const roundTripped = deserialize(serialize(publicKey));
+    const roundTripped = structuredClone(publicKey);
     console.log(roundTripped instanceof CryptoKey, roundTripped.algorithm.name);
   `;
   await using proc = Bun.spawn({

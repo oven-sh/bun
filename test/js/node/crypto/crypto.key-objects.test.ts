@@ -23,8 +23,10 @@ import {
   verify,
 } from "crypto";
 import fs from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import v8 from "node:v8";
 import { createContext, runInContext, runInThisContext, Script } from "node:vm";
+import { Worker } from "node:worker_threads";
 import path from "path";
 
 function readFile(...args) {
@@ -1800,3 +1802,181 @@ test("ECDSA should work", async () => {
 function randomProp() {
   return "prop" + crypto.randomUUID().replace(/-/g, "");
 }
+
+describe("KeyObject and CryptoKey serialization", () => {
+  const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const secretMaterial = Buffer.from("0123456789abcdef");
+  const secretKey = createSecretKey(secretMaterial);
+
+  // Node.js refuses to emit a KeyObject or CryptoKey into a byte sink the caller
+  // stores verbatim: v8.serialize() throws, and child_process "advanced" IPC turns
+  // the value into a plain {}. structuredClone() and worker postMessage() keep
+  // cloning it. Previously Bun wrote the plaintext key material (PKCS#8 PEM, raw
+  // symmetric secret, raw AES bytes) into the v8.serialize() output and delivered
+  // a live, exportable key to the IPC child.
+  describe.each([
+    ["private", privateKey],
+    ["public", publicKey],
+    ["secret", secretKey],
+  ])("%s KeyObject", (label, key) => {
+    test("v8.serialize() throws DataCloneError", () => {
+      const dataCloneError = expect.objectContaining({ name: "DataCloneError" });
+      let bytes: Buffer | undefined;
+      expect(() => {
+        bytes = v8.serialize(key);
+      }).toThrow(dataCloneError);
+      expect(bytes).toBeUndefined();
+
+      expect(() => v8.serialize({ nested: key })).toThrow(dataCloneError);
+      expect(() => v8.serialize([1, key, 2])).toThrow(dataCloneError);
+    });
+
+    test("structuredClone() still produces a working KeyObject", () => {
+      const cloned = structuredClone(key);
+      expect(cloned).toBeInstanceOf(KeyObject);
+      expect(cloned.type).toBe(label);
+      if (label === "secret") {
+        expect(cloned.export()).toEqual(key.export());
+      } else {
+        expect(cloned.asymmetricKeyType).toBe(key.asymmetricKeyType);
+      }
+    });
+  });
+
+  describe.each([
+    ["extractable", true],
+    ["non-extractable", false],
+  ])("%s CryptoKey", (_label, extractable) => {
+    const keyPromise = crypto.subtle.importKey("raw", secretMaterial, { name: "AES-GCM" }, extractable, ["encrypt"]);
+
+    test("v8.serialize() throws DataCloneError", async () => {
+      const key = await keyPromise;
+      const dataCloneError = expect.objectContaining({ name: "DataCloneError" });
+      let bytes: Buffer | undefined;
+      expect(() => {
+        bytes = v8.serialize(key);
+      }).toThrow(dataCloneError);
+      expect(bytes).toBeUndefined();
+
+      expect(() => v8.serialize({ nested: key })).toThrow(dataCloneError);
+      expect(() => v8.serialize([1, key, 2])).toThrow(dataCloneError);
+    });
+
+    test("structuredClone() still produces a working CryptoKey", async () => {
+      const key = await keyPromise;
+      const cloned = structuredClone(key);
+      expect({
+        ctor: cloned.constructor.name,
+        algorithm: cloned.algorithm.name,
+        extractable: cloned.extractable,
+      }).toEqual({ ctor: "CryptoKey", algorithm: "AES-GCM", extractable });
+    });
+  });
+
+  test.each([
+    ["private KeyObject", () => privateKey, "BEGIN PRIVATE KEY"],
+    ["secret KeyObject", () => secretKey, secretMaterial.toString("latin1")],
+    [
+      "extractable CryptoKey",
+      () => crypto.subtle.importKey("raw", secretMaterial, { name: "AES-GCM" }, true, ["encrypt"]),
+      secretMaterial.toString("latin1"),
+    ],
+  ])("v8.serialize() of a %s does not emit plaintext key material", async (_label, make, marker) => {
+    const key = await make();
+    let out: Buffer | undefined;
+    try {
+      out = v8.serialize(key);
+    } catch {}
+    expect({
+      containsPlaintextMaterial: out ? out.toString("latin1").includes(marker) : false,
+      threw: out === undefined,
+    }).toEqual({ containsPlaintextMaterial: false, threw: true });
+  });
+
+  test.concurrent("child_process advanced IPC delivers {} in place of a KeyObject or CryptoKey", async () => {
+    using dir = tempDir("keyobject-ipc", {
+      "parent.mjs": `
+        import crypto from "node:crypto";
+        import { fork } from "node:child_process";
+        const { privateKey, publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+        const secret = crypto.createSecretKey(Buffer.from("0123456789abcdef"));
+        const aes = await crypto.subtle.importKey(
+          "raw", Buffer.from("0123456789abcdef"), { name: "AES-GCM" }, true, ["encrypt"],
+        );
+        const c = fork("./child.mjs", [], { serialization: "advanced" });
+        c.on("message", m => { console.log(JSON.stringify(m)); c.kill(); });
+        c.send({ priv: privateKey, pub: publicKey, secret, aes, other: 42, nested: { deep: privateKey } });
+      `,
+      "child.mjs": `
+        process.on("message", m => {
+          const describe = v => ({
+            ctor: v?.constructor?.name,
+            keys: Object.keys(v ?? {}),
+            isKeyObject: typeof v?.export === "function",
+          });
+          process.send({
+            priv: describe(m.priv),
+            pub: describe(m.pub),
+            secret: describe(m.secret),
+            aes: describe(m.aes),
+            other: m.other,
+            deep: describe(m.nested.deep),
+          });
+          process.exit(0);
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const empty = { ctor: "Object", keys: [], isKeyObject: false };
+    expect(JSON.parse(stdout)).toEqual({
+      priv: empty,
+      pub: empty,
+      secret: empty,
+      aes: empty,
+      other: 42,
+      deep: empty,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("worker_threads postMessage still carries a KeyObject and CryptoKey", async () => {
+    const aes = await crypto.subtle.importKey("raw", secretMaterial, { name: "AES-GCM" }, true, ["encrypt"]);
+    const w = new Worker(
+      `
+        const { parentPort } = require("node:worker_threads");
+        parentPort.on("message", m => {
+          parentPort.postMessage({
+            priv: {
+              ctor: m.priv.constructor.name,
+              type: m.priv.type,
+              exportable: m.priv.export({ type: "pkcs8", format: "der" }).length > 0,
+            },
+            aes: { ctor: m.aes.constructor.name, algorithm: m.aes.algorithm.name, extractable: m.aes.extractable },
+          });
+        });
+      `,
+      { eval: true },
+    );
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+      w.on("message", resolve);
+      w.on("error", reject);
+      w.postMessage({ priv: privateKey, aes });
+      expect(await promise).toEqual({
+        priv: { ctor: "KeyObject", type: "private", exportable: true },
+        aes: { ctor: "CryptoKey", algorithm: "AES-GCM", extractable: true },
+      });
+    } finally {
+      await w.terminate();
+    }
+  });
+});

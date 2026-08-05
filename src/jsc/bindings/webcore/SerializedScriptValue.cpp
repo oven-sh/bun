@@ -1335,8 +1335,15 @@ private:
             }
 #if ENABLE(WEB_CRYPTO)
             if (auto* key = JSCryptoKey::toWrapped(vm, obj)) {
-                if (m_forStorage == SerializationForStorage::Yes && !key->extractable()) {
+                if (m_forStorage == SerializationForStorage::Yes) {
                     code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
+                if (m_forTransfer == SerializationForCrossProcessTransfer::Yes) {
+                    if (!startObjectInternal(obj))
+                        return true;
+                    write(ObjectTag);
+                    write(TerminatorTag);
                     return true;
                 }
                 if (!startObjectInternal(obj)) // handle duplicates
@@ -1443,6 +1450,18 @@ private:
             }
 
             if (auto* keyObject = dynamicDowncast<Bun::JSKeyObject>(obj)) {
+                if (m_forStorage == SerializationForStorage::Yes) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
+                if (m_forTransfer == SerializationForCrossProcessTransfer::Yes) {
+                    if (!startObjectInternal(keyObject))
+                        return true;
+                    write(ObjectTag);
+                    write(TerminatorTag);
+                    return true;
+                }
+
                 if (!startObjectInternal(keyObject)) // handle duplicates
                     return true;
                 write(Bun__KeyObjectTag);

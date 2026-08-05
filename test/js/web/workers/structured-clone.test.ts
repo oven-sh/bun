@@ -23,6 +23,12 @@ const identityCases: [string, () => object, Function][] = [
   ["Blob", () => new Blob(["hi"], { type: "text/plain" }), Blob],
   ["File", () => new File(["hi"], "a.txt", { type: "text/plain" }), File],
   ["X509Certificate", () => new X509Certificate(tls.cert), X509Certificate],
+];
+
+// node:crypto KeyObject clones through structuredClone / worker postMessage but is
+// rejected by bun:jsc serialize / v8.serialize (matching Node.js), so these run
+// for structuredClone only.
+const keyObjectIdentityCases: [string, () => object, Function][] = [
   ["secret KeyObject", () => createSecretKey(Buffer.from("0123456789abcdef")), KeyObject],
   ["public KeyObject", () => createPublicKey(tls.key), KeyObject],
   ["private KeyObject", () => createPrivateKey(tls.key), KeyObject],
@@ -289,7 +295,9 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
       // Two references to the same object must deserialize to the same object:
       // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
       describe("duplicated references preserve identity", () => {
-        test.each(identityCases)("%s", (_label, make, ctor) => {
+        const cases =
+          structuredCloneFn === structuredClone ? [...identityCases, ...keyObjectIdentityCases] : identityCases;
+        test.each(cases)("%s", (_label, make, ctor) => {
           const value = make();
           const cloned = structuredCloneFn([value, value]);
           expect(cloned[0]).toBeInstanceOf(ctor);
@@ -297,13 +305,17 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
           expect(cloned[0]).toBe(cloned[1]);
         });
 
-        test("CryptoKey", async () => {
-          const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]);
-          const cloned = structuredCloneFn([key, key]);
-          expect(cloned[0]).toBeInstanceOf(CryptoKey);
-          expect(cloned[0]).not.toBe(key);
-          expect(cloned[0]).toBe(cloned[1]);
-        });
+        if (structuredCloneFn === structuredClone) {
+          // CryptoKey clones through structuredClone / worker postMessage but is rejected
+          // by bun:jsc serialize / v8.serialize (matching Node.js).
+          test("CryptoKey", async () => {
+            const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]);
+            const cloned = structuredCloneFn([key, key]);
+            expect(cloned[0]).toBeInstanceOf(CryptoKey);
+            expect(cloned[0]).not.toBe(key);
+            expect(cloned[0]).toBe(cloned[1]);
+          });
+        }
 
         test("same object reachable through object, array, Map, and Set paths", () => {
           const d = new Date(7);
@@ -749,14 +761,18 @@ for (const structuredCloneFn of [
   jscSerializeRoundtripCrossProcessCold,
 ]) {
   describe(`${structuredCloneFn.name}: object pool back-references after platform objects`, () => {
-    test("a duplicated object after a CryptoKey keeps its identity", async () => {
-      const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 128 }, true, ["encrypt", "decrypt"]);
-      const o = { x: 1 };
-      const c = await structuredCloneFn([key, o, o]);
-      expect(c[0]).toBeInstanceOf(CryptoKey);
-      expect(c[1]).toEqual({ x: 1 });
-      expect(c[2]).toBe(c[1]);
-    });
+    if (structuredCloneFn === structuredClone) {
+      // bun:jsc serialize / v8.serialize rejects CryptoKey (matching Node.js); the
+      // back-reference path it covers is still reachable through structuredClone.
+      test("a duplicated object after a CryptoKey keeps its identity", async () => {
+        const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 128 }, true, ["encrypt", "decrypt"]);
+        const o = { x: 1 };
+        const c = await structuredCloneFn([key, o, o]);
+        expect(c[0]).toBeInstanceOf(CryptoKey);
+        expect(c[1]).toEqual({ x: 1 });
+        expect(c[2]).toBe(c[1]);
+      });
+    }
 
     test("a duplicated object after an X509Certificate keeps its identity", async () => {
       const cert = new X509Certificate(tls.cert);
@@ -772,7 +788,7 @@ for (const structuredCloneFn of [
 
 describe("reference pool survives a process boundary", () => {
   // One cold subprocess hop covering the whole identity matrix, so every platform object
-  // type (X509Certificate, KeyObjects, Blob, File, ...) is deserialized in a fresh VM.
+  // type (X509Certificate, Blob, File, ...) is deserialized in a fresh VM.
   test("duplicated references preserve identity for every type", () => {
     const values = identityCases.map(([, make]) => make());
     const cloned = jscSerializeRoundtripCrossProcessCold(values.map(value => [value, value]));

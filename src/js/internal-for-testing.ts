@@ -490,3 +490,10 @@ export const fetchH3Internals = {
 export const fileSinkInternals = {
   liveCount: $newRustFunction("runtime/webcore/FileSink.rs", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
 };
+
+export const resolverInternals = {
+  /** Entries retained by the process-lifetime parsed-package.json arena. */
+  packageJsonArenaLen: $newRustFunction("resolver/resolver.rs", "jsPackageJsonArenaLen", 0) as () => number,
+  /** Entries retained by the process-lifetime merged-tsconfig arena. */
+  tsconfigArenaLen: $newRustFunction("resolver/resolver.rs", "jsTsconfigArenaLen", 0) as () => number,
+};

@@ -94,4 +94,24 @@ pub use css::test_with_options as css_jsc_css_internals_test_with_options;
 // `bun_jsc`) rather than inventing a JSC edge into the collections crate.
 pub(crate) use crate::linear_fifo_testing::ordered_remove_probe as collections_linear_fifo_testing_ap_is_ordered_remove_probe;
 
+// `bun_resolver` has no JSC edge; these `bun:internal-for-testing` probes
+// read the resolver's process-lifetime parse arenas (leak regression tests).
+pub(crate) fn resolver_resolver_js_package_json_arena_len(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(JSValue::js_number(
+        bun_resolver::resolver::package_json_arena_len() as f64,
+    ))
+}
+
+pub(crate) fn resolver_resolver_js_tsconfig_arena_len(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(JSValue::js_number(
+        bun_resolver::resolver::tsconfig_arena_len() as f64,
+    ))
+}
+
 // ported from: generated_js2native.rs

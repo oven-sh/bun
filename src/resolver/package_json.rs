@@ -396,8 +396,28 @@ impl PackageJSON {
         package_id: Option<PackageID>,
         include_scripts_: IncludeScripts,
     ) -> Option<PackageJSON> {
-        let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
+        let (package_json_path, entry_contents) = Self::read_for_parse(r, input_path, dirname_fd)?;
+        Self::parse_with_contents::<INCLUDE_DEPENDENCIES>(
+            r,
+            package_json_path,
+            entry_contents,
+            package_id,
+            include_scripts_,
+        )
+    }
 
+    /// Joins `input_path` + "package.json", interns the joined path, and reads
+    /// the file (with the same error logging `parse` always had). Split from
+    /// [`parse_with_contents`] so `Resolver::parse_package_json` can compare
+    /// the raw bytes against the already-interned copy and skip the parse
+    /// entirely when they match — a re-parse is not free even when its result
+    /// is discarded (nested JSON object/array handles land in the thread-local
+    /// AST store, which individual frees never shrink).
+    pub(crate) fn read_for_parse(
+        r: &mut resolver::Resolver<'_>,
+        input_path: &[u8],
+        dirname_fd: Fd,
+    ) -> Option<(&'static [u8], Box<[u8]>)> {
         // SAFETY: PORT (Stacked Borrows) — `r.fs()`/`r.log()` return RAW `*mut`
         // (see `Resolver::fs()` note in lib.rs). `fs` and `log` are DISTINCT
         // singletons so the two `&mut` projections below do not alias each other,
@@ -465,6 +485,23 @@ impl PackageJSON {
                 bstr::BStr::new(package_json_path)
             ));
         }
+
+        Some((package_json_path, entry_contents))
+    }
+
+    pub(crate) fn parse_with_contents<const INCLUDE_DEPENDENCIES: IncludeDependencies>(
+        r: &mut resolver::Resolver<'_>,
+        package_json_path: &'static [u8],
+        entry_contents: Box<[u8]>,
+        package_id: Option<PackageID>,
+        include_scripts_: IncludeScripts,
+    ) -> Option<PackageJSON> {
+        let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
+
+        // SAFETY: see `read_for_parse` — same disjoint-singleton contract.
+        let r_fs: &mut fs::FileSystem = unsafe { &mut *r.fs() };
+        // SAFETY: see `read_for_parse`.
+        let r_log: &mut bun_ast::Log = unsafe { &mut *r.log() };
 
         // `bun_ast::Source.path` is the lightweight `bun_paths::fs::Path<'static>` (no
         // `pretty`/`is_node_module`); `key_path` is only used for `text`, so init the

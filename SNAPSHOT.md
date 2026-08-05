@@ -54,6 +54,10 @@ Attribution commands (write the word into `~/code/tmp/ccmem/cmd.<pid>`; needs `B
 
 With LLInt+DFG only, borrowed bytecode and generational GC on (the current script defaults): restored idle at prompt **~34–36 MB** (image ~245 MB); after one turn ~100; after 4 turns ~112, ~106 after GC; CPU for restore+4 turns ~1.2 s. (Earlier all-tiers/gen-GC-off config: 40–45 idle, ~150 after 4 turns.) Booted normally: 215–230 idle (168 with LLInt+DFG only).
 
+## Startup
+
+Time to interactive prompt (pty, `ttfp.ts`): normal boot ~505 ms / 0.52 s CPU; restored from image **~100–110 ms / 0.10 s CPU** — including the ASLR re-exec, mapping the image, the ~16 MB data-segment copy, restore handlers and repaint.
+
 ## Image size
 
 ~243 MB file, of which roughly 100–140 MB is ever touched in a session (rest stays unmapped-clean). Compresses to **30 MB with zstd -3 (0.1 s)** / 24 MB with -19, so ship compressed and inflate once to a cache file.

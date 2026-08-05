@@ -616,7 +616,6 @@ JSValue resolveAndFetchBuiltinModule(
 void evaluateCommonJSCustomExtension(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* target,
-    String filename,
     JSValue filenameValue,
     JSValue extension)
 {
@@ -864,7 +863,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
             JSC::throwException(globalObject, scope, JSC::createSyntaxError(globalObject, "Recursive extension. This is a bug in Bun"_s));
             RELEASE_AND_RETURN(scope, {});
         }
-        evaluateCommonJSCustomExtension(globalObject, target, specifierWtfString, specifierValue, JSC::JSValue::decode(res->result.value.cjsCustomExtension));
+        evaluateCommonJSCustomExtension(globalObject, target, specifierValue, JSC::JSValue::decode(res->result.value.cjsCustomExtension));
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, target);
     }
@@ -1112,6 +1111,24 @@ static JSValue fetchESMSourceCode(
         auto* exception = scope.exception();
         (void)scope.tryClearException();
         RELEASE_AND_RETURN(scope, reject(exception));
+    }
+
+    if (res->result.value.tag == SyntheticModuleType::CommonJSCustomExtension) {
+        auto created = Bun::createCommonJSModuleForCustomExtension(
+            globalObject, specifierJS, JSC::JSValue::decode(res->result.value.cjsCustomExtension));
+        EXCEPTION_ASSERT(created.has_value() == !scope.exception());
+        if (created.has_value()) {
+            RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(created.value()))));
+        }
+
+        if constexpr (allowPromise) {
+            auto* exception = scope.exception();
+            (void)scope.tryClearException();
+            RELEASE_AND_RETURN(scope, rejectedInternalPromise(globalObject, exception));
+        } else {
+            scope.release();
+            return {};
+        }
     }
 
     // The JSONForObjectLoader tag is source code returned from Bun that needs

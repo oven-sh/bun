@@ -235,16 +235,24 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
 bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (this->hasEvaluated || this->sourceCode.isNull()) {
+    if (this->hasEvaluated) {
         return true;
     }
 
-    evaluateCommonJSModuleOnce(
-        globalObject->vm(),
-        globalObject,
-        this,
-        this->m_dirname.get(),
-        this->m_filename.get());
+    if (JSValue extension = this->m_pendingCustomExtension.get()) {
+        this->m_pendingCustomExtension.clear();
+        evaluateCommonJSCustomExtension(globalObject, this, this->m_filename.get(), extension);
+        this->hasEvaluated = true;
+    } else if (this->sourceCode.isNull()) {
+        return true;
+    } else {
+        evaluateCommonJSModuleOnce(
+            globalObject->vm(),
+            globalObject,
+            this,
+            this->m_dirname.get(),
+            this->m_filename.get());
+    }
 
     if (auto exception = scope.exception()) {
         if (vm.hasPendingTerminationException()) [[unlikely]]
@@ -1191,6 +1199,7 @@ void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendHidden(thisObject->m_paths);
     visitor.appendHidden(thisObject->m_overriddenParent);
     visitor.appendHidden(thisObject->m_overriddenCompile);
+    visitor.appendHidden(thisObject->m_pendingCustomExtension);
     visitor.appendHidden(thisObject->m_childrenValue);
     {
         WTF::Locker locker { thisObject->cellLock() };
@@ -1574,12 +1583,22 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 if (entry) {
                     if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
                         if (!moduleObject->hasEvaluated) {
-                            evaluateCommonJSModuleOnce(
-                                vm,
-                                globalObject,
-                                moduleObject,
-                                moduleObject->m_dirname.get(),
-                                moduleObject->m_filename.get());
+                            if (JSValue extension = moduleObject->m_pendingCustomExtension.get()) {
+                                moduleObject->m_pendingCustomExtension.clear();
+                                evaluateCommonJSCustomExtension(
+                                    globalObject,
+                                    moduleObject,
+                                    moduleObject->m_filename.get(),
+                                    extension);
+                                moduleObject->hasEvaluated = true;
+                            } else {
+                                evaluateCommonJSModuleOnce(
+                                    vm,
+                                    globalObject,
+                                    moduleObject,
+                                    moduleObject->m_dirname.get(),
+                                    moduleObject->m_filename.get());
+                            }
                             if (auto exception = scope.exception()) {
                                 if (vm.hasPendingTerminationException()) [[unlikely]]
                                     return;
@@ -1606,6 +1625,50 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
             sourceURL));
 }
 
+static JSCommonJSModule* getOrCreateCommonJSModule(
+    Zig::GlobalObject* globalObject,
+    JSC::JSString* requireMapKey,
+    const WTF::String& sourceURL,
+    JSC::SourceCode&& sourceCode)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue entry = globalObject->requireMap()->get(globalObject, requireMapKey);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (entry) {
+        if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry))
+            return moduleObject;
+    }
+
+    size_t index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
+    JSString* dirname;
+    JSString* filename = requireMapKey;
+    if (index != WTF::notFound) {
+        dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    } else {
+        dirname = jsEmptyString(vm);
+    }
+    auto requireMap = globalObject->requireMap();
+    if (requireMap->size() == 0) {
+        requireMapKey = JSC::jsString(vm, WTF::String("."_s));
+    }
+
+    auto* moduleObject = JSCommonJSModule::create(
+        vm,
+        globalObject->CommonJSModuleObjectStructure(),
+        requireMapKey, filename, dirname, WTF::move(sourceCode));
+
+    moduleObject->putDirect(vm,
+        WebCore::clientData(vm)->builtinNames().exportsPublicName(),
+        JSC::constructEmptyObject(globalObject, globalObject->objectPrototype()), 0);
+
+    requireMap->set(globalObject, filename, moduleObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return moduleObject;
+}
+
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSC::JSString* requireMapKey,
@@ -1614,46 +1677,33 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSCommonJSModule* moduleObject = nullptr;
     WTF::String sourceURL = sourceProvider->sourceURL();
     SourceOrigin sourceOrigin = sourceProvider->sourceOrigin();
 
-    JSValue entry = globalObject->requireMap()->get(globalObject, requireMapKey);
+    auto* moduleObject = getOrCreateCommonJSModule(
+        globalObject, requireMapKey, sourceURL, JSC::SourceCode(WTF::move(sourceProvider)));
     RETURN_IF_EXCEPTION(scope, {});
-
-    if (entry) {
-        moduleObject = dynamicDowncast<JSCommonJSModule>(entry);
-    }
-
-    if (!moduleObject) {
-        size_t index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
-        JSString* dirname;
-        JSString* filename = requireMapKey;
-        if (index != WTF::notFound) {
-            dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
-            RETURN_IF_EXCEPTION(scope, {});
-        } else {
-            dirname = jsEmptyString(vm);
-        }
-        auto requireMap = globalObject->requireMap();
-        if (requireMap->size() == 0) {
-            requireMapKey = JSC::jsString(vm, WTF::String("."_s));
-        }
-
-        moduleObject = JSCommonJSModule::create(
-            vm,
-            globalObject->CommonJSModuleObjectStructure(),
-            requireMapKey, filename, dirname, JSC::SourceCode(WTF::move(sourceProvider)));
-
-        moduleObject->putDirect(vm,
-            WebCore::clientData(vm)->builtinNames().exportsPublicName(),
-            JSC::constructEmptyObject(globalObject, globalObject->objectPrototype()), 0);
-
-        requireMap->set(globalObject, filename, moduleObject);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
+
+    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL);
+}
+
+std::optional<JSC::SourceCode> createCommonJSModuleForCustomExtension(
+    Zig::GlobalObject* globalObject,
+    JSC::JSString* requireMapKey,
+    JSC::JSValue extension)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    WTF::String sourceURL = requireMapKey->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    SourceOrigin sourceOrigin = Zig::toSourceOrigin(sourceURL, false);
+
+    auto* moduleObject = getOrCreateCommonJSModule(
+        globalObject, requireMapKey, sourceURL, JSC::SourceCode());
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!moduleObject->hasEvaluated)
+        moduleObject->m_pendingCustomExtension.set(vm, moduleObject, extension);
 
     return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL);
 }

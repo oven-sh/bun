@@ -227,21 +227,35 @@ fn on_require_extension_modify_non_function(
     Ok(())
 }
 
+/// Default keys of `Module._extensions` (see `JSCommonJSExtensions::finishCreation`).
+const EXTENSIONS_DEFAULT_KEYS: &[&[u8]] = &[
+    b".js", b".json", b".node", b".ts", b".cts", b".mjs", b".mts",
+];
+
 pub fn find_longest_registered_extension<'a>(
     vm: &'a VirtualMachine,
     filename: &[u8],
 ) -> Option<&'a CustomLoader> {
     let basename = bun_paths::basename(filename);
     let mut next: usize = 0;
+    let mut last_ext: &[u8] = b"";
     while let Some(i) = strings::index_of_char_pos(basename, b'.', next) {
         next = i + 1;
         if i == 0 {
             continue;
         }
         let ext = &basename[i..];
+        last_ext = ext;
         if let Some(value) = vm.commonjs_custom_extensions.get(ext) {
             return Some(value);
         }
+        if EXTENSIONS_DEFAULT_KEYS.iter().any(|k| *k == ext) {
+            return None;
+        }
+    }
+    // Node's `.js` fallback; skip for extensions Bun handles natively (e.g. `.jsx`).
+    if last_ext == b".cjs" || DEFAULT_LOADERS.get(last_ext).is_none() {
+        return vm.commonjs_custom_extensions.get(b".js".as_slice());
     }
     None
 }

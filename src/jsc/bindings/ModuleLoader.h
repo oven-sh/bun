@@ -129,4 +129,10 @@ JSValue fetchBuiltinModuleWithoutResolution(
     BunString* specifier,
     ErrorableResolvedSource* res);
 
+void evaluateCommonJSCustomExtension(
+    Zig::GlobalObject* globalObject,
+    JSCommonJSModule* target,
+    JSValue filenameValue,
+    JSValue extension);
+
 } // namespace Bun

@@ -178,17 +178,19 @@ describe("ClipboardItem", () => {
     expect(new ClipboardItem(new Proxy({ "text/plain": "x" }, {})).types).toEqual(["text/plain"]);
     const items = Object.defineProperty({ "text/plain": "x" }, "not a mime", { value: "y", enumerable: false });
     expect(new ClipboardItem(items).types).toEqual(["text/plain"]);
-    // mimesniff §4.4: leading/trailing whitespace and `;`-parameters parse to
-    // the essence, which is what `types` reports and what every lookup compares
-    // against (Chrome/Firefox behave the same).
+    // mimesniff §4.4/§4.5: `types` reports the serialization of the parsed
+    // MIME type — parameters included, as in Chrome.
     const parameterized = new ClipboardItem({ "Text/Plain; charset=utf-8": "x" });
-    expect(parameterized.types).toEqual(["text/plain"]);
+    expect(parameterized.types).toEqual(["text/plain;charset=utf-8"]);
     const padded = new ClipboardItem({ " text/plain ": "y" });
     expect(padded.types).toEqual(["text/plain"]);
+    // Distinct serializations are distinct representations.
+    const twoReps = new ClipboardItem({ "text/plain": "a", "text/plain;charset=utf-8": "b" });
+    expect(twoReps.types).toEqual(["text/plain", "text/plain;charset=utf-8"]);
     expect(() => new ClipboardItem({ "text/": "x" })).toThrow(TypeError);
-    // Two spellings of one essence are one representation, not two.
+    // Two spellings of one serialization are one representation, not two.
     expect(() => new ClipboardItem({ "text/plain": "a", " text/plain ": "b" })).toThrow(TypeError);
-    // supports() normalizes the same way.
+    // supports() matches by essence.
     expect(ClipboardItem.supports("text/plain;charset=utf-8")).toBe(true);
   });
 

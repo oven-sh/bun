@@ -89,7 +89,7 @@ static RefPtr<Blob> blobFromResolvedValue(JSC::JSGlobalObject& globalObject, JSC
 void ClipboardItemBindingsDataSource::getType(const String& type, Ref<DeferredPromise>&& promise)
 {
     auto matchIndex = m_itemPromises.findIf([&](auto& item) {
-        return type == item.key;
+        return ClipboardItem::essenceMatches(item.key, type);
     });
 
     if (matchIndex == notFound) {

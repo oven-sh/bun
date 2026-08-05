@@ -39,6 +39,7 @@
 #include "JSDOMPromise.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
 namespace WebCore {
@@ -109,6 +110,109 @@ String ClipboardItem::parseMIMETypeEssence(const String& type)
     if (!isValidHTTPToken(view.left(slash)) || !isValidHTTPToken(view.substring(slash + 1)))
         return {};
     return view.convertToASCIILowercase();
+}
+
+// mimesniff §4.4.4 parameter parsing + §4.5 serialization. `position` is the
+// first character after the ';' that ended the subtype.
+static void appendSerializedMIMEParameters(StringBuilder& result, StringView view, size_t position)
+{
+    auto isQuotedStringToken = [](char16_t c) {
+        return c == 0x09 || (c >= 0x20 && c <= 0x7E) || (c >= 0x80 && c <= 0xFF);
+    };
+    Vector<String, 2> seenNames;
+    size_t length = view.length();
+    while (position < length) {
+        while (position < length && isASCIIWhitespace(view[position]))
+            ++position;
+        size_t nameStart = position;
+        while (position < length && view[position] != ';' && view[position] != '=')
+            ++position;
+        String name = view.substring(nameStart, position - nameStart).convertToASCIILowercase();
+        if (position >= length)
+            break;
+        if (view[position] == ';') {
+            ++position;
+            continue;
+        }
+        ++position; // '='
+        String value;
+        bool quoted = position < length && view[position] == '"';
+        if (quoted) {
+            ++position;
+            StringBuilder collected;
+            while (position < length && view[position] != '"') {
+                if (view[position] == '\\' && position + 1 < length)
+                    ++position;
+                collected.append(view[position]);
+                ++position;
+            }
+            if (position < length)
+                ++position; // closing '"'
+            value = collected.toString();
+            while (position < length && view[position] != ';')
+                ++position;
+        } else {
+            size_t valueStart = position;
+            while (position < length && view[position] != ';')
+                ++position;
+            auto raw = view.substring(valueStart, position - valueStart);
+            size_t end = raw.length();
+            while (end && isASCIIWhitespace(raw[end - 1]))
+                --end;
+            value = raw.left(end).toString();
+        }
+        if (position < length)
+            ++position; // ';'
+        if (name.isEmpty() || !isValidHTTPToken(name) || seenNames.contains(name))
+            continue;
+        if (value.isEmpty() && !quoted)
+            continue;
+        bool valueValid = true;
+        for (char16_t c : StringView(value).codeUnits()) {
+            if (!isQuotedStringToken(c)) {
+                valueValid = false;
+                break;
+            }
+        }
+        if (!valueValid)
+            continue;
+        seenNames.append(name);
+        result.append(';', name, '=');
+        if (!value.isEmpty() && isValidHTTPToken(value))
+            result.append(value);
+        else {
+            result.append('"');
+            for (char16_t c : StringView(value).codeUnits()) {
+                if (c == '"' || c == '\\')
+                    result.append('\\');
+                result.append(c);
+            }
+            result.append('"');
+        }
+    }
+}
+
+String ClipboardItem::parseAndSerializeMIMEType(const String& type)
+{
+    String essence = parseMIMETypeEssence(type);
+    if (essence.isEmpty())
+        return {};
+    auto view = StringView(type).trim(isASCIIWhitespace<char16_t>);
+    size_t semicolon = view.find(';');
+    if (semicolon == notFound)
+        return essence;
+    StringBuilder result;
+    result.append(essence);
+    appendSerializedMIMEParameters(result, view, semicolon + 1);
+    return result.toString();
+}
+
+bool ClipboardItem::essenceMatches(const String& serializedKey, const String& essence)
+{
+    size_t semicolon = serializedKey.find(';');
+    if (semicolon == notFound)
+        return serializedKey == essence;
+    return StringView(serializedKey).left(semicolon) == essence;
 }
 
 Ref<Blob> ClipboardItem::blobFromString(JSC::JSGlobalObject* globalObject, const String& stringData, const String& type)

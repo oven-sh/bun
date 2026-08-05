@@ -81,6 +81,10 @@ public:
     // input that does not parse. Every MIME-type comparison site normalizes
     // through this so validation and storage cannot drift apart.
     static String parseMIMETypeEssence(const String&);
+    // mimesniff §4.4 parse + §4.5 serialize (parameters kept); empty on failure.
+    static String parseAndSerializeMIMEType(const String&);
+    // Whether a stored (serialized) key's essence is `essence`.
+    static bool essenceMatches(const String& serializedKey, const String& essence);
 
     void collectDataForWriting(Clipboard& destination, CompletionHandler<void(std::optional<ClipboardItemData>, JSC::JSValue failureReason)>&&);
     void cancelDataCollection();

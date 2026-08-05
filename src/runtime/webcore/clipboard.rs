@@ -116,24 +116,31 @@ struct QueuedTask(*mut WorkPoolTask);
 unsafe impl Send for QueuedTask {}
 
 /// One FIFO thread runs every platform job, so ops commit in schedule order
-/// and a blocking backend never occupies the shared work pool.
-fn serial_queue() -> &'static bun_threading::Channel<QueuedTask> {
+/// and a blocking backend never occupies the shared work pool. `None` while
+/// the thread cannot be spawned (retried on the next call).
+fn serial_queue() -> Option<&'static bun_threading::Channel<QueuedTask>> {
+    use core::sync::atomic::{AtomicBool, Ordering};
     static QUEUE: std::sync::OnceLock<bun_threading::Channel<QueuedTask>> =
         std::sync::OnceLock::new();
-    static THREAD: std::sync::Once = std::sync::Once::new();
+    static SPAWNED: AtomicBool = AtomicBool::new(false);
+    static SPAWN_LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
     let queue = QUEUE.get_or_init(bun_threading::Channel::init_dynamic);
-    THREAD.call_once(|| {
-        std::thread::Builder::new()
-            .name("Bun Clipboard".into())
-            .spawn(move || {
-                while let Ok(QueuedTask(task)) = queue.read_item() {
-                    // SAFETY: consumes the task exactly once, like a pool worker.
-                    unsafe { ((*task).callback)(task) };
-                }
-            })
-            .expect("failed to spawn the clipboard thread");
-    });
-    queue
+    if !SPAWNED.load(Ordering::Acquire) {
+        let _guard = SPAWN_LOCK.lock_guard();
+        if !SPAWNED.load(Ordering::Relaxed) {
+            std::thread::Builder::new()
+                .name("Bun Clipboard".into())
+                .spawn(move || {
+                    while let Ok(QueuedTask(task)) = queue.read_item() {
+                        // SAFETY: consumes the task exactly once, like a pool worker.
+                        unsafe { ((*task).callback)(task) };
+                    }
+                })
+                .ok()?;
+            SPAWNED.store(true, Ordering::Release);
+        }
+    }
+    Some(queue)
 }
 
 /// Single source of truth for `ClipboardItem.supports` / `write()` validation.
@@ -159,7 +166,8 @@ impl Mime {
     }
 
     fn from_bytes(bytes: &[u8]) -> Option<Mime> {
-        match bytes {
+        // Keys arrive as serialized MIME types; the essence picks the format.
+        match bytes.split(|&byte| byte == b';').next().unwrap_or(bytes) {
             b"text/plain" => Some(Mime::TextPlain),
             b"text/html" => Some(Mime::TextHtml),
             b"image/png" => Some(Mime::ImagePng),
@@ -235,6 +243,12 @@ impl AnyTaskJobCtx for ClipboardCtx {
 /// `create` consumes `ctx` on every path, so a failure has already balanced
 /// the request via `RequestHandle`'s Drop.
 fn schedule(global: &JSGlobalObject, op: Op, request: RequestHandle) {
+    // No clipboard thread: reject rather than abort, or run unserialized on
+    // the shared pool.
+    let Some(queue) = serial_queue() else {
+        request.fail(global, Unavailable::Platform);
+        return;
+    };
     let ctx = ClipboardCtx {
         op,
         outcome: None,
@@ -242,7 +256,7 @@ fn schedule(global: &JSGlobalObject, op: Op, request: RequestHandle) {
     };
     let _ = AnyTaskJob::create_and_schedule_with(global, ctx, |task| {
         // Fails only on OOM; the queue is never closed.
-        bun_core::handle_oom(serial_queue().write_item(QueuedTask(task)));
+        bun_core::handle_oom(queue.write_item(QueuedTask(task)));
     });
 }
 
@@ -692,7 +706,11 @@ mod platform {
             if h.is_null() {
                 continue;
             }
-            let locked = LockedGlobal::new(clipboard, h).ok_or(Unavailable::Platform)?;
+            // A handle another app left unlockable (e.g. discarded) reads as
+            // absent rather than failing the whole operation.
+            let Some(locked) = LockedGlobal::new(clipboard, h) else {
+                continue;
+            };
             let bytes = copy_global(&locked, mime == Mime::TextPlain);
             drop(locked);
             if mime != Mime::TextHtml {

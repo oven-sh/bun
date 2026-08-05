@@ -156,9 +156,8 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSClipboardItemDOMConstr
     items.reserveInitialCapacity(record.size());
     for (auto& entry : record) {
         // Spec: `types` holds the serialization of the parsed MIME type
-        // (mimesniff §4.4), and two keys parsing to the same essence are one
-        // representation twice.
-        String normalized = ClipboardItem::parseMIMETypeEssence(entry.key);
+        // (mimesniff §4.4), parameters included, as in Chrome.
+        String normalized = ClipboardItem::parseAndSerializeMIMEType(entry.key);
         if (normalized.isEmpty()) [[unlikely]]
             return JSValue::encode(throwTypeError(lexicalGlobalObject, throwScope, makeString("\""_s, entry.key, "\" is not a valid MIME type"_s)));
         bool duplicate = items.containsIf([&](auto& item) { return item.key == normalized; });
@@ -305,9 +304,9 @@ static inline JSC::EncodedJSValue jsClipboardItemPrototypeFunction_getTypeBody(J
     auto type = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     throwScope.release();
-    // Stored keys are mimesniff-essences; match the argument the same way,
-    // falling back to a plain lowercase so an unparsable argument still hits
-    // the data source's own NotFoundError.
+    // Stored keys are serialized MIME types, matched by essence; fall back to
+    // a plain lowercase so an unparsable argument still hits the data
+    // source's own NotFoundError.
     String essence = ClipboardItem::parseMIMETypeEssence(type);
     impl.getType(essence.isEmpty() ? type.convertToASCIILowercase() : essence, WTF::move(promise));
     return JSValue::encode(jsUndefined());

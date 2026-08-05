@@ -60,7 +60,7 @@ Vector<String> ClipboardItemPlatformDataSource::types() const
 void ClipboardItemPlatformDataSource::getType(const String& type, Ref<DeferredPromise>&& promise)
 {
     auto matchIndex = m_data.findIf([&](auto& representation) {
-        return type == representation.key;
+        return ClipboardItem::essenceMatches(representation.key, type);
     });
 
     if (matchIndex == notFound) {

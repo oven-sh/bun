@@ -1094,10 +1094,9 @@ type H2FrameParserHiveAllocator = HiveArrayFallback<H2FrameParser, 256>;
 const H2_CORK_BUFFER_SIZE: usize = 16384;
 
 thread_local! {
-    // Boxed so only a pointer lives in static TLS — these two buffers are 32 KB
-    // combined and would otherwise dominate PT_TLS MemSiz on every thread
-    // (see test/js/bun/binary/tls-segment-size). Lazily allocated on first
-    // HTTP/2 access; threads that never touch h2 pay nothing.
+    // Boxed so only a pointer lives in static TLS — a 16 KB buffer would otherwise
+    // dominate PT_TLS MemSiz on every thread (see test/js/bun/binary/tls-segment-size).
+    // Lazily allocated on first HTTP/2 access; threads that never touch h2 pay nothing.
     static CORK_BUFFER: RefCell<Box<[u8; H2_CORK_BUFFER_SIZE]>> =
         RefCell::new(Box::new([0u8; H2_CORK_BUFFER_SIZE]));
     static CORK_OFFSET: Cell<u16> = const { Cell::new(0) };
@@ -1120,7 +1119,6 @@ thread_local! {
     // pool allocation itself.
     static POOL: RefCell<Option<Box<ManuallyDrop<H2FrameParserHiveAllocator>>>> =
         const { RefCell::new(None) };
-    static SHARED_REQUEST_BUFFER: RefCell<Box<[u8; 16384]>> = RefCell::new(Box::new([0u8; 16384]));
 }
 
 /// One wire-order piece of a multi-frame send_data batch (see BATCH_SEGMENTS).
@@ -1750,19 +1748,7 @@ impl Stream {
                     };
                     let _ = data_header.write(&mut writer, &client.frames_sent_legacy);
                     if padding != 0 {
-                        break 'brk SHARED_REQUEST_BUFFER.with_borrow_mut(|buffer| {
-                            // SAFETY: src/dst may overlap — use ptr::copy (memmove)
-                            unsafe {
-                                core::ptr::copy(
-                                    able_to_send.as_ptr(),
-                                    buffer.as_mut_ptr().add(1),
-                                    able_to_send.len(),
-                                );
-                            }
-                            buffer[0] = padding;
-                            buffer[1 + able_to_send.len()..payload_size].fill(0);
-                            writer.write_all(&buffer[0..payload_size]).is_ok()
-                        });
+                        break 'brk writer.write_padded(&able_to_send, padding).is_ok();
                     } else {
                         break 'brk writer.write_all(&able_to_send).is_ok();
                     }
@@ -1814,19 +1800,7 @@ impl Stream {
                     };
                     let _ = data_header.write(&mut writer, &client.frames_sent_legacy);
                     if padding != 0 {
-                        break 'brk SHARED_REQUEST_BUFFER.with_borrow_mut(|buffer| {
-                            // SAFETY: src/dst may overlap — ptr::copy is memmove; dst capacity covers payload_size
-                            unsafe {
-                                core::ptr::copy(
-                                    frame_slice.as_ptr(),
-                                    buffer.as_mut_ptr().add(1),
-                                    frame_slice.len(),
-                                );
-                            }
-                            buffer[0] = padding;
-                            buffer[1 + frame_slice.len()..payload_size].fill(0);
-                            writer.write_all(&buffer[0..payload_size]).is_ok()
-                        });
+                        break 'brk writer.write_padded(frame_slice, padding).is_ok();
                     } else {
                         break 'brk writer.write_all(frame_slice).is_ok();
                     }
@@ -6261,6 +6235,30 @@ impl bun_io::Write for DirectWriterStruct {
     }
 }
 
+impl DirectWriterStruct {
+    /// The payload of a PADDED DATA frame (RFC 9113 6.1); the caller wrote the frame header.
+    fn write_padded(&mut self, data: &[u8], padding: u8) -> bun_io::Result<()> {
+        let payload_size = 1 + data.len() + padding as usize;
+        // Taken by value so a re-entrant call gets its own; see take_h2_padded_frame_buffer.
+        let global = self.writer.global();
+        let mut buffer = global
+            .bun_vm()
+            .as_mut()
+            .rare_data()
+            .take_h2_padded_frame_buffer();
+        buffer[0] = padding;
+        buffer[1..=data.len()].copy_from_slice(data);
+        buffer[1 + data.len()..payload_size].fill(0);
+        let result = self.write_all(&buffer[..payload_size]);
+        global
+            .bun_vm()
+            .as_mut()
+            .rare_data()
+            .put_back_h2_padded_frame_buffer(buffer);
+        result
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // H2FrameParser impl — JS host fns (part 1)
 // ──────────────────────────────────────────────────────────────────────────
@@ -7417,19 +7415,7 @@ impl H2FrameParser {
                         let mut writer = self.to_writer();
                         let _ = data_header.write(&mut writer, &self.frames_sent_legacy);
                         if padding != 0 {
-                            SHARED_REQUEST_BUFFER.with_borrow_mut(|buffer| {
-                                // SAFETY: src/dst may overlap — ptr::copy is memmove; dst capacity covers payload_size
-                                unsafe {
-                                    core::ptr::copy(
-                                        slice.as_ptr(),
-                                        buffer.as_mut_ptr().add(1),
-                                        slice.len(),
-                                    );
-                                }
-                                buffer[0] = padding;
-                                buffer[1 + slice.len()..payload_size].fill(0);
-                                let _ = writer.write_all(&buffer[0..payload_size]);
-                            });
+                            let _ = writer.write_padded(slice, padding);
                         } else {
                             let _ = writer.write_all(slice);
                         }

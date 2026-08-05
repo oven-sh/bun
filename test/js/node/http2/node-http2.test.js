@@ -1990,6 +1990,78 @@ it("http2 session.goaway() opaqueData survives re-entrant buffer detach over a J
   expect(exitCode).toBe(0);
 }, 15_000);
 
+it("http2 padded DATA write survives a re-entrant stream write from a JS Duplex _write", async () => {
+  // With padding enabled, a single-frame DATA write that crosses the 16 KiB cork boundary
+  // flushes the cork into the JS transport mid-frame (onWrite → Duplex _write). A transport
+  // that writes to another padded stream from inside its _write re-enters the same padded
+  // send path while the outer frame is still being assembled. That must neither abort the
+  // process nor clobber the outer frame's bytes: every payload byte of all three writes has
+  // to reach the transport (same totals as node).
+  const fixture = `
+    const http2 = require("node:http2");
+    const { Duplex } = require("node:stream");
+    // fill: 13000 -> 9+13256 corked; outer: 12000 -> 9+12256, crosses the cork boundary;
+    // side: 3000 -> 9+3256, written from inside the transport _write during that flush.
+    const EXPECTED_WIRE = 9 + 13256 + 9 + 12256 + 9 + 3256;
+    let side, armed = false, reentered = false, total = 0, onComplete;
+    const counts = { 0x41: 0, 0x42: 0, 0x43: 0 };
+    const fail = what => err => {
+      console.error(what, err);
+      process.exit(1);
+    };
+    const duplex = new Duplex({
+      read() {},
+      write(chunk, enc, cb) {
+        if (armed) {
+          for (const b of chunk) if (b in counts) counts[b]++;
+          total += chunk.length;
+          // The first chunk carrying outer's payload is the mid-frame cork flush.
+          if (!reentered && chunk.includes(0x41)) {
+            reentered = true;
+            side.write(Buffer.alloc(3000, 0x42));
+          }
+          if (total >= EXPECTED_WIRE && onComplete) onComplete();
+        }
+        cb();
+      },
+    });
+    const session = http2.connect("http://127.0.0.1:1", {
+      createConnection: () => duplex,
+      paddingStrategy: http2.constants.PADDING_STRATEGY_MAX,
+    });
+    session.on("error", fail("session error"));
+    await new Promise(r => session.once("connect", r));
+    const frame = (type, flags) => Buffer.from([0, 0, 0, type, flags, 0, 0, 0, 0]);
+    // server preface by hand: empty SETTINGS, then the ACK for the client's SETTINGS
+    duplex.push(Buffer.concat([frame(4, 0), frame(4, 1)]));
+    await new Promise(r => setImmediate(r));
+    side = session.request({ ":method": "POST", ":path": "/side" }, { endStream: false });
+    const outer = session.request({ ":method": "POST", ":path": "/outer" }, { endStream: false });
+    const fill = session.request({ ":method": "POST", ":path": "/fill" }, { endStream: false });
+    for (const s of [side, outer, fill]) s.on("error", fail("stream error"));
+    // The three HEADERS frames leave the cork in this tick's deferred auto-flush, which runs
+    // before the loop reaches the next immediate.
+    await new Promise(r => setImmediate(r));
+    const complete = new Promise(r => (onComplete = r));
+    fill.write(Buffer.alloc(13000, 0x43));
+    armed = true;
+    outer.write(Buffer.alloc(12000, 0x41));
+    if (total < EXPECTED_WIRE) await complete;
+    console.log(JSON.stringify({ reentered, total, A: counts[0x41], B: counts[0x42], C: counts[0x43] }));
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({ reentered: true, total: 28795, A: 12000, B: 3000, C: 13000 });
+  expect(exitCode).toBe(0);
+});
+
 it("http2 server sends protocol-error GOAWAY on stream 0", async () => {
   // RFC 9113 section 6.8: GOAWAY frames MUST be sent with a stream identifier
   // of 0 in the frame header; the last processed stream id lives in the

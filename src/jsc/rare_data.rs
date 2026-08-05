@@ -268,6 +268,9 @@ pub struct RareData {
 
     pub(crate) temp_pipe_read_buffer: Option<Box<PipeReadBuffer>>,
 
+    /// `node:http2` PADDED DATA scratch; see [`Self::take_h2_padded_frame_buffer`].
+    h2_padded_frame_buffer: Option<Box<H2PaddedFrameBuffer>>,
+
     // There is intentionally no `aws_signature_cache` field — storage lives in
     // `bun_s3_signing::credentials::AWS_SIGNATURE_CACHE` (process static; it
     // was always reached via the main-thread VM, so it was a singleton in
@@ -326,6 +329,7 @@ impl Default for RareData {
             memory_pressure_watcher: None,
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
             temp_pipe_read_buffer: None,
+            h2_padded_frame_buffer: None,
             s3_default_client: Strong::empty(),
             node_quic_callbacks: Strong::empty(),
             default_csrf_secret: Box::default(),
@@ -381,6 +385,9 @@ impl PathBuf {
 // with `MiniEventLoop`'s scratch buffer). Re-export so `rare_data::PipeReadBuffer`
 // remains a stable path for existing callers.
 pub use bun_event_loop::PipeReadBuffer;
+
+/// One max-size HTTP/2 PADDED DATA frame payload (pad-length byte + data + padding).
+pub type H2PaddedFrameBuffer = [u8; 16384];
 
 // ──────────────────────────────────────────────────────────────────────────
 // ProxyEnvStorage
@@ -659,6 +666,20 @@ impl RareData {
     pub fn pipe_read_buffer(&mut self) -> &mut PipeReadBuffer {
         self.temp_pipe_read_buffer
             .get_or_insert_with(bun_core::boxed_zeroed::<PipeReadBuffer>)
+    }
+
+    /// Take the padded-frame scratch out of its slot (lazily allocated). By value rather
+    /// than borrowed: the socket write it feeds can re-enter JS and reach this path
+    /// again, and that nested caller then finds the slot empty and allocates its own.
+    pub fn take_h2_padded_frame_buffer(&mut self) -> Box<H2PaddedFrameBuffer> {
+        self.h2_padded_frame_buffer
+            .take()
+            .unwrap_or_else(bun_core::boxed_zeroed::<H2PaddedFrameBuffer>)
+    }
+
+    /// Hand a taken buffer back; the slot keeps the first one returned.
+    pub fn put_back_h2_padded_frame_buffer(&mut self, buffer: Box<H2PaddedFrameBuffer>) {
+        self.h2_padded_frame_buffer.get_or_insert(buffer);
     }
 
     pub fn boring_engine(&mut self) -> *mut boring::ENGINE {
@@ -1043,9 +1064,9 @@ fn get_tls_default_ciphers_from_js(
 
 impl Drop for RareData {
     fn drop(&mut self) {
-        // temp_pipe_read_buffer / spawn_sync_event_loop_ / s3_default_client /
-        // default_csrf_secret / cleanup_hooks / cron_jobs / path_buf /
-        // tls_default_ciphers:
+        // temp_pipe_read_buffer / h2_padded_frame_buffer / spawn_sync_event_loop_ /
+        // s3_default_client / default_csrf_secret / cleanup_hooks / cron_jobs /
+        // path_buf / tls_default_ciphers:
         // all dropped automatically via field Drop.
 
         if let Some(engine) = self.boring_ssl_engine.take() {

@@ -1778,9 +1778,11 @@ impl napi_async_work {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    /// Shutdown-drain release: unref the loop `KeepAlive` and free the box.
-    /// Does not call `complete` (it would run after `NapiEnv::cleanup()`);
-    /// the addon's `data` is left for the process to reclaim.
+    /// Shutdown-drain release: unref the loop `KeepAlive` only. The box is
+    /// addon-owned (`napi_create_async_work` hands the handle out and only
+    /// `napi_delete_async_work` may free it, possibly from a cleanup hook or
+    /// finalizer), so it is left to leak with the VM, like the addon's `data`.
+    /// `complete` is not called (it would run after `NapiEnv::cleanup()`).
     ///
     /// # Safety
     /// `this` must be the heap work popped from the shutdown drain; the pool
@@ -1788,7 +1790,6 @@ impl napi_async_work {
     pub(crate) unsafe fn release_for_shutdown(this: *mut napi_async_work) {
         // SAFETY: see fn contract.
         unsafe { core::mem::take(&mut (*this).poll_ref) }.unref(bun_io::js_vm_ctx());
-        Self::destroy(this);
     }
 
     pub(crate) fn schedule(&mut self) {

@@ -1162,6 +1162,10 @@ impl InitialStatTask {
         // the task lifetime (balanced by `deref()` in run_owned's closed path or
         // by the main-thread `initial_stat_*_on_main_thread` callbacks).
         StatWatcher::ref_(watcher);
+        // SAFETY: per fn contract. Paired with the `offthread_job_end` on
+        // every exit of `run_owned`; the watcher's `ctx` BackRef does not keep
+        // the VM alive, this count does.
+        unsafe { (*watcher).ctx.event_loop_shared().offthread_job_begin() };
         WorkPool::schedule_new(InitialStatTask {
             watcher,
             task: WorkPoolTask::default(),
@@ -1184,11 +1188,17 @@ impl InitialStatTask {
         // both also deref as shared (R-2), so aliased `&` is sound.
         // `ParentRef` Deref gives that shared `&`.
         let this_ref = ParentRef::from(NonNull::new(this).expect("run_owned: watcher"));
+        // Copied out so `offthread_job_end` below is the job's only VM access
+        // after the enqueue (or the deref) may hand the watcher away.
+        let event_loop = this_ref.ctx.event_loop_shared();
 
         if this_ref.closed.load(Ordering::Relaxed) {
             // Balance the ref() from createAndSchedule().
             // SAFETY: `this` is live (ref'd in `create_and_schedule`); we own that ref.
             StatWatcher::deref(this);
+            // Releases the count taken in `create_and_schedule` (last VM
+            // access, via the local).
+            event_loop.offthread_job_end();
             return;
         }
 
@@ -1216,6 +1226,9 @@ impl InitialStatTask {
         // ref ownership transferred to main-thread callback
         // (`initial_stat_*_on_main_thread` calls deref()). Nothing to forget —
         // `watcher` is a raw pointer.
+        // Releases the count taken in `create_and_schedule` (last VM access,
+        // via the local).
+        event_loop.offthread_job_end();
     }
 }
 

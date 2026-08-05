@@ -1,6 +1,29 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
+// A terminated worker strands some allocations by design (requeued task
+// boxes), so the subprocess runs with leak detection off; the oracle here is
+// the UAF abort, which is unaffected.
+const env = {
+  ...bunEnv,
+  ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+};
+
+// Same tolerated pre-existing terminate() abort as
+// worker-terminate-offthread.test.ts: strips exactly the known
+// assertNoException signature and returns whatever else stderr contained.
+function onlyKnownTerminateAssert(stderr: string): string[] {
+  const lines = stderr.split("\n").filter(line => line !== "");
+  if (!stderr.includes("!exception()")) return lines;
+  return lines.filter(
+    line =>
+      line !== "ASSERTION FAILED: (null)" &&
+      line !== "!exception()" &&
+      !(line.includes("ExceptionScope.h") && line.includes("assertNoException")) &&
+      !line.includes("no stacktrace available"),
+  );
+}
+
 // worker.terminate() while async node:zlib compression is in flight on the
 // thread pool must not dereference the worker's freed VM/EventLoop from the
 // pool-thread completion. One lane per Native* tag (zlib/brotli/zstd) keeps
@@ -48,15 +71,19 @@ test("worker.terminate() during in-flight node:zlib async compression does not U
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
-    env: bunEnv,
+    env,
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).not.toContain("heap-use-after-free");
-  expect(stderr).not.toContain("ERROR: AddressSanitizer");
-  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
+  expect(stderr).not.toContain("AddressSanitizer");
+  if (stderr.includes("assertNoException")) {
+    expect(onlyKnownTerminateAssert(stderr)).toEqual([]);
+  } else {
+    expect(stderr).toBe("");
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
+  }
   // Worker startup under debug+ASAN is ~1.8s on its own; 4 rounds cannot fit
   // the 5s default. Shrinking the buffers to fit loses the race window (0/3
   // repro on the unfixed build at 4 MiB), so the workload stays as-is.

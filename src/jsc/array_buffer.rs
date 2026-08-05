@@ -742,6 +742,26 @@ impl BinaryType {
         Ok(None)
     }
 
+    /// Lowercase variant name, as returned by `binaryType` getters.
+    pub const fn as_lowercase_str(self) -> &'static str {
+        match self {
+            BinaryType::Buffer => "buffer",
+            BinaryType::ArrayBuffer => "arraybuffer",
+            BinaryType::Uint8Array => "uint8array",
+            BinaryType::Uint8ClampedArray => "uint8clampedarray",
+            BinaryType::Uint16Array => "uint16array",
+            BinaryType::Uint32Array => "uint32array",
+            BinaryType::Int8Array => "int8array",
+            BinaryType::Int16Array => "int16array",
+            BinaryType::Int32Array => "int32array",
+            BinaryType::Float16Array => "float16array",
+            BinaryType::Float32Array => "float32array",
+            BinaryType::Float64Array => "float64array",
+            BinaryType::BigInt64Array => "bigint64array",
+            BinaryType::BigUint64Array => "biguint64array",
+        }
+    }
+
     /// This clones bytes
     pub fn to_js(self, bytes: &[u8], global: &JSGlobalObject) -> JsResult<JSValue> {
         match self {

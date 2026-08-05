@@ -1808,10 +1808,7 @@ impl<'a> Resolver<'a> {
             if strings::index_of(import_path, b"..").is_some() {
                 let platform = bun_paths::Platform::AUTO;
                 let ends_with_dir = platform.is_separator(import_path[import_path.len() - 1])
-                    || (import_path.len() > 3
-                        && platform.is_separator(import_path[import_path.len() - 3])
-                        && import_path[import_path.len() - 2] == b'.'
-                        && import_path[import_path.len() - 1] == b'.');
+                    || Self::import_path_names_directory(import_path);
                 let buf = bufs!(relative_abs_path);
                 let Some(abs) = self.fs_ref().abs_buf_checked(&[import_path], buf) else {
                     return ResultUnion::NotFound;
@@ -2082,9 +2079,18 @@ impl<'a> Resolver<'a> {
         ResultUnion::NotFound
     }
 
-    /// Whether a relative import specifier explicitly names a directory:
-    /// `.`, `..`, or a path ending in `/.` or `/..`.
+    /// Whether an import specifier explicitly names a directory: a trailing
+    /// separator, `.`, `..`, or a path ending in `/.` or `/..`. The join does
+    /// not always keep that information (dot segments normalize away, and on
+    /// Windows only a trailing `\` survives), so callers re-append the
+    /// separator themselves.
     fn import_path_names_directory(import_path: &[u8]) -> bool {
+        let Some(&last) = import_path.last() else {
+            return false;
+        };
+        if ResolvePath::is_sep_any(last) {
+            return true;
+        }
         let rest = if let Some(r) = import_path.strip_suffix(b"..") {
             r
         } else if let Some(r) = import_path.strip_suffix(b".") {

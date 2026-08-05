@@ -1218,4 +1218,24 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     expect(stdout).toContain('from "."');
     expect(exitCode).toBe(0);
   });
+
+  it('absolute specifier containing ".." and ending in "/." resolves the directory index', async () => {
+    using dir = tempDir("resolve-abs-dot-dir", conflictFixture);
+    const specifier = `${String(dir)}/sub/../lib/.`;
+    writeFileSync(
+      join(String(dir), "lib", "run.ts"),
+      `import { fromIndex } from ${JSON.stringify(specifier)}; console.log(fromIndex);`,
+    );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "lib/run.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("index\n");
+    expect(exitCode).toBe(0);
+  });
 });

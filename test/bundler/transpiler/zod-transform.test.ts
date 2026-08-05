@@ -68,15 +68,16 @@ test.concurrent("transform applies in the runtime transpiler", async () => {
       cwd: fixtureDir,
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     return stdout;
   };
   const on = await run(true);
   // The helper import gets a generated suffix at runtime: `__zod_<hash>`.
-  expect(on).toContain("__zod");
+  expect(on).toMatch(/__zod[\w$]*\(\(\) =>/);
   expect(on).toContain('from "bun:wrap"');
   expect(on).toContain('"k":"obj"');
   const off = await run(false);
-  expect(off).not.toContain("__zod");
+  expect(off).not.toMatch(/__zod[\w$]*\(\(\) =>/);
 });

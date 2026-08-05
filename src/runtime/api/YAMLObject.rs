@@ -1066,9 +1066,8 @@ pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult
     )
 }
 
-/// Convert an already-parsed YAML `Expr` to a JS value, resolving anchors
-/// and aliases the same way `parse` does. Used by `Bun.markdown.frontmatter`
-/// for `---` fenced metadata.
+/// Convert a parsed YAML `Expr` to a JS value, resolving anchors and
+/// aliases the same way `parse` does. Used by `Bun.markdown.frontmatter`.
 pub(crate) fn yaml_expr_to_js(global: &JSGlobalObject, root: Expr) -> JsResult<JSValue> {
     let mut ctx = ParserCtx {
         seen_objects: HashMap::default(),

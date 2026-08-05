@@ -3441,8 +3441,8 @@ impl RunCommand {
                 Global::exit(1);
             }
         };
-        // Front matter is metadata, not document content — skip it the
-        // same way the `Bun.markdown` renderers do by default.
+        // Skip a leading front-matter block, like the `Bun.markdown`
+        // renderers do by default.
         let contents: &[u8] = crate::api::markdown_object::strip_frontmatter(&contents);
 
         // Theme selection: colors when stdout is a TTY (or forced on),

@@ -252,9 +252,8 @@ fn render_to_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
     create_utf8_for_js(global_this, &result)
 }
 
-/// `md::Options` plus the binding-level `frontmatter` flag: the `bun_md`
-/// parser has no notion of front matter, so the strip happens here before
-/// the input reaches it.
+/// `md::Options` plus the binding-level `frontmatter` flag; `bun_md`
+/// itself knows nothing about front matter.
 struct ParsedOptions {
     md: md::Options,
     frontmatter: bool,
@@ -341,8 +340,7 @@ fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<
 
 #[derive(Clone, Copy)]
 enum FrontmatterLang {
-    /// `---` fences (Jekyll, Hugo, Astro, Eleventy, VitePress, Obsidian, …).
-    /// Also covers fenced JSON, which is valid YAML.
+    /// `---` fences. Fenced JSON parses through this too (JSON is valid YAML).
     Yaml,
     /// `+++` fences (Hugo, Zola).
     Toml,
@@ -364,9 +362,8 @@ fn is_fence_at(input: &[u8], pos: usize, marker: u8) -> bool {
         && input[pos + 2] == marker
 }
 
-/// Consume the rest of a fence line starting just past the three marker
-/// bytes: optional spaces/tabs, an optional `\r`, then `\n` or EOF. Returns
-/// the offset past the terminator; None when the line carries other content
+/// Consume spaces/tabs, an optional `\r`, then `\n` or EOF after a fence's
+/// three marker bytes; None when the line carries other content
 /// (`----`, `--- text`).
 fn fence_line_end(input: &[u8], mut i: usize) -> Option<usize> {
     while i < input.len() && (input[i] == b' ' || input[i] == b'\t') {
@@ -382,9 +379,9 @@ fn fence_line_end(input: &[u8], mut i: usize) -> Option<usize> {
     }
 }
 
-/// Find a front-matter block at the very start of `input` (after an
-/// optional UTF-8 BOM — `fs.readFileSync(path, "utf8")` keeps BOMs).
-/// Purely structural; the caller decides whether the metadata parses.
+/// Find a front-matter block at the very start of `input`, allowing a
+/// UTF-8 BOM (`fs.readFileSync(path, "utf8")` keeps BOMs). Purely
+/// structural; the caller decides whether the metadata parses.
 fn detect_frontmatter(input: &[u8]) -> Option<FrontmatterBlock> {
     let start = if input.starts_with(b"\xEF\xBB\xBF") {
         3
@@ -474,11 +471,9 @@ fn parse_meta(
     }
 }
 
-/// When `input` begins with a front-matter block whose metadata parses as a
-/// mapping (or is empty), the offset where the body starts. A missing
-/// closing fence, metadata that fails to parse, or a scalar/sequence
-/// document is not front matter — `---\nFoo\n---` stays a thematic break
-/// plus a setext heading, exactly as CommonMark reads it.
+/// The body offset when `input` starts with a front-matter block whose
+/// metadata parses as a mapping or is empty; anything else (unclosed
+/// fences, parse failures, scalar/sequence documents) is not front matter.
 pub(crate) fn frontmatter_body_offset(input: &[u8]) -> Option<usize> {
     let block = detect_frontmatter(input)?;
     // The parsers index with i32 offsets (see `with_text_format_source`).
@@ -500,8 +495,7 @@ pub(crate) fn frontmatter_body_offset(input: &[u8]) -> Option<usize> {
     }
 }
 
-/// Strip a leading front-matter block for the renderers; the input comes
-/// back unchanged when no valid block is present.
+/// Strip a leading front-matter block; unchanged when none is present.
 pub(crate) fn strip_frontmatter(input: &[u8]) -> &[u8] {
     match frontmatter_body_offset(input) {
         Some(body_start) => &input[body_start..],
@@ -509,7 +503,6 @@ pub(crate) fn strip_frontmatter(input: &[u8]) -> &[u8] {
     }
 }
 
-/// Build the `{ data, content }` result object for `frontmatter()`.
 fn frontmatter_result(
     global_this: &JSGlobalObject,
     data: JSValue,
@@ -517,7 +510,7 @@ fn frontmatter_result(
     input: &[u8],
     body_start: usize,
 ) -> JsResult<JSValue> {
-    // With nothing split off, hand back the original string instead of
+    // Nothing split off: hand back the original string instead of
     // re-encoding the bytes.
     let content = if body_start == 0 && input_value.is_string() {
         input_value
@@ -531,11 +524,8 @@ fn frontmatter_result(
 }
 
 /// `Bun.markdown.frontmatter(text)` — split a leading front-matter block
-/// from a document. Returns `{ data, content }`: `data` is the parsed
-/// metadata (`---` fences = YAML, `+++` fences = TOML; fenced JSON works
-/// through the YAML parser because JSON is valid YAML) and `content` is the
-/// text after the block. With no front-matter block, `data` is `null` and
-/// `content` is the input unchanged.
+/// (`---` YAML, `+++` TOML) into `{ data, content }`. `data` is `null`
+/// when no block is present.
 #[bun_jsc::host_fn]
 fn frontmatter(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let [input_value] = callframe.arguments_as_array::<1>();
@@ -554,8 +544,8 @@ fn frontmatter(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
         None => buffer.slice(),
     };
 
-    // The YAML/TOML parsers index with i32 offsets; bound the input the
-    // same way `Bun.YAML.parse` and friends do.
+    // The YAML/TOML parsers index with i32 offsets; bound the input like
+    // `Bun.YAML.parse` does.
     if input.len() > i32::MAX as usize {
         return Err(global_this.throw_range_error(
             input.len() as i64,
@@ -581,9 +571,8 @@ fn frontmatter(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
         Err(MetaParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
         Err(MetaParseError::StackOverflow) => return Err(global_this.throw_stack_overflow()),
         Err(MetaParseError::Syntax) => {
-            // The renderers treat an unparseable block as document content;
-            // here the caller explicitly asked for the metadata, so a parse
-            // failure inside the fences is a typo worth surfacing.
+            // The renderers treat an unparseable block as content; the
+            // extractor was asked for the metadata, so surface the typo.
             let (what, fallback) = match block.lang {
                 FrontmatterLang::Toml => ("TOML", "Unable to parse TOML"),
                 FrontmatterLang::Yaml => ("YAML", "Unable to parse YAML string"),

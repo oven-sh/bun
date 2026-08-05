@@ -1,7 +1,7 @@
 // Hardcoded module "node:_http_server"
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { Stream } = require("node:stream");
-const { Socket: NetSocket } = require("node:net");
+const { Socket: NetSocket, Server: NetServer } = require("node:net");
 const {
   _checkInvalidHeaderChar: checkInvalidHeaderChar,
   chunkExpression,
@@ -282,7 +282,7 @@ function emitRequestCloseNT(self) {
 }
 
 function emitListeningNextTick(self, hostname, port) {
-  if ((self.listening = !!self[serverSymbol])) {
+  if (self[serverSymbol]) {
     // TODO: remove the arguments
     // Note does not pass any arguments.
     self.emit("listening", null, hostname, port);
@@ -321,7 +321,6 @@ function Server(options, callback): void {
   this.on("listening", setupConnectionsTracking);
   this.on("connection", connectionListener);
 
-  this.listening = false;
   this._unref = false;
   this.timeout = 0;
   this.maxRequestsPerSocket = 0;
@@ -426,7 +425,18 @@ function Server(options, callback): void {
   if (callback) this.on("request", callback);
   return this;
 }
-$toClass(Server, "Server", EventEmitter);
+$toClass(Server, "Server", NetServer);
+
+// http.Server is backed by Bun.serve (held in [serverSymbol]); net.Server's
+// `listening` getter keys off `_handle`, which http.Server never populates.
+Object.defineProperty(Server.prototype, "listening", {
+  __proto__: null,
+  get() {
+    return !!this[serverSymbol];
+  },
+  configurable: true,
+  enumerable: true,
+});
 
 Server.prototype[kIncomingMessage] = undefined;
 
@@ -499,7 +509,6 @@ Server.prototype.closeAllConnections = function () {
   }
   this[serverSymbol] = undefined;
   clearInterval(this[kConnectionsCheckingInterval]);
-  this.listening = false;
 
   server.stop(true);
 };
@@ -533,7 +542,6 @@ Server.prototype.close = function (optionalCallback?) {
   }
   this[serverSymbol] = undefined;
   if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
-  this.listening = false;
   server.closeIdleConnections();
   server.stop();
   return this;

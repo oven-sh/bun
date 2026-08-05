@@ -75,3 +75,12 @@ pub fn take_snapshot_request() -> Option<String> {
         .unwrap_or_else(|e| e.into_inner())
         .take()
 }
+
+static CANCEL_TIMERS: AtomicU32 = AtomicU32::new(0);
+/// The app asked the runtime to drop every armed timer as part of taking the snapshot (its intervals re-arm themselves after restore).
+pub fn set_cancel_timers_at_snapshot(on: bool) {
+    CANCEL_TIMERS.store(on as u32, Ordering::Release);
+}
+pub fn cancel_timers_at_snapshot() -> bool {
+    CANCEL_TIMERS.load(Ordering::Acquire) != 0
+}

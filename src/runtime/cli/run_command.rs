@@ -1682,7 +1682,7 @@ pub fn take_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::VirtualMachine)
                 let before = (*state).timer.active_timer_count;
                 crate::timer::All::cancel_all_timeout_objects(&raw mut (*state).timer, vm);
                 bun_core::Output::err_generic(
-                    "snapshot: cancelled {} armed timers (BUN_SNAPSHOT_CANCEL_TIMERS)",
+                    "snapshot: cancelled {} armed timers at the app's request",
                     (before,),
                 );
                 bun_core::Output::flush();

@@ -24,11 +24,16 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
 /// `process.emit("restore")` before its first tick. Never returns normally.
 #[bun_jsc::host_fn]
 fn snapshot(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [path] = frame.arguments_as_array::<1>();
+    let [path, opts] = frame.arguments_as_array::<2>();
     if !path.is_string() {
-        return Err(
-            global.throw_invalid_arguments(format_args!("snapshot(path) expects a file path"))
-        );
+        return Err(global.throw_invalid_arguments(format_args!(
+            "snapshot(path, {{ cancelTimers }}) expects a file path"
+        )));
+    }
+    if opts.is_object() {
+        if let Some(v) = opts.get(global, "cancelTimers")? {
+            bun_core::image::set_cancel_timers_at_snapshot(v.to_boolean());
+        }
     }
     let path = path.to_bun_string(global)?.to_owned_slice();
     let cpath = std::ffi::CString::new(path)

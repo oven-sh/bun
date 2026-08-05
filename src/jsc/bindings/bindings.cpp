@@ -5169,27 +5169,12 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
     bool fast = !nonIndexedOnly && canPerformFastPropertyEnumerationForIterationBun(structure);
     JSValue prototypeObject = value;
 
-    if (fast) {
-        if (structure->outOfLineSize() == 0 && structure->inlineSize() == 0) {
-            fast = false;
-
-            if (JSValue proto = object->getPrototype(globalObject)) {
-                if ((structure = proto.structureOrNull())) {
-                    prototypeObject = proto;
-                    fast = canPerformFastPropertyEnumerationForIterationBun(structure);
-                    prototypeCount = 1;
-                }
-            }
-        }
-    }
     auto* propertyNames = vm.propertyNames;
     auto& builtinNames = WebCore::builtinNames(vm);
     WTF::Vector<Identifier, 6> visitedProperties;
 
-restart:
     if (fast) {
         bool anyHits = false;
-        JSC::JSObject* objectToUse = prototypeObject.getObject();
         structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
             if ((entry.attributes() & (PropertyAttribute::Function)) == 0 && (entry.attributes() & (PropertyAttribute::Builtin)) != 0) {
                 return true;
@@ -5198,7 +5183,7 @@ restart:
 
             if (prop == propertyNames->constructor
                 || prop == propertyNames->underscoreProto
-                || prop == propertyNames->toStringTagSymbol || (objectToUse != object && prop == propertyNames->__esModule))
+                || prop == propertyNames->toStringTagSymbol)
                 return true;
 
             if (builtinNames.bunNativePtrPrivateName() == prop)
@@ -5210,18 +5195,14 @@ restart:
             visitedProperties.append(Identifier::fromUid(vm, prop));
 
             ZigString key = toZigString(prop);
-            JSC::JSValue propertyValue = JSValue();
-
-            if (objectToUse == object) {
-                propertyValue = objectToUse->getDirect(entry.offset());
-                if (!propertyValue) {
-                    (void)scope.tryClearException();
-                    return true;
-                }
+            JSC::JSValue propertyValue = object->getDirect(entry.offset());
+            if (!propertyValue) {
+                (void)scope.tryClearException();
+                return true;
             }
 
-            if (!propertyValue || propertyValue.isGetterSetter() && !((entry.attributes() & PropertyAttribute::Accessor) != 0)) {
-                propertyValue = objectToUse->getIfPropertyExists(globalObject, prop);
+            if (propertyValue.isGetterSetter() && !((entry.attributes() & PropertyAttribute::Accessor) != 0)) {
+                propertyValue = object->getIfPropertyExists(globalObject, prop);
             }
 
             // Ignore exceptions due to getters.
@@ -5248,21 +5229,18 @@ restart:
         RETURN_IF_EXCEPTION(scope, );
 
         if (anyHits) {
-            if (prototypeCount++ < 5) {
-
-                if (JSValue proto = prototypeObject.getPrototype(globalObject)) {
-                    if (!(proto == globalObject->objectPrototype() || proto == globalObject->functionPrototype() || (proto.inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(proto)->target() != globalObject))) {
-                        if ((structure = proto.structureOrNull())) {
-                            prototypeObject = proto;
-                            fast = canPerformFastPropertyEnumerationForIterationBun(structure);
-                            goto restart;
-                        }
+            if (JSValue proto = object->getPrototype(globalObject)) {
+                if (!(proto == globalObject->objectPrototype() || proto == globalObject->functionPrototype() || (proto.inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(proto)->target() != globalObject))) {
+                    if (proto.isObject()) {
+                        prototypeObject = proto;
+                        prototypeCount = 1;
                     }
                 }
-                // Ignore exceptions from Proxy "getPrototype" trap.
-                CLEAR_IF_EXCEPTION(scope);
             }
-            return;
+            // Ignore exceptions from Proxy "getPrototype" trap.
+            CLEAR_IF_EXCEPTION(scope);
+            if (prototypeObject == value)
+                return;
         }
     }
 
@@ -5305,6 +5283,10 @@ restart:
                         || property == propertyNames->toStringTagSymbol || property == propertyNames->__esModule)
                         continue;
                 }
+
+                // Inherited: only native custom accessors (URL.href) are per-instance state.
+                if (iterating != object && !slot.isCustom())
+                    continue;
 
                 if (visitedProperties.contains(property))
                     continue;

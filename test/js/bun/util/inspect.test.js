@@ -100,6 +100,71 @@ it("when prototype defines the same property, don't print the same property twic
   expect(Bun.inspect(obj).trim()).toBe('{\n  foo: "456",\n}'.trim());
 });
 
+// https://github.com/oven-sh/bun/issues/4223
+it("class instances show only own properties, not prototype methods", () => {
+  class ImageSettings {
+    a = 123;
+    toJSON() {
+      return { a: "456" };
+    }
+  }
+  expect(Bun.inspect(new ImageSettings())).toBe("ImageSettings {\n  a: 123,\n}");
+
+  class Empty {
+    method() {}
+  }
+  expect(Bun.inspect(new Empty())).toBe("Empty {}");
+
+  class WithGetter {
+    get y() {
+      return 2;
+    }
+    method() {}
+  }
+  expect(Bun.inspect(new WithGetter())).toBe("WithGetter {}");
+
+  class Base {
+    x = 1;
+    baseMethod() {}
+  }
+  class Derived extends Base {
+    z = 3;
+    derivedMethod() {}
+  }
+  expect(Bun.inspect(new Derived())).toBe("Derived {\n  x: 1,\n  z: 3,\n}");
+
+  function Ctor() {
+    this.own = 1;
+  }
+  Ctor.prototype.protoData = "shared";
+  Ctor.prototype.protoMethod = function () {};
+  expect(Bun.inspect(new Ctor())).toBe("Ctor {\n  own: 1,\n}");
+
+  const plain = Object.create({ inherited: 1, method() {} });
+  plain.own = 2;
+  expect(Bun.inspect(plain)).toBe("{\n  own: 2,\n}");
+
+  // https://github.com/oven-sh/bun/issues/1713
+  const created = Object.create({ key: 123 });
+  expect(Bun.inspect(created)).toBe("{}");
+  created.key = 456;
+  expect(Bun.inspect(created)).toBe("{\n  key: 456,\n}");
+
+  // https://github.com/oven-sh/bun/issues/12365
+  class Base12365 {}
+  Base12365.prototype.visibleBaseProp = "base value";
+  class Derived12365 extends Base12365 {
+    constructor() {
+      super();
+      this.visibleDerivedProp = "derived value";
+    }
+  }
+  expect(Bun.inspect(new Derived12365())).toBe('Derived12365 {\n  visibleDerivedProp: "derived value",\n}');
+
+  // Own function properties are still shown.
+  expect(Bun.inspect({ a: 1, fn: () => {} })).toBe("{\n  a: 1,\n  fn: [Function: fn],\n}");
+});
+
 it("Blob inspect", () => {
   expect(Bun.inspect(new Blob(["123"]))).toBe(`Blob (3 bytes)`);
   expect(Bun.inspect(new Blob(["123".repeat(900)]))).toBe(`Blob (2.70 KB)`);
@@ -710,15 +775,6 @@ it("CloseEvent", () => {
       timeStamp: 0,
       srcElement: null,
       returnValue: true,
-      composedPath: [Function: composedPath],
-      stopPropagation: [Function: stopPropagation],
-      stopImmediatePropagation: [Function: stopImmediatePropagation],
-      preventDefault: [Function: preventDefault],
-      initEvent: [Function: initEvent],
-      NONE: 0,
-      CAPTURING_PHASE: 1,
-      AT_TARGET: 2,
-      BUBBLING_PHASE: 3,
     }"
   `);
 });
@@ -778,7 +834,6 @@ it("CustomEvent", () => {
         value: 42,
         name: "test",
       },
-      initCustomEvent: [Function: initCustomEvent],
       type: "custom",
       target: null,
       currentTarget: null,
@@ -791,15 +846,6 @@ it("CustomEvent", () => {
       timeStamp: 0,
       srcElement: null,
       returnValue: true,
-      composedPath: [Function: composedPath],
-      stopPropagation: [Function: stopPropagation],
-      stopImmediatePropagation: [Function: stopImmediatePropagation],
-      preventDefault: [Function: preventDefault],
-      initEvent: [Function: initEvent],
-      NONE: 0,
-      CAPTURING_PHASE: 1,
-      AT_TARGET: 2,
-      BUBBLING_PHASE: 3,
     }"
   `);
 });

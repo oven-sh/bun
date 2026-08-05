@@ -1941,9 +1941,7 @@ describe("bundler", () => {
     run: {
       stdout: `
         {"0":"A","1":"B","A":0,"B":1}
-        TestClass {
-          testMethod: [Function: testMethod],
-        }
+        TestClass {}
         false
       `,
     },
@@ -1980,9 +1978,7 @@ describe("bundler", () => {
     run: {
       stdout: `
         {"0":"A","1":"B","A":0,"B":1}
-        TestClass {
-          testMethod: [Function: testMethod],
-        }
+        TestClass {}
         false
       `,
     },

@@ -85,12 +85,10 @@ void MessagePortPipe::scheduleDrain(uint8_t side, ScriptExecutionContextIdentifi
 void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdentifier expectedCtx)
 {
     // Mirrors Node's MessagePort::OnMessage (src/node_messaging.cc): one
-    // drain task processes the whole inbox in a loop, draining microtasks
-    // between each delivery so queueMicrotask/Promise callbacks observe
-    // messages one at a time, but without a separate posted task per
-    // message. The per-invocation limit is max(initial queue size, 1000)
-    // — enough to amortize the uv_async-style reschedule cost, capped so a
-    // fast sender can't starve the event loop indefinitely.
+    // drain task processes a bounded batch, draining microtasks between each
+    // delivery so queueMicrotask/Promise callbacks observe messages one at a
+    // time, but without a separate posted task per message. Anything beyond
+    // the fixed per-turn cap waits for the next loop iteration.
     //
     // Messages are popped one at a time under the lock, so if the handler
     // transfers this port (pipe->detach clears `s.port`/`Attached`) the
@@ -114,7 +112,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
             s.state.store(st & ~DrainScheduled, std::memory_order_release);
             return;
         }
-        limit = std::max<size_t>(s.inbox.size(), 1000);
+        limit = std::min<size_t>(s.inbox.size(), kDrainPerTurnCap);
     }
 
     // All 'message' listeners removed: the port is paused. Leave the inbox buffered
@@ -179,8 +177,12 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         }
     }
 
-    if (rescheduleCtx)
-        scheduleDrain(side, rescheduleCtx);
+    if (rescheduleCtx) {
+        // Next-iteration so timers/poll get a turn; scheduleDrain would re-run inside the same tick.
+        context->postTaskNextIteration([pipe = Ref { *this }, side, ctxId = rescheduleCtx](ScriptExecutionContext&) {
+            pipe->drainAndDispatch(side, ctxId);
+        });
+    }
 }
 
 std::optional<MessageWithMessagePorts> MessagePortPipe::takeOne(uint8_t side)

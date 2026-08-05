@@ -83,6 +83,16 @@ pub fn queue_task(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) 
         .enqueue_task(Task::init(task));
 }
 
+/// `Bun__queueTask` variant that defers to the next event-loop iteration. JS-thread only.
+// HOST_EXPORT(Bun__queueTaskNextIteration, c)
+pub fn queue_task_next_iteration(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) {
+    crate::mark_binding!();
+    global
+        .bun_vm()
+        .event_loop_mut()
+        .enqueue_task_next_iteration(Task::init(task));
+}
+
 // HOST_EXPORT(Bun__reportUnhandledError, c)
 pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) -> JSValue {
     crate::mark_binding!();

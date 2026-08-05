@@ -268,10 +268,10 @@ void Worker::enqueueToParent(MessageWithMessagePorts&& message)
 }
 
 // Shared drain loop for the two inboxes. Mirrors MessagePortPipe's
-// drainAndDispatch (and Node's MessagePort::OnMessage): one task drains up to
-// max(initial queue size, 1000) messages, running microtasks between each so
-// queueMicrotask/Promise callbacks observe messages one at a time, then
-// yields and reschedules if more remain.
+// drainAndDispatch: one task drains up to MessagePortPipe::kDrainPerTurnCap
+// messages, running microtasks between each so queueMicrotask/Promise
+// callbacks observe messages one at a time, then yields to the next loop
+// iteration if more remain so a sustained sender can't starve timers/poll.
 //
 // Unlike MessagePortPipe, Worker sides never transfer, so we don't need to
 // re-check port identity each iteration — which lets us swap the whole inbox
@@ -289,45 +289,44 @@ static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* gl
             inbox.drainScheduled.store(false, std::memory_order_relaxed);
             return false;
         }
-        limit = std::max<size_t>(inbox.queue.size(), 1000);
+        limit = std::min<size_t>(inbox.queue.size(), MessagePortPipe::kDrainPerTurnCap);
         batch = std::exchange(inbox.queue, {});
     }
 
-    while (true) {
-        while (!batch.isEmpty()) {
-            if (limit-- == 0) {
-                // Yield to the rest of the event loop. Return the undrained
-                // tail to the front of the inbox so it stays ahead of
-                // anything enqueued concurrently; caller reschedules.
-                Locker locker { inbox.lock };
-                while (!batch.isEmpty())
-                    inbox.queue.prepend(batch.takeLast());
-                return true;
-            }
-            auto message = batch.takeFirst();
-
-            auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
-            auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), nullptr, WTF::move(ports));
-            dispatch(event.event);
-
-            if (globalObject->drainMicrotasks()) {
-                // Termination pending. Drop the rest — dispatch is a no-op
-                // once m_terminateRequested is set (drainToParent), and the
-                // worker thread is tearing down (drainToWorker).
-                return false;
-            }
+    while (!batch.isEmpty()) {
+        if (limit-- == 0) {
+            // Yield to the rest of the event loop. Put the undrained tail
+            // back ahead of anything the sender enqueued during dispatch:
+            // swap so inbox.queue holds the large old tail, then append the
+            // few arrivals — O(arrivals), not O(backlog), under the lock.
+            Locker locker { inbox.lock };
+            std::swap(inbox.queue, batch);
+            while (!batch.isEmpty())
+                inbox.queue.append(batch.takeFirst());
+            return true;
         }
+        auto message = batch.takeFirst();
 
-        // Batch exhausted — see if more arrived while we were dispatching.
-        Locker locker { inbox.lock };
-        if (inbox.queue.isEmpty()) {
-            inbox.drainScheduled.store(false, std::memory_order_relaxed);
+        auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
+        auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), nullptr, WTF::move(ports));
+        dispatch(event.event);
+
+        if (globalObject->drainMicrotasks()) {
+            // Termination pending. Drop the rest — dispatch is a no-op
+            // once m_terminateRequested is set (drainToParent), and the
+            // worker thread is tearing down (drainToWorker).
             return false;
         }
-        if (limit == 0)
-            return true; // budget spent; caller reschedules
-        batch = std::exchange(inbox.queue, {});
     }
+
+    // Batch exhausted (limit == batch.size() ≤ cap). Anything that arrived
+    // while dispatching waits for the next loop iteration.
+    Locker locker { inbox.lock };
+    if (inbox.queue.isEmpty()) {
+        inbox.drainScheduled.store(false, std::memory_order_relaxed);
+        return false;
+    }
+    return true;
 }
 
 void Worker::drainToWorker(ScriptExecutionContext& context)
@@ -342,7 +341,8 @@ void Worker::drainToWorker(ScriptExecutionContext& context)
         globalObject->globalEventScope->dispatchEvent(event);
     });
     if (reschedule) {
-        ScriptExecutionContext::postTaskTo(m_clientIdentifier, [protectedThis = Ref { *this }](ScriptExecutionContext& ctx) {
+        // Next-iteration so this thread's timers/poll get a turn; postTaskTo would re-run in the same tick.
+        context.postTaskNextIteration([protectedThis = Ref { *this }](ScriptExecutionContext& ctx) {
             protectedThis->drainToWorker(ctx);
         });
     }
@@ -360,7 +360,7 @@ void Worker::drainToParent(ScriptExecutionContext& context)
         dispatchEvent(event);
     });
     if (reschedule) {
-        postTaskToParent([protectedThis = Ref { *this }](ScriptExecutionContext& c) {
+        context.postTaskNextIteration([protectedThis = Ref { *this }](ScriptExecutionContext& c) {
             protectedThis->drainToParent(c);
         });
     }

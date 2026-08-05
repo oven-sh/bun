@@ -68,6 +68,12 @@ pub struct EventLoop {
     pub immediate_tasks: Vec<*mut ()>,
     pub next_immediate_tasks: Vec<*mut ()>,
 
+    /// Tasks deferred to the next event-loop iteration. Promoted into `tasks`
+    /// at `tick()` entry only, so a task queued here from inside the current
+    /// tick runs after the outer loop has polled I/O and fired due timers
+    /// (the `uv_async` yield node's MessagePort drain relies on).
+    pub next_iteration_tasks: Vec<Task>,
+
     pub concurrent_tasks: ConcurrentQueue,
     // BACKREF — `*JSGlobalObject` owned by the VM; outlives this EventLoop.
     pub global: Option<NonNull<JSGlobalObject>>,
@@ -113,6 +119,7 @@ impl Default for EventLoop {
             tasks: Queue::init(),
             immediate_tasks: Vec::new(),
             next_immediate_tasks: Vec::new(),
+            next_iteration_tasks: Vec::new(),
             concurrent_tasks: ConcurrentQueue::default(),
             global: None,
             virtual_machine: None,
@@ -622,6 +629,10 @@ impl EventLoop {
         jsc::mark_binding();
         crate::top_scope!(scope, self.global_ref());
         self.entered_event_loop_count += 1;
+        // Entry-only: deferrals from inside this tick land in the next one.
+        for task in self.next_iteration_tasks.drain(..) {
+            let _ = self.tasks.write_item(task);
+        }
         // The scope/counter cleanup is inlined at each return site below (a
         // scopeguard closure would alias `&mut self`).
 
@@ -682,6 +693,11 @@ impl EventLoop {
 
     pub fn enqueue_task(&mut self, task: Task) {
         let _ = self.tasks.write_item(task);
+    }
+
+    /// See `next_iteration_tasks`. JS-thread only.
+    pub fn enqueue_task_next_iteration(&mut self, task: Task) {
+        self.next_iteration_tasks.push(task);
     }
 
     /// Drain `concurrent_tasks` without running them and `delete` any
@@ -748,6 +764,9 @@ impl EventLoop {
     /// definer can't safely dispatch every erased callback at shutdown.
     pub fn release_queued_tasks_for_shutdown(&mut self) {
         self.drop_concurrent_cpp_tasks();
+        for task in self.next_iteration_tasks.drain(..) {
+            let _ = self.tasks.write_item(task);
+        }
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
         while let Some(task) = self.tasks.read_item() {
             // SAFETY: tag-specific release (drops JSC handles while the VM is
@@ -797,6 +816,7 @@ impl EventLoop {
         for task in requeue {
             let _ = self.tasks.write_item(task);
         }
+        self.next_iteration_tasks = Vec::new();
         let pending = core::mem::take(&mut self.immediate_tasks);
         let next = core::mem::take(&mut self.next_immediate_tasks);
         if !pending.is_empty() || !next.is_empty() {

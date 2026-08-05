@@ -226,6 +226,50 @@ describe("web worker", () => {
     expect(process.execArgv).toEqual(original_execArgv);
   });
 
+  test("sustained worker postMessage flood doesn't starve parent timers/immediates", async () => {
+    // A worker running a tight `for(;;) postMessage()` loop must not prevent
+    // the parent's setTimeout/setImmediate from firing. Cross-thread message
+    // delivery is a bounded task per event-loop turn in Node and browsers.
+    // The worker waits for "go" so the parent is already in its event loop
+    // when the flood starts and the first drain sees a bounded inbox.
+    const script = `
+      let recv = 0, t0 = 0;
+      const fired = {};
+      const workerSrc = "onmessage = () => { for (;;) postMessage(0); };";
+      const w = new Worker(URL.createObjectURL(new Blob([workerSrc], { type: "text/javascript" })));
+      w.onmessage = () => {
+        if (++recv === 1) {
+          t0 = Date.now();
+          setTimeout(() => { fired.timer = Date.now() - t0; }, 100);
+          setImmediate(() => { fired.immediate = Date.now() - t0; });
+        }
+        if ("timer" in fired && "immediate" in fired) {
+          console.log(JSON.stringify({ recv, fired }));
+          process.exit(0);
+        }
+        if (Date.now() - t0 > 2000) {
+          console.log(JSON.stringify({ recv, fired, STARVED: true }));
+          process.exit(1);
+        }
+      };
+      w.postMessage("go");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const out = JSON.parse(stdout.trim());
+    expect({ STARVED: out.STARVED, timer: typeof out.fired.timer, immediate: typeof out.fired.immediate }).toEqual({
+      STARVED: undefined,
+      timer: "number",
+      immediate: "number",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("sending 50 messages should just work", done => {
     const worker = new Worker(new URL("worker-fixture-many-messages.js", import.meta.url).href, {});
 

@@ -12,9 +12,10 @@
 // task on the receiving context. The drain task loops, popping one message at
 // a time under the lock and dispatching it, draining microtasks between each
 // (matching Node's MakeCallback / InternalCallbackScope behavior), up to
-// max(initial-queue-size, 1000) iterations before yielding back to the event
-// loop. Messages stay in the inbox until the instant they are dispatched, so
-// a port transferred mid-loop carries the remaining queue to the new owner.
+// kDrainPerTurnCap messages per turn; anything beyond that yields to the next
+// event-loop iteration so a sustained sender can't starve timers/poll.
+// Messages stay in the inbox until the instant they are dispatched, so a port
+// transferred mid-loop carries the remaining queue to the new owner.
 //
 // The Web API semantics (start(), close(), transfer, event dispatch) live in
 // MessagePort; this class knows nothing about EventTarget or JS.
@@ -35,6 +36,9 @@ using ScriptExecutionContextIdentifier = uint32_t;
 
 class MessagePortPipe final : public ThreadSafeRefCounted<MessagePortPipe> {
 public:
+    // Shared per-turn message drain cap for drainAndDispatch and Worker::drainInbox.
+    static constexpr size_t kDrainPerTurnCap = 1024;
+
     static Ref<MessagePortPipe> create() { return adoptRef(*new MessagePortPipe); }
     ~MessagePortPipe();
 

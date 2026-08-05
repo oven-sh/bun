@@ -911,7 +911,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
     #[cfg(windows)]
-    if !unsafe { &*el }.immediate_tasks.is_empty() {
+    if !unsafe { &*el }.immediate_tasks.is_empty()
+        || !unsafe { &*el }.next_iteration_tasks.is_empty()
+    {
         // SAFETY: `el` is the live per-thread event loop.
         unsafe { (*el).wakeup() };
     }
@@ -974,7 +976,8 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // `tickImmediateTasks` swaps `next_immediate_tasks` in, so this
         // reflects next-tick immediates (queued during the drain above).
         // SAFETY: `el` is the live per-thread event loop.
-        let has_pending_immediate = !unsafe { &*el }.immediate_tasks.is_empty();
+        let has_pending_immediate = !unsafe { &*el }.immediate_tasks.is_empty()
+            || !unsafe { &*el }.next_iteration_tasks.is_empty();
         // Fold the QUIC deadline into the poll timeout.
         // SAFETY: `loop_` is the live per-thread uws loop.
         let quic_next_tick_us = unsafe {
@@ -1067,7 +1070,9 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
     #[cfg(windows)]
-    if !unsafe { &*el }.immediate_tasks.is_empty() {
+    if !unsafe { &*el }.immediate_tasks.is_empty()
+        || !unsafe { &*el }.next_iteration_tasks.is_empty()
+    {
         // SAFETY: `el` is the live per-thread event loop.
         unsafe { (*el).wakeup() };
     }
@@ -1107,7 +1112,8 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
 
     {
         // SAFETY: `el` is the live per-thread event loop.
-        let has_pending_immediate = !unsafe { &*el }.immediate_tasks.is_empty();
+        let has_pending_immediate = !unsafe { &*el }.immediate_tasks.is_empty()
+            || !unsafe { &*el }.next_iteration_tasks.is_empty();
         // SAFETY: `loop_` is the live per-thread uws loop.
         let quic_next_tick_us = unsafe {
             let ild = &(*loop_).internal_loop_data;

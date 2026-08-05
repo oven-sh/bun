@@ -457,12 +457,40 @@ export function tempDirWithFiles(
   return base;
 }
 
+/**
+ * On Windows, EBUSY/EPERM from removing a test directory almost always means a
+ * process spawned by the test is still alive (or still terminating; handles are
+ * released asynchronously after TerminateProcess) and holds the directory as
+ * its cwd or has an open handle inside it. Several tests have independently
+ * re-discovered this the hard way, so say it in the error instead of making the
+ * next author bisect it again. The error is still thrown: a held directory is a
+ * real leak that the test must fix, by awaiting the child's exit before
+ * disposal or by spawning children that outlive the test with a cwd outside
+ * the temp dir.
+ */
+function rethrowWithRmDiagnostic(error: unknown, path: string): never {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  if (process.platform === "win32" && (code === "EBUSY" || code === "EPERM") && error instanceof Error) {
+    error.message +=
+      `\nA process is likely still holding '${path}' as its working directory or has an open handle inside it. ` +
+      `Kill that process and await its exit before the directory is cleaned up, or spawn processes that can ` +
+      `outlive the test with a cwd outside the temp dir (e.g. cwd: os.tmpdir()).`;
+  }
+  throw error;
+}
+
 class DisposableString extends String {
   [Symbol.dispose]() {
-    fs.rmSync(this + "", { recursive: true, force: true });
+    try {
+      fs.rmSync(this + "", { recursive: true, force: true });
+    } catch (error) {
+      rethrowWithRmDiagnostic(error, this + "");
+    }
   }
   [Symbol.asyncDispose]() {
-    return fs.promises.rm(this + "", { recursive: true, force: true });
+    return fs.promises.rm(this + "", { recursive: true, force: true }).catch(error => {
+      rethrowWithRmDiagnostic(error, this + "");
+    });
   }
 }
 
@@ -1863,7 +1891,11 @@ export function cwdScope(cwd: string) {
 export function rmScope(path: string) {
   return {
     [Symbol.dispose]() {
-      fs.rmSync(path, { recursive: true, force: true });
+      try {
+        fs.rmSync(path, { recursive: true, force: true });
+      } catch (error) {
+        rethrowWithRmDiagnostic(error, path);
+      }
     },
   };
 }

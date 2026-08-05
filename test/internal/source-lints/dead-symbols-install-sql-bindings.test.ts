@@ -73,7 +73,11 @@ test("dead Rust symbols (install, event_loop, dns, mysql protocol) do not reappe
   // the Representation enum body because WellDefinedProtocol::Ssh (a live
   // variant in the same file) would trip a whole-file grep.
   const hosted = src("src/install/hosted_git_info.rs");
-  const reprBody = hosted.slice(hosted.indexOf("pub enum Representation"), hosted.indexOf("HostedGitInfo"));
+  const reprStart = hosted.indexOf("pub enum Representation");
+  const reprEnd = hosted.indexOf("}", reprStart);
+  expect(reprStart).toBeGreaterThan(-1);
+  expect(reprEnd).toBeGreaterThan(reprStart);
+  const reprBody = hosted.slice(reprStart, reprEnd);
   if (/^\s*Ssh,$/m.test(reprBody)) {
     resurrected.push("src/install/hosted_git_info.rs: Representation::Ssh");
   }

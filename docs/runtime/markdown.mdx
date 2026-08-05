@@ -7,11 +7,13 @@ description: Parse and render Markdown with Bun's built-in Markdown API, support
   **Unstable API** — This API is under active development and may change in future versions of Bun.
 </Callout>
 
-Bun includes a fast, built-in Markdown parser written in Rust. It supports GitHub Flavored Markdown (GFM) extensions and provides three APIs:
+Bun includes a fast, built-in Markdown parser written in Rust. It supports GitHub Flavored Markdown (GFM) extensions and provides these APIs:
 
 - `Bun.markdown.html()` — render Markdown to an HTML string
 - `Bun.markdown.render()` — render Markdown with custom callbacks for each element
 - `Bun.markdown.react()` — render Markdown to React JSX elements
+- `Bun.markdown.ansi()` — render Markdown to an ANSI-colored terminal string
+- `Bun.markdown.frontmatter()` — split a front-matter block from a document
 
 ---
 
@@ -69,6 +71,7 @@ All available options:
 | `noHtmlBlocks`         | `false` | Disable HTML blocks                                         |
 | `noHtmlSpans`          | `false` | Disable inline HTML                                         |
 | `tagFilter`            | `false` | GFM tag filter for disallowed HTML tags                     |
+| `frontmatter`          | `true`  | Skip a leading front-matter block — see [Front matter](#front-matter) |
 
 #### Autolinks
 
@@ -96,6 +99,54 @@ Bun.markdown.html("## Hello World", { headings: true });
 // Enable only heading IDs (no autolink)
 Bun.markdown.html("## Hello World", { headings: { ids: true } });
 // '<h2 id="hello-world">Hello World</h2>\n'
+```
+
+---
+
+## Front matter
+
+Documents from static-site generators often start with a metadata block: `---` fences around YAML (Jekyll, Astro, Eleventy, VitePress) or `+++` fences around TOML (Hugo, Zola). All of the renderers — `html()`, `render()`, `react()`, `ansi()`, and `bun file.md` in the terminal — recognize a front-matter block at the very start of the input and skip it instead of rendering it:
+
+```ts
+const html = Bun.markdown.html(`---
+title: Hello
+---
+# Heading
+`);
+// "<h1>Heading</h1>\n"
+```
+
+A block only counts as front matter when it would parse: the fences must be closed, and the metadata must be a mapping (or empty). Anything else renders as plain CommonMark, so `---\nFoo\n---` is still a thematic break followed by a setext heading. The one CommonMark reading this changes is an empty block: `---\n---` at the very start of a document is treated as empty front matter and renders to nothing, instead of two thematic breaks. Pass `frontmatter: false` to disable the skip entirely:
+
+```ts
+Bun.markdown.html("---\ntitle: Hello\n---\n", { frontmatter: false });
+// "<hr />\n<h2>title: Hello</h2>\n"
+```
+
+### `Bun.markdown.frontmatter()`
+
+Parse the metadata and get the remaining body — no extra dependency needed:
+
+```ts
+const { data, content } = Bun.markdown.frontmatter(await Bun.file("post.md").text());
+data; // { title: "Hello", tags: ["a", "b"] }
+content; // the document after the block
+```
+
+The fence picks the parser: `---` is YAML and `+++` is TOML. JSON front matter between `---` fences works too, since JSON is valid YAML. `data` distinguishes the three possible shapes:
+
+- an **object** when the block parses as a mapping
+- **`{}`** when the block is empty (`---\n---`)
+- **`null`** when the input has no front-matter block — including a `---` block whose content is a scalar or sequence, which stays part of `content`
+
+Invalid YAML or TOML inside the fences throws a `SyntaxError` (a typo in your metadata should be loud).
+
+```ts
+Bun.markdown.frontmatter("+++\ntitle = 'Hello'\n+++\nbody");
+// { data: { title: "Hello" }, content: "body" }
+
+Bun.markdown.frontmatter("# Just a doc");
+// { data: null, content: "# Just a doc" }
 ```
 
 ---

@@ -258,9 +258,14 @@ for (const { name, file } of specFiles) {
   describe(name, () => {
     for (let i = 0; i < examples.length; i++) {
       const ex = examples[i];
+      // The one intentional deviation from the spec: with the default
+      // `frontmatter: true`, `---\n---` at the very start of a document is
+      // an empty front-matter block (rendering to nothing), not two
+      // thematic breaks. md-frontmatter.test.ts covers both readings.
+      const expected = ex.markdown === "---\n---" ? "" : ex.expected;
       test(`example ${i + 1} (line ${ex.line}): ${ex.section}`, () => {
         const actual = renderMarkdown(ex.markdown, ex.flags.length > 0 ? ex.flags : undefined);
-        expect(normalizeHtml(actual)).toBe(normalizeHtml(ex.expected));
+        expect(normalizeHtml(actual)).toBe(normalizeHtml(expected));
       });
     }
   });

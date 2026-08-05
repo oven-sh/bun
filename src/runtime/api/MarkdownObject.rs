@@ -2,7 +2,7 @@
 
 use bun_core::StackCheck;
 use bun_jsc::{
-    ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer,
+    ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, MarkedArgumentBuffer,
     RangeErrorOptions,
 };
 // Note: the `bun_md` crate's lib.rs is a
@@ -11,6 +11,8 @@ use bun_jsc::{
 use crate::node::StringOrBuffer;
 use bun_md::parser::{MAX_INPUT_LEN, ParserError};
 use bun_md::root as md;
+use bun_parsers::toml::TOML;
+use bun_parsers::yaml::{YAML, YamlParseError};
 
 // `bun_core::String::create_utf8_for_js` lives in `bun_jsc::bun_string_jsc`
 // (tier-6), not on `bun_core::String` itself.
@@ -105,6 +107,7 @@ pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
             ("ansi", __jsc_host_render_to_ansi, 2),
             ("render", __jsc_host_render, 3),
             ("react", __jsc_host_render_react, 3),
+            ("frontmatter", __jsc_host_frontmatter, 1),
         ],
     )
 }
@@ -165,7 +168,11 @@ pub(crate) fn render_to_ansi(
         remote_image_paths: None,
         image_base_dir: None,
     };
+    let mut skip_frontmatter = true;
     if theme_value.is_object() {
+        if let Some(v) = theme_value.get_boolean_loose(global_this, "frontmatter")? {
+            skip_frontmatter = v;
+        }
         if let Some(v) = theme_value.get_boolean_loose(global_this, "colors")? {
             theme.colors = v;
         }
@@ -189,6 +196,12 @@ pub(crate) fn render_to_ansi(
             }
         }
     }
+
+    let input = if skip_frontmatter {
+        strip_frontmatter(input)
+    } else {
+        input
+    };
 
     let result = match md::render_to_ansi(input, md::Options::TERMINAL, theme) {
         Ok(Some(r)) => r,
@@ -225,8 +238,13 @@ fn render_to_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
     };
 
     let options = parse_options(global_this, opts_value)?;
+    let input = if options.frontmatter {
+        strip_frontmatter(input)
+    } else {
+        input
+    };
 
-    let result = match md::render_to_html_with_options(input, options) {
+    let result = match md::render_to_html_with_options(input, options.md) {
         Ok(r) => r,
         Err(err) => return Err(parser_err_to_js(global_this, err, input.len())),
     };
@@ -234,9 +252,21 @@ fn render_to_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
     create_utf8_for_js(global_this, &result)
 }
 
-fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<md::Options> {
+/// `md::Options` plus the binding-level `frontmatter` flag: the `bun_md`
+/// parser has no notion of front matter, so the strip happens here before
+/// the input reaches it.
+struct ParsedOptions {
+    md: md::Options,
+    frontmatter: bool,
+}
+
+fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<ParsedOptions> {
     let mut options = md::Options::default();
+    let mut frontmatter = true;
     if opts_value.is_object() {
+        if let Some(v) = opts_value.get_boolean_loose(global_this, "frontmatter")? {
+            frontmatter = v;
+        }
         // Handle compound autolinks: true | { url, www, email }
         if let Some(autolinks_val) = opts_value.get(global_this, "autolinks")? {
             if autolinks_val.is_boolean() {
@@ -299,7 +329,294 @@ fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<
             }
         }
     }
-    Ok(options)
+    Ok(ParsedOptions {
+        md: options,
+        frontmatter,
+    })
+}
+
+// ========================================
+// Front matter
+// ========================================
+
+#[derive(Clone, Copy)]
+enum FrontmatterLang {
+    /// `---` fences (Jekyll, Hugo, Astro, Eleventy, VitePress, Obsidian, …).
+    /// Also covers fenced JSON, which is valid YAML.
+    Yaml,
+    /// `+++` fences (Hugo, Zola).
+    Toml,
+}
+
+struct FrontmatterBlock {
+    lang: FrontmatterLang,
+    /// The metadata text between the fences.
+    meta: core::ops::Range<usize>,
+    /// Offset of the first byte after the block (start of the body).
+    body_start: usize,
+}
+
+/// True when a fence (exactly three `marker` bytes) starts at `pos`.
+fn is_fence_at(input: &[u8], pos: usize, marker: u8) -> bool {
+    input.len() >= pos + 3
+        && input[pos] == marker
+        && input[pos + 1] == marker
+        && input[pos + 2] == marker
+}
+
+/// Consume the rest of a fence line starting just past the three marker
+/// bytes: optional spaces/tabs, an optional `\r`, then `\n` or EOF. Returns
+/// the offset past the terminator; None when the line carries other content
+/// (`----`, `--- text`).
+fn fence_line_end(input: &[u8], mut i: usize) -> Option<usize> {
+    while i < input.len() && (input[i] == b' ' || input[i] == b'\t') {
+        i += 1;
+    }
+    if i < input.len() && input[i] == b'\r' {
+        i += 1;
+    }
+    match input.get(i) {
+        None => Some(i),
+        Some(b'\n') => Some(i + 1),
+        Some(_) => None,
+    }
+}
+
+/// Find a front-matter block at the very start of `input` (after an
+/// optional UTF-8 BOM — `fs.readFileSync(path, "utf8")` keeps BOMs).
+/// Purely structural; the caller decides whether the metadata parses.
+fn detect_frontmatter(input: &[u8]) -> Option<FrontmatterBlock> {
+    let start = if input.starts_with(b"\xEF\xBB\xBF") {
+        3
+    } else {
+        0
+    };
+    let marker = *input.get(start)?;
+
+    let lang = match marker {
+        b'-' => FrontmatterLang::Yaml,
+        b'+' => FrontmatterLang::Toml,
+        _ => return None,
+    };
+    if !is_fence_at(input, start, marker) {
+        return None;
+    }
+    let meta_start = fence_line_end(input, start + 3)?;
+
+    // The closing fence must start a line; indented content (e.g. inside a
+    // YAML block scalar) can never sit at column 0.
+    let mut line_start = meta_start;
+    while line_start < input.len() {
+        if is_fence_at(input, line_start, marker) {
+            if let Some(body_start) = fence_line_end(input, line_start + 3) {
+                return Some(FrontmatterBlock {
+                    lang,
+                    meta: meta_start..line_start,
+                    body_start,
+                });
+            }
+        }
+        line_start += bun_core::strings::index_of(&input[line_start..], b"\n")? + 1;
+    }
+    None
+}
+
+enum MetaShape {
+    Mapping,
+    Empty,
+    Other,
+}
+
+fn classify_meta_root(root: bun_ast::Expr) -> MetaShape {
+    use bun_ast::expr::Data;
+    match root.data {
+        Data::EObject(_) => MetaShape::Mapping,
+        Data::ENull(_) | Data::EMissing(_) => MetaShape::Empty,
+        _ => MetaShape::Other,
+    }
+}
+
+enum MetaParseError {
+    Syntax,
+    StackOverflow,
+    OutOfMemory,
+}
+
+fn map_parsers_error(e: bun_parsers::Error) -> MetaParseError {
+    match e {
+        bun_parsers::Error::StackOverflow => MetaParseError::StackOverflow,
+        bun_parsers::Error::Alloc(_) => MetaParseError::OutOfMemory,
+        _ => MetaParseError::Syntax,
+    }
+}
+
+/// Parse a front-matter metadata slice with the parser `lang` selects.
+/// Allocates from `arena`; the caller holds the `ASTMemoryAllocator` scope.
+fn parse_meta(
+    arena: &bun_alloc::Arena,
+    log: &mut bun_ast::Log,
+    lang: FrontmatterLang,
+    meta: &[u8],
+) -> Result<bun_ast::Expr, MetaParseError> {
+    match lang {
+        FrontmatterLang::Yaml => {
+            let source = bun_ast::Source::init_path_string(b"input.yaml", meta);
+            YAML::parse(&source, log, arena).map_err(|e| match e {
+                YamlParseError::OutOfMemory => MetaParseError::OutOfMemory,
+                YamlParseError::StackOverflow => MetaParseError::StackOverflow,
+                YamlParseError::SyntaxError => MetaParseError::Syntax,
+            })
+        }
+        FrontmatterLang::Toml => {
+            let source = bun_ast::Source::init_path_string(b"input.toml", meta);
+            TOML::parse(&source, log, arena, false).map_err(map_parsers_error)
+        }
+    }
+}
+
+/// When `input` begins with a front-matter block whose metadata parses as a
+/// mapping (or is empty), the offset where the body starts. A missing
+/// closing fence, metadata that fails to parse, or a scalar/sequence
+/// document is not front matter — `---\nFoo\n---` stays a thematic break
+/// plus a setext heading, exactly as CommonMark reads it.
+pub(crate) fn frontmatter_body_offset(input: &[u8]) -> Option<usize> {
+    let block = detect_frontmatter(input)?;
+    // The parsers index with i32 offsets (see `with_text_format_source`).
+    if block.meta.len() > i32::MAX as usize {
+        return None;
+    }
+
+    let arena = bun_alloc::Arena::new();
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let _ast_scope = ast_memory_allocator.enter();
+    let mut log = bun_ast::Log::init();
+
+    match parse_meta(&arena, &mut log, block.lang, &input[block.meta.clone()]) {
+        Ok(root) => match classify_meta_root(root) {
+            MetaShape::Mapping | MetaShape::Empty => Some(block.body_start),
+            MetaShape::Other => None,
+        },
+        Err(_) => None,
+    }
+}
+
+/// Strip a leading front-matter block for the renderers; the input comes
+/// back unchanged when no valid block is present.
+pub(crate) fn strip_frontmatter(input: &[u8]) -> &[u8] {
+    match frontmatter_body_offset(input) {
+        Some(body_start) => &input[body_start..],
+        None => input,
+    }
+}
+
+/// Build the `{ data, content }` result object for `frontmatter()`.
+fn frontmatter_result(
+    global_this: &JSGlobalObject,
+    data: JSValue,
+    input_value: JSValue,
+    input: &[u8],
+    body_start: usize,
+) -> JsResult<JSValue> {
+    // With nothing split off, hand back the original string instead of
+    // re-encoding the bytes.
+    let content = if body_start == 0 && input_value.is_string() {
+        input_value
+    } else {
+        create_utf8_for_js(global_this, &input[body_start..])?
+    };
+    let result = JSValue::create_empty_object(global_this, 2);
+    result.put(global_this, b"data", data);
+    result.put(global_this, b"content", content);
+    Ok(result)
+}
+
+/// `Bun.markdown.frontmatter(text)` — split a leading front-matter block
+/// from a document. Returns `{ data, content }`: `data` is the parsed
+/// metadata (`---` fences = YAML, `+++` fences = TOML; fenced JSON works
+/// through the YAML parser because JSON is valid YAML) and `content` is the
+/// text after the block. With no front-matter block, `data` is `null` and
+/// `content` is the input unchanged.
+#[bun_jsc::host_fn]
+fn frontmatter(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let [input_value] = callframe.arguments_as_array::<1>();
+
+    if input_value.is_empty_or_undefined_or_null() {
+        return Err(global_this
+            .throw_invalid_arguments(format_args!("Expected a string or buffer to parse")));
+    }
+    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
+        return Err(global_this
+            .throw_invalid_arguments(format_args!("Expected a string or buffer to parse")));
+    };
+    let pinned = PinnedView::pin(global_this, &buffer)?;
+    let input: &[u8] = match &pinned {
+        Some(p) => p.slice(),
+        None => buffer.slice(),
+    };
+
+    // The YAML/TOML parsers index with i32 offsets; bound the input the
+    // same way `Bun.YAML.parse` and friends do.
+    if input.len() > i32::MAX as usize {
+        return Err(global_this.throw_range_error(
+            input.len() as i64,
+            RangeErrorOptions {
+                max: i64::from(i32::MAX),
+                field_name: b"input.byteLength",
+                ..Default::default()
+            },
+        ));
+    }
+
+    let Some(block) = detect_frontmatter(input) else {
+        return frontmatter_result(global_this, JSValue::NULL, input_value, input, 0);
+    };
+
+    let arena = bun_alloc::Arena::new();
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let _ast_scope = ast_memory_allocator.enter();
+    let mut log = bun_ast::Log::init();
+
+    let root = match parse_meta(&arena, &mut log, block.lang, &input[block.meta.clone()]) {
+        Ok(root) => root,
+        Err(MetaParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
+        Err(MetaParseError::StackOverflow) => return Err(global_this.throw_stack_overflow()),
+        Err(MetaParseError::Syntax) => {
+            // The renderers treat an unparseable block as document content;
+            // here the caller explicitly asked for the metadata, so a parse
+            // failure inside the fences is a typo worth surfacing.
+            let (what, fallback) = match block.lang {
+                FrontmatterLang::Toml => ("TOML", "Unable to parse TOML"),
+                FrontmatterLang::Yaml => ("YAML", "Unable to parse YAML string"),
+            };
+            let err = if let Some(first_msg) = log.msgs.first() {
+                global_this.create_syntax_error_instance(format_args!(
+                    "{} Parse error: {}",
+                    what,
+                    bstr::BStr::new(&first_msg.data.text)
+                ))
+            } else {
+                global_this.create_syntax_error_instance(format_args!(
+                    "{} Parse error: {}",
+                    what, fallback
+                ))
+            };
+            return Err(global_this.throw_value(err));
+        }
+    };
+
+    let data = match classify_meta_root(root) {
+        MetaShape::Mapping => match block.lang {
+            FrontmatterLang::Yaml => super::yaml_object::yaml_expr_to_js(global_this, root)?,
+            FrontmatterLang::Toml => super::expr_to_js(root, global_this)?,
+        },
+        MetaShape::Empty => JSValue::create_empty_object(global_this, 0),
+        // Valid YAML that is a scalar or sequence is not front matter.
+        MetaShape::Other => {
+            return frontmatter_result(global_this, JSValue::NULL, input_value, input, 0);
+        }
+    };
+
+    frontmatter_result(global_this, data, input_value, input, block.body_start)
 }
 
 /// `Bun.markdown.render(text, callbacks, options?)` — render markdown with custom callbacks.
@@ -329,9 +646,15 @@ fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
 
     // Parse parser options from 3rd argument
     let options = parse_options(global_this, opts_value)?;
+    let input = if options.frontmatter {
+        strip_frontmatter(input)
+    } else {
+        input
+    };
 
     // Create JS callback renderer
-    let mut js_renderer = match JsCallbackRenderer::init(global_this, input, options.heading_ids) {
+    let mut js_renderer = match JsCallbackRenderer::init(global_this, input, options.md.heading_ids)
+    {
         Ok(r) => r,
         Err(_) => return Err(global_this.throw_out_of_memory()),
     };
@@ -344,7 +667,7 @@ fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
     })?;
 
     // Run parser with the JS callback renderer
-    if let Err(err) = md::render_with_renderer(input, options, js_renderer.renderer()) {
+    if let Err(err) = md::render_with_renderer(input, options.md, js_renderer.renderer()) {
         return Err(parser_err_to_js(global_this, err, input.len()));
     }
 
@@ -422,12 +745,17 @@ fn render_ast(
 
     // Parse parser options from 3rd argument
     let options = parse_options(global_this, opts_value)?;
+    let input = if options.frontmatter {
+        strip_frontmatter(input)
+    } else {
+        input
+    };
 
     let mut renderer = match ParseRenderer::init(
         global_this,
         input,
         marked_args,
-        options.heading_ids,
+        options.md.heading_ids,
         react_version,
     ) {
         Ok(r) => r,
@@ -441,7 +769,7 @@ fn render_ast(
         JSValue::UNDEFINED
     })?;
 
-    if let Err(err) = md::render_with_renderer(input, options, renderer.renderer()) {
+    if let Err(err) = md::render_with_renderer(input, options.md, renderer.renderer()) {
         return Err(parser_err_to_js(global_this, err, input.len()));
     }
 

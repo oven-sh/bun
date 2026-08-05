@@ -69,6 +69,13 @@ describe("bun <file.md>", () => {
     expect(await runMd(["above", "", "---", "", "below", ""].join("\n"))).toMatchSnapshot();
   });
 
+  test("skips a leading front-matter block", async () => {
+    const out = await runMd(["---", "title: Hello", "draft: true", "---", "", "# Heading", "", "body", ""].join("\n"));
+    expect(out).not.toContain("title");
+    expect(out).toContain("Heading");
+    expect(out).toContain("body");
+  });
+
   test("renders fenced code block with JS syntax highlighting", async () => {
     expect(
       await runMd(["```js", 'const name = "world";', "console.log(`hello ${name}`);", "```", ""].join("\n")),

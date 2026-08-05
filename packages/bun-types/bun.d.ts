@@ -1083,6 +1083,14 @@ declare module "bun" {
        */
       tagFilter?: boolean;
       /**
+       * Recognize a front-matter block at the very start of the input
+       * (`---` YAML fences or `+++` TOML fences) and skip it instead of
+       * rendering it. Set to `false` to treat the block as plain CommonMark
+       * (thematic break + setext heading).
+       * Default: `true`.
+       */
+      frontmatter?: boolean;
+      /**
        * Enable autolinks. Pass `true` to enable all autolink types (URL, WWW, email),
        * or an object to enable individually.
        *
@@ -1377,6 +1385,13 @@ declare module "bun" {
        * @default false
        */
       kittyGraphics?: boolean;
+      /**
+       * Recognize a front-matter block at the very start of the input
+       * (`---` YAML fences or `+++` TOML fences) and skip it instead of
+       * rendering it.
+       * @default true
+       */
+      frontmatter?: boolean;
     }
 
     /**
@@ -1508,6 +1523,44 @@ declare module "bun" {
       components?: ComponentOverrides,
       options?: ReactOptions,
     ): import("./jsx.d.ts").JSX.Element;
+
+    /** Result of {@link frontmatter}. */
+    interface FrontmatterResult {
+      /**
+       * The parsed front-matter data: an object for a block that parses as
+       * a mapping, `{}` for an empty block, `null` when the input has no
+       * front-matter block.
+       */
+      data: Record<string, unknown> | null;
+      /** The input with the front-matter block removed. */
+      content: string;
+    }
+
+    /**
+     * Split a leading front-matter block from a document.
+     *
+     * Supports `---` fences (YAML) and `+++` fences (TOML) at the very
+     * start of the input; JSON between `---` fences also works, since JSON
+     * is valid YAML. The block must parse as a mapping (or be empty) to
+     * count as front matter: `---\nFoo\n---` is a thematic break plus a
+     * setext heading, not front matter, and comes back with `data: null`
+     * and the input unchanged.
+     *
+     * Invalid YAML or TOML inside the fences throws a `SyntaxError`.
+     *
+     * @param input The text (or buffer) to split
+     * @returns `{ data, content }`
+     *
+     * @example
+     * ```ts
+     * const { data, content } = Bun.markdown.frontmatter("---\ntitle: Hello\n---\n# Heading");
+     * data; // { title: "Hello" }
+     * content; // "# Heading"
+     * ```
+     */
+    export function frontmatter(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
+    ): FrontmatterResult;
   }
 
   /**

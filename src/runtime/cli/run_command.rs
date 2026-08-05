@@ -3441,6 +3441,9 @@ impl RunCommand {
                 Global::exit(1);
             }
         };
+        // Front matter is metadata, not document content — skip it the
+        // same way the `Bun.markdown` renderers do by default.
+        let contents: &[u8] = crate::api::markdown_object::strip_frontmatter(&contents);
 
         // Theme selection: colors when stdout is a TTY (or forced on),
         // hyperlinks when colors are on. Light/dark detected from env.
@@ -3500,8 +3503,8 @@ impl RunCommand {
         // actually contains an image marker — otherwise the whole block
         // is a no-op.
         let mut remote_map: StringHashMap<Box<[u8]>> = StringHashMap::default();
-        if kitty_graphics && strings::contains(&contents, b"![") {
-            Self::prefetch_remote_images(&contents, md_opts, &mut remote_map);
+        if kitty_graphics && strings::contains(contents, b"![") {
+            Self::prefetch_remote_images(contents, md_opts, &mut remote_map);
         }
 
         // Relative image paths in the markdown should resolve against
@@ -3545,7 +3548,7 @@ impl RunCommand {
             image_base_dir: Some(image_base_dir),
         };
 
-        let rendered = match md::render_to_ansi(&contents, md_opts, theme) {
+        let rendered = match md::render_to_ansi(contents, md_opts, theme) {
             Err(bun_md::parser::ParserError::OutOfMemory) => bun_core::out_of_memory(),
             Err(bun_md::parser::ParserError::StackOverflow) => {
                 pretty_errorln!(

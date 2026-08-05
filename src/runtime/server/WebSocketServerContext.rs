@@ -321,8 +321,6 @@ pub(crate) fn on_create(
                 )));
             }
 
-            // Range-check before narrowing so out-of-range values are
-            // rejected instead of wrapping (65566 as u16 is 30).
             let idle_timeout = value.to_int64().max(0);
             if idle_timeout > 960 {
                 return Err(global_object.throw_invalid_arguments(format_args!(

@@ -22,8 +22,13 @@ async function warmup(url: URL) {
   while (remaining > 0) {
     const batch = new Array(batchSize);
     for (let j = 0; j < batchSize; j++) {
-      // warmup the server with streaming requests, because is the most memory intensive
-      batch[j] = fetch(`${url.origin}/streaming`, {
+      // Warm up with incomplete-streaming: it is the highest-RSS scenario (the
+      // unread tail of each 512 KB body lingers until the request context is
+      // recycled), so priming the allocator with it leaves every scenario's
+      // start_memory at the shared server's steady-state plateau. Warming with
+      // /streaming instead left incomplete-streaming to grow the heap by ~80 MB
+      // mid-measurement on darwin aarch64 (build 78545), a false positive.
+      batch[j] = fetch(`${url.origin}/incomplete-streaming`, {
         method: "POST",
         body: zeroCopyPayload,
       }).then(res => res.text());
@@ -115,8 +120,14 @@ async function calculateMemoryLeak(fn: (url: URL) => Promise<void>, url: URL) {
   if (end_memory > peak_memory) {
     peak_memory = end_memory;
   }
-  // use first example as a reference if is a memory leak this should keep increasing and not be stable
-  const consumption = end_memory - memory_examples[0];
+  // A per-request leak grows RSS linearly across the samples; a one-time heap
+  // expansion steps up and plateaus. Using the median sample as the baseline
+  // (instead of the first) lets the first half of the run absorb allocator
+  // growth while still flagging linear growth: a leaked 512 KB body produces
+  // ~2.5 GB of growth over the second half, against a 64 MB threshold.
+  const sorted = [...memory_examples].sort((a, b) => a - b);
+  const baseline = sorted[sorted.length >> 1];
+  const consumption = end_memory - baseline;
   // memory leak in MB
   const leak = Math.floor(consumption > 0 ? consumption / 1024 / 1024 : 0);
   return { leak, start_memory, peak_memory, end_memory, memory_examples };

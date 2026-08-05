@@ -20,7 +20,7 @@ for (let i = 0; i < nodes.length; i += nodeStride) {
 }
 
 const propertyEdgeType = edgeTypes.indexOf("Property");
-const targetsByName = {};
+const targetsByName = { __proto__: null };
 for (let i = 0; i < edges.length; i += 4) {
   if (edges[i + 2] !== propertyEdgeType) continue;
   if (!moduleIds.has(edges[i])) continue;

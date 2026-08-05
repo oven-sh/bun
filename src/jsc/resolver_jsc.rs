@@ -29,6 +29,18 @@ extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> JSVa
     node_module_paths_js_value(in_str, global, false)
 }
 
+/// `Module._initPaths()`: sync `process.env.NODE_PATH` into the resolver's env map.
+#[unsafe(no_mangle)]
+extern "C" fn Resolver__setNodePath(global: &JSGlobalObject, value: &BunString) {
+    crate::mark_binding!();
+    let vm = global.bun_vm().as_mut();
+    // Serialise against a spawning worker's env-map clone (see ProxyEnvStorage).
+    let _guard = vm.proxy_env_storage.lock();
+    let env_map = &mut vm.transpiler.env_mut().map;
+    let value_slice = value.to_utf8();
+    bun_core::handle_oom(env_map.put_alloc_key_and_value(b"NODE_PATH", value_slice.slice()));
+}
+
 // C++ callers pass `in_str` by value without transferring a ref:
 // `bun_core::String` is `Copy` with no `Drop` impl, so receiving it by value
 // never releases the caller's ref.

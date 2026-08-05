@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
+import { bunEnv, bunExe, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -401,5 +401,128 @@ describe.concurrent("node-module-module", () => {
    ./j.cjs (seen)
    ./k.cjs (seen)`);
     expect(await proc.exited).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/5630
+  test("module.constructor is the Module constructor", async () => {
+    // Spawned so the first access to `module.constructor` happens before
+    // anything touches `require("module")`.
+    const script = `
+      const ctor = module.constructor;
+      const Module = require("module");
+      console.log(JSON.stringify({
+        ctorName: ctor && ctor.name,
+        sameAsModule: ctor === Module,
+        initPathsType: typeof (ctor && ctor._initPaths),
+        protoIsModuleProto: Object.getPrototypeOf(module) === Module.prototype,
+        protoCtor: Module.prototype.constructor === Module,
+        instanceOf: module instanceof Module,
+        newModuleCtor: new Module("x").constructor === Module,
+      }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      ctorName: "Module",
+      sameAsModule: true,
+      initPathsType: "function",
+      protoIsModuleProto: true,
+      protoCtor: true,
+      instanceOf: true,
+      newModuleCtor: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("assigning require on a new Module() does not hijack the process-global require", async () => {
+    const script = `
+      "use strict";
+      const Module = require("module");
+      const m = new Module("fake");
+      m.require = () => "hijacked";
+      const out = {
+        ownRequire: Object.prototype.hasOwnProperty.call(m, "require"),
+        mRequire: m.require("os"),
+        globalRequire: typeof require("os").platform,
+      };
+      const orig = Module.prototype._compile;
+      Module.prototype._compile = function wrapped() {};
+      out.protoCompileReplaced = Module.prototype._compile !== orig;
+      console.log(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      ownRequire: true,
+      mRequire: "hijacked",
+      globalRequire: "function",
+      protoCompileReplaced: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/5630
+  test("Module._initPaths() picks up NODE_PATH set at runtime", async () => {
+    using dir = tempDir("init-paths-runtime", {
+      "lib/runtime-mod/index.js": "module.exports = 'from-runtime-node-path';",
+      "lib2/runtime-mod2/index.js": "module.exports = 'from-runtime-node-path-2';",
+      "lib2/runtime-mod3/index.js": "module.exports = 3;",
+      "package.json": JSON.stringify({ name: "p", type: "commonjs" }),
+      "app.cjs": `
+        const path = require("path");
+        const out = {};
+
+        try { require("runtime-mod"); out.before = "resolved"; }
+        catch (e) { out.before = e && e.code; }
+
+        process.env.NODE_PATH = path.join(__dirname, "lib");
+        module.constructor._initPaths();
+
+        out.after = require("runtime-mod");
+        out.globalPathsHasLib = require("module").globalPaths.includes(path.join(__dirname, "lib"));
+
+        // Re-calling _initPaths with a new NODE_PATH replaces the previous one.
+        process.env.NODE_PATH = path.join(__dirname, "lib2");
+        require("module")._initPaths();
+        out.after2 = require("runtime-mod2");
+
+        // And clearing it stops resolution of a not-yet-required module.
+        delete process.env.NODE_PATH;
+        require("module")._initPaths();
+        try { require.resolve("runtime-mod3"); out.cleared = "resolved"; }
+        catch (e) { out.cleared = e && e.code; }
+
+        console.log(JSON.stringify(out));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-install", "app.cjs"],
+      env: { ...bunEnv, NODE_PATH: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      before: "MODULE_NOT_FOUND",
+      after: "from-runtime-node-path",
+      globalPathsHasLib: true,
+      after2: "from-runtime-node-path-2",
+      cleared: "MODULE_NOT_FOUND",
+    });
+    expect(exitCode).toBe(0);
   });
 });

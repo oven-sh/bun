@@ -2174,11 +2174,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(Bun::createS3ErrorStructure(init.vm, init.owner));
         });
 
-    m_commonJSModuleObjectStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(Bun::createCommonJSModuleStructure(static_cast<Zig::GlobalObject*>(init.owner)));
-        });
-
     m_JSSocketAddressDTOStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(Bun::JSSocketAddressDTO::createStructure(init.vm, init.owner));

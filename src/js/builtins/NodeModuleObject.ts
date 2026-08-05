@@ -1,8 +1,10 @@
-// Implementation for `require('node:module')._initPaths`. Exists only as a
-// compatibility stub. Calling this does not affect the actual CommonJS loader.
+// `require('node:module')._initPaths`: re-reads NODE_PATH and refreshes `Module.globalPaths`.
 export function _initPaths() {
   const homeDir = process.platform === "win32" ? process.env.USERPROFILE : Bun.env.HOME;
-  const nodePath = process.platform === "win32" ? process.env.NODE_PATH : Bun.env.NODE_PATH;
+  const nodePath = process.env.NODE_PATH;
+
+  // Sync the current NODE_PATH into the native resolver's env snapshot.
+  $newCppFunction("NodeModuleModule.cpp", "jsFunctionSetNodePathForRequire", 1)(nodePath);
 
   // process.execPath is $PREFIX/bin/node except on Windows where it is
   // $PREFIX\node.exe where $PREFIX is the root of the Node.js installation.

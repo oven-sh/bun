@@ -1654,8 +1654,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ir: Ir,
         refs: Vec<Expr>,
     ) -> Expr {
-        let body =
-            G::FnBody::init_return_expr(self.arena, original).unwrap_or_oom();
+        let body = G::FnBody::init_return_expr(self.arena, original).unwrap_or_oom();
         let thunk = self.new_expr(
             E::Arrow {
                 args: js_ast::StoreSlice::EMPTY,

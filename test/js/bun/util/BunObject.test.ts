@@ -15,6 +15,49 @@ test("hasNonReifiedStatic", () => {
   expect(hasNonReifiedStatic(Bun)).toBe(false);
 });
 
+// A lazy static-table property builder that reifies another lazy property on
+// Bun (transitioning the object) and then throws used to trip
+// ASSERT(object->structure() == this) in JSC::Structure::storedPrototype,
+// because JSObject::getPropertySlot kept using the pre-transition structure
+// for the prototype step. Here the bun:sql module evaluation inside the
+// Bun.sql builder reads Error.prototype, which the proxy intercepts.
+test("lazy property builder that transitions Bun and throws does not abort", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `let phase = 0;
+globalThis.Error = new Proxy(function () {}, {
+  get(target, key, receiver) {
+    if (key === "prototype" && phase === 0) {
+      phase = 1;
+      Bun.semver;
+      throw "boom";
+    }
+    return Reflect.get(target, key, receiver);
+  },
+});
+let caught;
+try {
+  Bun.sql;
+} catch (e) {
+  caught = e;
+}
+console.log("caught:", caught, "phase:", phase);`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  // "phase: 1" proves the builder re-entered the Bun object mid-lookup; if the
+  // sql module stops reading Error.prototype at evaluation time, this test no
+  // longer exercises the code path and needs a new trigger.
+  expect(stdout).toBe("caught: boom phase: 1\n");
+  expect(exitCode).toBe(0);
+});
+
 test("require('bun')", () => {
   const str = eval("'bun'");
   expect(require(str)).toBe(Bun);

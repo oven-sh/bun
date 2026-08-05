@@ -167,7 +167,7 @@ impl core::ops::Deref for FileSinkPtr {
     type Target = FileSink;
     #[inline]
     fn deref(&self) -> &FileSink {
-        // SAFETY: `adopt` contract — `self.0` is a live `FileSink` from
+        // SAFETY: constructor invariant — `self.0` is a live `FileSink` from
         // `FileSink::create*`; the held intrusive ref keeps it alive for `'_`.
         unsafe { self.0.as_ref() }
     }
@@ -176,7 +176,7 @@ impl core::ops::Deref for FileSinkPtr {
 impl core::ops::DerefMut for FileSinkPtr {
     #[inline]
     fn deref_mut(&mut self) -> &mut FileSink {
-        // SAFETY: `adopt` contract — `self.0` is live; `&mut self` is exclusive
+        // SAFETY: constructor invariant — `self.0` is live; `&mut self` is exclusive
         // on this owning handle (FileSinkPtr is non-`Copy`, single-threaded
         // shell), so no other `&`/`&mut` to the `FileSink` overlaps.
         unsafe { self.0.as_mut() }
@@ -186,7 +186,7 @@ impl core::ops::DerefMut for FileSinkPtr {
 impl Drop for FileSinkPtr {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: `adopt` contract — `self.0` is live with one owned intrusive
+        // SAFETY: constructor invariant — `self.0` is live with one owned intrusive
         // ref; `FileSink::deref` (CellRefCounted derive) frees on zero.
         unsafe { FileSink::deref(self.0.as_ptr()) };
     }
@@ -1118,11 +1118,38 @@ impl Writable {
             "ReadableStream stdin requires the JS event loop"
         );
         let global = jsc::JSGlobalObject::opaque_ref(global_ptr.cast());
-        if let Some(err) = pipe.assign_to_stream(stream, global).to_error() {
-            let msg = format!(
-                "Failed to pipe ReadableStream to stdin: {}",
-                err.fmt_string(global)
-            );
+        let result = pipe.assign_to_stream(stream, global);
+        // Success shapes: undefined/null/empty (drained or natively wired) or
+        // a promise (pump in flight). Anything else is a synchronous throw —
+        // an `Error` instance or any other thrown value propagated as-is.
+        let thrown = if let Some(err) = result.to_error() {
+            Some(err)
+        } else if global.has_exception() {
+            global.clear_exception_except_termination();
+            Some(jsc::JSValue::UNDEFINED)
+        } else if !result.is_empty_or_undefined_or_null() && result.as_any_promise().is_none() {
+            Some(result)
+        } else {
+            None
+        };
+        if let Some(err) = thrown {
+            // `fmt::Write` (unlike `format!`/`io::Write`) propagates the
+            // formatter `Err` that `fmt_string` produces when the thrown
+            // value's `toString()` itself throws.
+            use core::fmt::Write as _;
+            let mut msg = String::new();
+            if err.is_undefined()
+                || write!(
+                    &mut msg,
+                    "Failed to pipe ReadableStream to stdin: {}",
+                    err.fmt_string(global)
+                )
+                .is_err()
+            {
+                global.clear_exception_except_termination();
+                msg.clear();
+                msg.push_str("Failed to pipe ReadableStream to stdin");
+            }
             return Err(WritableInitError::StreamAssign(
                 msg.into_bytes().into_boxed_slice(),
             ));

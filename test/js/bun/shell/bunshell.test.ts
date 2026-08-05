@@ -3236,6 +3236,34 @@ describe("redirect stdin from ReadableStream", () => {
     expect(out.stderr.toString()).toContain("Failed to pipe ReadableStream to stdin: Error: boom-sync");
     expect(out.exitCode).toBe(1);
   });
+
+  test.concurrent("direct stream whose pull() throws a non-Error value fails the command", async () => {
+    const s = new ReadableStream({
+      type: "direct",
+      pull() {
+        throw { foo: 1 };
+      },
+    });
+    const out = await $`${BUN} -e ${childPump} < ${s}`.env(bunEnv).nothrow().quiet();
+    expect(out.stderr.toString()).toContain("Failed to pipe ReadableStream to stdin");
+    expect(out.exitCode).toBe(1);
+  });
+
+  test.concurrent("direct stream whose pull() throws a value with a throwing toString()", async () => {
+    const s = new ReadableStream({
+      type: "direct",
+      pull() {
+        throw {
+          toString() {
+            throw 0;
+          },
+        };
+      },
+    });
+    const out = await $`${BUN} -e ${childPump} < ${s}`.env(bunEnv).nothrow().quiet();
+    expect(out.stderr.toString()).toContain("Failed to pipe ReadableStream to stdin");
+    expect(out.exitCode).toBe(1);
+  });
 });
 
 describe("stdin redirect from a zero-length buffer delivers EOF to the spawned command", () => {

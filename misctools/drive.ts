@@ -22,6 +22,7 @@ const proc = Bun.spawn([...pre, `${process.env.HOME}/code/tmp/noaslr/noaslr`, cl
   env, cwd: process.cwd(),
   terminal: { cols: 150, rows: 45, data: (_t, d) => { const s = new TextDecoder().decode(d); buf += s; out.push(s); } },
 });
+const cputime = () => { try { const r = Bun.spawnSync(["ps", "-o", "time=", "-p", String(proc.pid)]); return r.stdout.toString().trim(); } catch { return "?"; } };
 const footprint = () => { try { const r = Bun.spawnSync(["vmmap", "--summary", String(proc.pid)]); const m = /Physical footprint:\s+(\S+)/.exec(r.stdout.toString()); return m ? m[1] : "?"; } catch { return "?"; } };
 const strip = (s: string) => s.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "").replace(/\x1b\][^\x07]*\x07/g, "");
 const waitFor = async (re: RegExp, ms: number) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (re.test(strip(buf))) return true; if (proc.exitCode !== null || proc.signalCode) return false; await Bun.sleep(200); } return false; };
@@ -34,7 +35,7 @@ else {
   const ready = await waitFor(/❯|>/, 20000);
   console.log(`[drive] ${stamp()} prompt=${ready} footprint=${footprint()}`);
   await Bun.sleep(12000);
-  console.log(`[drive] ${stamp()} idle footprint=${footprint()}`);
+  console.log(`[drive] ${stamp()} idle footprint=${footprint()} cpu=${cputime()}`);
   const text = opt("--type");
   if (text) {
     proc.terminal!.write(text); await Bun.sleep(1500);
@@ -43,6 +44,16 @@ else {
     if (w) { const ok = await waitFor(new RegExp(w), secs * 1000); console.log(`[drive] ${stamp()} waited for ${w}: ${ok} footprint=${footprint()}`); }
     await Bun.sleep(8000);
     console.log(`[drive] ${stamp()} after interaction footprint=${footprint()}`);
+    const turns = +(opt("--turns", "1")!);
+    for (let i = 2; i <= turns; i++) {
+      const before = (strip(buf).match(/⏺/g) || []).length;
+      proc.terminal!.write(`${text} ${i}`); await Bun.sleep(1500); proc.terminal!.write("\r");
+      const t1 = Date.now(); while (Date.now() - t1 < secs * 1000 && (strip(buf).match(/⏺/g) || []).length <= before) await Bun.sleep(300);
+      await Bun.sleep(6000);
+      console.log(`[drive] ${stamp()} after turn ${i} footprint=${footprint()} cpu=${cputime()}`);
+    }
+    const cmd = opt("--cmd");
+    if (cmd) { for (const c of cmd.split(",")) { await Bun.write(`${process.cwd()}/cmd.${proc.pid}`, c); proc.terminal!.write(" "); await Bun.sleep(c === "newpayload" || c === "dirtymap" ? 25000 : 10000); proc.terminal!.write("\x7f"); console.log(`[drive] ${stamp()} ran cmd ${c} footprint=${footprint()}`); } }
   }
 }
 if (proc.exitCode === null && !proc.signalCode) { proc.kill("SIGTERM"); await Bun.sleep(500); proc.kill("SIGKILL"); }

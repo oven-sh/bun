@@ -867,7 +867,15 @@ static void dumpNewCells(JSC::VM& vm)
     vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     struct E { size_t n = 0, bytes = 0; };
     std::map<std::string, E> byClass; size_t total = 0, totalBytes = 0, mortalBlocks = 0, mortalBlockLive = 0;
-    vm.heap.objectSpace().forEachBlock([&](JSC::MarkedBlock::Handle* h) { if (!h->block().isImmortal()) mortalBlocks++; });
+    struct D { size_t blocks = 0, liveBytes = 0, capBytes = 0, emptyBlocks = 0; };
+    std::map<std::string, D> byDir;
+    vm.heap.objectSpace().forEachBlock([&](JSC::MarkedBlock::Handle* h) {
+        if (h->block().isImmortal()) return;
+        mortalBlocks++;
+        size_t live = 0; h->forEachLiveCell([&](size_t, JSC::HeapCell*, JSC::HeapCell::Kind) { live++; return IterationStatus::Continue; });
+        char key[96]; snprintf(key, sizeof key, "%s/%zu", h->subspace()->name(), h->cellSize());
+        auto& d = byDir[key]; d.blocks++; d.liveBytes += live * h->cellSize(); d.capBytes += h->cellsPerBlock() * h->cellSize(); if (!live) d.emptyBlocks++;
+    });
     JSC::HeapIterationScope scope(vm.heap);
     vm.heap.objectSpace().forEachLiveCell(scope, [&](JSC::HeapCell* cell, JSC::HeapCell::Kind kind) {
         bool isNew = cell->isPreciseAllocation() ? !cell->preciseAllocation().isImmortal() : !cell->markedBlock().isImmortal();
@@ -878,6 +886,7 @@ static void dumpNewCells(JSC::VM& vm)
         if (!cell->isPreciseAllocation()) mortalBlockLive += sz;
         return IterationStatus::Continue;
     });
+    { std::vector<std::pair<size_t, std::string>> rows; for (auto& [k, d] : byDir) { char line[200]; snprintf(line, sizeof line, "  %-40s blocks=%4zu (%5.2fMB) live=%5.2fMB occupancy=%3.0f%% empty=%zu", k.c_str(), d.blocks, d.blocks * JSC::MarkedBlock::blockSize / 1048576.0, d.liveBytes / 1048576.0, d.capBytes ? 100.0 * d.liveBytes / d.capBytes : 0.0, d.emptyBlocks); rows.push_back({ d.blocks, line }); } std::sort(rows.begin(), rows.end(), std::greater<>()); fprintf(stderr, "[newcells] mortal blocks by directory (subspace/cellSize):\n"); for (size_t i = 0; i < std::min<size_t>(rows.size(), 25); i++) fprintf(stderr, "%s\n", rows[i].second.c_str()); }
     fprintf(stderr, "[newcells] after full GC: %zu new cells, %.2fMB cell bytes; %zu mortal MarkedBlocks = %.2fMB (%.0f%% live)\n", total, totalBytes / 1048576.0, mortalBlocks, mortalBlocks * JSC::MarkedBlock::blockSize / 1048576.0, mortalBlocks ? 100.0 * mortalBlockLive / (mortalBlocks * JSC::MarkedBlock::blockSize) : 0.0);
     std::vector<std::pair<size_t, std::string>> rows;
     for (auto& [k, e] : byClass) { char line[200]; snprintf(line, sizeof line, "  %-44s %8zu  %8.2fMB", k.c_str(), e.n, e.bytes / 1048576.0); rows.push_back({ e.bytes, line }); }

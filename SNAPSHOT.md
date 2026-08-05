@@ -54,6 +54,10 @@ Attribution commands (write the word into `~/code/tmp/ccmem/cmd.<pid>`; needs `B
 
 restored idle at prompt ~40–45 MB (image ~260 MB); after typing + slash menu ~52–57; after one model turn ~105–120, ~87–100 after GC+reclean. Booted normally: 215–230 idle.
 
+## Per-turn growth (not image-specific)
+
+Restored or not, footprint grows ~10–25 MB per trivial turn over the first turns (4 "pong" turns: 122 → 152 MB). Live JS cells grow only ~1.3 MB/turn; the growth is JSC tiering artifacts in malloc (baseline JIT `JITData`/IC stubs/`JIT::link`, DFG/FTL OSR-exit vectors, MetadataTables) as each turn executes more not-yet-compiled code. Measured over restore + 4 turns: `BUN_JSC_useBaselineJIT=0 BUN_JSC_useFTLJIT=0` (LLInt → DFG only) → idle 37 vs 44 MB, after 4 turns **114 vs 150 MB**, CPU 1.67 s vs 1.94 s. FTL off alone or higher DFG thresholds don't help.
+
 ## Known gotchas
 
 - `static`/`call_once`/function-local statics and env reads cached at boot carry the *build* process's values.

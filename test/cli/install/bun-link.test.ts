@@ -8,10 +8,12 @@ import {
   readdirSorted,
   runBunInstall,
   stderrForInstall,
+  tempDir,
   tmpdirSync,
   toBeValidBin,
   toHaveBins,
 } from "harness";
+import { existsSync } from "node:fs";
 import { basename, join } from "path";
 import { dummyAfterAll, dummyAfterEach, dummyBeforeAll, dummyBeforeEach, package_dir } from "./dummy.registry";
 
@@ -471,4 +473,49 @@ it("should link dependency without crashing", async () => {
 
   // This should fail with a non-zero exit code.
   expect(await exited4).toBe(1);
+});
+
+// https://github.com/oven-sh/bun/issues/10152
+it("should expand leading tilde in bunfig [install] globalDir/globalBinDir", async () => {
+  using dir = tempDir("link-tilde", {
+    "pkg/package.json": JSON.stringify({ name: "link-tilde-pkg", version: "1.0.0" }),
+    "pkg/bunfig.toml": `[install]\nglobalDir = "~/my-global"\nglobalBinDir = "~/my-gbin"\n`,
+    "home/.keep": "",
+  });
+  const dirStr = String(dir);
+  const homeDir = join(dirStr, "home");
+  const pkgDir = join(dirStr, "pkg");
+
+  const spawnEnv: NodeJS.Dict<string> = {
+    ...env,
+    HOME: homeDir,
+    USERPROFILE: homeDir,
+  };
+  for (const k of [
+    "BUN_INSTALL",
+    "BUN_INSTALL_BIN",
+    "BUN_INSTALL_GLOBAL_DIR",
+    "BUN_INSTALL_CACHE_DIR",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME",
+  ]) {
+    delete spawnEnv[k];
+  }
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "link"],
+    cwd: pkgDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: spawnEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("error:");
+  expect(stdout).toContain('Registered "link-tilde-pkg"');
+  // The unexpanded paths would have created a literal "~" directory under cwd.
+  expect(existsSync(join(pkgDir, "~"))).toBeFalse();
+  expect(existsSync(join(homeDir, "my-global"))).toBeTrue();
+  expect(existsSync(join(homeDir, "my-gbin"))).toBeTrue();
+  expect(exitCode).toBe(0);
 });

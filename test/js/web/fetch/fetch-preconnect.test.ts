@@ -136,9 +136,14 @@ describe.concurrent.todoIf(isWindows)("fetch.preconnect", () => {
           },
         });
         const url = \`http://127.0.0.1:\${listener.port}\`;
-        // The first iteration parks a socket in the keep-alive pool; later
-        // iterations reuse it. The sleeps give the HTTP thread time to pool
-        // the socket between iterations (preconnect has no completion signal).
+        // The first preconnect parks a socket in the keep-alive pool; wait for
+        // the server to observe its connection before continuing (the park on
+        // the client side follows it by microseconds and has no JS signal).
+        fetch.preconnect(url);
+        const deadline = Date.now() + 5000;
+        while (sockets.length === 0 && Date.now() < deadline) await Bun.sleep(5);
+        // Later iterations reuse the parked socket; short sleeps keep each
+        // preconnect's HTTP-thread turn ahead of the next call.
         for (let i = 0; i < 20; i++) {
           fetch.preconnect(url);
           await Bun.sleep(25);
@@ -166,6 +171,51 @@ describe.concurrent.todoIf(isWindows)("fetch.preconnect", () => {
     const connections = Number(/connections: (\d+)/.exec(stdout)?.[1]);
     expect(connections).toBeGreaterThanOrEqual(1);
     expect(connections).toBeLessThan(10);
+    expect(exitCode).toBe(0);
+  });
+
+  // Companion to the test above that runs on every build: each preconnect
+  // holds one of BUN_CONFIG_MAX_HTTP_REQUESTS slots until its completion is
+  // dispatched, so if the pooled-reuse path ever drops that dispatch, the
+  // preconnect loop pins all 4 slots and the final fetch can never start.
+  it("pooled preconnects release their request slots", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const sockets = [];
+        const listener = Bun.listen({
+          port: 0,
+          hostname: "127.0.0.1",
+          socket: {
+            open(socket) {
+              sockets.push(socket);
+            },
+            data(socket) {
+              socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok");
+            },
+            close() {},
+          },
+        });
+        const url = \`http://127.0.0.1:\${listener.port}\`;
+        fetch.preconnect(url);
+        const deadline = Date.now() + 5000;
+        while (sockets.length === 0 && Date.now() < deadline) await Bun.sleep(5);
+        for (let i = 0; i < 20; i++) {
+          fetch.preconnect(url);
+          await Bun.sleep(25);
+        }
+        const response = await fetch(url);
+        console.log("status:", response.status);
+        listener.stop(true);`,
+      ],
+      env: { ...bunEnv, BUN_CONFIG_MAX_HTTP_REQUESTS: "4" },
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("AddressSanitizer");
+    expect(stdout).toContain("status: 200");
     expect(exitCode).toBe(0);
   });
 

@@ -225,6 +225,36 @@ describe("bun test", () => {
       expect(stderr).toContain("should run");
     });
   });
+  describe("describe.skip / describe.todo", () => {
+    const fixture = (kind: "skip" | "todo") => `
+      import { describe, test, beforeAll, afterAll, beforeEach, afterEach } from "bun:test";
+      describe.${kind}("disabled suite", () => {
+        beforeAll(() => { console.error("beforeAll ran"); });
+        afterAll(() => { console.error("afterAll ran"); });
+        beforeEach(() => {});
+        afterEach(() => {});
+        test("the only real test", () => {});
+      });
+    `;
+    for (const kind of ["skip", "todo"] as const) {
+      test(`should not count beforeAll/afterAll as ${kind} tests`, () => {
+        const stderr = runTest({ input: fixture(kind) });
+        expect(stderr).not.toContain("(unnamed)");
+        expect(stderr).not.toContain("beforeAll ran");
+        expect(stderr).not.toContain("afterAll ran");
+        expect(stderr).toContain("the only real test");
+        expect(stderr).toMatch(new RegExp(`\\b1 ${kind}\\b`));
+        expect(stderr).toContain("Ran 1 test across 1 file");
+      });
+    }
+    test("should still run beforeAll/afterAll in describe.todo with --todo", () => {
+      const stderr = runTest({ args: ["--todo"], input: fixture("todo") });
+      expect(stderr).not.toContain("(unnamed)");
+      expect(stderr).toContain("beforeAll ran");
+      expect(stderr).toContain("afterAll ran");
+      expect(stderr).toContain("Ran 1 test across 1 file");
+    });
+  });
   describe("only", () => {
     test("should run nested describe.only", () => {
       const stderr = runTest({

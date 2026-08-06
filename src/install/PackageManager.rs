@@ -9,7 +9,7 @@ use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::bun_schema::api as Api;
 use bun_alloc::AllocError;
-use bun_collections::linear_fifo::{DynamicBuffer, StaticBuffer};
+use bun_collections::linear_fifo::StaticBuffer;
 use bun_collections::{ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap};
 use bun_core::ZBox;
 use bun_core::{Global, Output};
@@ -73,6 +73,8 @@ pub mod populate_manifest_cache;
 pub mod process_dependency_list;
 #[path = "PackageManager/ProgressStrings.rs"]
 pub mod progress_strings;
+#[path = "PackageManager/ResolveGraph.rs"]
+pub mod resolve_graph;
 #[path = "PackageManager/runTasks.rs"]
 pub mod run_tasks;
 #[path = "PackageManager/security_scanner.rs"]
@@ -199,12 +201,10 @@ pub use directories::{
 
 pub use self::package_manager_enqueue as enqueue;
 pub use enqueue::{
-    create_extract_task_for_streaming, enqueue_dependency_list, enqueue_dependency_to_root,
-    enqueue_dependency_with_main, enqueue_dependency_with_main_and_success_fn,
-    enqueue_extract_npm_package, enqueue_git_checkout, enqueue_git_for_checkout,
-    enqueue_network_task, enqueue_package_for_download, enqueue_parse_npm_package,
-    enqueue_patch_task, enqueue_patch_task_pre, enqueue_tarball_for_download,
-    enqueue_tarball_for_reading,
+    create_extract_task_for_streaming, enqueue_dependency_to_root, enqueue_extract_npm_package,
+    enqueue_git_checkout, enqueue_git_for_checkout, enqueue_network_task,
+    enqueue_package_for_download, enqueue_parse_npm_package, enqueue_patch_task,
+    enqueue_patch_task_pre, enqueue_tarball_for_download, enqueue_tarball_for_reading,
 };
 
 use self::package_manager_lifecycle as lifecycle;
@@ -214,7 +214,7 @@ pub use lifecycle::{
 };
 
 use self::package_manager_resolution as resolution;
-pub use resolution::{assign_root_resolution, resolve_from_disk_cache};
+pub use resolution::resolve_from_disk_cache;
 
 pub use self::progress_strings::ProgressStrings;
 
@@ -223,10 +223,10 @@ pub use self::patch_package::{PatchCommitResult, do_patch_commit, prepare_patch}
 pub use self::process_dependency_list::GitResolver;
 
 pub use self::run_tasks::{
-    alloc_github_url, decrement_pending_tasks, drain_dependency_list, flush_dependency_queue,
-    flush_network_queue, flush_patch_task_queue, generate_network_task_for_tarball,
-    get_network_task, has_created_network_task, increment_pending_tasks, is_network_task_required,
-    pending_task_count, run_tasks, schedule_tasks,
+    alloc_github_url, decrement_pending_tasks, flush_network_queue, flush_patch_task_queue,
+    generate_network_task_for_tarball, get_network_task, has_created_network_task,
+    increment_pending_tasks, is_network_task_required, pending_task_count, run_tasks,
+    schedule_tasks,
 };
 
 pub use self::update_package_json_and_install::{
@@ -250,17 +250,26 @@ type ResolveTaskQueue = UnboundedQueue<Task::Task<'static> /* , .next */>;
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;
 pub(crate) type FolderResolutionMap =
     HashMap<u64, FolderResolutionEntry /* , IdentityContext<u64>, 80 */>;
-pub(crate) type NpmAliasMap =
-    HashMap<PackageNameHash, crate::dependency::Version /* , IdentityContext<u64>, 80 */>;
-
 type NetworkQueue = LinearFifo<*mut NetworkTask, StaticBuffer<*mut NetworkTask, 32>>;
 type PatchTaskFifo = LinearFifo<*mut PatchTask, StaticBuffer<*mut PatchTask, 32>>;
 
 pub type PatchTaskQueue = UnboundedQueue<PatchTask /* , .next */>;
 pub type AsyncNetworkTaskQueue = UnboundedQueue<NetworkTask /* , .next */>;
 
-pub(crate) type SuccessFn = fn(&mut PackageManager, DependencyID, PackageID);
-pub(crate) type FailFn = fn(&mut PackageManager, &Dependency, PackageID, Error);
+/// Packages produced by finished extractions / checkouts, keyed by the task
+/// that produced them, for the resolution cursor to pick up.
+pub(crate) type ResolvedTaskPackages = HashMap<Task::Id, PackageID>;
+/// Why a manifest name is unfetchable this session; the resolution cursor
+/// stops waiting on these.
+#[derive(Clone, Copy)]
+pub(crate) enum ManifestFailure {
+    /// The fetch failed and its error was already reported.
+    Reported,
+    /// The fetch could not be started; each dependency that needs the
+    /// manifest reports this error against itself.
+    Fire(Error),
+}
+pub(crate) type FailedManifests = HashMap<PackageNameHash, ManifestFailure>;
 
 // Default to a maximum of 64 simultaneous HTTP requests for bun install if no proxy is specified
 // if a proxy IS specified, default to 64. We have different values because we might change this in the future.
@@ -372,10 +381,8 @@ pub struct PackageManager {
 
     pub(crate) on_wake: WakeHandler,
 
-    pub(crate) peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
-
-    // name hash from alias package name -> aliased package dependency version info
-    pub(crate) known_npm_aliases: NpmAliasMap,
+    pub(crate) resolved_task_packages: ResolvedTaskPackages,
+    pub(crate) failed_manifests: FailedManifests,
 
     pub(crate) event_loop: AnyEventLoop,
 
@@ -384,6 +391,16 @@ pub struct PackageManager {
     pub(crate) trusted_deps_to_add_to_package_json: Vec<Box<[u8]>>,
 
     pub any_failed_to_install: bool,
+
+    /// Edges the loaded lockfile left unresolved and the manifest diff did
+    /// not touch. The lockfile is authoritative, holes included: the
+    /// resolution cursor leaves these unresolved.
+    pub(crate) settled_unresolved_edges: bun_collections::DynamicBitSet,
+
+    /// Names whose manifest fetch finished this session. Their in-memory
+    /// manifest is the answer regardless of cache-control freshness — the
+    /// freshness rule only decides whether to fetch, never to refetch.
+    pub(crate) finished_manifest_fetches: HashMap<PackageNameHash, ()>,
 
     // When adding a `file:` dependency in a workspace package, we want to install it
     // relative to the workspace root, but the path provided is relative to the
@@ -1936,13 +1953,15 @@ pub fn init(
         wr!(global_dir, None);
         wr!(global_link_dir_path, Box::default());
         wr!(on_wake, WakeHandler::default());
-        wr!(
-            peer_dependencies,
-            LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
-        );
-        wr!(known_npm_aliases, NpmAliasMap::default());
+        wr!(resolved_task_packages, ResolvedTaskPackages::default());
+        wr!(failed_manifests, FailedManifests::default());
         wr!(trusted_deps_to_add_to_package_json, Vec::new());
         wr!(any_failed_to_install, false);
+        wr!(
+            settled_unresolved_edges,
+            bun_collections::DynamicBitSet::default()
+        );
+        wr!(finished_manifest_fetches, HashMap::default());
         wr!(updating_packages, StringArrayHashMap::default());
         wr!(updating_catalogs, Vec::new());
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
@@ -2369,13 +2388,15 @@ fn init_with_runtime_once(
         wr!(global_dir, None);
         wr!(global_link_dir_path, Box::default());
         wr!(on_wake, WakeHandler::default());
-        wr!(
-            peer_dependencies,
-            LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
-        );
-        wr!(known_npm_aliases, NpmAliasMap::default());
+        wr!(resolved_task_packages, ResolvedTaskPackages::default());
+        wr!(failed_manifests, FailedManifests::default());
         wr!(trusted_deps_to_add_to_package_json, Vec::new());
         wr!(any_failed_to_install, false);
+        wr!(
+            settled_unresolved_edges,
+            bun_collections::DynamicBitSet::default()
+        );
+        wr!(finished_manifest_fetches, HashMap::default());
         wr!(workspace_name_hash, None);
         wr!(
             workspace_package_json_cache,

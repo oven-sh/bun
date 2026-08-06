@@ -683,7 +683,6 @@ impl BunxCommand {
         // call that may itself reborrow the same `Log`.
         let ctx_log = unsafe { ctx.log_mut() };
         let update_requests = UpdateRequest::parse(
-            None,
             ctx_log,
             &[opts.package_name],
             &mut requests_buf,

@@ -3,8 +3,8 @@ use core::cmp::Ordering;
 use crate::Error;
 use bun_collections::ArrayHashMap;
 use bun_core::strings;
+use bun_install::PackageNameHash;
 use bun_install::dependency::{self, Behavior, Dependency, DependencyExt as _};
-use bun_install::{PackageManager, PackageNameHash};
 use bun_output::{declare_scope, scoped_log};
 use bun_semver::String as SemverString;
 use bun_semver::string::Builder as SemverBuilder;
@@ -76,12 +76,8 @@ impl OverrideMap {
 
     /// The new-side buffer lives inside `new_builder`, so no separate
     /// `new: &mut Lockfile` param is taken — that would alias the borrow.
-    /// `pm` is generic over `NpmAliasRegistry` (not `&mut PackageManager`) so a
-    /// caller already holding `&mut manager.lockfile` can pass
-    /// `&mut manager.known_npm_aliases` instead of the whole manager.
-    pub(crate) fn clone<PM: crate::dependency::NpmAliasRegistry>(
+    pub(crate) fn clone(
         &self,
-        pm: &mut PM,
         old_string_bytes: &[u8],
         new_builder: &mut StringBuilder,
     ) -> Result<OverrideMap, Error> {
@@ -90,7 +86,7 @@ impl OverrideMap {
 
         for (k, v) in self.map.keys().iter().zip(self.map.values()) {
             new.map
-                .put_assume_capacity(*k, v.clone_in(pm, old_string_bytes, new_builder)?);
+                .put_assume_capacity(*k, v.clone_in(old_string_bytes, new_builder)?);
         }
 
         Ok(new)
@@ -127,7 +123,6 @@ impl OverrideMap {
     /// It is assumed the input map is uninitialized (zero entries)
     pub(crate) fn parse_append(
         &mut self,
-        pm: &mut PackageManager,
         lockfile_dependencies: &[Dependency],
         root_package: &Package,
         log: &mut bun_ast::Log,
@@ -138,7 +133,6 @@ impl OverrideMap {
         debug_assert!(self.map.count() == 0); // only call parse once
         if let Some(overrides) = expr.as_property(b"overrides") {
             self.parse_from_overrides(
-                pm,
                 lockfile_dependencies,
                 root_package,
                 json_source,
@@ -148,7 +142,6 @@ impl OverrideMap {
             )?;
         } else if let Some(resolutions) = expr.as_property(b"resolutions") {
             self.parse_from_resolutions(
-                pm,
                 lockfile_dependencies,
                 root_package,
                 json_source,
@@ -164,7 +157,6 @@ impl OverrideMap {
     /// https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides
     fn parse_from_overrides(
         &mut self,
-        pm: &mut PackageManager,
         lockfile_dependencies: &[Dependency],
         root_package: &Package,
         source: &bun_ast::Source,
@@ -265,7 +257,6 @@ impl OverrideMap {
             if let Some(version) = parse_override_value(
                 "override",
                 lockfile_dependencies,
-                pm,
                 root_package,
                 source,
                 value_loc,
@@ -284,7 +275,6 @@ impl OverrideMap {
     /// yarn berry: https://yarnpkg.com/configuration/manifest#resolutions
     fn parse_from_resolutions(
         &mut self,
-        pm: &mut PackageManager,
         lockfile_dependencies: &[Dependency],
         root_package: &Package,
         source: &bun_ast::Source,
@@ -367,7 +357,6 @@ impl OverrideMap {
             if let Some(version) = parse_override_value(
                 "resolution",
                 lockfile_dependencies,
-                pm,
                 root_package,
                 source,
                 crate::bun_json::value_loc_of_property(&source.contents, key_loc, &value),
@@ -392,7 +381,6 @@ pub(crate) fn parse_override_value(
     // accept the dependency slice directly and read string-bytes through
     // `builder.string_bytes` instead of taking the whole `Lockfile`.
     lockfile_dependencies: &[Dependency],
-    package_manager: &mut PackageManager,
     root_package: &Package,
     source: &bun_ast::Source,
     loc: bun_ast::Loc,
@@ -446,14 +434,7 @@ pub(crate) fn parse_override_value(
     let name_hash = SemverBuilder::string_hash(key);
     let name = builder.append_with_hash::<SemverString>(key, name_hash);
 
-    let version = match dependency::parse(
-        name,
-        name_hash,
-        literal_sliced.slice,
-        &literal_sliced,
-        &mut *log,
-        package_manager,
-    ) {
+    let version = match dependency::parse(name, literal_sliced.slice, &literal_sliced, &mut *log) {
         Some(v) => v,
         None => {
             log.add_warning_fmt(

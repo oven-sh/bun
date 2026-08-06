@@ -5,39 +5,9 @@ use bun_paths::strings;
 use bun_semver as Semver;
 use bun_semver::{SlicedString, String};
 
+use crate::PackageNameHash;
 use crate::hosted_git_info;
 use crate::repository::Repository;
-use crate::{PackageManager, PackageNameHash};
-
-// ──────────────────────────────────────────────────────────────────────────
-// NpmAliasRegistry — exposes only the one `PackageManager` method `parse`
-// actually touches (`known_npm_aliases.put`) so `parse_with_tag` can take an
-// `Option<&mut dyn NpmAliasRegistry>` and stay decoupled from the full
-// `PackageManager` surface.
-// ──────────────────────────────────────────────────────────────────────────
-
-pub trait NpmAliasRegistry {
-    fn record_npm_alias(&mut self, hash: PackageNameHash, version: &Version);
-}
-
-impl NpmAliasRegistry for PackageManager {
-    #[inline]
-    fn record_npm_alias(&mut self, hash: PackageNameHash, version: &Version) {
-        self.known_npm_aliases.insert(hash, Clone::clone(version));
-    }
-}
-
-/// Field-level impl so callers that have already split-borrowed
-/// `PackageManager` (e.g. they hold `&mut manager.lockfile` for a
-/// `StringBuilder`) can pass `&mut manager.known_npm_aliases` directly to
-/// `Dependency::clone_in` / `OverrideMap::clone` instead of a full
-/// `&mut PackageManager`.
-impl NpmAliasRegistry for crate::package_manager_real::NpmAliasMap {
-    #[inline]
-    fn record_npm_alias(&mut self, hash: PackageNameHash, version: &Version) {
-        self.insert(hash, Clone::clone(version));
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // URI
@@ -63,14 +33,12 @@ pub trait DependencyExt {
     fn is_tarball(dependency: &[u8]) -> bool;
     fn split_name_and_maybe_version(str: &[u8]) -> (&[u8], Option<&[u8]>);
     fn unscoped_package_name(name: &[u8]) -> &[u8];
-    fn parse_with_optional_tag<'a, 'b>(
+    fn parse_with_optional_tag<'a>(
         alias: String,
-        alias_hash: impl Into<Option<PackageNameHash>>,
         dependency: &[u8],
         tag: Option<version::Tag>,
         sliced: &SlicedString,
         log: impl Into<Option<&'a mut bun_ast::Log>>,
-        package_manager: impl Into<Option<&'b mut PackageManager>>,
     ) -> Option<Version>;
     fn is_less_than(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> bool;
     fn cmp(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> Ordering;
@@ -81,15 +49,13 @@ pub trait DependencyExt {
         builder: &mut SB,
     );
     fn count<SB: StringBuilderLike>(&self, buf: &[u8], builder: &mut SB);
-    fn clone_in<SB: StringBuilderLike, PM: NpmAliasRegistry>(
+    fn clone_in<SB: StringBuilderLike>(
         &self,
-        package_manager: &mut PM,
         buf: &[u8],
         builder: &mut SB,
     ) -> Result<Dependency, crate::Error>;
-    fn clone_with_different_buffers<SB: StringBuilderLike, PM: NpmAliasRegistry>(
+    fn clone_with_different_buffers<SB: StringBuilderLike>(
         &self,
-        package_manager: &mut PM,
         name_buf: &[u8],
         version_buf: &[u8],
         builder: &mut SB,
@@ -98,13 +64,11 @@ pub trait DependencyExt {
     fn is_aliased(&self, buf: &[u8]) -> bool;
     fn eql(&self, b: &Dependency, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool;
     fn is_remote_tarball(dep: &[u8]) -> bool;
-    fn parse<'a, 'b>(
+    fn parse<'a>(
         alias: String,
-        alias_hash: impl Into<Option<PackageNameHash>>,
         dependency: &[u8],
         sliced: &SlicedString,
         log: impl Into<Option<&'a mut bun_ast::Log>>,
-        manager: impl Into<Option<&'b mut PackageManager>>,
     ) -> Option<Version>;
 }
 
@@ -135,28 +99,16 @@ impl DependencyExt for Dependency {
 
     /// Forwards to the module-level `parse_with_optional_tag`.
     ///
-    /// `alias_hash`, `log`, and `package_manager` accept either the bare value
-    /// (`u64` / `&mut Log` / `&mut PackageManager`) or `Option<_>` via
-    /// `impl Into<Option<_>>`.
+    /// `log` accepts either `&mut Log` or `Option<&mut Log>` via `impl Into<Option<_>>`.
     #[inline]
-    fn parse_with_optional_tag<'a, 'b>(
+    fn parse_with_optional_tag<'a>(
         alias: String,
-        alias_hash: impl Into<Option<PackageNameHash>>,
         dependency: &[u8],
         tag: Option<version::Tag>,
         sliced: &SlicedString,
         log: impl Into<Option<&'a mut bun_ast::Log>>,
-        package_manager: impl Into<Option<&'b mut PackageManager>>,
     ) -> Option<Version> {
-        parse_with_optional_tag(
-            alias,
-            alias_hash,
-            dependency,
-            tag,
-            sliced,
-            log,
-            package_manager,
-        )
+        parse_with_optional_tag(alias, dependency, tag, sliced, log)
     }
 
     /// Sorting order for dependencies is:
@@ -202,18 +154,16 @@ impl DependencyExt for Dependency {
     /// Named `clone_in` so it doesn't shadow
     /// `std::clone::Clone::clone` (callers in `migration.rs` / `PackageManager.rs`
     /// rely on the trait method for shallow copy).
-    fn clone_in<SB: StringBuilderLike, PM: NpmAliasRegistry>(
+    fn clone_in<SB: StringBuilderLike>(
         &self,
-        package_manager: &mut PM,
         buf: &[u8],
         builder: &mut SB,
     ) -> Result<Dependency, crate::Error> {
-        self.clone_with_different_buffers(package_manager, buf, buf, builder)
+        self.clone_with_different_buffers(buf, buf, builder)
     }
 
-    fn clone_with_different_buffers<SB: StringBuilderLike, PM: NpmAliasRegistry>(
+    fn clone_with_different_buffers<SB: StringBuilderLike>(
         &self,
-        package_manager: &mut PM,
         name_buf: &[u8],
         version_buf: &[u8],
         builder: &mut SB,
@@ -230,14 +180,10 @@ impl DependencyExt for Dependency {
             name: new_name,
             version: parse_with_tag(
                 new_name,
-                Some(Semver::string::Builder::string_hash(
-                    new_name.slice(out_slice),
-                )),
                 new_literal.slice(out_slice),
                 self.version.tag,
                 &sliced,
                 None,
-                Some(package_manager as &mut dyn NpmAliasRegistry),
             )
             .unwrap_or_default(),
             behavior: self.behavior,
@@ -283,18 +229,15 @@ impl DependencyExt for Dependency {
     /// the actual implementation is a free fn. Delegate so downstream callers
     /// (`bun_install_jsc`) keep type-checking.
     ///
-    /// `alias_hash`, `log`, and `manager` accept either bare values or
-    /// `Option<_>`.
+    /// `log` accepts either a bare value or `Option<_>`.
     #[inline]
-    fn parse<'a, 'b>(
+    fn parse<'a>(
         alias: String,
-        alias_hash: impl Into<Option<PackageNameHash>>,
         dependency: &[u8],
         sliced: &SlicedString,
         log: impl Into<Option<&'a mut bun_ast::Log>>,
-        manager: impl Into<Option<&'b mut PackageManager>>,
     ) -> Option<Version> {
-        parse(alias, alias_hash, dependency, sliced, log, manager)
+        parse(alias, dependency, sliced, log)
     }
 }
 
@@ -333,7 +276,6 @@ pub struct Context<'a> {
     // allocator dropped (global mimalloc)
     pub(crate) log: &'a mut bun_ast::Log,
     pub(crate) buffer: &'a [u8],
-    pub(crate) package_manager: Option<&'a mut PackageManager>,
 }
 
 pub(crate) fn to_dependency(this: External, ctx: &mut Context<'_>) -> Dependency {
@@ -349,7 +291,6 @@ pub(crate) fn to_dependency(this: External, ctx: &mut Context<'_>) -> Dependency
         behavior: Behavior::from_bits_retain(this[16]),
         version: Version::to_version(
             name,
-            name_hash,
             this[17..SIZE].try_into().expect("infallible: size matches"),
             ctx,
         ),
@@ -611,12 +552,7 @@ pub trait VersionExt {
         builder: &mut SB,
     ) -> Result<Version, crate::Error>;
     fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool;
-    fn to_version(
-        alias: String,
-        alias_hash: PackageNameHash,
-        bytes: VersionExternal,
-        ctx: &mut Context<'_>,
-    ) -> Version;
+    fn to_version(alias: String, bytes: VersionExternal, ctx: &mut Context<'_>) -> Version;
     fn to_external(&self) -> VersionExternal;
     fn eql(&self, rhs: &Version, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool;
 }
@@ -653,12 +589,7 @@ impl VersionExt for Version {
         )
     }
 
-    fn to_version(
-        alias: String,
-        alias_hash: PackageNameHash,
-        bytes: VersionExternal,
-        ctx: &mut Context<'_>,
-    ) -> Version {
+    fn to_version(alias: String, bytes: VersionExternal, ctx: &mut Context<'_>) -> Version {
         let slice = String {
             bytes: bytes[1..9].try_into().expect("infallible: size matches"),
         };
@@ -692,18 +623,7 @@ impl VersionExt for Version {
             }
         };
         let sliced = slice.sliced(ctx.buffer);
-        parse_with_tag(
-            alias,
-            Some(alias_hash),
-            sliced.slice,
-            tag,
-            &sliced,
-            Some(ctx.log),
-            ctx.package_manager
-                .as_deref_mut()
-                .map(|m| m as &mut dyn NpmAliasRegistry),
-        )
-        .unwrap_or_default()
+        parse_with_tag(alias, sliced.slice, tag, &sliced, Some(ctx.log)).unwrap_or_default()
     }
 
     #[inline]
@@ -1167,57 +1087,39 @@ pub(crate) fn is_windows_abs_path_with_leading_slashes(dep: &[u8]) -> Option<&[u
 }
 
 #[inline]
-pub fn parse<'a, 'b>(
+pub fn parse<'a>(
     alias: String,
-    alias_hash: impl Into<Option<PackageNameHash>>,
     dependency: &[u8],
     sliced: &SlicedString,
     log: impl Into<Option<&'a mut bun_ast::Log>>,
-    manager: impl Into<Option<&'b mut PackageManager>>,
 ) -> Option<Version> {
     let dep = strings::trim_left(dependency, b" \t\n\r");
-    parse_with_tag(
-        alias,
-        alias_hash.into(),
-        dep,
-        Tag::infer(dep),
-        sliced,
-        log.into(),
-        manager.into().map(|m| m as &mut dyn NpmAliasRegistry),
-    )
+    parse_with_tag(alias, dep, Tag::infer(dep), sliced, log.into())
 }
 
-pub(crate) fn parse_with_optional_tag<'a, 'b>(
+pub(crate) fn parse_with_optional_tag<'a>(
     alias: String,
-    alias_hash: impl Into<Option<PackageNameHash>>,
     dependency: &[u8],
     tag: Option<Tag>,
     sliced: &SlicedString,
     log: impl Into<Option<&'a mut bun_ast::Log>>,
-    package_manager: impl Into<Option<&'b mut PackageManager>>,
 ) -> Option<Version> {
     let dep = strings::trim_left(dependency, b" \t\n\r");
     parse_with_tag(
         alias,
-        alias_hash.into(),
         dep,
         tag.unwrap_or_else(|| Tag::infer(dep)),
         sliced,
         log.into(),
-        package_manager
-            .into()
-            .map(|m| m as &mut dyn NpmAliasRegistry),
     )
 }
 
 pub(crate) fn parse_with_tag(
     alias: String,
-    alias_hash: Option<PackageNameHash>,
     dependency: &[u8],
     tag: Tag,
     sliced: &SlicedString,
     log_: Option<&mut bun_ast::Log>,
-    package_manager: Option<&mut dyn NpmAliasRegistry>,
 ) -> Option<Version> {
     match tag {
         Tag::Npm => {
@@ -1246,8 +1148,6 @@ pub(crate) fn parse_with_tag(
                 alias
             };
 
-            is_alias = is_alias && alias_hash.is_some();
-
             // Strip single leading v
             // v1.0.0 -> 1.0.0
             // note: "vx" is valid, it becomes "x". "yarn add react@vx" -> "yarn add react@x" -> "yarn add react@17.0.2"
@@ -1274,12 +1174,6 @@ pub(crate) fn parse_with_tag(
                 },
                 tag: Tag::Npm,
             };
-
-            if is_alias {
-                if let Some(pm) = package_manager {
-                    pm.record_npm_alias(alias_hash.unwrap(), &result);
-                }
-            }
 
             Some(result)
         }

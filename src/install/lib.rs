@@ -1088,7 +1088,6 @@ pub enum TaskCallbackContext {
     Dependency(DependencyID),
     DependencyInstallContext(DependencyInstallContext),
     IsolatedPackageInstallContext(isolated_install::EntryId),
-    RootDependency(DependencyID),
     RootRequestId(PackageID),
 }
 

@@ -260,7 +260,6 @@ fn normalize_package_json_path<'a>(
 fn read_package_json_from_disk<R: FolderResolverImpl>(
     manager: &mut PackageManager,
     abs: &ZStr,
-    version: &dependency::Version,
     features: Features,
     resolver: &mut R,
 ) -> crate::Result<LockfilePackage> {
@@ -357,10 +356,9 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
 
     package.meta.set_has_install_script(has_scripts);
 
-    if let Some(existing_id) =
-        manager
-            .lockfile
-            .get_package_id(package.name_hash, Some(version), &package.resolution)
+    if let Some(existing_id) = manager
+        .lockfile
+        .get_package_id(package.name_hash, &package.resolution)
     {
         package.meta.id = existing_id;
         manager.lockfile.packages.set(existing_id as usize, package);
@@ -440,13 +438,7 @@ pub(crate) fn get_or_put(
             let mut resolver: SymlinkResolver = NewResolver {
                 folder_path: &path[0..non_normalized_path.len()],
             };
-            break 'global read_package_json_from_disk(
-                manager,
-                abs,
-                version,
-                Features::LINK,
-                &mut resolver,
-            );
+            break 'global read_package_json_from_disk(manager, abs, Features::LINK, &mut resolver);
         }
         GlobalOrRelative::Relative(tag) => match tag {
             dependency::version::Tag::Folder => 'folder: {
@@ -454,7 +446,6 @@ pub(crate) fn get_or_put(
                 break 'folder read_package_json_from_disk(
                     manager,
                     abs,
-                    version,
                     Features::FOLDER,
                     &mut resolver,
                 );
@@ -464,7 +455,6 @@ pub(crate) fn get_or_put(
                 break 'workspace read_package_json_from_disk(
                     manager,
                     abs,
-                    version,
                     Features::WORKSPACE,
                     &mut resolver,
                 );
@@ -481,7 +471,6 @@ pub(crate) fn get_or_put(
             break 'cache_folder read_package_json_from_disk(
                 manager,
                 abs,
-                version,
                 Features::NPM,
                 &mut resolver,
             );

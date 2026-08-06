@@ -6,7 +6,7 @@ use bun_collections::ArrayHashMap;
 use bun_collections::array_hash_map::ArrayHashAdapter;
 use bun_install::dependency::DependencyExt as _;
 use bun_install::lockfile::{Buffers, StringBuilder};
-use bun_install::{Dependency, Lockfile, PackageManager};
+use bun_install::{Dependency, Lockfile};
 // Layering: every install-side caller (Package.rs / pnpm.rs) parses JSON/YAML
 // into the lower-tier `bun_ast::js_ast` shape (re-exported via
 // `crate::bun_json`). Importing `bun_js_parser` here would force a higher-tier
@@ -120,7 +120,6 @@ impl CatalogMap {
     /// sites would alias `&mut lockfile.catalogs` against `&mut lockfile`.
     pub(crate) fn parse_append(
         &mut self,
-        pm: &mut PackageManager,
         log: &mut Log,
         source: &Source,
         expr: Expr,
@@ -130,7 +129,7 @@ impl CatalogMap {
         if let Some(default_catalog) = expr.get(b"catalog") {
             let group = self.get_or_put_group(builder.string_bytes.as_slice(), String::EMPTY)?;
             found_any = true;
-            Self::parse_append_group(group, pm, log, source, &default_catalog, builder)?;
+            Self::parse_append_group(group, log, source, &default_catalog, builder)?;
         }
 
         if let Some(catalogs) = expr.get(b"catalogs") {
@@ -138,7 +137,7 @@ impl CatalogMap {
             catalogs.try_for_each_property(|catalog_name_str, _, catalog_value| {
                 let catalog_name = builder.append::<String>(catalog_name_str);
                 let group = self.get_or_put_group(builder.string_bytes.as_slice(), catalog_name)?;
-                Self::parse_append_group(group, pm, log, source, &catalog_value, builder)
+                Self::parse_append_group(group, log, source, &catalog_value, builder)
             })?;
         }
 
@@ -147,7 +146,6 @@ impl CatalogMap {
 
     fn parse_append_group(
         group: &mut Map,
-        pm: &mut PackageManager,
         log: &mut Log,
         source: &Source,
         catalog: &Expr,
@@ -164,14 +162,9 @@ impl CatalogMap {
             let buf = builder.string_bytes.as_slice();
             let version_sliced = version_literal.sliced(buf);
 
-            let Some(version) = Dependency::parse(
-                dep_name,
-                dep_name_hash,
-                version_sliced.slice,
-                &version_sliced,
-                &mut *log,
-                Some(&mut *pm),
-            ) else {
+            let Some(version) =
+                Dependency::parse(dep_name, version_sliced.slice, &version_sliced, &mut *log)
+            else {
                 log.add_error(
                     Some(source),
                     value_loc_of_property(&source.contents, key_loc, &value),
@@ -289,12 +282,8 @@ impl CatalogMap {
     /// `builder` already borrows the new lockfile's `buffers.string_bytes`, so
     /// the new-side buffer is read through it instead of taking a separate
     /// `new: &mut Lockfile` param that would alias `&mut new` twice.
-    /// `pm` is generic over `NpmAliasRegistry` (was `&mut PackageManager`) so a
-    /// caller already holding `&mut manager.lockfile` can pass
-    /// `&mut manager.known_npm_aliases` instead of the whole manager.
-    pub(crate) fn clone<PM: crate::dependency::NpmAliasRegistry>(
+    pub(crate) fn clone(
         &self,
-        pm: &mut PM,
         old_buf: &[u8],
         builder: &mut StringBuilder,
     ) -> Result<CatalogMap, crate::Error> {
@@ -309,7 +298,7 @@ impl CatalogMap {
         // the slice length pre-append and OOB-panic on any non-inline key.
         for (dep_name, dep) in self.default.keys().iter().zip(self.default.values()) {
             let new_key = builder.append::<String>(dep_name.slice(old_buf));
-            let new_val = dep.clone_in(pm, old_buf, builder)?;
+            let new_val = dep.clone_in(old_buf, builder)?;
             let buf = builder.string_bytes.as_slice();
             new_catalog.default.put_assume_capacity_context(
                 new_key,
@@ -329,7 +318,7 @@ impl CatalogMap {
 
             for (dep_name, dep) in deps.keys().iter().zip(deps.values()) {
                 let new_key = builder.append::<String>(dep_name.slice(old_buf));
-                let new_val = dep.clone_in(pm, old_buf, builder)?;
+                let new_val = dep.clone_in(old_buf, builder)?;
                 let buf = builder.string_bytes.as_slice();
                 new_group.put_assume_capacity_context(
                     new_key,
@@ -390,11 +379,9 @@ fn put_entries_from_pnpm_lockfile(
 
         let Some(parsed_version) = Dependency::parse(
             dep_name,
-            dep_name_hash,
             version_sliced.slice,
             &version_sliced,
             Some(&mut *log),
-            None,
         ) else {
             return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
         };

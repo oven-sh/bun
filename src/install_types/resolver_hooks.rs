@@ -1491,21 +1491,16 @@ pub trait AutoInstaller {
     ) -> EnqueueResult;
 
     // ── Dependency parsing ─────────────────────────────────────────────────
-    // `&mut self`: `parse_with_tag` records `npm:`-aliased deps into
-    // `pm.known_npm_aliases`, so the impl needs a
-    // mutable manager handle even though parsing is otherwise pure.
     fn parse_dependency(
-        &mut self,
+        &self,
         name: SemverString,
-        name_hash: Option<u64>,
         version: &[u8],
         sliced: &bun_semver::SlicedString,
         log: Option<&mut bun_ast::Log>,
     ) -> Option<DependencyVersion>;
     fn parse_dependency_with_tag(
-        &mut self,
+        &self,
         name: SemverString,
-        name_hash: u64,
         version: &[u8],
         tag: DependencyVersionTag,
         sliced: &bun_semver::SlicedString,

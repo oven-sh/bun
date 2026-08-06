@@ -7,8 +7,6 @@ import {
   assertManifestsPopulated,
   bunExe,
   bunEnv as env,
-  isFlaky,
-  isMacOS,
   isWindows,
   mergeWindowEnvs,
   readdirSorted,
@@ -3679,87 +3677,84 @@ describe("hoisting", async () => {
       },
     ];
     for (const { dependencies, expected, situation } of peerTests) {
-      test.todoIf(isFlaky && isMacOS && situation === "peer ^1.0.2")(
-        `it should hoist ${expected} when ${situation}`,
-        async () => {
-          await writeFile(
-            packageJson,
-            JSON.stringify({
-              name: "foo",
-              dependencies,
-            }),
-          );
+      test(`it should hoist ${expected} when ${situation}`, async () => {
+        await writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            dependencies,
+          }),
+        );
 
-          var { stdout, stderr, exited } = spawn({
-            cmd: [bunExe(), "install"],
-            cwd: packageDir,
-            stdout: "pipe",
-            stdin: "pipe",
-            stderr: "pipe",
-            env,
-          });
+        var { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
 
-          var err = await stderr.text();
-          var out = await stdout.text();
-          expect(err).toContain("Saved lockfile");
-          expect(err).not.toContain("not found");
-          expect(err).not.toContain("error:");
-          for (const dep of Object.keys(dependencies)) {
-            expect(out).toContain(`+ ${dep}@${dependencies[dep]}`);
-          }
-          expect(await exited).toBe(0);
-          assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+        var err = await stderr.text();
+        var out = await stdout.text();
+        expect(err).toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        expect(err).not.toContain("error:");
+        for (const dep of Object.keys(dependencies)) {
+          expect(out).toContain(`+ ${dep}@${dependencies[dep]}`);
+        }
+        expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-          expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
+        expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
 
-          await rm(join(packageDir, "bun.lockb"));
+        await rm(join(packageDir, "bun.lockb"));
 
-          ({ stdout, stderr, exited } = spawn({
-            cmd: [bunExe(), "install"],
-            cwd: packageDir,
-            stdout: "pipe",
-            stdin: "pipe",
-            stderr: "pipe",
-            env,
-          }));
+        ({ stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        }));
 
-          err = await stderr.text();
-          out = await stdout.text();
-          expect(err).toContain("Saved lockfile");
-          expect(err).not.toContain("not found");
-          expect(err).not.toContain("error:");
-          if (out.includes("installed")) {
-            console.log("stdout:", out);
-          }
-          expect(out).not.toContain("package installed");
-          expect(await exited).toBe(0);
-          assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+        err = await stderr.text();
+        out = await stdout.text();
+        expect(err).toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        expect(err).not.toContain("error:");
+        if (out.includes("installed")) {
+          console.log("stdout:", out);
+        }
+        expect(out).not.toContain("package installed");
+        expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-          expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
+        expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
 
-          await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+        await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
-          ({ stdout, stderr, exited } = spawn({
-            cmd: [bunExe(), "install"],
-            cwd: packageDir,
-            stdout: "pipe",
-            stdin: "pipe",
-            stderr: "pipe",
-            env,
-          }));
+        ({ stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        }));
 
-          err = await stderr.text();
-          out = await stdout.text();
-          expect(err).not.toContain("Saved lockfile");
-          expect(err).not.toContain("not found");
-          expect(err).not.toContain("error:");
-          expect(out).not.toContain("package installed");
-          expect(await exited).toBe(0);
-          assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+        err = await stderr.text();
+        out = await stdout.text();
+        expect(err).not.toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        expect(err).not.toContain("error:");
+        expect(out).not.toContain("package installed");
+        expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-          expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
-        },
-      );
+        expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
+      });
     }
   });
 
@@ -4269,7 +4264,7 @@ describe("hoisting", async () => {
     });
   });
 
-  test.todoIf(isFlaky && isWindows)("text lockfile is hoisted", async () => {
+  test("text lockfile is hoisted", async () => {
     // Each dependency depends on 'hoist-lockfile-shared'.
     // 1 - "*"
     // 2 - "^1.0.1"
@@ -4403,7 +4398,13 @@ describe("transitive file dependencies", () => {
         await lstat(join(packageDir, "pkg1", "node_modules", "file-dep", "node_modules", "files", "package.json"))
       ).isSymbolicLink(),
       readdirSorted(join(packageDir, "pkg1", "node_modules", "missing-file-dep", "node_modules")), // []
-      exists(join(packageDir, "pkg1", "node_modules", "aliased-file-dep")), // false
+      // pkg1's alias resolves to its own target (`file-dep@1.0.1`), nested under pkg1
+      file(join(packageDir, "pkg1", "node_modules", "aliased-file-dep", "package.json")).json(),
+      (
+        await lstat(
+          join(packageDir, "pkg1", "node_modules", "aliased-file-dep", "node_modules", "files", "package.json"),
+        )
+      ).isSymbolicLink(),
       (
         await lstat(
           join(
@@ -4446,11 +4447,20 @@ describe("transitive file dependencies", () => {
       ...(Array(7).fill({ name: "a-dep", version: "1.0.1" }) as any),
       true,
       [] as string[],
-      false,
+      { name: "file-dep", version: "1.0.1", dependencies: { files: "file:." } },
       true,
       true,
       true,
-      ["@another-scope", "@scoped", "dep-file-dep", "file-dep", "missing-file-dep", "self-file-dep"],
+      true,
+      [
+        "@another-scope",
+        "@scoped",
+        "aliased-file-dep",
+        "dep-file-dep",
+        "file-dep",
+        "missing-file-dep",
+        "self-file-dep",
+      ],
     ];
 
     // @ts-ignore
@@ -4638,7 +4648,7 @@ describe("transitive file dependencies", () => {
       "+ missing-file-dep@1.0.1",
       "+ self-file-dep@1.0.1",
       "",
-      "13 packages installed",
+      "15 packages installed",
     ]);
 
     await checkUnhoistedFiles();
@@ -4661,7 +4671,7 @@ describe("transitive file dependencies", () => {
       "+ missing-file-dep@1.0.1",
       "+ self-file-dep@1.0.1",
       "",
-      "13 packages installed",
+      "15 packages installed",
     ]);
 
     await checkUnhoistedFiles();
@@ -4696,7 +4706,7 @@ describe("transitive file dependencies", () => {
       "+ missing-file-dep@1.0.0",
       "+ self-file-dep@1.0.0",
       "",
-      "13 packages installed",
+      "15 packages installed",
     ]);
 
     await checkUnhoistedFiles();
@@ -4727,7 +4737,7 @@ describe("transitive file dependencies", () => {
       "+ missing-file-dep@1.0.0",
       "+ self-file-dep@1.0.0",
       "",
-      "13 packages installed",
+      "15 packages installed",
     ]);
   });
 

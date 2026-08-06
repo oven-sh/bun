@@ -34,10 +34,11 @@ use bun_install_types::NodeLinker::NodeLinker;
 
 // Free-function "methods" on `PackageManager` hosted in sibling modules
 // to avoid one giant `impl PackageManager` block.
+use crate::package_manager_real::resolve_graph;
 use crate::package_manager_real::run_tasks::{RunTasksCallbacks, run_tasks};
 use crate::package_manager_real::{
-    enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre, save_lockfile,
-    setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
+    enqueue_patch_task_pre, save_lockfile, setup_global_dir, update_lockfile_if_needed,
+    write_yarn_lock,
 };
 
 use super::security_scanner;
@@ -84,11 +85,6 @@ pub fn install_with_manager(
 
     update_lockfile_if_needed(manager, &load_result)?;
 
-    // Snapshot the loaded-from-lockfile package count so
-    // `Lockfile::get_package_id` can tell loaded pins apart from packages
-    // appended by manifest fetches in this resolve session.
-    manager.lockfile.mark_loaded_packages();
-
     let (config_version, changed_config_version) = load_result.choose_config_version();
     manager.options.config_version = Some(config_version);
 
@@ -112,6 +108,9 @@ pub fn install_with_manager(
     // this defaults to false
     // but we force allowing updates to the lockfile when you do bun add
     let mut had_any_diffs = false;
+    // Edges the manifest diff invalidated; every other edge the loaded
+    // lockfile left unresolved stays unresolved.
+    let mut redecide_ids: Vec<DependencyID> = Vec::new();
     manager.progress = Default::default();
 
     match &load_result {
@@ -256,11 +255,10 @@ pub fn install_with_manager(
                 // Split-borrow `manager.lockfile` so the `StringBuilder`
                 // (which owns `buffers.string_bytes` + `string_pool`) and the
                 // remaining lockfile columns can coexist without raw-pointer
-                // reborrows. `manager.{summary, known_npm_aliases,
-                // patched_dependencies_to_remove}` are disjoint top-level
-                // fields and can be accessed alongside `manager.lockfile`.
+                // reborrows. `manager.{summary, patched_dependencies_to_remove}`
+                // are disjoint top-level fields and can be accessed alongside
+                // `manager.lockfile`.
                 let summary = &manager.summary;
-                let known_npm_aliases = &mut manager.known_npm_aliases;
                 let patched_dependencies_to_remove = &mut manager.patched_dependencies_to_remove;
                 let (mut builder_, lf) = manager.lockfile.string_builder_split();
                 let builder = &mut builder_;
@@ -338,16 +336,12 @@ pub fn install_with_manager(
                         break 'brk all_name_hashes;
                     };
 
-                    *lf.overrides = lockfile.overrides.clone(
-                        known_npm_aliases,
-                        &lockfile.buffers.string_bytes,
-                        builder,
-                    )?;
-                    *lf.catalogs = lockfile.catalogs.clone(
-                        known_npm_aliases,
-                        &lockfile.buffers.string_bytes,
-                        builder,
-                    )?;
+                    *lf.overrides = lockfile
+                        .overrides
+                        .clone(&lockfile.buffers.string_bytes, builder)?;
+                    *lf.catalogs = lockfile
+                        .catalogs
+                        .clone(&lockfile.buffers.string_bytes, builder)?;
 
                     // `ArrayHashMap::clone()` is an inherent fallible method,
                     // not the `Clone` trait, so
@@ -381,14 +375,12 @@ pub fn install_with_manager(
                     debug_assert_eq!(lf.resolutions.len(), (off + len) as usize);
 
                     for (i, new_dep) in new_dependencies.iter().enumerate() {
-                        let cloned = new_dep.clone_in(
-                            known_npm_aliases,
-                            &lockfile.buffers.string_bytes,
-                            builder,
-                        )?;
+                        let cloned = new_dep.clone_in(&lockfile.buffers.string_bytes, builder)?;
                         lf.dependencies[off as usize + i] = cloned;
                         if mapping[i] != invalid_package_id {
                             lf.resolutions[off as usize + i] = old_resolutions[mapping[i] as usize];
+                        } else {
+                            redecide_ids.push(off + i as u32);
                         }
                     }
 
@@ -477,84 +469,41 @@ pub fn install_with_manager(
 
                     builder.clamp();
 
-                    // `enqueueDependencyWithMain` can reach `Lockfile.Package.fromNPM`,
-                    // which grows `buffers.dependencies` and may reallocate it.
-                    // Iterate by index against a snapshot of the original length and
-                    // copy each entry to the stack so neither the loop nor the callee
-                    // ever reads through a pointer into the old backing storage.
+                    // Invalidate every edge whose override changed; the resolution
+                    // cursor re-decides invalid edges it reaches from the root.
                     if manager.summary.overrides_changed && !all_name_hashes.is_empty() {
                         let dependencies_len = manager.lockfile.buffers.dependencies.len();
                         for dependency_i in 0..dependencies_len {
-                            let dependency =
-                                manager.lockfile.buffers.dependencies[dependency_i].clone();
-                            if all_name_hashes.contains(&dependency.name_hash) {
+                            let name_hash =
+                                manager.lockfile.buffers.dependencies[dependency_i].name_hash;
+                            if all_name_hashes.contains(&name_hash) {
                                 manager.lockfile.buffers.resolutions[dependency_i] =
                                     invalid_package_id;
-                                if let Err(err) = enqueue_dependency_with_main(
-                                    manager,
-                                    dependency_i as u32,
-                                    &dependency,
-                                    invalid_package_id,
-                                    false,
-                                ) {
-                                    add_dependency_error(manager, &dependency, err);
-                                }
+                                redecide_ids.push(dependency_i as u32);
                             }
                         }
                     }
 
+                    // Same for catalog-versioned edges when a catalog changed.
                     if manager.summary.catalogs_changed {
                         let dependencies_len = manager.lockfile.buffers.dependencies.len();
-                        for _dep_id in 0..dependencies_len {
-                            let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
-                            let dep =
-                                manager.lockfile.buffers.dependencies[dep_id as usize].clone();
-                            if dep.version.tag != DependencyVersionTag::Catalog {
+                        for dependency_i in 0..dependencies_len {
+                            if manager.lockfile.buffers.dependencies[dependency_i]
+                                .version
+                                .tag
+                                != DependencyVersionTag::Catalog
+                            {
                                 continue;
                             }
 
-                            manager.lockfile.buffers.resolutions[dep_id as usize] =
-                                invalid_package_id;
-                            if let Err(err) = enqueue_dependency_with_main(
-                                manager,
-                                dep_id,
-                                &dep,
-                                invalid_package_id,
-                                false,
-                            ) {
-                                add_dependency_error(manager, &dep, err);
-                            }
+                            manager.lockfile.buffers.resolutions[dependency_i] = invalid_package_id;
+                            redecide_ids.push(dependency_i as u32);
                         }
                     }
 
-                    // Split this into two passes because the below may allocate memory or invalidate pointers
                     if manager.summary.add > 0 || manager.summary.update > 0 {
-                        let changes = mapping.len() as PackageID;
-                        let mut counter_i: PackageID = 0;
-
                         let _ = manager.get_cache_directory();
                         let _ = manager.get_temporary_directory();
-
-                        while counter_i < changes {
-                            if mapping[counter_i as usize] == invalid_package_id {
-                                let dependency_i = counter_i + off;
-                                let dependency = manager.lockfile.buffers.dependencies
-                                    [dependency_i as usize]
-                                    .clone();
-                                let resolution =
-                                    manager.lockfile.buffers.resolutions[dependency_i as usize];
-                                if let Err(err) = enqueue_dependency_with_main(
-                                    manager,
-                                    dependency_i,
-                                    &dependency,
-                                    resolution,
-                                    false,
-                                ) {
-                                    add_dependency_error(manager, &dependency, err);
-                                }
-                            }
-                            counter_i += 1;
-                        }
                     }
 
                     if manager.summary.update > 0 {
@@ -564,6 +513,10 @@ pub fn install_with_manager(
             }
         }
         _ => {}
+    }
+
+    if !needs_new_lockfile {
+        manager.mark_settled_unresolved_edges(&redecide_ids);
     }
 
     if needs_new_lockfile {
@@ -582,12 +535,19 @@ pub fn install_with_manager(
                 unsafe { enqueue_patch_task_pre(manager, task) };
             }
         }
-        // Anything that needs to be downloaded from an update needs to be scheduled here
-        manager.drain_dependency_list();
     }
 
-    if manager.pending_task_count() > 0 || manager.peer_dependencies.readable_length() > 0 {
-        resolve_pending_tasks(manager, &root, log_level)?;
+    // An install whose manifest diff produced no work — nothing to decide,
+    // nothing pending — leaves the loaded lockfile exactly as recorded; skip
+    // the resolution passes entirely.
+    let resolve_needed = needs_new_lockfile
+        || !redecide_ids.is_empty()
+        || manager.summary.add > 0
+        || manager.summary.update > 0
+        || manager.pending_task_count() > 0
+        || manager.pending_pre_calc_hashes.load(Ordering::Relaxed) > 0;
+    if resolve_needed {
+        resolve_pending_tasks(manager, log_level)?;
     }
 
     let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
@@ -897,101 +857,57 @@ pub fn install_with_manager(
     Ok(())
 }
 
-// ─── runAndWaitFn closure family ──────────────────────────────────────────
-// A const-generic struct + three thin wrapper fns.
+// ─── install-command waits ──────────────────────────────────────────────
 
-/// `RunTasksCallbacks` impl for the void-callback `runTasks` call inside
-/// `runAndWaitFn::isDone` (no hooks, `progress_bar = true`). Only these
-/// flags differ from the default.
-struct InstallWaitCallbacks;
+/// `RunTasksCallbacks` for the install command's waits (no hooks,
+/// `progress_bar = true`).
+pub(crate) struct InstallWaitCallbacks;
 impl RunTasksCallbacks for InstallWaitCallbacks {
     type Ctx = ();
     const PROGRESS_BAR: bool = true;
 }
 
-struct RunAndWaitClosure<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool> {
-    // The caller also holds the same
-    // pointer to call `sleepUntil`. Storing `&mut PackageManager` would alias the outer
-    // borrow in `run_and_wait`. Keep a raw pointer; `run_and_wait` derives this pointer
-    // first and then reborrows *through it* for the `sleep_until` receiver, so both the
-    // receiver and the callback's reborrow share the same raw provenance root.
-    // See `run_and_wait` for the remaining `tick`/`event_loop` overlap note.
+/// Waits for the patchfile pre-hash tasks. Hashes must be current before any
+/// package's preinstall state is computed, so this completes before the
+/// resolution cursor starts.
+struct PrePatchHashWait {
+    // Raw pointer — `sleep_until` also receives it, so storing
+    // `&mut PackageManager` would alias. `run_and_wait` derives the pointer
+    // first and reborrows through it, so the receiver and the callback share
+    // one raw provenance root.
     manager: *mut PackageManager,
     err: Option<crate::Error>,
 }
 
-impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
-    RunAndWaitClosure<CHECK_PEERS, ONLY_PRE_PATCH>
-{
+impl PrePatchHashWait {
     fn is_done(closure: &mut Self) -> bool {
-        // SAFETY: `closure.manager` is the raw provenance root set in `run_and_wait`.
-        // `sleep_until` is now an associated fn taking `*mut PackageManager` and
-        // `AnyEventLoop::tick_raw` reborrows the event loop only *between* `is_done`
-        // calls, so this `&mut PackageManager` is the unique live borrow for the
-        // duration of the callback (no `&mut event_loop` straddles it). The original
-        // `this: &mut` in `run_and_wait` is dead past the `let mgr = ...` line.
+        // SAFETY: `closure.manager` is the raw provenance root set in
+        // `run_and_wait`; `tick_raw` holds no `&mut event_loop` across this
+        // callback, so this is the unique live borrow of the manager.
         let this = unsafe { &mut *closure.manager };
-        if CHECK_PEERS {
-            if let Err(err) = this.process_peer_dependency_list() {
-                closure.err = Some(err);
-                return true;
-            }
-        }
 
-        this.drain_dependency_list();
-
-        // void RunTasksCallbacks — the trait dispatch needs a
-        // concrete `RunTasksCallbacks` impl; `extract_ctx` collapses to `()` so we
-        // do NOT pass `this` as both receiver and ctx (would alias `&mut`).
         let log_level = this.options.log_level;
-        if let Err(err) = run_tasks::<InstallWaitCallbacks>(this, &mut (), CHECK_PEERS, log_level) {
+        if let Err(err) = run_tasks::<InstallWaitCallbacks>(this, &mut (), log_level) {
             closure.err = Some(err);
             return true;
         }
 
-        if CHECK_PEERS {
-            if this.peer_dependencies.readable_length() > 0 {
-                return false;
-            }
-        }
-
-        if ONLY_PRE_PATCH {
-            let pending_patch = this.pending_pre_calc_hashes.load(Ordering::Relaxed);
-            return pending_patch == 0;
-        }
-
-        let pending_tasks = this.pending_task_count();
-
-        if PackageManager::verbose_install() && pending_tasks > 0 {
-            if PackageManager::has_enough_time_passed_between_waiting_messages() {
-                bun_core::pretty_errorln!(
-                    "<d>[PackageManager]<r> waiting for {} tasks\n",
-                    pending_tasks,
-                );
-            }
-        }
-
-        pending_tasks == 0
+        this.pending_pre_calc_hashes.load(Ordering::Relaxed) == 0
     }
 
     fn run_and_wait(this: &mut PackageManager) -> crate::Result<()> {
-        // Derive the raw pointer first and route *every* manager access through it.
-        // Previously `closure.manager` was taken from `this`, then `this` was reborrowed
-        // into `sleep_until`'s `&mut self` — under Stacked Borrows that reborrow popped
-        // the raw pointer's tag, so the later `&mut *closure.manager` in `is_done` used
-        // an invalidated provenance. Now `mgr` is the root: both the `sleep_until`
-        // receiver and the closure share it, and `this` is never touched again.
+        // Derive the raw pointer first and route every manager access through
+        // it, so the `sleep_until` receiver and the callback share one root.
         let mgr: *mut PackageManager = this;
-        let mut closure = RunAndWaitClosure::<CHECK_PEERS, ONLY_PRE_PATCH> {
+        let mut closure = PrePatchHashWait {
             manager: mgr,
             err: None,
         };
 
-        // SAFETY: `mgr` was just derived from the live exclusive `this` borrow above and
-        // is the sole access path for the manager from here on. `sleep_until` takes the
-        // raw pointer directly (no `&mut self` receiver) and `tick_raw` holds no
-        // `&mut event_loop` across `is_done`, so `closure.manager`'s reborrow inside the
-        // callback never invalidates a live tag.
+        // SAFETY: `mgr` was derived from the live exclusive `this` borrow and
+        // is the sole access path from here on; `sleep_until` takes the raw
+        // pointer directly and `tick_raw` holds no `&mut event_loop` across
+        // `is_done`.
         unsafe { PackageManager::sleep_until(mgr, &mut closure, Self::is_done) };
 
         if let Some(err) = closure.err {
@@ -999,16 +915,6 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
         }
         Ok(())
     }
-}
-
-fn wait_for_calcing_patch_hashes(this: &mut PackageManager) -> crate::Result<()> {
-    RunAndWaitClosure::<false, true>::run_and_wait(this)
-}
-fn wait_for_everything_except_peers(this: &mut PackageManager) -> crate::Result<()> {
-    RunAndWaitClosure::<false, false>::run_and_wait(this)
-}
-fn wait_for_peers(this: &mut PackageManager) -> crate::Result<()> {
-    RunAndWaitClosure::<true, false>::run_and_wait(this)
 }
 
 // Outlined cold so the install fast path (`install_with_manager` tail) does not
@@ -1315,44 +1221,6 @@ pub(crate) fn get_workspace_filters(
     Ok((workspace_filters, install_root_dependencies))
 }
 
-/// Adds a contextual error for a dependency resolution failure.
-/// This provides better error messages than just propagating the raw error.
-/// The error is logged to manager.log, and the install will fail later when
-/// manager.log.hasErrors() is checked.
-#[cold]
-#[inline(never)]
-fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, err: crate::Error) {
-    // reshaped for borrowck — capture the realname slice before
-    // taking `&mut` on `manager.log`.
-    let realname = dependency.realname();
-    let path = manager.lockfile.str(&realname).to_vec();
-    let path_fmt = bun_core::fmt::fmt_path(
-        &path,
-        bun_core::fmt::PathFormatOptions {
-            path_sep: match dependency.version.tag {
-                DependencyVersionTag::Folder => bun_core::fmt::PathSep::Auto,
-                _ => bun_core::fmt::PathSep::Any,
-            },
-            ..Default::default()
-        },
-    );
-
-    let log = manager.log_mut();
-    if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
-        log.add_warning_with_note(
-            None,
-            Default::default(),
-            err.name().as_bytes(),
-            format_args!("error occurred while resolving {}", path_fmt),
-        );
-    } else {
-        log.add_zig_error_with_note(
-            err.name(),
-            format_args!("error occurred while resolving {}", path_fmt),
-        );
-    }
-}
-
 // ─── cold install branches ────────────────────────────────────────────────
 // These are the rarely-taken arms of `install_with_manager` (lockfile load
 // error reporting, building a brand-new lockfile, the network resolve loop,
@@ -1586,7 +1454,6 @@ fn create_new_lockfile_and_enqueue(
             unsafe { enqueue_patch_task_pre(manager, task) };
         }
     }
-    enqueue_dependency_list(manager, root.dependencies);
     Ok(root)
 }
 
@@ -1594,53 +1461,28 @@ fn create_new_lockfile_and_enqueue(
 #[inline(never)]
 fn resolve_pending_tasks(
     manager: &mut PackageManager,
-    root: &lockfile::Package,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
-    if root.dependencies.len > 0 {
-        let _ = manager.get_cache_directory();
-        let _ = manager.get_temporary_directory();
-    }
-
-    if log_level.show_progress() {
-        manager.start_progress_bar();
-    } else if log_level != Options::LogLevel::Silent {
-        bun_core::pretty_errorln!("Resolving dependencies");
-        Output::flush();
+    // Work already pending here (patchfile pre-hash tasks) is announced up
+    // front, ahead of that work's output; otherwise the driver announces
+    // itself only if it has to wait on I/O.
+    let mut announce = resolve_graph::Announce::OnFirstWait;
+    if manager.pending_task_count() > 0
+        || manager.pending_pre_calc_hashes.load(Ordering::Relaxed) > 0
+    {
+        resolve_graph::announce_resolution(manager, log_level);
+        announce = resolve_graph::Announce::Already;
     }
 
     if manager.lockfile.patched_dependencies.len() > 0 {
-        wait_for_calcing_patch_hashes(manager)?;
+        PrePatchHashWait::run_and_wait(manager)?;
     }
 
-    if manager.pending_task_count() > 0 {
-        wait_for_everything_except_peers(manager)?;
-    }
-
-    // Resolving a peer dep can create a NEW package whose own peer deps
-    // get re-queued to `peer_dependencies` during `drainDependencyList`.
-    // When all manifests are cached (synchronous resolution), no I/O tasks
-    // are spawned, so `pendingTaskCount() == 0`. We must drain the peer
-    // queue iteratively here — entering the event loop (`waitForPeers`)
-    // with zero pending I/O would block forever.
-    while manager.peer_dependencies.readable_length() > 0 {
-        manager.process_peer_dependency_list()?;
-        manager.drain_dependency_list();
-    }
-
-    if manager.pending_task_count() > 0 {
-        wait_for_peers(manager)?;
-    }
-
-    if log_level.show_progress() {
-        manager.end_progress_bar();
-    } else if log_level != Options::LogLevel::Silent {
-        bun_core::pretty_errorln!(
-            "Resolved, downloaded and extracted [{}]",
-            manager.total_tasks,
-        );
-        Output::flush();
-    }
+    manager.resolve_graph::<InstallWaitCallbacks>(
+        log_level,
+        &[],
+        resolve_graph::ResolveOptions::install(announce),
+    )?;
     Ok(())
 }
 

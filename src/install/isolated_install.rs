@@ -181,12 +181,9 @@ impl<'a, 'b> Wait<'a, 'b> {
         let log_level = pkg_manager.options.log_level;
         // `run_tasks` must not call `installer.manager_mut()` — `pkg_manager`
         // is the live `&mut PackageManager` for this call.
-        if let Err(err) = run_tasks::run_tasks::<StoreRunTasksCallbacks>(
-            pkg_manager,
-            self.installer,
-            true,
-            log_level,
-        ) {
+        if let Err(err) =
+            run_tasks::run_tasks::<StoreRunTasksCallbacks>(pkg_manager, self.installer, log_level)
+        {
             self.err = Some(err);
             return true;
         }
@@ -662,15 +659,7 @@ pub(crate) fn install_isolated_packages(
             // and devDependency handling to match `hoistDependency`
             {
                 let sorter = lockfile::DepSorter { lockfile };
-                dep_ids_sort_buf.sort_by(|a, b| {
-                    if sorter.is_less_than(*a, *b) {
-                        core::cmp::Ordering::Less
-                    } else if sorter.is_less_than(*b, *a) {
-                        core::cmp::Ordering::Greater
-                    } else {
-                        core::cmp::Ordering::Equal
-                    }
-                });
+                dep_ids_sort_buf.sort_by(|a, b| sorter.cmp(*a, *b));
             }
 
             peer_dep_ids.clear();

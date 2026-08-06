@@ -40,7 +40,6 @@ pub(crate) fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSVal
     let positionals_view: Vec<&[u8]> = all_positionals.iter().map(|s| s.as_slice()).collect();
 
     let update_requests = match UpdateRequest::parse_with_error(
-        None,
         &mut log,
         &positionals_view,
         &mut array,

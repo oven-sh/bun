@@ -8,9 +8,7 @@ use bun_js_parser as js_ast;
 use bun_semver::{SlicedString, String as SemverString, string::Builder as StringBuilder};
 
 use bun_install::dependency::{self, DependencyExt as _};
-use bun_install::{
-    Dependency, INVALID_PACKAGE_ID, Lockfile, PackageID, PackageManager, PackageNameHash,
-};
+use bun_install::{Dependency, INVALID_PACKAGE_ID, Lockfile, PackageID, PackageNameHash};
 // `lockfile.packages.items_name()` is provided by an extension trait on
 // `MultiArrayList<Package>`.
 pub struct UpdateRequest {
@@ -131,17 +129,15 @@ impl UpdateRequest {
     // NOTE: `from_js` lives on an extension trait in the `*_jsc` crate.
 
     pub fn parse<'a>(
-        pm: Option<&mut PackageManager>,
         log: &mut Log,
         positionals: &[&[u8]],
         update_requests: &'a mut Array,
         subcommand: Subcommand,
     ) -> &'a mut [UpdateRequest] {
-        Self::parse_with_error(pm, log, positionals, update_requests, subcommand, true)
+        Self::parse_with_error(log, positionals, update_requests, subcommand, true)
             .unwrap_or_else(|_| Global::crash())
     }
     pub fn parse_with_error<'a>(
-        mut pm: Option<&mut PackageManager>,
         log: &mut Log,
         positionals: &[&[u8]],
         update_requests: &'a mut Array,
@@ -206,12 +202,10 @@ impl UpdateRequest {
                 } else {
                     placeholder
                 },
-                alias.map(StringBuilder::string_hash),
                 value,
                 None,
                 &SlicedString::init(input, value),
                 Some(&mut *log),
-                pm.as_deref_mut(),
             ) else {
                 if fatal {
                     Output::err_generic(
@@ -234,12 +228,10 @@ impl UpdateRequest {
             if alias.is_some() && version.tag == dependency::version::Tag::Git {
                 if let Some(ver) = Dependency::parse_with_optional_tag(
                     placeholder,
-                    None,
                     input,
                     None,
                     &SlicedString::init(input, input),
                     Some(&mut *log),
-                    pm.as_deref_mut(),
                 ) {
                     alias = None;
                     version = ver;

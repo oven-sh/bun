@@ -524,7 +524,6 @@ fn process_deps(
     deps_buf: &mut [Dependency],
     res_buf: &mut [PackageID],
     log: &mut bun_ast::Log,
-    manager: &mut PackageManager,
     yarn_entry_to_package_id: &[PackageID],
 ) -> Result<usize, Error> {
     // Returns count instead of slice to avoid borrowck conflict with caller's bufs.
@@ -559,11 +558,9 @@ fn process_deps(
                 name_hash: dep_name_hash,
                 version: Dependency::parse(
                     dep_name_str,
-                    Some(dep_name_hash),
                     parsed_version,
                     &SlicedString::init(parsed_version, parsed_version),
                     Some(&mut *log),
-                    Some(&mut *manager),
                 )
                 .unwrap_or_default(),
                 behavior: behavior_for(dep_type, dep_entry_workspace),
@@ -815,7 +812,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 string_builder.allocate()?;
             }
             lf.overrides.parse_append(
-                manager,
                 lf.dependencies.as_slice(),
                 &root_package,
                 log,
@@ -1199,11 +1195,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                             name_hash,
                             version: Dependency::parse(
                                 dep_name_string,
-                                Some(name_hash),
                                 version_string.slice(this.buffers.string_bytes.as_slice()),
                                 &version_string.sliced(this.buffers.string_bytes.as_slice()),
                                 Some(&mut *log),
-                                Some(&mut *manager),
                             )
                             .unwrap_or_default(),
                             behavior: behavior_for(dep.dep_type, false),
@@ -1246,7 +1240,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 dependencies_buf,
                 resolutions_buf,
                 &mut *log,
-                &mut *manager,
                 &yarn_entry_to_package_id,
             )?;
             dependencies_buf = &mut dependencies_buf[processed..];
@@ -1262,7 +1255,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 dependencies_buf,
                 resolutions_buf,
                 &mut *log,
-                &mut *manager,
                 &yarn_entry_to_package_id,
             )?;
             dependencies_buf = &mut dependencies_buf[processed..];
@@ -1278,7 +1270,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 dependencies_buf,
                 resolutions_buf,
                 &mut *log,
-                &mut *manager,
                 &yarn_entry_to_package_id,
             )?;
             dependencies_buf = &mut dependencies_buf[processed..];
@@ -1294,7 +1285,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 dependencies_buf,
                 resolutions_buf,
                 &mut *log,
-                &mut *manager,
                 &yarn_entry_to_package_id,
             )?;
             dependencies_buf = &mut dependencies_buf[processed..];
@@ -1668,11 +1658,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
             let mut parsed_version = Dependency::parse(
                 dep_name_string,
-                Some(name_hash),
                 dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                 &sliced_string,
                 Some(&mut *log),
-                Some(&mut *manager),
             )
             .unwrap_or_default();
 
@@ -1738,11 +1726,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
                 let mut parsed_version = Dependency::parse(
                     dep_name_string,
-                    Some(name_hash),
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                     &sliced_string,
                     Some(&mut *log),
-                    Some(&mut *manager),
                 )
                 .unwrap_or_default();
 
@@ -1790,11 +1776,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
                 let mut parsed_version = Dependency::parse(
                     dep_name_string,
-                    Some(name_hash),
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                     &sliced_string,
                     Some(&mut *log),
-                    Some(&mut *manager),
                 )
                 .unwrap_or_default();
 
@@ -1842,11 +1826,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
                 let mut parsed_version = Dependency::parse(
                     dep_name_string,
-                    Some(name_hash),
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                     &sliced_string,
                     Some(&mut *log),
-                    Some(&mut *manager),
                 )
                 .unwrap_or_default();
 
@@ -1894,11 +1876,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
                 let mut parsed_version = Dependency::parse(
                     dep_name_string,
-                    Some(name_hash),
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                     &sliced_string,
                     Some(&mut *log),
-                    Some(&mut *manager),
                 )
                 .unwrap_or_default();
 

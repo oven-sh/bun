@@ -988,14 +988,9 @@ fn migrate_npm_lockfile<'a>(
                         bstr::BStr::new(name_bytes),
                         bstr::BStr::new(version_bytes)
                     );
-                    let Some(version) = Dependency::parse(
-                        dep_name,
-                        Some(name_hash),
-                        sliced.slice,
-                        &sliced,
-                        Some(&mut *log),
-                        Some(&mut *manager),
-                    ) else {
+                    let Some(version) =
+                        Dependency::parse(dep_name, sliced.slice, &sliced, Some(&mut *log))
+                    else {
                         return Err(crate::Error::InvalidNPMLockfile);
                     };
                     debug!("-> {}\n", <&'static str>::from(version.tag));
@@ -1118,13 +1113,12 @@ fn migrate_npm_lockfile<'a>(
                                                         .sliced(sb.bytes.as_slice());
                                                     let parsed = dependency::parse_with_tag(
                                                         dep_name,
-                                                        Some(name_hash),
                                                         dep_resolved_sliced.slice,
                                                         tag,
                                                         &dep_resolved_sliced,
                                                         Some(&mut *log),
-                                                        Some(&mut *manager as &mut dyn dependency::NpmAliasRegistry),
-                                                    ).ok_or(crate::Error::InvalidNPMLockfile)?;
+                                                    )
+                                                    .ok_or(crate::Error::InvalidNPMLockfile)?;
                                                     res_version_tag = parsed.tag;
                                                     res_version_git_owner =
                                                         if parsed.tag == DepTag::Git {
@@ -1449,7 +1443,7 @@ fn migrate_npm_lockfile<'a>(
                 //
                 // If this is hit, it means getOrPutID was not called on this package id. Look for where 'resolution[i]' is set
                 debug_assert!(
-                    this.get_package_id(this.packages.items_name_hash()[i], None, r)
+                    this.get_package_id(this.packages.items_name_hash()[i], r)
                         .is_some()
                 );
             }

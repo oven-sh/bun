@@ -293,12 +293,9 @@ pub fn populate_manifest_cache(
                 // void RunTasksCallbacks — `extract_ctx` is unit. Do NOT pass
                 // `manager` as both receiver and ctx (aliased &mut); the generic
                 // context collapses to `&mut ()`.
-                if let Err(err) = run_tasks::run_tasks::<ManifestsOnlyCallbacks>(
-                    manager,
-                    &mut (),
-                    true,
-                    log_level,
-                ) {
+                if let Err(err) =
+                    run_tasks::run_tasks::<ManifestsOnlyCallbacks>(manager, &mut (), log_level)
+                {
                     closure.err = Some(err);
                     return true;
                 }

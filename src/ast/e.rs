@@ -1583,6 +1583,35 @@ pub struct Spread {
 // `data` (the only field needing a static relocation) at offset 0; `align(8)`
 // keeps the struct itself 8-aligned. `EString` is arena-stored (never inline
 // in `Expr`), so this does not affect `Expr` size.
+/// Which of the four TOML date/time kinds a tagged `EString` literal is, and
+/// the Temporal class it materializes as. Discriminants cross the FFI
+/// boundary (`Bun__Temporal__fromDateTimeLiteral`) — keep them in sync with
+/// the C++ switch.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum TomlDateTimeKind {
+    /// `1979-05-27T00:32:00-07:00` → `Temporal.Instant`
+    OffsetDateTime = 1,
+    /// `1979-05-27T07:32:00` → `Temporal.PlainDateTime`
+    LocalDateTime = 2,
+    /// `1979-05-27` → `Temporal.PlainDate`
+    LocalDate = 3,
+    /// `07:32:00` → `Temporal.PlainTime`
+    LocalTime = 4,
+}
+
+impl TomlDateTimeKind {
+    /// Unqualified Temporal class name (`Instant`, `PlainDateTime`, …).
+    pub fn temporal_class(self) -> &'static [u8] {
+        match self {
+            TomlDateTimeKind::OffsetDateTime => b"Instant",
+            TomlDateTimeKind::LocalDateTime => b"PlainDateTime",
+            TomlDateTimeKind::LocalDate => b"PlainDate",
+            TomlDateTimeKind::LocalTime => b"PlainTime",
+        }
+    }
+}
+
 #[repr(C, align(8))]
 pub struct EString {
     // A version of this where `utf8` and `value` are stored in a packed union, with len as a single u32 was attempted.
@@ -1600,6 +1629,12 @@ pub struct EString {
     pub rope_len: u32,
     pub prefer_template: bool,
     pub is_utf16: bool,
+    /// Set only by the TOML parser, on a date/time literal whose `data` is
+    /// the (ASCII, pre-validated) source text. The TOML AST never enters the
+    /// JS visit/transform passes; the sinks that materialize or print it
+    /// (`expr_to_js`, `data_to_js`, `to_lazy_export_ast`, the printer) check
+    /// this tag and produce a Temporal value instead of a string.
+    pub toml_datetime: Option<TomlDateTimeKind>,
 }
 // Also exported as `String`; `EString` avoids colliding with bun_core::String.
 pub use EString as String;
@@ -1613,6 +1648,7 @@ impl Default for EString {
             end: None,
             rope_len: 0,
             is_utf16: false,
+            toml_datetime: None,
         }
     }
 }
@@ -1660,6 +1696,7 @@ impl EString {
             end: None,
             rope_len: 0,
             is_utf16: false,
+            toml_datetime: None,
         }
     }
     /// `data` is arena-owned (source text or `Expr.Data.Store` / bump arena)
@@ -1667,6 +1704,17 @@ impl EString {
     pub fn init(data: &[u8]) -> Self {
         Self {
             data: Str::new(data),
+            ..Default::default()
+        }
+    }
+
+    /// A TOML date/time literal: `data` is its ASCII source text (fractional
+    /// seconds pre-truncated to the 9 digits Temporal carries), accepted
+    /// verbatim by `Temporal.*.from`.
+    pub fn init_toml_datetime(data: &[u8], kind: TomlDateTimeKind) -> Self {
+        Self {
+            data: Str::new(data),
+            toml_datetime: Some(kind),
             ..Default::default()
         }
     }
@@ -1896,6 +1944,7 @@ impl EString {
             end: self.end,
             rope_len: self.rope_len,
             is_utf16: self.is_utf16,
+            toml_datetime: self.toml_datetime,
         }
     }
 
@@ -1972,67 +2021,6 @@ impl fmt::Display for EString {
             f.write_str("])")?;
         }
         Ok(())
-    }
-}
-
-/// Which of the four TOML date/time kinds a `DateTime` literal is, and the
-/// Temporal class it materializes as. Discriminants cross the FFI boundary
-/// (`Bun__Temporal__fromDateTimeLiteral`) — keep them in sync with the C++
-/// switch.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[repr(u8)]
-pub enum DateTimeKind {
-    /// `1979-05-27T00:32:00-07:00` → `Temporal.Instant`
-    OffsetDateTime = 1,
-    /// `1979-05-27T07:32:00` → `Temporal.PlainDateTime`
-    LocalDateTime = 2,
-    /// `1979-05-27` → `Temporal.PlainDate`
-    LocalDate = 3,
-    /// `07:32:00` → `Temporal.PlainTime`
-    LocalTime = 4,
-}
-
-impl DateTimeKind {
-    /// Unqualified Temporal class name (`Instant`, `PlainDateTime`, …).
-    pub fn temporal_class(self) -> &'static [u8] {
-        match self {
-            DateTimeKind::OffsetDateTime => b"Instant",
-            DateTimeKind::LocalDateTime => b"PlainDateTime",
-            DateTimeKind::LocalDate => b"PlainDate",
-            DateTimeKind::LocalTime => b"PlainTime",
-        }
-    }
-}
-
-/// A date/time literal that materializes as a Temporal object. Produced only
-/// by the TOML parser; JavaScript has no such literal.
-pub struct DateTime {
-    /// Source text of the literal. Always ASCII, already validated by the
-    /// producing parser, and accepted verbatim by `Temporal.*.from` (fractional
-    /// seconds are pre-truncated to the 9 digits Temporal carries).
-    pub data: Str,
-    pub kind: DateTimeKind,
-}
-
-impl DateTime {
-    /// `data` is arena-owned (source text or bump arena) and bulk-freed;
-    /// `StoreStr` records it under the `StoreRef` contract.
-    pub fn init(data: &[u8], kind: DateTimeKind) -> Self {
-        Self {
-            data: Str::new(data),
-            kind,
-        }
-    }
-
-    #[inline]
-    pub fn slice(&self) -> &[u8] {
-        self.data.slice()
-    }
-}
-
-impl fmt::Display for DateTime {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "E.DateTime({})", bstr::BStr::new(&self.data))
     }
 }
 

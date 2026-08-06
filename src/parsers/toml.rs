@@ -16,10 +16,10 @@
 //! - integers parse as `f64` but are validated as 64-bit integers first;
 //!   values outside `Number.MAX_SAFE_INTEGER` are errors (TOML requires
 //!   lossless handling or an error)
-//! - date/time values become `E::DateTime` nodes that materialize as Temporal
-//!   objects (offset date-time → `Temporal.Instant`, local date-time →
-//!   `Temporal.PlainDateTime`, local date → `Temporal.PlainDate`, local time
-//!   → `Temporal.PlainTime`)
+//! - date/time values become `E::String`s tagged with `toml_datetime`, which
+//!   materialize as Temporal objects (offset date-time → `Temporal.Instant`,
+//!   local date-time → `Temporal.PlainDateTime`, local date →
+//!   `Temporal.PlainDate`, local time → `Temporal.PlainTime`)
 //! - strings are UTF-8; non-ASCII content is re-encoded to UTF-16 EStrings
 //!   so both the JS conversion and the printer paths agree
 
@@ -139,7 +139,7 @@ enum ValueData<'a> {
     /// One of the four TOML date/time kinds, as its source text (always ASCII).
     DateTime {
         text: &'a [u8],
-        kind: E::DateTimeKind,
+        kind: E::TomlDateTimeKind,
     },
     Boolean(bool),
     ArrayOpen,
@@ -673,7 +673,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                 self.expect_value_terminator()?;
                 return Ok(ValueData::DateTime {
                     text: &self.src[start..self.pos],
-                    kind: E::DateTimeKind::LocalTime,
+                    kind: E::TomlDateTimeKind::LocalTime,
                 });
             }
         }
@@ -705,7 +705,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
 
     /// `YYYY-MM-DD` and everything that may follow it (time, offset).
     /// Returns the full source text of the literal and which kind it is.
-    fn scan_datetime_from_date(&mut self) -> PResult<(&'a [u8], E::DateTimeKind)> {
+    fn scan_datetime_from_date(&mut self) -> PResult<(&'a [u8], E::TomlDateTimeKind)> {
         let start = self.pos;
 
         let year = self.read_digits(4, b"Invalid date: expected a 4-digit year")?;
@@ -757,7 +757,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
         };
 
         if !has_time {
-            return Ok((&self.src[start..self.pos], E::DateTimeKind::LocalDate));
+            return Ok((&self.src[start..self.pos], E::TomlDateTimeKind::LocalDate));
         }
 
         self.scan_time_digits()?;
@@ -798,9 +798,9 @@ impl<'a, 'log> Scanner<'a, 'log> {
         };
 
         let kind = if has_offset {
-            E::DateTimeKind::OffsetDateTime
+            E::TomlDateTimeKind::OffsetDateTime
         } else {
-            E::DateTimeKind::LocalDateTime
+            E::TomlDateTimeKind::LocalDateTime
         };
         Ok((&self.src[start..self.pos], kind))
     }
@@ -1756,7 +1756,7 @@ impl<'a, 'log> Parser<'a, 'log> {
             ValueData::Number(n) => Ok(Expr::init(E::Number::new(n), loc)),
             ValueData::DateTime { text, kind } => {
                 let text = truncate_fractional_seconds(text, self.bump);
-                Ok(Expr::init(E::DateTime::init(text, kind), loc))
+                Ok(Expr::init(E::String::init_toml_datetime(text, kind), loc))
             }
             ValueData::Boolean(b) => Ok(Expr::init(E::Boolean { value: b }, loc)),
             ValueData::ArrayOpen => self.parse_array(token.pos),

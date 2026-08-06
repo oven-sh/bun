@@ -614,19 +614,19 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// Rewrites every `E::DateTime` in `expr` (in place) into the
-/// `Temporal.<Class>.from("<text>")` call it prints as, referencing an
-/// unbound `Temporal` symbol declared on first use. The calls are annotated
-/// as removable-if-unused: constructing a Temporal value from a validated
-/// literal has no observable side effects, so tree shaking may drop unused
-/// exports.
+/// Rewrites every `toml_datetime`-tagged `E::String` in `expr` (in place)
+/// into the `Temporal.<Class>.from("<text>")` call it prints as, referencing
+/// an unbound `Temporal` symbol declared on first use. The calls are
+/// annotated as removable-if-unused: constructing a Temporal value from a
+/// validated literal has no observable side effects, so tree shaking may
+/// drop unused exports.
 fn lower_date_time_literals<'a>(
     p: &mut JavaScriptParser<'a>,
     expr: &mut Expr,
     temporal_ref: &mut Option<js_ast::Ref>,
 ) -> Result<(), Error> {
     match expr.data {
-        js_ast::ExprData::EDateTime(dt) => {
+        js_ast::ExprData::EString(str) if str.toml_datetime.is_some() => {
             let ref_ = match *temporal_ref {
                 Some(ref_) => ref_,
                 None => {
@@ -637,8 +637,9 @@ fn lower_date_time_literals<'a>(
                 }
             };
             let (class, text) = {
-                let dt = dt.get();
-                (dt.kind.temporal_class(), dt.slice())
+                let str = str.get();
+                let kind = str.toml_datetime.expect("infallible: guard checked");
+                (kind.temporal_class(), str.slice8())
             };
             let loc = expr.loc;
             p.record_usage(ref_);

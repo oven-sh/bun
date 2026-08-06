@@ -954,7 +954,6 @@ impl_into_expr_data_boxed! {
     If => EIf,
     Import => EImport,
     InlinedEnum => EInlinedEnum,
-    DateTime => EDateTime,
 }
 
 impl_into_expr_data_inline! {
@@ -1140,7 +1139,6 @@ pub enum Tag {
     ENumber,
     EBigInt,
     EString,
-    EDateTime,
     ERequireString,
     ERequireResolveString,
     ERequireCallTarget,
@@ -1218,7 +1216,6 @@ impl Tag {
             Tag::EMissing => "<missing>",
             Tag::ENumber => "number",
             Tag::EBigInt => "BigInt",
-            Tag::EDateTime => "date-time",
             Tag::EObject | Tag::EObjectJSON => "object",
             Tag::ESpread => "...",
             Tag::ETemplate => "template",
@@ -1482,7 +1479,6 @@ pub enum Data {
     ENumber(E::Number),
     EBigInt(StoreRef<E::BigInt>),
     EString(StoreRef<E::EString>),
-    EDateTime(StoreRef<E::DateTime>),
 
     ERequireString(E::RequireString),
     ERequireResolveString(E::RequireResolveString),
@@ -2157,6 +2153,7 @@ impl Data {
                     end: el.end,
                     rope_len: el.rope_len,
                     is_utf16: el.is_utf16,
+                    toml_datetime: el.toml_datetime,
                 });
                 Ok(Data::EString(StoreRef::from_bump(item)))
             }
@@ -2315,10 +2312,6 @@ impl Data {
                     hasher.update(bytemuck::cast_slice::<u16, u8>(current.slice16()));
                 }
                 hasher.update(b"\x00");
-            }
-            Data::EDateTime(e) => {
-                raw(hasher, e.kind as u8);
-                hasher.update(e.slice());
             }
             Data::ERequireString(e) => {
                 raw(hasher, e.import_record_index); // preferably, i'd like to write the filepath
@@ -2902,7 +2895,6 @@ crate::new_store!(
         E::PrivateIdentifier,
         E::BigInt,
         E::EString,
-        E::DateTime,
         E::InlinedEnum,
         E::NameOfSymbol,
     ],

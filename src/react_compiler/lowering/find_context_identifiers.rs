@@ -536,8 +536,7 @@ impl<'a> ContextIdentifierVisitor<'a> {
             | Data::EImportMetaMain(_)
             | Data::ERequireMain
             | Data::ESpecial(_)
-            | Data::ENameOfSymbol(_)
-            | Data::EDateTime(_) => {}
+            | Data::ENameOfSymbol(_) => {}
         }
     }
 }

@@ -922,8 +922,7 @@ pub mod js_bundler {
                     );
                 };
 
-                // Covers an explicit `root` and the root derived from
-                // entrypoint directories.
+                // Also covers the root derived from the entrypoint directories.
                 check_path_null_bytes(global_this, "root", path.slice())?;
 
                 let dir = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice()) {

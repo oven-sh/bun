@@ -1793,7 +1793,7 @@ it("close() does not crash with FTS5 virtual tables (#37044)", async () => {
   // close() must not finalize FTS5's internal prepared statements behind the
   // vtab's back; doing so use-after-frees in sqlite3_close's vtab disconnect.
   const src = `
-    const { Database } = require("bun:sqlite");
+    import { Database } from "bun:sqlite";
     for (let i = 0; i < 10; i++) {
       const db = new Database(":memory:");
       db.exec("CREATE VIRTUAL TABLE notes_fts USING fts5(body)");

@@ -1878,13 +1878,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
         return JSValue::encode(jsUndefined());
     }
 
-    // Statements bun doesn't track may still be live on the connection:
-    // virtual-table modules (e.g. FTS5) cache their own prepared statements
-    // and finalize them during vtab disconnect inside sqlite3_close*, and a
-    // re-entrant close() from a bound-parameter getter leaves db.run()'s
-    // transient statement alive on this stack. Never finalize those behind
-    // their owner's back; on SQLITE_BUSY, close_v2 defers the close until
-    // they drain.
+    // Remaining statements are not bun's to finalize: vtab modules (FTS5)
+    // finalize their cached statements during disconnect inside sqlite3_close*,
+    // and a re-entrant close() from a bound-parameter getter leaves db.run()'s
+    // transient statement live on this stack (close_v2 defers until it drains).
     int statusCode = force ? sqlite3_close(db) : sqlite3_close_v2(db);
     if (statusCode == SQLITE_BUSY) {
         sqlite3_close_v2(db);
@@ -3003,9 +3000,8 @@ JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject)
 
 } // namespace WebCore
 
-// Drained means every statement bun tracks is finalized. Statements sqlite3
-// still knows about (virtual-table modules' cached statements) don't count:
-// sqlite3_close_v2 finalizes them via vtab disconnect.
+// Drained = every bun-tracked statement finalized. Statements sqlite3 still
+// holds (vtab modules' cached ones) don't count; close_v2 finalizes those.
 void VersionSqlite3::closeIfDrained()
 {
     if (!closed || !db)

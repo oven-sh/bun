@@ -149,8 +149,7 @@ pub trait Sink {
     fn on_header(&self, _stream_id: u32, _name: &[u8], _value: &[u8], _never_index: bool) {}
     /// The header block for `stream_id` is complete. `end_stream` = the HEADERS carried END_STREAM.
     fn on_headers_complete(&self, _stream_id: u32, _end_stream: bool, _flags: u8) {}
-    /// The peer's RST_STREAM for this stream is the next frame in the same read; fires right
-    /// before on_headers_complete so the embedder can drop the response it is about to produce.
+    /// The peer's RST_STREAM for this stream is the next buffered frame (rapid reset).
     fn on_rst_after_headers(&self, _stream_id: u32) {}
     /// A DATA payload (padding already stripped).
     fn on_data(&self, _stream_id: u32, _data: &[u8]) {}
@@ -429,8 +428,7 @@ impl Connection {
             stream_id,
             &code.as_u32().to_be_bytes(),
         );
-        // Every engine-sent RST_STREAM is a reaction to an inbound frame, so it charges the
-        // same bucket as a peer-sent one (application resets go through the embedder's writer).
+        // Every engine-sent RST_STREAM is a reaction to an inbound frame.
         self.note_stream_reset();
     }
 
@@ -563,8 +561,6 @@ impl Connection {
                 break;
             }
             let payload = &remaining[wire::FRAME_HEADER_SIZE..total];
-            // Rapid reset: when the frame after this header block is that stream's own
-            // RST_STREAM (fully buffered and valid per §6.4), the response is dropped.
             self.rst_after_headers = 0;
             if self.is_server
                 && matches!(
@@ -827,9 +823,7 @@ impl Connection {
         self.obq_ack_pending = 0;
     }
 
-    /// Drain one token from the stream-reset bucket. Server-only, like nghttp2's
-    /// session_update_stream_reset_ratelim (gated there on GOAWAY_SUBMITTED, which here is
-    /// subsumed by `terminated`; a peer-received GOAWAY must not disable the limiter).
+    /// nghttp2's session_update_stream_reset_ratelim (server-only).
     fn note_stream_reset(&mut self) {
         if !self.is_server || self.reset_flood {
             return;
@@ -843,7 +837,6 @@ impl Connection {
                 .unwrap_or(u32::MAX)
                 .saturating_mul(self.stream_reset_rate);
             self.reset_tokens = self.reset_tokens.saturating_add(gain);
-            // Keep the sub-second remainder (nghttp2 compares integer-second timestamps).
             self.reset_last_refill += std::time::Duration::from_secs(elapsed);
         }
         self.reset_tokens = self.reset_tokens.min(self.stream_reset_burst);
@@ -854,8 +847,7 @@ impl Connection {
         self.reset_flood = true;
     }
 
-    /// Tear the session down (GOAWAY ENHANCE_YOUR_CALM / NGHTTP2_ERR_FLOODED) once the
-    /// stream-reset bucket is empty. Returns true when torn down.
+    /// GOAWAY(ENHANCE_YOUR_CALM) once the stream-reset bucket is empty.
     fn check_reset_flood(&mut self, sink: &impl Sink) -> bool {
         if !self.reset_flood || self.terminated {
             return false;

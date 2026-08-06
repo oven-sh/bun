@@ -1316,8 +1316,7 @@ pub struct H2FrameParser {
     /// Drained into Connection::close_stream on the next rewrite_read batch.
     pending_engine_stream_closes: JsCell<Vec<u32>>,
     dispatch_depth: Cell<u32>,
-    /// Stream id whose RST_STREAM is the next buffered frame (Sink::on_rst_after_headers);
-    /// request()/write_stream drop the response for it, on_stream_reset clears it.
+    /// Stream whose RST_STREAM is the next buffered frame; its response is dropped.
     rst_after_headers: Cell<u32>,
     max_rejected_streams: Cell<u32>,
     max_session_invalid_frames: Cell<u32>,
@@ -9940,8 +9939,7 @@ impl H2FrameParser {
                             .set(max_session_invalid_frames.to_uint64_no_truncate() as u32);
                     }
                 }
-                // node applies the pair only when both are numbers, floored to 1
-                // (updateOptionsBuffer in lib/internal/http2/util.js).
+                // node's updateOptionsBuffer: applied only when both are numbers, floored to 1.
                 if let Some(reset_burst) = settings_js.get(global_object, "streamResetBurst")?
                     && let Some(reset_rate) = settings_js.get(global_object, "streamResetRate")?
                     && reset_burst.is_number()

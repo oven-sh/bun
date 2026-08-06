@@ -1165,7 +1165,9 @@ devTest("stylesheets imported through a failed js file stay active", {
     // One batch: parse error in comp.ts plus an edge adjustment, so the
     // route's css list retraces while comp.ts is failed.
     {
-      await using _batch = await dev.batchChanges({ errors: null });
+      await using _batch = await dev.batchChanges({
+        errors: ["comp.ts:2:18: error: Unexpected ;"],
+      });
       await dev.write("comp.ts", `import "./comp.css";\nexport const x = ;\n`, { dedent: false });
       await dev.write("index.ts", `import.meta.hot.accept();\nimport "./comp.ts";\nimport "./b.css";\n`, {
         dedent: false,

@@ -591,10 +591,6 @@ impl Loader {
                 if !key.is_empty() {
                     self.map.put(key, value)?;
                 }
-            } else {
-                if !env.is_empty() {
-                    self.map.put(env, b"")?;
-                }
             }
         }
         self.did_load_process = true;

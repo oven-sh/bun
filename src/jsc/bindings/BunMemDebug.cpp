@@ -112,6 +112,11 @@ extern "C" void mi_prof_visit_live(bool (*cb)(uintptr_t addr, size_t size, const
 static std::vector<std::pair<uintptr_t, uintptr_t>> s_frozenRanges; // sorted [start,end)
 static std::vector<uintptr_t> s_payloadPages; // sorted OS pages that held live malloc blocks (main heap) at freeze
 static std::map<uintptr_t, uint32_t> s_pageSizeClass; // page -> block size of (first) live block seen
+#if OS(DARWIN)
+#define OS_DARWIN_ONLY(x) x
+#else
+#define OS_DARWIN_ONLY(x) 0
+#endif
 struct FrozenRun { uintptr_t start; size_t len; size_t fileOff; };
 // Image bytes may live at an offset inside a bigger file (embedded in the executable's __BUN/.bun section): all image-file reads/maps add this.
 static off_t s_imageBaseOff = 0;
@@ -1805,7 +1810,7 @@ static void imageRestoreAndRun(const char* path)
         mi_arenas_seal_existing(); // every arena that exists now is image memory: nobody (any thread) allocates into its free space again
         { uint64_t top = 0; for (auto& r : regions) if (r.addr >= 0x20000000000ull && r.addr < 0x300000000000ull) top = std::max<uint64_t>(top, r.addr + r.len); if (top) mi_os_hint_floor((void*)(top + (1ull << 30))); } // the overlay brought the builder's hint pointer; make sure fresh memory goes above everything imaged
         mi_arena_id_t freshArena = 0; mi_heap_t* fresh = nullptr;
-        if (!getenv("BUN_IMAGE_NOFRESHARENA")) { // post-restore memory never interleaves with (or dirties the bitmaps of) image arenas
+        if (getenv("BUN_IMAGE_FRESHARENA") ? strcmp(getenv("BUN_IMAGE_FRESHARENA"), "0") != 0 : (bool)OS_DARWIN_ONLY(1)) { // dedicated post-restore arena (default on macOS; on Linux the general path — sealed image arenas + hint floor — is used until the exclusive-arena binding is sorted)
             // Explicit placement (no dependence on the allocator's hint state, which the overlay just replaced): 1GiB right above everything imaged.
             uint64_t top = 0; for (auto& r : regions) if (r.addr >= 0x20000000000ull && r.addr < 0x300000000000ull) top = std::max<uint64_t>(top, r.addr + r.len);
             void* want = (void*)((top + (1ull << 30)) & ~((1ull << 30) - 1)); size_t sz = 1ull << 30;

@@ -1,6 +1,6 @@
 // Tests adapted from https://github.com/nodejs/node/pull/63154
 // (test/parallel/test-util-inspect-temporal.js)
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import util from "util";
 
 const colorRegex = new RegExp(`^\u001b\\[${util.inspect.colors[util.inspect.styles.date][0]}m`);

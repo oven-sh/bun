@@ -1656,8 +1656,7 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       // JSC's Temporal constructors are named `PlainDate`, not the
       // `Temporal.PlainDate` V8 uses; map direct instances onto the label so
       // the prefix comes out the same as Node's.
-      const effectiveConstructor =
-        constructor !== null && `Temporal.${constructor}` === label ? label : constructor;
+      const effectiveConstructor = constructor !== null && `Temporal.${constructor}` === label ? label : constructor;
       const prefix = getPrefix(effectiveConstructor, tag, label);
       base = `${prefix}${getTemporalDisplayString(value)}`;
       if (keys.length === 0 && protoProps === undefined) {

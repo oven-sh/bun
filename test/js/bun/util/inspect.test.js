@@ -878,9 +878,7 @@ describe("Temporal values", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe(
-      "Temporal.PlainDate 2020-01-02\n{\n  at: Temporal.Instant 1970-01-01T00:00:00Z,\n}\n",
-    );
+    expect(stdout).toBe("Temporal.PlainDate 2020-01-02\n{\n  at: Temporal.Instant 1970-01-01T00:00:00Z,\n}\n");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });

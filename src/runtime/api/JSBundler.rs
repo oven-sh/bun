@@ -340,6 +340,7 @@ pub mod js_bundler {
                 object.get_own(global_this, &BunString::static_str("executablePath"))?
             {
                 let slice = executable_path.to_slice(global_this)?;
+                check_path_null_bytes(global_this, "compile.executablePath", slice.slice())?;
                 let path_z = bun_core::ZBox::from_bytes(slice.slice());
                 if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
                     .unwrap_or(bun_sys::ExistsAtType::Directory)
@@ -369,6 +370,7 @@ pub mod js_bundler {
                     windows.get_own(global_this, &BunString::static_str("icon"))?
                 {
                     let slice = windows_icon_path.to_slice(global_this)?;
+                    check_path_null_bytes(global_this, "compile.windows.icon", slice.slice())?;
                     let path_z = bun_core::ZBox::from_bytes(slice.slice());
                     if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
                         .unwrap_or(bun_sys::ExistsAtType::Directory)
@@ -1027,6 +1029,7 @@ pub mod js_bundler {
                     }
                 };
                 let validate = |option: &str, s: &[u8]| -> JsResult<()> {
+                    check_path_null_bytes(global_this, option, s)?;
                     if let Some((pos, tail)) = options::find_unterminated_placeholder(s) {
                         return Err(global_this.throw_invalid_arguments(format_args!(
                             "{}: unterminated \"{}\" placeholder (missing \"]\") at position {}",

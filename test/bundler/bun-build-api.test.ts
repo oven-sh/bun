@@ -213,6 +213,34 @@ describe("Bun.build", () => {
         metafile: join(String(dir), "meta\0.json"),
       } as any),
     ).toThrow("The property 'metafile' must be a string without null bytes");
+    expect(() =>
+      Bun.build({
+        entrypoints: [entry],
+        naming: "[name]\0-REQUESTED.[ext]",
+      }),
+    ).toThrow("The property 'naming' must be a string without null bytes");
+    expect(() =>
+      Bun.build({
+        entrypoints: [entry],
+        naming: { chunk: "[name]\0-REQUESTED.[ext]" },
+      }),
+    ).toThrow("The property 'naming.chunk' must be a string without null bytes");
+    expect(() =>
+      Bun.build({
+        entrypoints: [entry],
+        compile: {
+          executablePath: join(String(dir), "bun\0zz"),
+        },
+      } as any),
+    ).toThrow("The property 'compile.executablePath' must be a string without null bytes");
+    expect(() =>
+      Bun.build({
+        entrypoints: [entry],
+        compile: {
+          windows: { icon: join(String(dir), "icon\0.ico") },
+        },
+      } as any),
+    ).toThrow("The property 'compile.windows.icon' must be a string without null bytes");
     // the truncated "out" directory must not have been created
     expect(readdirSync(String(dir)).sort()).toEqual(["e.mjs"]);
   });

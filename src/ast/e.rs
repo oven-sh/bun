@@ -1575,14 +1575,6 @@ pub struct Spread {
     pub value: ExprNodeIndex,
 }
 
-/// JavaScript string literal type
-// repr(C, align(8)): `StoreStr`/`StoreRef` are `packed(4)`, so under
-// `repr(Rust)` the `data.ptr: NonNull<u8>` lands at a 4-but-not-8-aligned
-// offset, and a `static EString = EString::from_static(b"...")` then emits an
-// `ARM64_RELOC_UNSIGNED` at that offset which arm64 ld rejects. `repr(C)` pins
-// `data` (the only field needing a static relocation) at offset 0; `align(8)`
-// keeps the struct itself 8-aligned. `EString` is arena-stored (never inline
-// in `Expr`), so this does not affect `Expr` size.
 /// Discriminants are shared with the C++ switch in
 /// `Bun__Temporal__fromDateTimeLiteral`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1610,6 +1602,14 @@ impl TomlDateTimeKind {
     }
 }
 
+/// JavaScript string literal type
+// repr(C, align(8)): `StoreStr`/`StoreRef` are `packed(4)`, so under
+// `repr(Rust)` the `data.ptr: NonNull<u8>` lands at a 4-but-not-8-aligned
+// offset, and a `static EString = EString::from_static(b"...")` then emits an
+// `ARM64_RELOC_UNSIGNED` at that offset which arm64 ld rejects. `repr(C)` pins
+// `data` (the only field needing a static relocation) at offset 0; `align(8)`
+// keeps the struct itself 8-aligned. `EString` is arena-stored (never inline
+// in `Expr`), so this does not affect `Expr` size.
 #[repr(C, align(8))]
 pub struct EString {
     // A version of this where `utf8` and `value` are stored in a packed union, with len as a single u32 was attempted.

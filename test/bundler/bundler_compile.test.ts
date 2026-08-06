@@ -67,7 +67,8 @@ describe("bundler", () => {
     files: {
       "/entry.ts": /* js */ `
         process.exitCode = 1;
-        process.versions.bun = "bun!";
+        // defineProperty because process.versions.bun is non-writable (but configurable) like in Node
+        Object.defineProperty(process.versions, "bun", { value: "bun!" });
         if (process.versions.bun === "bun!") throw new Error("fail");
         if (require("./${process.platform}-${process.arch}.js") === "${Bun.version.replaceAll("-debug", "")}") {
           process.exitCode = 0;
@@ -86,7 +87,8 @@ describe("bundler", () => {
         import { foo } from "hello:world";
         if (foo !== "bar") throw new Error("fail");
         process.exitCode = 1;
-        process.versions.bun = "bun!";
+        // defineProperty because process.versions.bun is non-writable (but configurable) like in Node
+        Object.defineProperty(process.versions, "bun", { value: "bun!" });
         if (process.versions.bun === "bun!") throw new Error("fail");
         const another = require("./${process.platform}-${process.arch}.js").replaceAll("-debug", "");
         if (another === "${Bun.version.replaceAll("-debug", "")}") {

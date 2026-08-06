@@ -32,6 +32,11 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSString> m_cachedCwd;
     WriteBarrier<Unknown> m_argv;
     WriteBarrier<Unknown> m_execArgv;
+    // Lazily-created values returned by the getter-only stdio/report accessors.
+    WriteBarrier<Unknown> m_stdin;
+    WriteBarrier<Unknown> m_stdout;
+    WriteBarrier<Unknown> m_stderr;
+    WriteBarrier<Unknown> m_report;
 
 public:
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
@@ -81,6 +86,11 @@ public:
 
     JSValue getExecArgv(JSGlobalObject* globalObject);
     void setExecArgv(JSGlobalObject* globalObject, JSValue execArgv);
+
+    JSValue getStdin(JSGlobalObject* globalObject);
+    JSValue getStdout(JSGlobalObject* globalObject);
+    JSValue getStderr(JSGlobalObject* globalObject);
+    JSValue getReport(JSGlobalObject* globalObject);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)

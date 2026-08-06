@@ -63,18 +63,8 @@ fn data_to_js_with_check(
         ExprData::EArrayJSON(e) => array_json_to_js(e, global, stack_check),
         ExprData::EString(e) => {
             if let Some(kind) = e.toml_datetime {
-                let text = e.slice8();
-                // SAFETY: `text` is an arena-owned ASCII slice that outlives
-                // the call.
-                return unsafe {
-                    bun_jsc::cpp::Bun__Temporal__fromDateTimeLiteral(
-                        global,
-                        text.as_ptr(),
-                        text.len(),
-                        kind as u8,
-                    )
-                }
-                .map_err(js_err);
+                return JSValue::from_toml_datetime_literal(global, e.slice8(), kind as u8)
+                    .map_err(js_err);
             }
             string_to_js(e, global)
         }

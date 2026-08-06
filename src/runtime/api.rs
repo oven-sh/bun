@@ -315,17 +315,7 @@ fn expr_to_js_with_check(
         ExprData::EString(str) => {
             let str = str.get();
             if let Some(kind) = str.toml_datetime {
-                let text = str.slice8();
-                // SAFETY: `text` is an arena-owned ASCII slice that outlives
-                // the call.
-                return unsafe {
-                    bun_jsc::cpp::Bun__Temporal__fromDateTimeLiteral(
-                        global,
-                        text.as_ptr(),
-                        text.len(),
-                        kind as u8,
-                    )
-                };
+                return JSValue::from_toml_datetime_literal(global, str.slice8(), kind as u8);
             }
             estring_to_js(str, global)
         }

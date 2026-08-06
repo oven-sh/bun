@@ -745,6 +745,15 @@ describe("TOML.stringify", () => {
     expect(TOML.parse(TOML.stringify({ zdt })).zdt.equals(zdt.toInstant())).toBe(true);
   });
 
+  test("a ZonedDateTime with a sub-minute offset falls back to the UTC instant form", () => {
+    // Pre-standard-time zones use LMT: Europe/Berlin in 1800 is +00:53:28,
+    // which TOML's HH:MM offset grammar cannot carry.
+    const zdt = Temporal.ZonedDateTime.from("1800-01-01T00:00[Europe/Berlin]");
+    expect(zdt.offsetNanoseconds % 60_000_000_000).not.toBe(0);
+    expect(TOML.stringify({ zdt })).toBe(`zdt = ${zdt.toInstant().toString()}\n`);
+    expect(TOML.parse(TOML.stringify({ zdt })).zdt.equals(zdt.toInstant())).toBe(true);
+  });
+
   test("a non-ISO calendar date emits its ISO fields without the calendar annotation", () => {
     const hebrew = Temporal.PlainDate.from("2024-01-01[u-ca=hebrew]");
     expect(hebrew.toString()).toBe("2024-01-01[u-ca=hebrew]"); // what TOML cannot carry

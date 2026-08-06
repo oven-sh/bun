@@ -6013,15 +6013,11 @@ pub(crate) extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
 ) {
     // No exception may stay pending when this hook returns: JSC's
     // `consoleProtoFuncTakeHeapSnapshot` performs no exception check after the
-    // client call, so report failures as uncaught instead (termination just
-    // stops the print and keeps the VM unwinding).
+    // client call, so report failures as uncaught instead.
     // TODO: this does an extra JSONStringify and we don't need it to!
     let snapshot: [JSValue; 1] = match global_this.generate_heap_snapshot() {
         Ok(snapshot) => [snapshot],
-        Err(err) => {
-            let _ = crate::task::report_error_or_terminate(global_this, err);
-            return;
-        }
+        Err(err) => return global_this.report_active_exception_as_unhandled(err),
     };
     if let Err(err) = message_with_type_and_level_(
         core::ptr::null_mut(), // unused by the callee
@@ -6031,7 +6027,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
         snapshot.as_ptr(),
         1,
     ) {
-        let _ = crate::task::report_error_or_terminate(global_this, err);
+        global_this.report_active_exception_as_unhandled(err);
     }
 }
 

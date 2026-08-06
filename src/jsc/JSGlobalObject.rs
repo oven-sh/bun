@@ -967,6 +967,18 @@ impl JSGlobalObject {
     }
 
     pub(crate) fn generate_heap_snapshot(&self) -> JsResult<JSValue> {
+        // Debug-only fault injection for
+        // test/js/bun/console/console-take-heap-snapshot.test.ts: a real
+        // out-of-memory inside the snapshot's JSONParse cannot be staged from
+        // JS (constrained memory fails the earlier WTF-side snapshot
+        // allocations non-recoverably), so the console hook's error path is
+        // exercised this way.
+        #[cfg(debug_assertions)]
+        if bun_core::env_var::feature_flag::BUN_INTERNAL_FAIL_TAKE_HEAP_SNAPSHOT.get()
+            == Some(true)
+        {
+            return Err(self.throw_out_of_memory());
+        }
         crate::from_js_host_call(self, || JSC__JSGlobalObject__generateHeapSnapshot(self))
     }
 

@@ -1378,9 +1378,11 @@ static bool platformIsJITRegion(const PlatformRegion& r) { return r.executable &
 static uint64_t platformTextBase() { return (uint64_t)__executable_start; }
 static uint64_t platformLibsBase() { return (uint64_t)dlsym(RTLD_DEFAULT, "getpid"); } // libc's slide stands in for all system libs
 extern "C" char __etext[] __attribute__((weak)); extern "C" char etext[];
-static uint64_t platformBuildId() // FNV-1a over the start of .text + its extent; stands in for the ELF build-id
+static uint64_t platformBuildId() // FNV-1a over 64 KiB of code around main() + the text extent; stands in for the ELF build-id (the ELF/program headers at __executable_start change when a payload is appended, code does not)
 {
-    const uint8_t* t = (const uint8_t*)__executable_start; uint64_t h = 1469598103934665603ull; size_t n = 65536;
+    extern int main(int, char**);
+    const uint8_t* t = (const uint8_t*)((uintptr_t)&main & ~(uintptr_t)0xffff); uint64_t h = 1469598103934665603ull; size_t n = 65536;
+    if (t < (const uint8_t*)__executable_start + 65536) t = (const uint8_t*)__executable_start + 65536;
     for (size_t i = 0; i < n; i++) { h ^= t[i]; h *= 1099511628211ull; }
     return h ^ (uint64_t)((char*)etext - (char*)__executable_start);
 }

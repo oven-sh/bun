@@ -20,8 +20,8 @@
  *     output is not acceptable API)
  *   - datetime -> Temporal.Instant, datetime-local -> Temporal.PlainDateTime,
  *     date-local -> Temporal.PlainDate, time-local -> Temporal.PlainTime;
- *     compared by class + canonical toString (Temporal instances have no own
- *     properties, so a bare toEqual would compare nothing)
+ *     compared with plain toEqual (deepEquals compares Temporal objects by
+ *     class and value)
  *   - invalid documents -> SyntaxError, with the exact full message asserted
  *     when the in-tree parser produced a SyntaxError at generation time
  */
@@ -245,8 +245,6 @@ function valueToJS(val: unknown, indent: number = 0): string {
 // ---------------------------------------------------------------------------
 // 6. Generate the test file
 // ---------------------------------------------------------------------------
-const kindUnion = DATETIME_KINDS.map(k => JSON.stringify(k)).join(" | ");
-
 let output = `// Tests generated from the official toml-lang/toml-test conformance suite
 // Generated from toml-test commit: ${commit}
 // Scope: TOML v1.1.0 manifest (tests/files-toml-1.1.0): ${validCases.length} valid + ${outOfRangeCases.length} out-of-range-integer + ${invalidCases.length} invalid + ${invalidEncodingCases.length} invalid-encoding cases
@@ -256,10 +254,9 @@ let output = `// Tests generated from the official toml-lang/toml-test conforman
 //   - integer: number; values outside Number.MAX_SAFE_INTEGER throw (TOML
 //     requires lossless handling or an error — see the out-of-range block)
 //   - datetime: Temporal.Instant; datetime-local: Temporal.PlainDateTime;
-//     date-local: Temporal.PlainDate; time-local: Temporal.PlainTime.
-//     Temporal instances have no own properties, so toEqual alone would
-//     compare nothing: both sides normalize to "<Temporal.X iso>" tag strings
-//     (class + canonical toString) before the single toEqual
+//     date-local: Temporal.PlainDate; time-local: Temporal.PlainTime,
+//     compared with plain toEqual (deepEquals compares Temporal objects by
+//     class and value)
 //   - invalid documents throw SyntaxError; the exact full message is asserted
 //     where the in-tree parser produced a SyntaxError at generation time
 //
@@ -268,16 +265,6 @@ let output = `// Tests generated from the official toml-lang/toml-test conforman
 import { TOML } from "bun";
 import { describe, expect, test } from "bun:test";
 
-class TomlDateTime {
-  constructor(
-    public kind: ${kindUnion},
-    public value: string,
-  ) {}
-}
-function dt(kind: TomlDateTime["kind"], value: string): TomlDateTime {
-  return new TomlDateTime(kind, value);
-}
-
 const TEMPORAL_CLASS = {
   "datetime": "Instant",
   "datetime-local": "PlainDateTime",
@@ -285,61 +272,12 @@ const TEMPORAL_CLASS = {
   "time-local": "PlainTime",
 } as const;
 
-function temporalTag(className: string, iso: string): string {
-  return \`<Temporal.\${className} \${iso}>\`;
-}
-
 // The corpus value is TOML source text; TOML.parse truncates fractional
-// seconds to Temporal's 9-digit limit, and Temporal.*.from accepts the rest
-// of TOML's spellings (space separator, lowercase t/z, omitted seconds) as is.
-function expectedTemporalTag(marker: TomlDateTime): string {
-  const className = TEMPORAL_CLASS[marker.kind];
-  const text = marker.value.replace(/\\.(\\d{9})\\d+/, ".$1");
-  return temporalTag(className, (Temporal as any)[className].from(text).toString());
-}
-
-// Datetime markers become "<Temporal.X iso>" tags; everything else is unchanged.
-function normalizeExpected(expected: unknown): unknown {
-  if (expected instanceof TomlDateTime) return expectedTemporalTag(expected);
-  if (Array.isArray(expected)) return expected.map(normalizeExpected);
-  if (expected !== null && typeof expected === "object") {
-    const out: Record<string, unknown> = Object.create(null);
-    for (const [k, v] of Object.entries(expected)) out[k] = normalizeExpected(v);
-    return out;
-  }
-  return expected;
-}
-
-// Normalize the positions of \`actual\` that \`expected\` marks as datetimes, in
-// lockstep, so a single toEqual compares everything else exactly. A value of
-// the wrong class is left as is and shows up as the toEqual mismatch.
-function normalizeActual(actual: unknown, expected: unknown): unknown {
-  if (expected instanceof TomlDateTime) {
-    const className = TEMPORAL_CLASS[expected.kind];
-    if (actual instanceof (Temporal as any)[className]) {
-      return temporalTag(className, (actual as any).toString());
-    }
-    return actual;
-  }
-  if (Array.isArray(expected) && Array.isArray(actual)) {
-    return actual.map((a, i) => normalizeActual(a, expected[i]));
-  }
-  if (
-    expected !== null &&
-    typeof expected === "object" &&
-    actual !== null &&
-    typeof actual === "object" &&
-    !Array.isArray(actual)
-  ) {
-    const out: Record<string, unknown> = Object.create(null);
-    for (const [k, v] of Object.entries(actual)) out[k] = normalizeActual(v, (expected as any)[k]);
-    return out;
-  }
-  return actual;
-}
-
-function expectTomlEqual(parsed: unknown, expected: unknown): void {
-  expect(normalizeActual(parsed, expected)).toEqual(normalizeExpected(expected) as any);
+// seconds to Temporal's 9-digit limit (truncated, not rounded), and
+// Temporal.*.from accepts the rest of TOML's spellings (space separator,
+// lowercase t/z, omitted seconds) as is.
+function dt(kind: keyof typeof TEMPORAL_CLASS, value: string) {
+  return (Temporal as any)[TEMPORAL_CLASS[kind]].from(value.replace(/\\.(\\d{9})\\d+/, ".$1"));
 }
 `;
 
@@ -352,8 +290,8 @@ for (const tc of validCases) {
   output += `  test(${jsString(tc.name)}, () => {\n`;
   output += `    const input: string = ${jsString(tc.input)};\n`;
   output += `    const expected: any = ${valueToJS(tc.expected, 2)};\n`;
-  output += `    expectTomlEqual(TOML.parse(input), expected);\n`;
-  output += `    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);\n`;
+  output += `    expect(TOML.parse(input)).toEqual(expected);\n`;
+  output += `    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);\n`;
   output += `  });\n\n`;
 }
 output += `});\n`;

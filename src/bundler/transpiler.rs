@@ -2783,10 +2783,8 @@ impl<'a> Transpiler<'a> {
                 Ok(Some(f)) => f,
                 Ok(None) => continue,
                 Err(err) => {
-                    // An error that was not already reported (e.g. the
-                    // printer's recursion guard tripping on a deeply nested
-                    // AST) must still fail the build instead of silently
-                    // producing no output for this file.
+                    // Print errors (unlike parse errors) add nothing to the
+                    // log, and an unlogged failure exits 0 with no output.
                     if self.log().errors == errors_before {
                         let path: &[u8] = item.path_const().map(|p| p.text).unwrap_or(b"");
                         let message: &str = match err {

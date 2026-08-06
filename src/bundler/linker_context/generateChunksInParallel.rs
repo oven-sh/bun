@@ -268,17 +268,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             debug!("  DONE {} source maps (quoted contents)", chunks.len());
         }
 
-        // A part that failed to print (e.g. the printer's recursion guard
-        // tripping on a deeply nested AST) would otherwise join the chunk as
-        // silently truncated output; report it and fail the build instead.
-        //
-        // Not for the dev server: its caller treats any `Err` from this
-        // function as OOM (`finish_from_bake_dev_server` returns
-        // `Result<(), AllocError>` and `on_after_decrement_scan_counter`
-        // does `.expect("oom")`), so failing here would abort the whole
-        // server on one bad file. It keeps its long-standing behavior for
-        // an unprintable part (the part's code is dropped) until print
-        // failures are routed per-file like parse failures.
+        // A part that failed to print (e.g. the recursion guard tripped on a
+        // deeply nested AST) must fail the build instead of joining the chunk
+        // as silently truncated output. Dev server excluded: its callers turn
+        // any `Err` here into an OOM panic (see `finish_from_bake_dev_server`),
+        // so unprintable parts keep the old dropped-code behavior there.
         if !IS_DEV_SERVER {
             let mut had_print_error = false;
             for chunk in chunks.iter() {

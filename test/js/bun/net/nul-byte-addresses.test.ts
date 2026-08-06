@@ -12,6 +12,7 @@
 // rejection is pure input validation that fires before any I/O.
 import { connect } from "bun";
 import { describe, expect, it } from "bun:test";
+import { tls as certs } from "harness";
 import dns from "node:dns";
 
 describe.concurrent("NUL bytes in addresses are rejected, not truncated", () => {
@@ -52,23 +53,37 @@ describe.concurrent("NUL bytes in addresses are rejected, not truncated", () => 
     );
   });
 
+  it("resolver.setServers rejects an IP containing a NUL", () => {
+    const resolver = new dns.Resolver();
+    expect(() => resolver.setServers(["8.8.8.8\0.example.invalid"])).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_IP_ADDRESS" }),
+    );
+  });
+
   it("Bun.connect({ tls: { serverName } }) rejects a serverName containing a NUL byte", async () => {
     // The serverName becomes the C string handed to SSL_set_tlsext_host_name,
     // so "good.example\0evil" would silently send "good.example" on the wire.
-    // Reserved port 1: nothing listens there in CI, and the check must refuse
-    // before any connection attempt anyway.
+    // A real local TLS server: without the check, the handshake COMPLETES with
+    // the truncated SNI, so a successful connect fails the assertion below.
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: certs,
+      socket: { data() {} },
+    });
     let err: any;
+    let socket: Awaited<ReturnType<typeof connect>> | undefined;
     try {
-      const socket = await connect({
+      socket = await connect({
         hostname: "127.0.0.1",
-        port: 1,
+        port: listener.port,
         tls: { serverName: "localhost\0.example.invalid", rejectUnauthorized: false },
         socket: { data() {} },
       });
-      socket.end();
     } catch (e) {
       err = e;
     }
+    socket?.end();
     expect(err?.message).toContain("must not contain null bytes");
   });
 });

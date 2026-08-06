@@ -1871,12 +1871,18 @@ impl UDPSocket {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected 2 arguments")));
         }
 
-        if args[0].to_slice(global_this)?.slice().contains(&0) {
-            return Err(global_this
-                .throw_invalid_arguments(format_args!("\"address\" must not contain null bytes")));
-        }
-
+        // Coerce once and validate the coerced bytes: a second coercion of a
+        // non-string argument could observe a different value than the one
+        // that was checked.
         let str = bun_core::OwnedString::new(args[0].to_bun_string(global_this)?);
+        {
+            let host_utf8 = str.to_utf8_without_ref();
+            if host_utf8.slice().contains(&0) {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "\"address\" must not contain null bytes"
+                )));
+            }
+        }
         let connect_host = str.to_owned_slice_z();
 
         let connect_port_js = args[1];

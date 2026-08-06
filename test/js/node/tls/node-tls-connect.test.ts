@@ -1298,25 +1298,50 @@ describe("servernames containing NUL bytes", () => {
   // SSL_set_tlsext_host_name, so "good.example\0evil" would silently send
   // "good.example" on the wire while JS-level checks see the full string.
   it("tls.connect rejects a servername containing a NUL byte", async () => {
-    // Reserved port 1: nothing listens there in CI, and the servername check
-    // must refuse before any connection is attempted anyway.
+    // A real local TLS server: without the check, the handshake COMPLETES with
+    // the truncated SNI, which the sentinel below turns into a failure.
+    const server = tls.createServer(COMMON_CERT_);
+    await once(server.listen(0, "127.0.0.1"), "listening");
     let err: any;
     try {
       const socket = tls.connect({
         host: "127.0.0.1",
-        port: 1,
+        port: (server.address() as AddressInfo).port,
         servername: "localhost\0.example.invalid",
         rejectUnauthorized: false,
       });
       err = await new Promise((resolve, reject) => {
         socket.on("error", resolve);
-        socket.on("secureConnect", () => reject(new Error("handshake completed")));
+        socket.on("secureConnect", () => reject(new Error("handshake completed with a truncated SNI")));
       });
       socket.destroy();
     } catch (e) {
       err = e;
+    } finally {
+      server.close();
     }
     expect(err?.message).toContain("must not contain null bytes");
+  });
+
+  it("socket.setServername rejects a servername containing a NUL byte", async () => {
+    // A plain server that never responds keeps the handshake pending, so the
+    // native setServername path is reachable without racing secureConnect.
+    const server = net.createServer(s => s.on("error", () => {}));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const socket = tls.connect({
+      host: "127.0.0.1",
+      port: (server.address() as AddressInfo).port,
+      servername: "initial.example.invalid",
+      rejectUnauthorized: false,
+    });
+    socket.on("error", () => {});
+    try {
+      await once(socket, "connect");
+      expect(() => socket.setServername("localhost\0.example.invalid")).toThrow("must not contain null bytes");
+    } finally {
+      socket.destroy();
+      server.close();
+    }
   });
 
   it("server.addContext rejects a hostname pattern containing a NUL byte", async () => {

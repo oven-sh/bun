@@ -5649,6 +5649,16 @@ impl Resolver {
             );
             let address_slice = address_string.to_owned_slice();
 
+            if address_slice.contains(&0) {
+                return Err(jsc::Error::INVALID_IP_ADDRESS.throw(
+                    global_this,
+                    format_args!(
+                        "Invalid IP address: \"{}\"",
+                        bstr::BStr::new(&address_slice)
+                    ),
+                ));
+            }
+
             let mut address_buffer = vec![0u8; address_slice.len() + 1];
             let _ = strings::copy(&mut address_buffer, &address_slice);
             address_buffer[address_slice.len()] = 0;

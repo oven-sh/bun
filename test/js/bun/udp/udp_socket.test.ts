@@ -645,28 +645,33 @@ test("sendMany() sends every packet of a larger-than-one-batch call", async () =
 });
 
 describe("hostnames containing NUL bytes", () => {
-  // Bind/connect hostnames become C strings; an embedded NUL would silently
-  // bind or connect to the truncated prefix ("127.0.0.1\0evil" -> 127.0.0.1)
-  // while JS-level checks see the full string.
-  test.concurrent("bind hostname is rejected", async () => {
+  // Bind/connect hostnames become C strings; a NUL would silently bind or
+  // connect to the truncated prefix ("127.0.0.1\0evil" -> 127.0.0.1) while
+  // JS-level checks see the full string. A trailing NUL is the same bypass:
+  // "127.0.0.1\0" !== "127.0.0.1" in JS but reaches C as "127.0.0.1".
+  const hostnames = ["127.0.0.1\0.example.invalid", "127.0.0.1\0"];
+
+  test.concurrent.each(hostnames)("bind hostname %j is rejected", async hostname => {
     let err;
+    let socket;
     try {
-      const socket = await udpSocket({ hostname: "127.0.0.1\0.example.invalid", port: 0 });
-      socket.close();
+      socket = await udpSocket({ hostname, port: 0 });
     } catch (e) {
       err = e;
     }
+    socket?.close();
     expect(err?.message).toContain("must not contain null bytes");
   });
 
-  test.concurrent("connect hostname is rejected", async () => {
+  test.concurrent.each(hostnames)("connect hostname %j is rejected", async hostname => {
     let err;
+    let socket;
     try {
-      const socket = await udpSocket({ connect: { hostname: "127.0.0.1\0.example.invalid", port: 53 } });
-      socket.close();
+      socket = await udpSocket({ connect: { hostname, port: 53 } });
     } catch (e) {
       err = e;
     }
+    socket?.close();
     expect(err?.message).toContain("must not contain null bytes");
   });
 });

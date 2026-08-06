@@ -1210,10 +1210,21 @@ pub mod parse_worker {
                         debug_assert!(entry.ref_.inner_index() < extra.symbols.len() as u32);
                     }
                 }
+                // In bake builds (dev server or server components), every
+                // stylesheet is emitted into the client bundle and served to
+                // the browser, even when it was discovered through a
+                // server-graph import. Minify-time targets decide vendor
+                // prefixing and selector downleveling, so a server-target
+                // parse would permanently strip those from the served CSS.
+                let css_target = if topts.server_components || topts.has_dev_server() {
+                    options::Target::Browser
+                } else {
+                    topts.target
+                };
                 if let Err(e) = css_ast.minify(
                     bump,
                     &bun_css::MinifyOptions {
-                        targets: bun_css::Targets::for_bundler_target(topts.target),
+                        targets: bun_css::Targets::for_bundler_target(css_target),
                         unused_symbols: Default::default(),
                     },
                     &extra,

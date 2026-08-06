@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { devTest, emptyHtmlFile, imageFixtures, minimalFramework } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -689,6 +689,34 @@ devTest("css import before create project relative", {
     assert(backgroundImage);
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
     await dev.fetch("/").expect.toContain("HELLO");
+  },
+});
+
+devTest("css imported on the server gets browser-target processing", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import "../styles.css";
+      export default function (req, meta) {
+        return new Response(JSON.stringify(meta.styles), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    `,
+    "styles.css": `
+      .box:fullscreen {
+        color: red;
+      }
+    `,
+  },
+  async test(dev) {
+    const styles = await (await dev.fetch("/")).json();
+    expect(styles).toHaveLength(1);
+    const css = await (await dev.fetch(styles[0])).text();
+    // Stylesheets are always served to the browser, so selector downleveling
+    // for browser targets must apply even when the importer is a server file.
+    expect(css).toContain(":-webkit-full-screen");
+    expect(css).toContain(":fullscreen");
   },
 });
 

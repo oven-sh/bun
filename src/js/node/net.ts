@@ -3187,12 +3187,12 @@ function internalConnectMultiple(context, canceled?) {
 
   if (localPort) {
     if (addressType === 4) {
-      localAddress = "0.0.0.0";
+      localAddress = DEFAULT_IPV4_ADDR;
       // TODO:
       // err = self._handle.bind(localAddress, localPort);
     } else {
       // addressType === 6
-      localAddress = "::";
+      localAddress = DEFAULT_IPV6_ADDR;
       // TODO:
       // err = self._handle.bind6(localAddress, localPort, flags);
     }

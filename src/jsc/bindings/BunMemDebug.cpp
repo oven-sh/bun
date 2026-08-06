@@ -1869,6 +1869,7 @@ static void imageRestoreAndRun(const char* path)
     us_loop_reinit_for_image(uws_get_loop());
     { const char* d = getenv("BUN_MEMDEBUG"); s_dir = (d && *d) ? strdup(d) : nullptr; } // tooling dir belongs to this process, not the builder
     Bun__imageAdoptMainThreadVM();
+    vm->refreshStackBoundsAfterImageRestore(); // before any JSLock/sanitizeStack: the VM still holds the builder's stack addresses (asserts once the stack lands elsewhere, i.e. with ASLR)
     { JSC::JSLockHolder lock(*vm); vm->didRestoreFromImage();
       fprintf(stderr, "[image] termination state: request=%d pendingTermException=%d exception=%p trapsNeedTermination=%d\n", (int)vm->hasTerminationRequest(), (int)vm->hasPendingTerminationException(), vm->exceptionForInspection(), (int)vm->traps().needHandling(JSC::VMTraps::NeedTermination));
       if (vm->hasPendingTerminationException() || vm->hasTerminationRequest()) { vm->clearHasTerminationRequest(); { auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*vm); scope.clearException(); } vm->traps().clearTrap(JSC::VMTraps::NeedTermination); fprintf(stderr, "[image] cleared stale termination state\n"); } }

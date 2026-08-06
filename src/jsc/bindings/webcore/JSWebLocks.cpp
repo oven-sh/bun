@@ -430,12 +430,25 @@ static void releaseAndSettle(Zig::GlobalObject* globalObject, WebLockRequest& re
     auto scope = DECLARE_THROW_SCOPE(vm);
     ensureWebLocksClient(globalObject).requests.remove(request.id);
     // Re-checks the queue and may grant other requests synchronously.
-    BunWebLocksRegistry::singleton().release(globalObject, request.id, request.name);
+    bool released = BunWebLocksRegistry::singleton().release(globalObject, request.id, request.name);
     RETURN_IF_EXCEPTION(scope, );
     removeAbortListener(globalObject, request);
     RETURN_IF_EXCEPTION(scope, );
     if (request.stolen) {
         // The steal already rejected the promise and published the end event.
+        return;
+    }
+    if (!released && request.granted) {
+        // Another thread stole the lock and its notification task has not
+        // run yet (the registry entry is already gone). The steal wins, as
+        // it does when the notification arrives first.
+        request.stolen = true;
+        JSValue error = createDOMException(globalObject, ExceptionCode::AbortError, lockAbortedMessage);
+        RETURN_IF_EXCEPTION(scope, );
+        publishLockRequestEnd(globalObject, request, error);
+        RETURN_IF_EXCEPTION(scope, );
+        settleReject(globalObject, request, error);
+        RETURN_IF_EXCEPTION(scope, );
         return;
     }
     publishLockRequestEnd(globalObject, request, rejected ? value : jsUndefined());

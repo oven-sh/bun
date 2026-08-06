@@ -222,14 +222,15 @@ uint64_t BunWebLocksRegistry::request(Zig::GlobalObject* globalObject, const Str
     return id;
 }
 
-void BunWebLocksRegistry::release(Zig::GlobalObject* globalObject, uint64_t id, const String& name)
+bool BunWebLocksRegistry::release(Zig::GlobalObject* globalObject, uint64_t id, const String& name)
 {
     auto self = globalObject->scriptExecutionContext()->identifier();
+    bool removedAny = false;
     {
         Locker locker { m_lock };
         auto it = m_held.find(name);
         if (it != m_held.end()) {
-            bool removedAny = it->value.removeAllMatching([&](auto& lock) {
+            removedAny = it->value.removeAllMatching([&](auto& lock) {
                 return lock.id == id && lock.contextId == self;
             }) > 0;
             if (removedAny)
@@ -241,7 +242,8 @@ void BunWebLocksRegistry::release(Zig::GlobalObject* globalObject, uint64_t id, 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     processQueue(globalObject);
-    RETURN_IF_EXCEPTION(scope, );
+    RETURN_IF_EXCEPTION(scope, removedAny);
+    return removedAny;
 }
 
 void BunWebLocksRegistry::contextDestroyed(ScriptExecutionContextIdentifier contextId)

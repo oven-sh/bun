@@ -606,6 +606,39 @@ describe("worker threads", () => {
     });
   });
 
+  test("a stolen holder rejects even if its callback settles before the steal notification arrives", async () => {
+    const sab = new SharedArrayBuffer(4);
+    const flag = new Int32Array(sab);
+    const release = Promise.withResolvers<string>();
+    const holder = navigator.locks.request("steal-settle-race", () => release.promise);
+    const worker = new Worker(
+      `
+      const { workerData } = require("worker_threads");
+      const flag = new Int32Array(workerData);
+      navigator.locks.request("steal-settle-race", { steal: true }, () => {
+        Atomics.store(flag, 0, 1);
+        Atomics.notify(flag, 0);
+        return new Promise(() => {});
+      });
+      setInterval(() => {}, 1000);
+      `,
+      { eval: true, workerData: sab },
+    );
+    // Busy-wait for the steal to commit, then settle the stolen holder's
+    // callback immediately: its release usually runs before the stolen
+    // notification task is processed, and the outcome must be AbortError in
+    // either order.
+    const deadline = Date.now() + 15_000;
+    while (Atomics.load(flag, 0) === 0 && Date.now() < deadline) {}
+    expect(Atomics.load(flag, 0)).toBe(1);
+    release.resolve("finished-anyway");
+    await expect(holder).rejects.toMatchObject({
+      name: "AbortError",
+      message: "The operation was aborted",
+    });
+    await worker.terminate();
+  });
+
   test("worker can steal a lock held by the main thread", async () => {
     const stolen = Promise.withResolvers<string>();
     const mainLock = navigator.locks

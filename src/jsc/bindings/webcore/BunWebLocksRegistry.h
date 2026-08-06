@@ -52,8 +52,11 @@ public:
     // id; steal victims are notified on their own threads.
     uint64_t request(Zig::GlobalObject*, const String& name, bool exclusive, bool steal, bool ifAvailable, int32_t& immediateEvent);
 
-    // Release a held lock, then grant whatever that unblocks.
-    void release(Zig::GlobalObject*, uint64_t id, const String& name);
+    // Release a held lock, then grant whatever that unblocks. Returns false
+    // if the lock was no longer held (it was stolen by another thread whose
+    // notification has not arrived yet, so the caller must treat the request
+    // as stolen).
+    bool release(Zig::GlobalObject*, uint64_t id, const String& name);
 
 private:
     friend class WTF::NeverDestroyed<BunWebLocksRegistry>;

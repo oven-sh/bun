@@ -48,9 +48,12 @@ _ohos_kill_orphans 2>/dev/null || true
 # PPID=1 孤儿清理 — 杀所有不属于 verdaccio/opencode 的 PPID=1 bun 进程
 # 这些是 bun test 被杀后遗留的子孙（如 bun run jsx-*、bun -e fixture 等）
 _ohos_kill_orphans() {
-  local _pid
+  local _pid _age
   for _pid in $(ps -eo pid,ppid,args 2>/dev/null | awk '/[b]un/ && !/verdaccio/ && !/opencode/ && $2 == 1 {print $1}'); do
-    kill -9 "$_pid" 2>/dev/null || true
+    # 只杀存活 >10s 的孤儿 bun：刚过继给 init 的子进程可能仍被
+    # 其他 worker 的测试使用（正常退出前的瞬态），立即杀会误伤。
+    _age=$(ps -o etimes= -p "$_pid" 2>/dev/null || echo 0)
+    [ "${_age:-0}" -gt 10 ] 2>/dev/null && kill -9 "$_pid" 2>/dev/null || true
   done
 }
 
@@ -512,12 +515,21 @@ while IFS= read -r f; do
       if [ -f "$PDIR/running_$_j" ] && [ ! -f "$PDIR/result_$_j" ]; then
         _pid=$(cat "$PDIR/pid_$_j" 2>/dev/null || echo 0)
         if [ "$_pid" -gt 0 ] && ! kill -0 "$_pid" 2>/dev/null; then
-          # subshell 死了但没写 result → 写 timeout
-          _test_path=$(cat "$PDIR/running_$_j" 2>/dev/null || echo "unknown")
-          echo "[ZOMBIE] $_test_path (subshell $_pid died without result)" >> "$REPORT"
-          _ohos_force_result "$_j" "$_test_path" "0"
-          rm -f "$PDIR/running_$_j" "$PDIR/pid_$_j" "$PDIR/wt_$_j"
-          continue
+          # subshell 刚退出时 result 可能还在写入收尾（快速测试的
+          # wait/清理阶段）。短暂轮询确认 result 是否出现，避免把
+          # 正常完成的快速测试误判为 ZOMBIE（本次 131 个假 ZOMBIE 根因）。
+          _zombie_confirm=1
+          for _zc in 1 2 3 4 5; do
+            [ -f "$PDIR/result_$_j" ] && { _zombie_confirm=0; break; }
+            sleep 0.2 2>/dev/null || sleep 1
+          done
+          if [ "$_zombie_confirm" -eq 1 ] && [ ! -f "$PDIR/result_$_j" ]; then
+            _test_path=$(cat "$PDIR/running_$_j" 2>/dev/null || echo "unknown")
+            echo "[ZOMBIE] $_test_path (subshell $_pid died without result)" >> "$REPORT"
+            _ohos_force_result "$_j" "$_test_path" "0"
+            rm -f "$PDIR/running_$_j" "$PDIR/pid_$_j" "$PDIR/wt_$_j"
+            continue
+          fi
         fi
       fi
       # 检查卡死的 worker：running 存在但 result 不存在，且超时

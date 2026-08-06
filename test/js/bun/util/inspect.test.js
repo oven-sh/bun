@@ -835,6 +835,26 @@ describe("Temporal values", () => {
     expect(Bun.inspect(Temporal.ZonedDateTime.from("2020-01-01T00:00:00+09:00[Asia/Tokyo][u-ca=japanese]"))).toBe(
       "Temporal.ZonedDateTime 2020-01-01T00:00:00+09:00[Asia/Tokyo][u-ca=japanese]",
     );
+    // Non-ISO PlainYearMonth/PlainMonthDay print the full reference date, not
+    // the bare YYYY-MM / MM-DD form.
+    expect(Bun.inspect(new Temporal.PlainYearMonth(2024, 1, "hebrew", 15))).toBe(
+      "Temporal.PlainYearMonth 2024-01-15[u-ca=hebrew]",
+    );
+    expect(Bun.inspect(new Temporal.PlainMonthDay(1, 15, "hebrew", 1972))).toBe(
+      "Temporal.PlainMonthDay 1972-01-15[u-ca=hebrew]",
+    );
+  });
+
+  it("rounds sub-minute historic offsets to the minute, like toString", () => {
+    // Liberia used -00:44:30 until 1972; the half-minute tie rounds away from zero.
+    const monrovia = Temporal.ZonedDateTime.from("1950-01-01T00:00[Africa/Monrovia]");
+    expect(monrovia.offset).toBe("-00:44:30");
+    expect(monrovia.toString()).toContain("-00:45[");
+    expect(Bun.inspect(monrovia)).toBe(`Temporal.ZonedDateTime ${monrovia.toString()}`);
+    // Kolkata's LMT era is +05:53:28; below the tie it truncates.
+    const kolkata = Temporal.ZonedDateTime.from("1850-01-01T00:00[Asia/Kolkata]");
+    expect(kolkata.toString()).toContain("+05:53[");
+    expect(Bun.inspect(kolkata)).toBe(`Temporal.ZonedDateTime ${kolkata.toString()}`);
   });
 
   it("prints a single token when nested", () => {

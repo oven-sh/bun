@@ -1606,6 +1606,14 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                     &*self.bundled_files.keys()[dep.get() as usize],
                                 );
                                 entry_points.append_css(k.slice())?;
+                            } else if self.bundled_files.values()[dep.get() as usize].failed {
+                                // A chunk entry whose last build failed has
+                                // `Unknown` content; re-enqueue it like a
+                                // direct edit of that file would.
+                                let k = bun_ptr::RawSlice::new(
+                                    &*self.bundled_files.keys()[dep.get() as usize],
+                                );
+                                entry_points.append_js(k.slice(), bake::Graph::Client)?;
                             }
                             it = entry.next_dependency;
                         }

@@ -964,3 +964,31 @@ devTest("stylesheet that fails to print becomes a per-file error instead of an e
     await c.style(".visible").color.expect.toBe("#00f");
   },
 });
+// Same as above, but the unprintable rules live in an `@import`ed child file.
+// The failure belongs to the chunk entry, yet editing the child must still
+// re-enqueue the chunk (the child needs its graph edge even in a failed build).
+devTest("editing an @imported stylesheet recovers a failed CSS print", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["main.css"],
+      body: "hello",
+    }),
+    "main.css": `@import "./child.css";\nbody { margin: 0; }\n`,
+    "child.css":
+      Array.from({ length: 30 }, (_, i) => `.x${i}:fullscreen {`).join("\n") +
+      "\ncolor: red;\n" +
+      Buffer.alloc(30, "}").toString() +
+      "\n",
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ["main.css: error: Failed to generate CSS for this file (PrintError)"],
+    });
+
+    // Recovery must work by editing the child, not just the entry.
+    await c.expectReload(async () => {
+      await dev.write("child.css", ".visible { color: blue; }\n", { dedent: false, errors: null });
+    });
+    await c.style(".visible").color.expect.toBe("#00f");
+  },
+});

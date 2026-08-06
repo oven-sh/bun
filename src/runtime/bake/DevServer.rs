@@ -4119,13 +4119,17 @@ pub(super) fn finalize_bundle(
                 bun_ast::Loc::EMPTY,
                 format_args!("Failed to generate CSS for this file ({})", err.name()),
             );
+            let entry_key = entry_source.path.key_for_incremental_graph();
             dev.client_graph.insert_failure(
-                incremental_graph::InsertFailureKey::AbsPath(
-                    entry_source.path.key_for_incremental_graph(),
-                ),
+                incremental_graph::InsertFailureKey::AbsPath(entry_key),
                 &log,
                 false,
             )?;
+            // Cache the entry's file index so pass 2 still diffs the chunk's
+            // `@import` edges; editing an imported child file must find the
+            // edge to re-enqueue this chunk.
+            *ctx.get_cached_index(bake::Side::Client, index) =
+                CachedFileIndex::from(dev.client_graph.get_file_index(entry_key));
             continue;
         }
 
@@ -4319,19 +4323,6 @@ pub(super) fn finalize_bundle(
         )?;
     }
     for chunk in css_chunks_mut.iter() {
-        // Pass 1 skipped failed chunks, so their entry has no resolved file index.
-        if chunk
-            .compile_results_for_chunk
-            .iter()
-            .any(|compile_result| {
-                matches!(
-                    compile_result,
-                    bundler::CompileResult::Css { result: Err(_), .. }
-                )
-            })
-        {
-            continue;
-        }
         let entry_index = bun_ast::Index::init(chunk.entry_point.source_index());
         dev.client_graph.process_chunk_dependencies(
             &mut ctx,

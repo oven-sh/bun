@@ -6,11 +6,10 @@
 namespace Bun {
 
 // require.extensions & Module._extensions
-class JSCommonJSExtensions : public JSC::JSDestructibleObject {
+class JSCommonJSExtensions : public JSC::JSNonFinalObject {
 public:
-    using Base = JSC::JSDestructibleObject;
+    using Base = JSC::JSNonFinalObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut;
-    ~JSCommonJSExtensions();
 
     static JSCommonJSExtensions* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {

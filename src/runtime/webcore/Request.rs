@@ -1143,11 +1143,12 @@ impl Request {
                 if let Some(request) = request_ptr {
                     // SAFETY: the cast returns a live *mut Request payload (m_ctx)
                     let request = unsafe { &*request };
-                    // Fetch spec: with no body from `init`, a
-                    // disturbed-or-locked input body is unusable.
-                    if is_input_argument
+                    // Fetch spec: `init.body: null`/absent contributes no
+                    // body, so the input's body applies and must be usable.
+                    let input_body_applies = is_input_argument
                         && (!fields.contains(Fields::Body)
-                            || matches!(req.body_value(), BodyValue::Null))
+                            || matches!(req.body_value(), BodyValue::Null));
+                    if input_body_applies
                         && request.body_stream_check(global_this, |s, g| {
                             s.is_disturbed(g) || s.is_locked(g)
                         })
@@ -1206,7 +1207,7 @@ impl Request {
                         }
                     }
 
-                    if !fields.contains(Fields::Body) {
+                    if !fields.contains(Fields::Body) || input_body_applies {
                         match request.body_value() {
                             BodyValue::Null | BodyValue::Used => {}
                             // `Empty` is a non-null body; an input copy keeps

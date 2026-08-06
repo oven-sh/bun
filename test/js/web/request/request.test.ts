@@ -285,6 +285,13 @@ describe("new Request(request) copies internal state without calling getters", (
     expect(await new Request(make(), {}).text()).toBe("real-body");
   });
 
+  test("init body: null contributes no body, so the input's body is copied", async () => {
+    const input = new Request("http://localhost/", { method: "POST", body: "hello" });
+    const copy = new Request(input, { body: null });
+    expect(copy.body).not.toBeNull();
+    expect(await copy.text()).toBe("hello");
+  });
+
   test("an empty-string body input copies as a non-null empty body", async () => {
     const make = () => new Request("http://localhost/", { method: "POST", body: "" });
     const single = new Request(make());

@@ -50,6 +50,7 @@
 #include <fcntl.h>
 #if OS(DARWIN)
 #include <mach/mach.h>
+#include <sys/sysctl.h>
 #include <crt_externs.h>
 #include <spawn.h>
 #include <termios.h>
@@ -73,6 +74,7 @@
 #endif
 #if OS(LINUX)
 #include <sys/personality.h>
+#include <sys/auxv.h>
 #include <dirent.h>
 #include <ucontext.h>
 #endif
@@ -186,8 +188,6 @@ static void setImageEnvDefaults()
     if (getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT")) unsetenv("MIMALLOC_HINT_FLOOR");
     else setenv("MIMALLOC_HINT_FLOOR", "0x21000000000", 0);
     setenv("BUN_IMAGE_JIT_ADDR", "0x3c0000000", 0);
-    setenv("BUN_JSC_useBaselineJIT", "0", 0);
-    setenv("BUN_JSC_useFTLJIT", "0", 0);
 }
 extern "C" bool Bun__isCompiledExecutable();
 static bool imageEnvIsSet()
@@ -1405,6 +1405,30 @@ static std::vector<PlatformLib> platformSystemLibs() { return { }; } // Darwin: 
 struct ImageFixup { uint64_t addr; uint64_t lib; };
 struct ImageFixupHeader { char magic[8]; uint64_t nlibs; uint64_t nfixups; }; // then PlatformLib[nlibs] (base/end/nameHash as recorded), ImageFixup[nfixups]
 
+
+// CPU feature word for the image header: an image may hold state that latched CPU-dependent code paths (SIMD dispatch tables in vendored
+// libraries), so it is only used on a CPU that has at least the features of the machine that built it.
+static uint64_t platformCpuFeatures()
+{
+    uint64_t f = 0;
+#if CPU(X86_64)
+    unsigned a, b, c, d;
+    auto cpuid = [&](unsigned leaf, unsigned sub) { __asm__ volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(leaf), "c"(sub)); };
+    cpuid(1, 0); f |= (uint64_t)(c & ((1u << 0) | (1u << 9) | (1u << 19) | (1u << 20) | (1u << 23) | (1u << 25) | (1u << 28))); // sse3 ssse3 sse4.1 sse4.2 popcnt aes avx
+    cpuid(7, 0); f |= (uint64_t)(b & ((1u << 3) | (1u << 5) | (1u << 8) | (1u << 16) | (1u << 17) | (1u << 30) | (1u << 31))) << 32; // bmi1 avx2 bmi2 avx512f avx512dq avx512bw avx512vl
+    f |= 1ull << 63; // "x86-64" tag
+#elif CPU(ARM64)
+#if OS(DARWIN)
+    const char* keys[] = { "hw.optional.arm.FEAT_AES", "hw.optional.arm.FEAT_SHA256", "hw.optional.arm.FEAT_CRC32", "hw.optional.arm.FEAT_LSE", "hw.optional.arm.FEAT_DotProd", "hw.optional.arm.FEAT_SHA3", "hw.optional.arm.FEAT_I8MM", "hw.optional.arm.FEAT_BF16", "hw.optional.arm.FEAT_SME", "hw.optional.arm.FEAT_SVE" };
+    for (unsigned i = 0; i < sizeof keys / sizeof *keys; i++) { int v = 0; size_t n = sizeof v; if (!sysctlbyname(keys[i], &v, &n, nullptr, 0) && v) f |= 1ull << i; }
+#elif OS(LINUX)
+    f = getauxval(AT_HWCAP) & 0xffffffffull; f |= (getauxval(AT_HWCAP2) & 0x7fffffffull) << 32;
+#endif
+    f |= 1ull << 62; // "arm64" tag
+#endif
+    return f;
+}
+
 struct ImageHeader { char magic[8]; uint64_t textBase; uint64_t vm; uint64_t globalObject; uint64_t mainThread; uint64_t nregions; uint64_t reserved[8]; uint64_t libsBase; uint64_t spare[7]; }; // 176 bytes; region table follows
 struct ImageRegion { uint64_t addr; uint64_t len; uint64_t fileOff; uint64_t kind; }; // kind: 0 heap(anon), 1 __DATA segment
 
@@ -1547,6 +1571,7 @@ static void imageDump(JSC::VM& vm, const char* path)
     if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] settled %zu StringImpl headers\n", settledStrings);
     { // linked CodeBlocks, metadata (value profiles/ICs), UnlinkedCodeBlocks and JIT code are per-run hot state: measured 11-17MB cheaper to re-create them fresh than to dirty them in the image
         const char* dc = getenv("BUN_IMAGE_DELETE_CODE"); // =0 keep all, =linked keep unlinked; default: drop everything
+        vm.completeAllJITPlansBeforeImageSnapshot(); // drain in-flight DFG/FTL plans first: nothing compiles or installs code while we walk/delete/freeze (results are discarded below anyway)
         JSC::sanitizeStackForVM(vm);
         if (dc && !strcmp(dc, "0")) { }
         else if (dc && !strcmp(dc, "linked")) vm.deleteAllLinkedCode(JSC::DeleteAllCodeIfNotCollecting);
@@ -1621,7 +1646,7 @@ static void imageDump(JSC::VM& vm, const char* path)
     int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) { fprintf(stderr, "[image] open %s failed\n", path); return; }
     ImageHeader hdr {}; memcpy(hdr.magic, "BUNIMG2", 8);
-    hdr.textBase = platformTextBase(); hdr.libsBase = platformLibsBase(); hdr.spare[0] = platformBuildId(); hdr.vm = (uint64_t)&vm;
+    hdr.textBase = platformTextBase(); hdr.libsBase = platformLibsBase(); hdr.spare[0] = platformBuildId(); hdr.spare[2] = platformCpuFeatures(); hdr.vm = (uint64_t)&vm;
     hdr.globalObject = (uint64_t)defaultGlobalObject();
     hdr.mainThread = (uint64_t)&WTF::Thread::currentSingleton();
     hdr.reserved[0] = (uint64_t)mi_theap_get_default(); // main thread's mimalloc theap (TLS-referenced, lives in the heap)
@@ -1687,6 +1712,7 @@ static void imageRestoreAndRun(const char* path)
     ImageHeader hdr; ipread(fd, &hdr, sizeof hdr, 0);
     if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] source %s base=%lld magic=%.7s nregions=%llu text=%llx libs=%llx build=%llx\n", filePath, (long long)s_imageBaseOff, hdr.magic, (unsigned long long)hdr.nregions, (unsigned long long)hdr.textBase, (unsigned long long)hdr.libsBase, (unsigned long long)hdr.spare[0]);
     if (memcmp(hdr.magic, "BUNIMG2", 8) || hdr.spare[0] != platformBuildId()) { fprintf(stderr, "[image] %s was not produced by this build of the executable; booting normally\n", path); close(fd); return; }
+    { uint64_t need = hdr.spare[2], have = platformCpuFeatures(); if (need && (have & need) != need) { fprintf(stderr, "[image] %s was built on a CPU with features this one lacks (%llx vs %llx); booting normally\n", path, (unsigned long long)need, (unsigned long long)have); close(fd); return; } }
     if (hdr.textBase != platformTextBase()) { fprintf(stderr, "[image] ASLR slide differs (image text %llx vs ours %llx); booting normally\n", (unsigned long long)hdr.textBase, (unsigned long long)platformTextBase()); close(fd); return; }
     if (false) { fprintf(stderr, "[image] %s was produced by a different build of this executable; booting normally\n", path); close(fd); return; }
     // Extern-library fixup table. Storage is anonymous mmap, not heap: the allocator's memory is about to be overlaid by the image.

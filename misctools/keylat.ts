@@ -2,7 +2,7 @@
 const cli = process.argv[2]; const mode = process.argv[3]; // "restored" | "normal"
 let buf = ""; const strip = (s: string) => s.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "");
 const proc = Bun.spawn([cli], {
-  env: { ...process.env, TERM: "xterm-256color", ...(mode === "normal" ? { BUN_IMAGE: "0", BUN_JSC_useBaselineJIT: "0", BUN_JSC_useFTLJIT: "0" } : {}) },
+  env: { ...process.env, TERM: "xterm-256color", ...(mode === "normal" ? { BUN_IMAGE: "0" } : {}) },
   terminal: { cols: 150, rows: 45, data(_t, d) { buf += new TextDecoder().decode(d); } },
 });
 const until = async (p: () => boolean, ms: number) => { const t = performance.now(); while (performance.now() - t < ms) { if (p()) return true; await Bun.sleep(1); } return false; };

@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isLinux, isMacOS, tempDir } from "harness";
 import { join } from "path";
 
 // Heap image round-trip: the fixture snapshots itself at idle, a fresh process restores it and continues.
-const env = { ...bunEnv, MIMALLOC_DETERMINISTIC_HINT: "1", BUN_IMAGE_JIT_ADDR: "0x3c0000000", BUN_JSC_useBaselineJIT: "0", BUN_JSC_useFTLJIT: "0" };
+const env = { ...bunEnv, MIMALLOC_DETERMINISTIC_HINT: "1", BUN_IMAGE_JIT_ADDR: "0x3c0000000" };
 const buildEnv = env;
 const restoreEnv = { ...env, MIMALLOC_HINT_FLOOR: "0x21000000000" }; // a restoring process keeps its own early heap above where image regions get mapped
 const hasImages = typeof Bun.unsafe.snapshot === "function" && (isLinux || isMacOS);

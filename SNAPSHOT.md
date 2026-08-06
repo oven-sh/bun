@@ -69,7 +69,7 @@ Attribution commands (write the word into `~/code/tmp/ccmem/cmd.<pid>`; needs `B
 
 ## Numbers (Aug 5 2026, M-series, this stack, plain `cli` with `cli.img.zst` beside it, no special env)
 
-Restored: **~34–37 MB at the prompt / idle** (image ~234–243 MB, 28 MB zst); after one turn ~92–98; after 2 turns ~102–107, **~96 after GC + reclean**; CPU for restore + 2 turns ~0.8–0.9 s; time to prompt ~100 ms (0.27 s CPU on first run incl. inflate, 0.13 s after). Booted normally: 215–230 idle (174–184 with LLInt+DFG only + borrowed bytecode), ~505 ms to prompt. Generational + concurrent GC and concurrent JIT on; LLInt+DFG tiers.
+All JIT tiers on (LLInt/Baseline/DFG/FTL — an earlier LLInt+DFG-only experiment is *not* a default; its numbers are kept below only as a measurement), generational + concurrent GC, concurrent JIT. Restored: **~34–40 MB at the prompt / idle**; per-turn growth is larger with all tiers (see 'Per-turn growth'); re-baselining with all tiers is pending. Booted normally: 215–230 idle, ~505 ms to prompt.
 
 ## Where the memory is after two turns (restored CC, current build)
 
@@ -97,7 +97,7 @@ Keystroke → echo at the prompt (`keylat.ts`, pty): normal boot p50 ~4.6 ms; re
 
 ## Per-turn growth (not image-specific)
 
-Restored or not, footprint grows ~10–25 MB per trivial turn over the first turns (4 "pong" turns: 122 → 152 MB). Live JS cells grow only ~1.3 MB/turn; the growth is JSC tiering artifacts in malloc (baseline JIT `JITData`/IC stubs/`JIT::link`, DFG/FTL OSR-exit vectors, MetadataTables) as each turn executes more not-yet-compiled code. Measured over restore + 4 turns: `BUN_JSC_useBaselineJIT=0 BUN_JSC_useFTLJIT=0` (LLInt → DFG only) → idle 37 vs 44 MB, after 4 turns **114 vs 150 MB**, CPU 1.67 s vs 1.94 s. FTL off alone or higher DFG thresholds don't help.
+Restored or not, footprint grows ~10–25 MB per trivial turn over the first turns (4 "pong" turns: 122 → 152 MB). Live JS cells grow only ~1.3 MB/turn; the growth is JSC tiering artifacts in malloc (baseline JIT `JITData`/IC stubs/`JIT::link`, DFG/FTL OSR-exit vectors, MetadataTables) as each turn executes more not-yet-compiled code. Measured over restore + 4 turns: LLInt → DFG only gave 114 vs 150 MB and less CPU — recorded as attribution of where the bytes go, **not** as a configuration to ship (Jarred: tiers stay on). The item is to reduce JIT-tier malloc footprint by real means: GC-driven discard of baseline code/JITData when idle, IC stub sharing, and checking why `JIT::link`/`OSR-exit` metadata is retained past usefulness.
 
 ## Linux status
 

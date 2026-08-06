@@ -664,8 +664,11 @@ root: &root
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stdout).toBe('{"a":{"b":1},"c":{"b":1}}\n' + "Cyclic aliases are only supported by Bun.YAML.parse\n");
-        expect(exitCode).toBe(0);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: '{"a":{"b":1},"c":{"b":1}}\n' + "Cyclic aliases are only supported by Bun.YAML.parse\n",
+          stderr: "",
+          exitCode: 0,
+        });
       });
     });
 

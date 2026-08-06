@@ -2814,20 +2814,22 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     ) -> Result<Expr, ParseError> {
         self.block_indents.push(mapping_indent)?;
 
-        self.scan(ScanOptions {
-            additional_parent_indent: Some(mapping_indent.add(1)),
-            ..Default::default()
-        })?;
+        let key: Result<Expr, ParseError> = (|| {
+            self.scan(ScanOptions {
+                additional_parent_indent: Some(mapping_indent.add(1)),
+                ..Default::default()
+            })?;
 
-        let key = self.parse_block_indented(
-            mapping_indent,
-            mapping_line,
-            mapping_start,
-            BlockIndentedKind::MapExplicitKey,
-        )?;
+            self.parse_block_indented(
+                mapping_indent,
+                mapping_line,
+                mapping_start,
+                BlockIndentedKind::MapExplicitKey,
+            )
+        })();
 
         self.block_indents.pop();
-        Ok(key)
+        key
     }
 
     /// `anchor` is the [200] block collection's own anchor; an anchor on

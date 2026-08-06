@@ -14,7 +14,6 @@ import {
   readdirSorted,
   runBunInstall,
   runBunUpdate,
-  stderrForInstall,
   tempDir,
   tls,
   tmpdirSync,
@@ -150,10 +149,12 @@ describe("certificate authority", () => {
       ),
       write(
         join(packageDir, "bunfig.toml"),
-        `
-    [install]
-    cache = false
-    registry = "https://localhost:${server.port}/"`,
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: `https://localhost:${server.port}/`,
+          },
+        }),
       ),
       write(join(packageDir, "cafile"), tls.cert),
     ]);
@@ -192,10 +193,12 @@ describe("certificate authority", () => {
       ),
       write(
         join(packageDir, "bunfig.toml"),
-        `
-        [install]
-        cache = false
-        registry = "https://localhost:${server.port}/"`,
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: `https://localhost:${server.port}/`,
+          },
+        }),
       ),
     ]);
 
@@ -208,7 +211,7 @@ describe("certificate authority", () => {
       env,
     });
     let out = await stdout.text();
-    let err = stderrForInstall(await stderr.text());
+    let err = await stderr.text();
     expect(err).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
     expect(await exited).toBe(1);
 
@@ -310,11 +313,13 @@ describe("certificate authority", () => {
       ),
       write(
         join(packageDir, "bunfig.toml"),
-        `
-      [install]
-      cache = false
-      registry = "http://localhost:${port}/"
-      cafile = "does-not-exist"`,
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: `http://localhost:${port}/`,
+            cafile: "does-not-exist",
+          },
+        }),
       ),
     ]);
 
@@ -426,10 +431,12 @@ describe("whoami", async () => {
   });
   test("username from .npmrc", async () => {
     // It should report the username from npmrc, even without an account
-    const bunfig = `
-    [install]
-    cache = false
-    registry = "http://localhost:${port}/"`;
+    const bunfig = Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: `http://localhost:${port}/`,
+      },
+    });
     const npmrc = `
     //localhost:${port}/:username=whoami-npmrc
     //localhost:${port}/:_password=123456
@@ -521,10 +528,12 @@ describe("whoami", async () => {
   test("invalid token", async () => {
     // create the user and provide an invalid token
     const token = await generateRegistryUser("invalid-token", "invalid-token");
-    const bunfig = `
-    [install]
-    cache = false
-    registry = { url = "http://localhost:${port}/", token = "1234567" }`;
+    const bunfig = Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: { url: `http://localhost:${port}/`, token: "1234567" },
+      },
+    });
     await rm(join(packageDir, "bunfig.toml"));
     await Promise.all([
       write(packageJson, JSON.stringify({ name: "whoami-pkg", version: "1.1.1" })),
@@ -1139,10 +1148,11 @@ describe("bundledDependencies", () => {
         ),
         write(
           join(packageDir, "bunfig.toml"),
-          `
-[install]
-cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
-          `,
+          Bun.TOML.stringify({
+            install: {
+              cache: join(packageDir, ".bun-cache"),
+            },
+          }),
         ),
       ]);
 
@@ -1296,12 +1306,13 @@ describe("optionalDependencies", () => {
   test("should not install optional deps if false in bunfig", async () => {
     await writeFile(
       join(packageDir, "bunfig.toml"),
-      `
-  [install]
-  cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
-  optional = false
-  registry = "http://localhost:${port}/"
-  `,
+      Bun.TOML.stringify({
+        install: {
+          cache: join(packageDir, ".bun-cache"),
+          optional: false,
+          registry: `http://localhost:${port}/`,
+        },
+      }),
     );
     await writeFile(
       packageJson,
@@ -1782,12 +1793,13 @@ test("manifest cache will invalidate when registry changes", async () => {
   await Promise.all([
     write(
       join(packageDir, "bunfig.toml"),
-      `
-[install]
-cache = "${cacheDir.replaceAll("\\", "\\\\")}"
-registry = "http://localhost:${port}"
-saveTextLockfile = false
-      `,
+      Bun.TOML.stringify({
+        install: {
+          cache: cacheDir,
+          registry: `http://localhost:${port}`,
+          saveTextLockfile: false,
+        },
+      }),
     ),
     write(
       packageJson,
@@ -1817,10 +1829,11 @@ saveTextLockfile = false
     rm(join(packageDir, "bun.lockb"), { force: true }),
     write(
       join(packageDir, "bunfig.toml"),
-      `
-[install]
-cache = "${cacheDir.replaceAll("\\", "\\\\")}"
-`,
+      Bun.TOML.stringify({
+        install: {
+          cache: cacheDir,
+        },
+      }),
     ),
   ]);
 
@@ -2639,12 +2652,13 @@ describe("binaries", () => {
     await Promise.all([
       write(
         join(packageDir, "bunfig.toml"),
-        `
-      [install]
-      cache = false
-      registry = "http://localhost:${port}/"
-      globalBinDir = "${join(packageDir, "global-bin-dir").replace(/\\/g, "\\\\")}"
-      `,
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: `http://localhost:${port}/`,
+            globalBinDir: join(packageDir, "global-bin-dir"),
+          },
+        }),
       ),
       ,
     ]);
@@ -2698,12 +2712,13 @@ describe("binaries", () => {
       if (global) {
         await write(
           join(packageDir, "bunfig.toml"),
-          `
-          [install]
-          cache = false
-          registry = "http://localhost:${port}/"
-          globalBinDir = "${join(packageDir, "global-bin-dir").replace(/\\/g, "\\\\")}"
-          `,
+          Bun.TOML.stringify({
+            install: {
+              cache: false,
+              registry: `http://localhost:${port}/`,
+              globalBinDir: join(packageDir, "global-bin-dir"),
+            },
+          }),
         );
       } else {
         await write(
@@ -3116,12 +3131,13 @@ test("--config cli flag works", async () => {
     ),
     write(
       join(packageDir, "bunfig2.toml"),
-      `
-[install]
-cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
-registry = "http://localhost:${port}/"
-dev = false
-`,
+      Bun.TOML.stringify({
+        install: {
+          cache: join(packageDir, ".bun-cache"),
+          registry: `http://localhost:${port}/`,
+          dev: false,
+        },
+      }),
     ),
   ]);
 
@@ -6222,7 +6238,7 @@ describe("pm trust", async () => {
       env,
     });
 
-    let err = stderrForInstall(await stderr.text());
+    let err = await stderr.text();
     expect(err).not.toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -6249,7 +6265,7 @@ describe("pm trust", async () => {
         env,
       });
 
-      let err = stderrForInstall(await stderr.text());
+      let err = await stderr.text();
       expect(err).toContain("error: Lockfile not found");
       let out = await stdout.text();
       expect(out).toBeEmpty();
@@ -6275,7 +6291,7 @@ describe("pm trust", async () => {
         env,
       });
 
-      let err = stderrForInstall(await stderr.text());
+      let err = await stderr.text();
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
@@ -6302,7 +6318,7 @@ describe("pm trust", async () => {
         env,
       }));
 
-      err = stderrForInstall(await stderr.text());
+      err = await stderr.text();
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
@@ -8614,11 +8630,12 @@ describe("windows bin linking shim should work", async () => {
 
   await writeFile(
     join(packageDir, "bunfig.toml"),
-    `
-[install]
-cache = false
-registry = "http://localhost:${port}/"
-`,
+    Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: `http://localhost:${port}/`,
+      },
+    }),
   );
 
   await writeFile(
@@ -8931,11 +8948,12 @@ test("rejects npm aliases whose manifest URL resolves to a different host than t
   await Promise.all([
     write(
       join(packageDir, "bunfig.toml"),
-      `
-[install]
-cache = false
-registry = { url = "http://localhost:${port}/", token = "${token}" }
-`,
+      Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: { url: `http://localhost:${port}/`, token },
+        },
+      }),
     ),
     write(
       packageJson,
@@ -8990,11 +9008,12 @@ test("registry override from a project .env only keeps the saved token when the 
   await Promise.all([
     write(
       join(packageDir, "bunfig.toml"),
-      `
-[install]
-cache = false
-registry = { url = "http://localhost:${port}/", token = "${token}" }
-`,
+      Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: { url: `http://localhost:${port}/`, token },
+        },
+      }),
     ),
     write(
       packageJson,
@@ -9039,11 +9058,12 @@ registry = { url = "http://localhost:${port}/", token = "${token}" }
     rm(join(packageDir, "bun.lockb"), { force: true }),
     write(
       join(packageDir, "bunfig.toml"),
-      `
-[install]
-cache = false
-registry = { url = "http://127.0.0.1:${otherRegistry.port}/", token = "${token}" }
-`,
+      Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: { url: `http://127.0.0.1:${otherRegistry.port}/`, token },
+        },
+      }),
     ),
     write(join(packageDir, ".env"), `BUN_CONFIG_REGISTRY=http://127.0.0.1:${otherRegistry.port}/\n`),
   ]);
@@ -9073,11 +9093,12 @@ registry = { url = "http://127.0.0.1:${otherRegistry.port}/", token = "${token}"
     rm(join(packageDir, "bun.lockb"), { force: true }),
     write(
       join(packageDir, "bunfig.toml"),
-      `
-[install]
-cache = false
-registry = { url = "https://127.0.0.1:${otherRegistry.port}/", token = "${token}" }
-`,
+      Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: { url: `https://127.0.0.1:${otherRegistry.port}/`, token },
+        },
+      }),
     ),
     write(join(packageDir, ".env"), `BUN_CONFIG_REGISTRY=http://127.0.0.1:${otherRegistry.port}/\n`),
   ]);
@@ -9116,7 +9137,12 @@ describe("registry/token env var priority", () => {
     await Promise.all([
       write(
         join(packageDir, "bunfig.toml"),
-        `[install]\ncache = false\nregistry = "http://localhost:${server.port}/"\n`,
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: `http://localhost:${server.port}/`,
+          },
+        }),
       ),
       write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } })),
     ]);

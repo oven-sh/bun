@@ -39,6 +39,8 @@ pub mod lshpack;
 pub mod proxy_tunnel;
 #[path = "SendFile.rs"]
 pub mod send_file;
+#[path = "session_cache.rs"]
+pub mod session_cache;
 #[path = "Signals.rs"]
 pub mod signals;
 #[path = "ThreadSafeStreamBuffer.rs"]
@@ -184,7 +186,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
-pub enum HTTPUpgradeState {
+enum HTTPUpgradeState {
     #[default]
     None = 0,
     Pending = 1,
@@ -206,7 +208,7 @@ pub struct Flags {
     pub reject_unauthorized: bool,
     pub(crate) is_preconnect_only: bool,
     pub is_streaming_request_body: bool,
-    pub(crate) defer_fail_until_connecting_is_complete: bool,
+    pub(crate) defer_terminal_dispatch_until_connecting_is_complete: bool,
     pub(crate) upgrade_state: HTTPUpgradeState,
     pub(crate) protocol: Protocol,
     pub forced_protocol: Option<Protocol>,
@@ -227,7 +229,7 @@ impl Default for Flags {
             reject_unauthorized: true,
             is_preconnect_only: false,
             is_streaming_request_body: false,
-            defer_fail_until_connecting_is_complete: false,
+            defer_terminal_dispatch_until_connecting_is_complete: false,
             upgrade_state: HTTPUpgradeState::None,
             protocol: Protocol::Http1_1,
             forced_protocol: None,
@@ -266,6 +268,23 @@ pub fn max_http_header_size() -> usize {
 #[inline]
 pub fn set_max_http_header_size(v: usize) {
     MAX_HTTP_HEADER_SIZE.store(v, Ordering::Relaxed);
+}
+
+/// `--insecure-http-parser`: the process-wide default for node:http's
+/// `insecureHTTPParser` option. Set once during single-threaded CLI parsing;
+/// read from JS when node:http builds its parser leniency flags.
+static INSECURE_HTTP_PARSER: AtomicBool = AtomicBool::new(false);
+
+/// Safe accessor for `INSECURE_HTTP_PARSER`.
+#[inline]
+pub fn insecure_http_parser() -> bool {
+    INSECURE_HTTP_PARSER.load(Ordering::Relaxed)
+}
+
+/// Safe setter for `INSECURE_HTTP_PARSER` (see [`insecure_http_parser`]).
+#[inline]
+pub fn set_insecure_http_parser(v: bool) {
+    INSECURE_HTTP_PARSER.store(v, Ordering::Relaxed);
 }
 
 /// Set once during single-threaded CLI parsing; read from the HTTP thread.
@@ -360,7 +379,7 @@ pub(crate) fn strip_port_from_host(host: &[u8]) -> &[u8] {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum ShouldContinue {
+enum ShouldContinue {
     ContinueStreaming,
     Finished,
 }
@@ -606,9 +625,7 @@ impl<'a> ThreadlocalAsyncHTTP<'a> {
 }
 
 /// `socket: anytype` in `set_timeout` — minimal trait for what the body calls.
-pub trait SocketTimeout {
-    fn timeout(&self, seconds: core::ffi::c_uint);
-    fn set_timeout_minutes(&self, minutes: core::ffi::c_uint);
+trait SocketTimeout {
     /// Seconds-granularity idle timer. Values >240s are routed onto uSockets'
     /// minute-granularity long-timeout wheel; ≤240s use the short-tick timer.
     fn set_timeout(&self, seconds: core::ffi::c_uint);
@@ -1172,12 +1189,6 @@ pub fn configure_http_client_with_alpn(
 use bun_http_types::ETag::HeaderEntryColumns;
 
 impl<const SSL: bool> SocketTimeout for HttpSocket<SSL> {
-    fn timeout(&self, seconds: c_uint) {
-        uws::NewSocketHandler::<SSL>::timeout(self, seconds)
-    }
-    fn set_timeout_minutes(&self, minutes: c_uint) {
-        uws::NewSocketHandler::<SSL>::set_timeout_minutes(self, minutes)
-    }
     fn set_timeout(&self, seconds: c_uint) {
         uws::NewSocketHandler::<SSL>::set_timeout(self, seconds)
     }
@@ -1844,6 +1855,28 @@ impl<'a> HTTPClient<'a> {
                     host_z,
                     self.alpn_offer(),
                 );
+
+                if crate::session_cache::eligible(self) {
+                    let want_tunnel = self.http_proxy.is_some() && self.url.is_https();
+                    // SAFETY: `ssl_ptr` is live and pre-handshake (guarded by
+                    // `SSL_is_init_finished == 0` above); `get_ssl_ctx` returns
+                    // the static `https_context` or the heap context this
+                    // client holds a strong ref on, both of which outlive
+                    // every SSL attached to their socket group.
+                    unsafe {
+                        crate::session_cache::install(
+                            ssl_ptr,
+                            self.get_ssl_ctx::<true>(),
+                            self.connected_url.hostname,
+                            self.connected_url.get_port_auto(),
+                            if want_tunnel || self.http_proxy.is_none() {
+                                self.proxy_auth_hash()
+                            } else {
+                                0
+                            },
+                        );
+                    }
+                }
             }
         } else {
             self.first_call::<IS_SSL>(socket);
@@ -2028,7 +2061,10 @@ impl<'a> HTTPClient<'a> {
             self.state.response_stage = ResponseStage::Fail;
             self.state.fail = Some(err);
             self.state.stage = Stage::Fail;
-            if self.flags.defer_fail_until_connecting_is_complete {
+            if self
+                .flags
+                .defer_terminal_dispatch_until_connecting_is_complete
+            {
                 return;
             }
             self.dispatch_result_and_reset(false);
@@ -2686,12 +2722,16 @@ impl<'a> HTTPClient<'a> {
     fn start_<const IS_SSL: bool>(&mut self) {
         self.unregister_abort_tracker();
 
-        // mark that we are connecting
-        self.flags.defer_fail_until_connecting_is_complete = true;
-        // this will call .fail() if the connection fails in the middle of the function avoiding UAF with can happen when the connection is aborted
+        // Mark that we are connecting: a terminal result reached inside this
+        // function (synchronous failure, or preconnect completing on a pooled
+        // socket) is recorded and dispatched by `complete_connecting_process()`
+        // instead, since the dispatch frees the AsyncHTTP clone embedding
+        // `self` while these frames still use it.
         // `complete_connecting_process()` cannot be a Drop guard here
         // (it needs `&mut self`, which would alias every other `self.*` call in the body),
         // so it is called explicitly before each return.
+        self.flags
+            .defer_terminal_dispatch_until_connecting_is_complete = true;
 
         // Aborted before connecting
         if self.signals.get(signals::Field::Aborted) {
@@ -3889,10 +3929,17 @@ impl<'a> HTTPClient<'a> {
     }
 
     fn complete_connecting_process(&mut self) {
-        if self.flags.defer_fail_until_connecting_is_complete {
-            self.flags.defer_fail_until_connecting_is_complete = false;
+        if self
+            .flags
+            .defer_terminal_dispatch_until_connecting_is_complete
+        {
+            self.flags
+                .defer_terminal_dispatch_until_connecting_is_complete = false;
             if self.state.stage == Stage::Fail {
                 self.dispatch_result_and_reset(true);
+            } else if self.flags.is_preconnect_only && self.state.stage == Stage::Done {
+                // Deferred preconnect success (see `on_preconnect`).
+                self.dispatch_preconnect_result();
             }
         }
     }
@@ -3956,7 +4003,10 @@ impl<'a> HTTPClient<'a> {
             self.state.fail = Some(err);
             self.state.stage = Stage::Fail;
 
-            if !self.flags.defer_fail_until_connecting_is_complete {
+            if !self
+                .flags
+                .defer_terminal_dispatch_until_connecting_is_complete
+            {
                 self.dispatch_result_and_reset(true);
             }
         }
@@ -4376,6 +4426,20 @@ impl<'a> HTTPClient<'a> {
         self.state.request_stage = RequestStage::Done;
         self.state.stage = Stage::Done;
         self.flags.proxy_tunneling = false;
+        // True when pooled-socket reuse reached here synchronously inside
+        // `start_`/`connect`; `complete_connecting_process` dispatches then.
+        if self
+            .flags
+            .defer_terminal_dispatch_until_connecting_is_complete
+        {
+            return;
+        }
+        self.dispatch_preconnect_result();
+    }
+
+    /// Terminal result for a preconnect-only request. Frees the HTTP-thread
+    /// AsyncHTTP clone embedding `self`; nothing may touch `self` afterwards.
+    fn dispatch_preconnect_result(&mut self) {
         self.result_callback.run(
             self.parent_async_http(),
             HTTPClientResult {

@@ -356,11 +356,12 @@ describe.concurrent("bun-install", () => {
       });
       await writeFile(
         join(ctx.package_dir, "bunfig.toml"),
-        `
-  [install]
-  cache = false
-  registry = "http://${server.hostname}:${server.port}/"
-  `,
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: `http://${server.hostname}:${server.port}/`,
+          },
+        }),
       );
       await writeFile(
         join(ctx.package_dir, "package.json"),
@@ -6775,11 +6776,12 @@ describe.concurrent("bun-install", () => {
 
       await writeFile(
         join(ctx.package_dir, "bunfig.toml"),
-        `
-  [install]
-  frozenLockfile = true
-  registry = "${ctx.registry_url}"
-  `,
+        Bun.TOML.stringify({
+          install: {
+            frozenLockfile: true,
+            registry: ctx.registry_url,
+          },
+        }),
       );
 
       // change version of baz in package.json
@@ -8779,7 +8781,10 @@ describe.concurrent("bun-install", () => {
         `should ${fails ? "fail" : "handle"} joining registry and package URLs (${regURL})`,
         async () => {
           await withContext(defaultOpts, async ctx => {
-            await writeFile(join(ctx.package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
+            await writeFile(
+              join(ctx.package_dir, "bunfig.toml"),
+              Bun.TOML.stringify({ install: { cache: false, registry: regURL } }),
+            );
 
             await writeFile(
               join(ctx.package_dir, "package.json"),
@@ -8823,7 +8828,10 @@ describe.concurrent("bun-install", () => {
       await withContext(defaultOpts, async ctx => {
         const regURL = "asdfghjklqwertyuiop";
 
-        await writeFile(join(ctx.package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
+        await writeFile(
+          join(ctx.package_dir, "bunfig.toml"),
+          Bun.TOML.stringify({ install: { cache: false, registry: regURL } }),
+        );
 
         await writeFile(
           join(ctx.package_dir, "package.json"),
@@ -8862,7 +8870,10 @@ describe.concurrent("bun-install", () => {
     test.todo("shouldn't fail joining invalid registry and package URLs for peer dependencies", async () => {
       const regURL = "asdfghjklqwertyuiop";
 
-      await writeFile(join(ctx.package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
+      await writeFile(
+        join(ctx.package_dir, "bunfig.toml"),
+        Bun.TOML.stringify({ install: { cache: false, registry: regURL } }),
+      );
 
       await writeFile(
         join(ctx.package_dir, "package.json"),
@@ -9009,12 +9020,13 @@ describe.concurrent("bun-install", () => {
       await Promise.all([
         write(
           join(ctx.package_dir, "bunfig.toml"),
-          `
-  [install]
-  cache = false
-  registry = "${ctx.registry_url}"
-  saveTextLockfile = true
-  `,
+          Bun.TOML.stringify({
+            install: {
+              cache: false,
+              registry: ctx.registry_url,
+              saveTextLockfile: true,
+            },
+          }),
         ),
         write(
           join(ctx.package_dir, "package.json"),

@@ -3069,10 +3069,14 @@ pub mod mock {
     }
 
     pub(crate) fn jest_mock_return_object_type(global_this: &JSGlobalObject, value: JSValue) -> JsResult<ReturnStatus> {
-        if let Some(type_string) = value.fast_get(global_this, bun_jsc::BuiltinName::Type)? {
-            if type_string.is_string() {
-                if let Some(val) = RETURN_STATUS_MAP.from_js(global_this, type_string)? {
-                    return Ok(val);
+        // `mock.results` is a user-mutable JSArray, so `value` can be anything
+        // (`fn.mock.results.push(undefined)`); `fast_get` requires an object.
+        if value.is_object() {
+            if let Some(type_string) = value.fast_get(global_this, bun_jsc::BuiltinName::Type)? {
+                if type_string.is_string() {
+                    if let Some(val) = RETURN_STATUS_MAP.from_js(global_this, type_string)? {
+                        return Ok(val);
+                    }
                 }
             }
         }

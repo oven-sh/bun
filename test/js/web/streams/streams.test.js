@@ -7,7 +7,7 @@ import {
   readableStreamToText,
 } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { createReadStream, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -1720,11 +1720,14 @@ it("Bun.file().stream() read text from large file", async () => {
   // Guard against reading the same repeating chunks
   // There were bugs previously where the stream would
   // repeat the same chunk over and over again
+  // Debug+ASAN makes the ~260k SHA1 calls below ~50x slower; 1MB still spans
+  // multiple stream chunks so the repeating-chunk guard holds.
+  const targetSize = 1024 * 1024 * (isDebug || isASAN ? 1 : 10);
   var sink = new ArrayBufferSink();
-  sink.start({ highWaterMark: 1024 * 1024 * 10 });
+  sink.start({ highWaterMark: targetSize });
   var written = 0;
   var i = 0;
-  while (written < 1024 * 1024 * 10) {
+  while (written < targetSize) {
     written += sink.write(Bun.SHA1.hash((i++).toString(10), "hex"));
   }
   const hugely = Buffer.from(sink.end()).toString();
@@ -1836,10 +1839,16 @@ recursiveFunction();
 
 it("handles exceptions during empty stream creation", () => {
   expect(() => {
+    // Only the unwind frames nearest the stack limit exercise the
+    // ReadableStream__empty exception path this test covers; the remaining
+    // thousands of frames re-run the trivially-succeeding case and push
+    // debug+ASAN past the per-test timeout.
+    let unwound = 0;
     function foo() {
       try {
         foo();
       } catch (e) {}
+      if (unwound++ > 256) return;
       const v8 = new Blob();
       v8.stream();
     }

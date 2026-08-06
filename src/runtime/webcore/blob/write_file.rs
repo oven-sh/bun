@@ -1,4 +1,5 @@
 use core::ffi::c_void;
+use core::ptr::NonNull;
 use core::sync::atomic::AtomicU8;
 #[cfg(not(windows))]
 use core::sync::atomic::Ordering;
@@ -1336,10 +1337,12 @@ pub struct WriteFileWaitFromLockedValueTask {
 }
 
 impl WriteFileWaitFromLockedValueTask {
-    pub(crate) fn then_wrap(this: *mut c_void, value: &mut body::Value) {
+    pub(crate) fn then_wrap(this: NonNull<c_void>, value: &mut body::Value) {
         // SAFETY: `this` is the Box-allocated task registered as `locked.task` below;
         // ownership is reclaimed here (the `Locked` arm re-leaks it).
-        let this = unsafe { bun_core::heap::take(this.cast::<WriteFileWaitFromLockedValueTask>()) };
+        let this = unsafe {
+            bun_core::heap::take(this.cast::<WriteFileWaitFromLockedValueTask>().as_ptr())
+        };
         let _ = Self::then(this, value);
         // TODO: properly propagate exception upwards
     }
@@ -1424,7 +1427,11 @@ impl WriteFileWaitFromLockedValueTask {
                 // Restore the moved-out blob so the next `then()` has its store.
                 this.file_blob = file_blob;
                 locked.on_receive_value = Some(Self::then_wrap);
-                locked.task = Some(bun_core::heap::into_raw(this).cast::<c_void>());
+                locked.task = Some(
+                    NonNull::new(bun_core::heap::into_raw(this))
+                        .unwrap()
+                        .cast::<c_void>(),
+                );
             }
         }
         Ok(())

@@ -780,9 +780,6 @@ impl MySQLConnection {
                     affected_rows: 0,
                     last_insert_id: 0,
                     status_flags: StatusFlags::default(),
-                    warnings: 0,
-                    info: Data::Empty,
-                    session_state_changes: Data::Empty,
                     packet_size: header_length,
                 };
                 ok.decode_internal(reader)?;
@@ -1384,9 +1381,6 @@ impl MySQLConnection {
             affected_rows: 0,
             last_insert_id: 0,
             status_flags: StatusFlags::default(),
-            warnings: 0,
-            info: Data::Empty,
-            session_state_changes: Data::Empty,
             packet_size: header_length,
         };
         match PacketType(first_byte) {
@@ -1725,11 +1719,6 @@ impl ReaderContext for Reader {
         Err(AnyMySQLError::ShortRead)
     }
 }
-
-// Canonical type lives in `bun_sql::mysql`; re-export so this module's
-// struct-literal call sites (`QueryResult { .. }`) flow into
-// `JSMySQLConnection::on_query_result(MySQLQueryResult)` without conversion.
-pub use bun_sql::mysql::MySQLQueryResult as QueryResult;
 
 pub(crate) type PreparedStatementsMap = StringHashMap<*mut MySQLStatement>;
 /// Result of `PreparedStatementsMap::get_or_put` — surfaced for

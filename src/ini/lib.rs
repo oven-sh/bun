@@ -190,7 +190,7 @@ pub use draft::{
     load_npmrc_config,
 };
 pub mod config_iterator {
-    pub use super::{ConfigItem as Item, ConfigIterator as Iter, ConfigOpt as Opt};
+    pub use super::ConfigItem as Item;
 }
 
 mod draft {
@@ -1447,6 +1447,12 @@ mod draft {
                         None
                     }
                 };
+        }
+
+        if let Some(hoist_expr) = out.get(b"hoist") {
+            if let Some(hoist) = hoist_expr.as_bool() {
+                install.hoist = Some(hoist);
+            }
         }
 
         let mut registry_map = install.scoped.take().unwrap_or_default();

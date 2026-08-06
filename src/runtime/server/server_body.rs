@@ -128,10 +128,10 @@ trait RequestCtxOps: RequestCtx {
     fn arm_on_data(&self, resp: &mut Self::Resp);
     // body-streaming callback hooks (type-erased, stored on `Body::PendingValue`).
     // `this` must be a live `*mut Self::RequestCtx` cast to `*mut c_void`.
-    fn on_start_buffering_callback(this: *mut c_void);
-    fn on_start_streaming_request_body_callback(this: *mut c_void) -> WebCore::DrainResult;
+    fn on_start_buffering_callback(this: NonNull<c_void>);
+    fn on_start_streaming_request_body_callback(this: NonNull<c_void>) -> WebCore::DrainResult;
     fn on_request_body_readable_stream_available(
-        this: *mut c_void,
+        this: NonNull<c_void>,
         global_this: &JSGlobalObject,
         readable: WebCore::ReadableStream,
     );
@@ -258,16 +258,16 @@ where
             .on_data(handler::<ThisServer, SSL, DBG, H3>, self.as_ctx_ptr());
     }
     #[inline]
-    fn on_start_buffering_callback(this: *mut c_void) {
+    fn on_start_buffering_callback(this: NonNull<c_void>) {
         Self::on_start_buffering_callback(this)
     }
     #[inline]
-    fn on_start_streaming_request_body_callback(this: *mut c_void) -> WebCore::DrainResult {
+    fn on_start_streaming_request_body_callback(this: NonNull<c_void>) -> WebCore::DrainResult {
         Self::on_start_streaming_request_body_callback(this)
     }
     #[inline]
     fn on_request_body_readable_stream_available(
-        this: *mut c_void,
+        this: NonNull<c_void>,
         global_this: &JSGlobalObject,
         readable: WebCore::ReadableStream,
     ) {
@@ -1762,16 +1762,11 @@ where
             return Ok(JSValue::FALSE);
         }
 
-        // After a graceful stop() has drained to idle, `deinit_if_we_can`
-        // downgrades the wrapper and clears `handler.server` / `handler.app`.
-        // `js_value_for_dispatch` still lets a late keep-alive request reach
-        // `fetch()` while the wrapper is `Weak`, but accepting a new websocket
-        // there would create a `ServerWebSocket` whose `init`/`on_open` skip
-        // the `m_server` trace edge and `on_websocket_opened()` (because
-        // `handler.server` is `None`), so `has_active_web_sockets()` would
-        // stay false and the next idle pass could free the `NewServer` box
-        // under a live socket. Refuse the upgrade once idle; the caller sees
-        // `false` and can fall through to a regular response.
+        // `deinit_if_we_can` only clears `handler.server` once every
+        // connection has closed, so this is defensive for the `Finalized`
+        // window between the wrapper's `finalize()` and the next-tick
+        // `schedule_deinit`: accepting an upgrade there would create a
+        // `ServerWebSocket` whose open/close accounting is skipped.
         if self
             .config
             .websocket
@@ -2610,25 +2605,31 @@ where
         _global: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if self.app.is_none() {
+        if self.app.is_none() || self.deinit_running.get() {
             return Ok(JSValue::UNDEFINED);
         }
+        // On a Bun.serve server each close reaches `on_connection_filter(-1)`
+        // synchronously; hold the guard so it cannot re-derive `&mut self`
+        // while this frame owns it.
+        self.deinit_running.set(true);
         self.app_mut().close_idle_connections();
+        self.deinit_running.set(false);
+        self.deinit_if_we_can();
         Ok(JSValue::UNDEFINED)
     }
 
     pub(crate) fn stop_from_js(&mut self, abruptly: Option<JSValue>) -> JSValue {
         let rc = self.get_all_closed_promise(&self.global());
 
-        if self.has_listener() {
-            let abrupt = 'brk: {
-                if let Some(val) = abruptly {
-                    if val.is_boolean() && val.to_boolean() {
-                        break 'brk true;
-                    }
-                }
-                false
-            };
+        let abrupt = matches!(abruptly, Some(v) if v.is_boolean() && v.to_boolean());
+        // `!deinit_running`: a `server.stop()` reached from a close callback
+        // that an outer `stop()`'s drain fired would re-enter `stop_listening`
+        // with a fresh `&mut self` under the outer frame's borrow.
+        if self.has_listener()
+            || (abrupt
+                && !self.flags.contains(ServerFlags::TERMINATED)
+                && !self.deinit_running.get())
+        {
             self.stop(abrupt);
         }
 
@@ -2636,7 +2637,9 @@ where
     }
 
     pub(crate) fn dispose_from_js(&mut self) -> JSValue {
-        if self.has_listener() {
+        if self.has_listener()
+            || (!self.flags.contains(ServerFlags::TERMINATED) && !self.deinit_running.get())
+        {
             self.stop(true);
         }
         JSValue::UNDEFINED
@@ -2825,7 +2828,11 @@ where
     }
 
     pub(crate) fn get_all_closed_promise(&mut self, global: &JSGlobalObject) -> JSValue {
-        if !self.has_listener() && self.pending_requests.get() == 0 {
+        if !self.has_listener()
+            && self.pending_requests.get() == 0
+            && !self.has_active_connections()
+            && !self.has_active_web_sockets()
+        {
             return JSPromise::resolved_promise(global, JSValue::UNDEFINED).to_js();
         }
         if self.all_closed_promise.has_value() {
@@ -3313,7 +3320,7 @@ where
                 // we don't waste memory
                 if let Some(body) = ctx.request_body_mut() {
                     *body = BodyValue::Locked(crate::webcore::body::PendingValue {
-                        task: Some(ctx_slot.cast::<c_void>()),
+                        task: Some(NonNull::new(ctx_slot).unwrap().cast::<c_void>()),
                         global: server.global_this,
                         on_start_buffering: Some(Ctx::on_start_buffering_callback),
                         on_start_streaming: Some(Ctx::on_start_streaming_request_body_callback),
@@ -3948,7 +3955,7 @@ fn server_set_app_flags(
     server: JSValue,
     require_host_header: bool,
     use_strict_method_validation: bool,
-    use_insecure_http_parser: bool,
+    lenient_http_flags: u8,
     http_allow_half_open: bool,
 ) -> JsResult<JSValue> {
     if !server.is_object() {
@@ -3962,7 +3969,7 @@ fn server_set_app_flags(
         unsafe { &mut *this }.set_flags(
             require_host_header,
             use_strict_method_validation,
-            use_insecure_http_parser,
+            lenient_http_flags,
             http_allow_half_open,
         );
     } else if let Some(this) = server.as_::<HTTPSServer>() {
@@ -3970,7 +3977,7 @@ fn server_set_app_flags(
         unsafe { &mut *this }.set_flags(
             require_host_header,
             use_strict_method_validation,
-            use_insecure_http_parser,
+            lenient_http_flags,
             http_allow_half_open,
         );
     } else if let Some(this) = server.as_::<DebugHTTPServer>() {
@@ -3978,7 +3985,7 @@ fn server_set_app_flags(
         unsafe { &mut *this }.set_flags(
             require_host_header,
             use_strict_method_validation,
-            use_insecure_http_parser,
+            lenient_http_flags,
             http_allow_half_open,
         );
     } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
@@ -3986,7 +3993,7 @@ fn server_set_app_flags(
         unsafe { &mut *this }.set_flags(
             require_host_header,
             use_strict_method_validation,
-            use_insecure_http_parser,
+            lenient_http_flags,
             http_allow_half_open,
         );
     } else {
@@ -4044,7 +4051,7 @@ extern "C" fn server_set_app_flags_shim(
     server: JSValue,
     require_host_header: bool,
     use_strict_method_validation: bool,
-    use_insecure_http_parser: bool,
+    lenient_http_flags: u8,
     http_allow_half_open: bool,
 ) -> JSValue {
     host_fn::to_js_host_fn_result(
@@ -4054,7 +4061,7 @@ extern "C" fn server_set_app_flags_shim(
             server,
             require_host_header,
             use_strict_method_validation,
-            use_insecure_http_parser,
+            lenient_http_flags,
             http_allow_half_open,
         ),
     )

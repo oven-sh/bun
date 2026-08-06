@@ -350,7 +350,6 @@ JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnNames);
 JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnCount);
 JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetParamCount);
 JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetIsFinalized);
-JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetHasMultipleStatements);
 
 JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes);
 JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnDeclaredTypes);

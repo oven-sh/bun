@@ -1605,7 +1605,7 @@ impl BlobExt for Blob {
             global_this,
             readable_stream.value,
             // SAFETY: file_sink is a live +1 *mut FileSink.
-            unsafe { &mut *file_sink },
+            unsafe { NonNull::new_unchecked(file_sink) },
         );
 
         assignment_result.ensure_still_alive();
@@ -5257,7 +5257,7 @@ pub(crate) fn write_file_internal(
                         {
                             on_start_buffering(orig_task);
                         }
-                        locked.task = Some(task.cast::<c_void>());
+                        locked.task = Some(NonNull::new(task).unwrap().cast::<c_void>());
                         locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
                         // SAFETY: `task` was just heap-allocated; consumed in `then_wrap`.
                         Ok(ControlFlow::Break(unsafe { (*task).promise.value() }))
@@ -5774,7 +5774,7 @@ pub(crate) fn construct_bun_file(
 // S3BlobDownloadTask
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct S3BlobDownloadTask {
+struct S3BlobDownloadTask {
     pub(crate) blob: Blob,
     /// JSC_BORROW: process-lifetime global; `BackRef` so the deref is safe and
     /// the borrow detaches from `&self` (Copy) for use across `&mut self` calls.
@@ -5784,7 +5784,7 @@ pub struct S3BlobDownloadTask {
     pub(crate) handler: S3ReadHandler,
 }
 
-pub type S3ReadHandler = fn(&Blob, bun_ptr::BackRef<JSGlobalObject>, &mut [u8]) -> JSValue;
+type S3ReadHandler = fn(&Blob, bun_ptr::BackRef<JSGlobalObject>, &mut [u8]) -> JSValue;
 
 impl S3BlobDownloadTask {
     pub(crate) fn call_handler(&mut self, raw_bytes: &mut [u8]) -> JSValue {
@@ -5936,7 +5936,7 @@ impl Drop for S3BlobDownloadTask {
 // FileStreamWrapper / pipeReadableStreamToBlob
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct FileStreamWrapper {
+struct FileStreamWrapper {
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) readable_stream_ref: webcore::readable_stream::ReadableStreamStrong,
     // LIFETIMES.tsv: SHARED — but FileSink uses an intrusive single-thread refcount

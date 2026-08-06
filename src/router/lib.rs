@@ -136,7 +136,7 @@ struct RouteIndex {
 // yet landed, so MultiArrayList<RouteIndex> can't expose per-field column
 // accessors. Hand-rolled SoA struct until the derive exists.
 #[derive(Default)]
-pub struct RouteIndexList {
+struct RouteIndexList {
     // The `Box` is load-bearing: `Routes::index` / `Routes::static_` hold
     // `NonNull<Route>` / `*const Route` into the box interiors; unboxing
     // would dangle them on `Vec` realloc.
@@ -1143,7 +1143,7 @@ pub trait ResolverLike {
 pub mod pattern {
     use super::*;
 
-    pub type RoutePathInt = u16;
+    type RoutePathInt = u16;
 
     #[derive(Clone, Copy)]
     pub struct Pattern {

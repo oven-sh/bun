@@ -1951,7 +1951,7 @@ pub mod internal {
 
     // The stack key borrows the caller's host string; `to_owned()` copies
     // before storing on the heap `Request`.
-    pub struct RequestKey<'a> {
+    struct RequestKey<'a> {
         pub(crate) host: Option<&'a ZStr>,
         /// Used for getaddrinfo() to avoid glibc UDP port 0 bug, but NOT included in hash
         pub(crate) port: u16,

@@ -281,10 +281,6 @@ function makeContextifyScript(
   });
 }
 
-function runScriptInThisContext(script, displayErrors, _breakOnFirstLine) {
-  return script.runInThisContext({ displayErrors });
-}
-
 // ---- internal/modules/cjs/loader (constructible Module shim) ----------------
 
 class CJSModuleShim {
@@ -423,7 +419,6 @@ export default {
   deprecate: util.deprecate,
   isError,
   kEmptyObject,
-  promisify: util.promisify,
   // internal/util/colors
   shouldColorize,
   // internal/util/debuglog
@@ -455,5 +450,4 @@ export default {
   makeRequireFunction,
   // internal/vm
   makeContextifyScript,
-  runScriptInThisContext,
 };

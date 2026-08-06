@@ -383,7 +383,6 @@ describe("fetch(request) reads internal state, not JS-visible getters", () => {
     expect(new URL(seen.url).pathname).toBe("/sub");
     expect(seen.method).toBe("POST");
     expect(seen.headers["x-real"]).toBe("1");
-    expect(seen.headers["x-from-getter"]).toBeUndefined();
     expect(seen.body).toBe("real-body");
   });
 

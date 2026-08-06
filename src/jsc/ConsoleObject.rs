@@ -6012,7 +6012,17 @@ pub(crate) extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
     _len: usize,
 ) {
     // TODO: this does an extra JSONStringify and we don't need it to!
-    let snapshot: [JSValue; 1] = [global_this.generate_heap_snapshot()];
+    let snapshot: [JSValue; 1] = match global_this.generate_heap_snapshot() {
+        Ok(snapshot) => [snapshot],
+        // The exception must not stay pending: JSC's
+        // `consoleProtoFuncTakeHeapSnapshot` performs no exception check after
+        // this client call, so report it as uncaught instead (termination just
+        // stops the print and keeps the VM unwinding).
+        Err(err) => {
+            let _ = crate::task::report_error_or_terminate(global_this, err);
+            return;
+        }
+    };
     // SAFETY: re-entry into our own host shim with a stack-local args slice.
     unsafe {
         message_with_type_and_level(

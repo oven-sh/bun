@@ -144,12 +144,16 @@ extern int bun_is_compiled_executable(void);
 #define bun_heap_image_mode (0) /* Linux: pending (see Bun SNAPSHOT.md); env MIMALLOC_DETERMINISTIC_HINT drives it */
 #endif
 static mi_decl_cache_align _Atomic(uintptr_t) aligned_base; // = 0  (hint bump pointer; file scope so mi_os_hint_floor can move it)
+static _Atomic(uintptr_t) hint_floor; // = 0: lowest address hinted allocations may use (also where the pointer restarts when it wraps or is invalid)
 
-// Heap image restore: make sure every hinted OS allocation from now on lands at or above `floor` (the image occupies the area below).
+// Heap image restore: every hinted OS allocation from now on lands at or above `floor` (the image occupies the area below). Also repairs a
+// pointer that is unusable (0, past MI_HINT_MAX — e.g. inherited from another process's data segment).
 void mi_os_hint_floor(void* floor) mi_attr_noexcept {
   uintptr_t f = _mi_align_up((uintptr_t)floor, MI_HINT_ALIGN);
+  uintptr_t curf = mi_atomic_load_acquire(&hint_floor);
+  while (curf < f && !mi_atomic_cas_weak_acq_rel(&hint_floor, &curf, f)) { }
   uintptr_t cur = mi_atomic_load_acquire(&aligned_base);
-  while (cur < f && !mi_atomic_cas_weak_acq_rel(&aligned_base, &cur, f)) { }
+  while ((cur < f || cur > MI_HINT_MAX) && !mi_atomic_cas_weak_acq_rel(&aligned_base, &cur, f)) { }
 }
 
 void* _mi_os_get_aligned_hint(size_t try_alignment, size_t size)
@@ -175,8 +179,9 @@ void* _mi_os_get_aligned_hint(size_t try_alignment, size_t size)
   size += MI_HINT_ALIGN;              // put in virtual gaps between hinted blocks; this splits VLA's but increases guarded areas.
 
   uintptr_t hint = mi_atomic_add_acq_rel(&aligned_base, size);
-  if (hint == 0 || hint > MI_HINT_MAX) {   // wrap or initialize
+  if (hint == 0 || hint > MI_HINT_MAX || hint < mi_atomic_load_relaxed(&hint_floor)) {   // wrap or initialize (never below the floor)
     uintptr_t init = MI_HINT_BASE;
+    { uintptr_t fl = mi_atomic_load_relaxed(&hint_floor); if (fl > init) init = fl; }
     // Experiment: MIMALLOC_DETERMINISTIC_HINT=1 disables hint randomization (heap-image determinism tests).
     const int deterministic = deterministic_all;
     #if (MI_SECURE>=1 || defined(NDEBUG))  // security: randomize start of aligned allocations unless in debug mode

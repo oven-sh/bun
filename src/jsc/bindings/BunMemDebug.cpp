@@ -1774,6 +1774,23 @@ static void imageRestoreAndRun(const char* path)
         }
     }
     // Re-seat allocator TLS: this thread's default theap must be the image's main theap, not whatever this process created before the overlay.
+    { // libc-free critical section: overwrite our data segments with the builder's, then rebase extern-library pointers. Plain loops only (no PLT calls).
+        // Process-owned libc globals that live in *our* data segment (copy relocations in a non-PIE executable): keep this process's values.
+        char** volatile* environSlot = (char** volatile*)&environ; char** savedEnviron = *environSlot; // volatile: the overlay below rewrites it behind the compiler's back
+        for (size_t di = 0; di < nDataSegs; di++) {
+            DataSeg& d = dataSegs[di]; volatile uint64_t* dst = d.dst; const uint64_t* src = d.src;
+            for (size_t k = 0; k < d.words; k++) {
+                uint64_t a = (uint64_t)(d.dst + k); bool linkerOwned = false;
+                for (size_t q = 0; q < nLinkerRanges; q++) if (a >= linkerRanges[q][0] && a < linkerRanges[q][1]) { linkerOwned = true; break; }
+                if (!linkerOwned) dst[k] = src[k];
+            }
+        }
+        if (useLibFixups) for (size_t k = 0; k < nFixups; k++) { ImageFixup& f = fixups[k]; bool linkerOwned = false; for (size_t q = 0; q < nLinkerRanges; q++) if (f.addr >= linkerRanges[q][0] && f.addr < linkerRanges[q][1]) { linkerOwned = true; break; } if (!linkerOwned && f.lib < nLibDelta && libDelta[f.lib]) *(volatile uint64_t*)f.addr += libDelta[f.lib]; }
+        if (useLibFixups) *environSlot = savedEnviron;
+        *(volatile off_t*)&s_imageBaseOff = imageBaseOff;
+        mi_os_hint_floor((void*)hintFloorAfterOverlay);
+    }
+    for (size_t di = 0; di < nDataSegs; di++) munmap((void*)dataSegs[di].src, dataSegs[di].words * 8);
     if (hdr.reserved[0]) mi_theap_set_default((mi_theap_t*)hdr.reserved[0]);
     _mi_scavenger_forked_child(); // same situation as a fork child: the image says a scavenger runs, but no such thread exists here
     mi_prof_reinit_lock(); // and any allocator-internal lock a build-process thread was holding is nobody's now
@@ -1832,23 +1849,6 @@ static void imageRestoreAndRun(const char* path)
 #endif
     // pthread TLS keys created by the build process (WTF::ThreadSpecific etc.) must exist here too, or setspecific silently fails; burn keys up to the image's high-water mark.
     if (hdr.reserved[1]) { for (int i = 0; i < 1024; i++) { pthread_key_t k = 0; if (pthread_key_create(&k, nullptr)) break; if ((uint64_t)k + 1 >= hdr.reserved[1]) break; } }
-    { // libc-free critical section: overwrite our data segments with the builder's, then rebase extern-library pointers. Plain loops only (no PLT calls).
-        // Process-owned libc globals that live in *our* data segment (copy relocations in a non-PIE executable): keep this process's values.
-        char** volatile* environSlot = (char** volatile*)&environ; char** savedEnviron = *environSlot; // volatile: the overlay below rewrites it behind the compiler's back
-        for (size_t di = 0; di < nDataSegs; di++) {
-            DataSeg& d = dataSegs[di]; volatile uint64_t* dst = d.dst; const uint64_t* src = d.src;
-            for (size_t k = 0; k < d.words; k++) {
-                uint64_t a = (uint64_t)(d.dst + k); bool linkerOwned = false;
-                for (size_t q = 0; q < nLinkerRanges; q++) if (a >= linkerRanges[q][0] && a < linkerRanges[q][1]) { linkerOwned = true; break; }
-                if (!linkerOwned) dst[k] = src[k];
-            }
-        }
-        if (useLibFixups) for (size_t k = 0; k < nFixups; k++) { ImageFixup& f = fixups[k]; bool linkerOwned = false; for (size_t q = 0; q < nLinkerRanges; q++) if (f.addr >= linkerRanges[q][0] && f.addr < linkerRanges[q][1]) { linkerOwned = true; break; } if (!linkerOwned && f.lib < nLibDelta && libDelta[f.lib]) *(volatile uint64_t*)f.addr += libDelta[f.lib]; }
-        if (useLibFixups) *environSlot = savedEnviron;
-        *(volatile off_t*)&s_imageBaseOff = imageBaseOff;
-        mi_os_hint_floor((void*)hintFloorAfterOverlay);
-    }
-    for (size_t di = 0; di < nDataSegs; di++) munmap((void*)dataSegs[di].src, dataSegs[di].words * 8);
     if (useLibFixups && (verbose || nFixups)) fprintf(stderr, "[image] rebased %zu extern-library pointers\n", nFixups);
     fprintf(stderr, "[image] restored %zu regions: %.1fMB mapped clean, %.1fMB __DATA copied\n", regions.size(), mapped / 1048576.0, copied / 1048576.0);
     // From here on all globals/heap are the build process's. Adopt the image's main Thread object for this OS thread.

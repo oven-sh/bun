@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import nodeCrypto from "node:crypto";
 
 // Not yet in @types/node 25.
@@ -321,5 +322,106 @@ describe("crypto.argon2", () => {
       "ERR_INVALID_ARG_TYPE",
       expected("parameters.associatedData"),
     );
+  });
+
+  test("detached message hashes as empty, like node", () => {
+    // Matches the empty-string-message vector above.
+    const emptyMessageHash = "0a34f1abde67086c82e785eaf17c68382259a264f4e61b91cd2763cb75ac189a";
+    const base = { ...defaults, parallelism: 4, tagLength: 32, memory: 32 };
+
+    const detached = new ArrayBuffer(32);
+    detached.transfer();
+    expect(crypto.argon2Sync("argon2id", { ...base, message: detached }).toString("hex")).toBe(emptyMessageHash);
+
+    const viewBuffer = new ArrayBuffer(32);
+    const detachedView = new Uint8Array(viewBuffer);
+    viewBuffer.transfer();
+    expect(crypto.argon2Sync("argon2id", { ...base, message: detachedView }).toString("hex")).toBe(emptyMessageHash);
+
+    // A detached nonce has byteLength 0 and fails the >= 8 check.
+    const detachedNonce = new ArrayBuffer(16);
+    detachedNonce.transfer();
+    expectNodeError(
+      () => crypto.argon2Sync("argon2id", { ...base, nonce: detachedNonce }),
+      RangeError,
+      "ERR_OUT_OF_RANGE",
+      'The value of "parameters.nonce.byteLength" is out of range. It must be >= 8 && <= 4294967295. Received 0',
+    );
+  });
+
+  test("accepts SharedArrayBuffer inputs, like node", () => {
+    // Matches the plain-Buffer vector above with the same bytes.
+    const expected = "03aab965c12001c9d7d0d2de33192c0494b684bb148196d73c1df1acaf6d0c2e";
+    const sabMessage = new SharedArrayBuffer(32);
+    new Uint8Array(sabMessage).fill(0x01);
+    const sabNonce = new SharedArrayBuffer(16);
+    new Uint8Array(sabNonce).fill(0x02);
+
+    const parameters = { parallelism: 4, tagLength: 32, memory: 32, passes: 3 };
+    expect(
+      crypto.argon2Sync("argon2id", { ...parameters, message: sabMessage, nonce: sabNonce }).toString("hex"),
+    ).toBe(expected);
+    expect(
+      crypto
+        .argon2Sync("argon2id", {
+          ...parameters,
+          message: new Uint8Array(sabMessage),
+          nonce: new Uint8Array(sabNonce),
+        })
+        .toString("hex"),
+    ).toBe(expected);
+  });
+
+  test("allocation-limit failures are catchable errors, not aborts", async () => {
+    // In-range parameters can still exceed what the process can allocate
+    // (rust-argon2 allocates infallibly; node surfaces an OpenSSL error).
+    // Lower the synthetic limit so the guard fires at test-friendly sizes,
+    // and assert both paths deliver node's catchable error.
+    using dir = tempDir("argon2-alloc-limit", {
+      "check.js": `
+        const crypto = require("node:crypto");
+        const base = { message: "pw", nonce: "saltsalt", parallelism: 1, tagLength: 32, memory: 8, passes: 1 };
+        const results = {};
+
+        try {
+          crypto.argon2Sync("argon2id", { ...base, memory: 32 * 1024 }); // 32 MiB > 16 MiB limit
+          results.syncMemory = "no error";
+        } catch (e) {
+          results.syncMemory = e.message;
+        }
+        try {
+          crypto.argon2Sync("argon2id", { ...base, tagLength: 32 * 1024 * 1024 });
+          results.syncTagLength = "no error";
+        } catch (e) {
+          results.syncTagLength = e.message;
+        }
+        results.withinLimit = crypto.argon2Sync("argon2id", base).length;
+
+        crypto.argon2("argon2id", { ...base, memory: 32 * 1024 }, (err) => {
+          results.asyncMemory = err === null ? "no error" : err.message;
+          console.log(JSON.stringify(results));
+          process.exit(0);
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "check.js"],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(16 * 1024 * 1024) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      syncMemory: "Argon2 derivation failed",
+      syncTagLength: "Argon2 derivation failed",
+      withinLimit: 32,
+      asyncMemory: "Argon2 derivation failed",
+    });
+    expect(exitCode).toBe(0);
   });
 });

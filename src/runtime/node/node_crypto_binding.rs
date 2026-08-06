@@ -1470,6 +1470,15 @@ mod _impl {
                 }
             };
 
+            // The validators admit sizes rust-argon2 would abort on
+            // (`vec![Block::zero(); mem_cost]` and the output Vec allocate
+            // infallibly). Pre-fail the job instead, so both paths deliver
+            // the same catchable error node produces when OpenSSL's argon2
+            // allocation fails.
+            let limit = jsc::virtual_machine::synthetic_allocation_limit();
+            let failed =
+                (memory as usize).saturating_mul(1024) > limit || tag_length as usize > limit;
+
             let ctx = Argon2 {
                 message: copy_buffer_arg(global, message_value, b"message")?,
                 nonce: copy_buffer_arg(global, nonce_value, b"nonce")?,
@@ -1481,20 +1490,24 @@ mod _impl {
                 passes,
                 variant,
                 output: Vec::new(),
-                failed: false,
+                failed,
             };
             Ok((ctx, callback))
         }
 
         fn run(&mut self) {
+            if self.failed {
+                return;
+            }
             let config = rust_argon2::Config {
                 ad: &self.associated_data,
                 hash_length: self.tag_length,
                 lanes: self.parallelism,
                 mem_cost: self.memory,
                 secret: &self.secret,
-                // Lanes determine the output; they are computed on the calling
-                // thread. Never spawn threads from a work-pool worker (matches pwhash.rs).
+                // Sequential like Bun.password (pwhash.rs): lanes determine
+                // the output, not the thread count, so results match node,
+                // which threads lanes via OpenSSL on its worker.
                 thread_mode: rust_argon2::ThreadMode::Sequential,
                 time_cost: self.passes,
                 variant: self.variant,

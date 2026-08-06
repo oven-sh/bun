@@ -84,10 +84,22 @@ bool EventEmitter::removeAllListeners()
         return false;
 
     auto& map = data->eventListenerMap;
-    bool any = !map.isEmpty();
+    if (map.isEmpty()) {
+        this->m_thisObject.clear();
+        return false;
+    }
+
+    auto eventTypes = map.eventTypes();
     map.clear();
+    eventListenersDidChange();
+
+    if (this->onDidChangeListener) {
+        for (auto& eventType : eventTypes)
+            this->onDidChangeListener(*this, eventType, false);
+    }
+
     this->m_thisObject.clear();
-    return any;
+    return true;
 }
 
 bool EventEmitter::removeAllListeners(const Identifier& eventType)

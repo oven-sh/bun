@@ -2535,10 +2535,14 @@ fn probe_kitty_graphics() -> bool {
             Err(_) => return false,
         };
         let mut tty_state = bun_core::tty::State::new();
-        let _ = tty_state.set_mode(0, bun_core::tty::Mode::Raw);
+        let _ = tty_state.set_mode(0, bun_core::tty::Mode::Raw, bun_core::tty::SetAttrWhen::Drain);
         let _restore = scopeguard::guard((saved_termios, tty_state), |(saved, mut state)| {
             if bun_sys::posix::tcsetattr(0, bun_sys::posix::TCSA::Now, &saved).is_err() {
-                let _ = state.set_mode(0, bun_core::tty::Mode::Normal);
+                let _ = state.set_mode(
+                    0,
+                    bun_core::tty::Mode::Normal,
+                    bun_core::tty::SetAttrWhen::Drain,
+                );
             }
         });
 

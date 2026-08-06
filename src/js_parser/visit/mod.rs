@@ -1782,7 +1782,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             match stmt.data {
                 StmtData::SEmpty(_) => continue,
 
-                // skip directives for now
+                // Keep "use strict" so the printed function body stays strict under
+                // the sloppy CommonJS wrapper; other directives are not runtime-relevant.
+                StmtData::SDirective(dir) if dir.value.slice() == b"use strict" => {
+                    output.push(stmt);
+                    continue;
+                }
                 StmtData::SDirective(_) => continue,
 
                 StmtData::SLocal(local) => {

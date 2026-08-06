@@ -1437,6 +1437,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(path)
     }
 
+    /// A Directive Prologue entry is a *bare* StringLiteral token (ECMA-262): a
+    /// parenthesized `("use strict")` starts at `(`, not a quote, so it is not one.
+    fn stmt_starts_with_quote(source: &bun_ast::Source, loc: bun_ast::Loc) -> bool {
+        matches!(source.contents().get(loc.i()), Some(b'"') | Some(b'\''))
+    }
+
+    /// A Use Strict Directive must contain no `EscapeSequence` (ECMA-262), so
+    /// compare the raw bytes between the quotes: `"use\x20strict"` is not a match.
+    fn directive_raw_eq(source: &bun_ast::Source, loc: bun_ast::Loc, directive: &[u8]) -> bool {
+        let range = source.range_of_string(loc);
+        if range.len < 2 {
+            return false;
+        }
+        let start = loc.i() + 1;
+        let end = range.end_i().saturating_sub(1);
+        source.contents().get(start..end) == Some(directive)
+    }
+
     pub(crate) fn parse_stmts_up_to(
         &mut self,
         eend: T,
@@ -1477,20 +1495,53 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_directive_prologue = false;
                 if let js_ast::stmt::Data::SExpr(expr) = &stmt.data {
                     if let js_ast::expr::Data::EString(str_) = &expr.value.data {
-                        if !str_.prefer_template {
+                        if !str_.prefer_template && Self::stmt_starts_with_quote(p.source, stmt.loc)
+                        {
                             is_directive_prologue = true;
 
-                            if str_.eql_comptime(b"use strict") {
-                                skip = true;
-                                // Track "use strict" directives
-                                p.current_scope_mut().strict_mode =
-                                    StrictModeKind::ExplicitStrictMode;
-                                if p.current_scope == p.module_scope {
-                                    p.module_scope_directive_loc = stmt.loc;
+                            if Self::directive_raw_eq(p.source, stmt.loc, b"use strict") {
+                                // Only Entry (module/enum/namespace body) and FunctionBody
+                                // have a Directive Prologue; a block-scope string must not
+                                // flip the scope strict.
+                                if matches!(
+                                    p.current_scope().kind,
+                                    js_ast::scope::Kind::Entry | js_ast::scope::Kind::FunctionBody
+                                ) {
+                                    p.current_scope_mut().strict_mode =
+                                        StrictModeKind::ExplicitStrictMode;
                                 }
-                            } else if str_.eql_comptime(b"use asm") {
+                                if p.current_scope == p.module_scope {
+                                    // Dropped and re-synthesized in `to_ast` for the CJS wrapper.
+                                    skip = true;
+                                    p.module_scope_directive_loc = stmt.loc;
+                                } else if matches!(
+                                    p.current_scope().kind,
+                                    js_ast::scope::Kind::Entry | js_ast::scope::Kind::FunctionBody
+                                ) {
+                                    // Keep as a directive so the printed function body (or
+                                    // lowered namespace/enum IIFE) stays strict under the
+                                    // sloppy CommonJS wrapper (matches esbuild and tsc).
+                                    let bytes = str_.string(p.arena).expect("OOM");
+                                    stmt = Stmt::alloc(
+                                        S::Directive {
+                                            value: bun_ast::StoreStr::new(bytes),
+                                        },
+                                        stmt.loc,
+                                    );
+                                } else {
+                                    // No prologue in block/try/catch/switch/class-static: drop
+                                    // the no-op string so minify cannot hoist it into a prologue.
+                                    skip = true;
+                                }
+                            } else if Self::directive_raw_eq(p.source, stmt.loc, b"use asm") {
                                 skip = true;
                                 stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
+                            } else if str_.eql_comptime(b"use strict")
+                                || str_.eql_comptime(b"use asm")
+                            {
+                                // Cooked value matches but raw form had an escape: per spec
+                                // not a directive, so drop the side-effect-free string.
+                                skip = true;
                             } else {
                                 let bytes = str_.string(p.arena).expect("OOM");
                                 stmt = Stmt::alloc(

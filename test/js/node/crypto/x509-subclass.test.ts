@@ -92,6 +92,88 @@ describe("X509Certificate", () => {
   });
 });
 
+// X509Certificate.prototype accessors must be non-enumerable, matching Node.js.
+// Previously Bun marked them enumerable, so walking the prototype (e.g. Bluebird's
+// promisifyAll) invoked the getters with the prototype as `this` and threw
+// ERR_INVALID_THIS. https://github.com/oven-sh/bun/issues/31806
+describe("X509Certificate.prototype accessor enumerability", () => {
+  const accessors = [
+    "ca",
+    "fingerprint",
+    "fingerprint256",
+    "fingerprint512",
+    "infoAccess",
+    "issuer",
+    "issuerCertificate",
+    "keyUsage",
+    "publicKey",
+    "raw",
+    "serialNumber",
+    "signatureAlgorithm",
+    "signatureAlgorithmOid",
+    "subject",
+    "subjectAltName",
+    "validFrom",
+    "validFromDate",
+    "validTo",
+    "validToDate",
+  ];
+
+  const methods = [
+    "checkEmail",
+    "checkHost",
+    "checkIP",
+    "checkIssued",
+    "checkPrivateKey",
+    "toJSON",
+    "toLegacyObject",
+    "toString",
+    "verify",
+  ];
+
+  test("accessors are non-enumerable", () => {
+    // Map each property to its enumerable flag, or "missing" when the property is
+    // absent, so the assertion fails loudly if an accessor is dropped (rather than
+    // silently passing on an undefined descriptor).
+    const state = Object.fromEntries(
+      accessors.map(name => {
+        const desc = Object.getOwnPropertyDescriptor(X509Certificate.prototype, name);
+        return [name, desc ? desc.enumerable : "missing"];
+      }),
+    );
+    expect(state).toEqual(Object.fromEntries(accessors.map(name => [name, false])));
+  });
+
+  test("methods are non-enumerable", () => {
+    const state = Object.fromEntries(
+      methods.map(name => {
+        const desc = Object.getOwnPropertyDescriptor(X509Certificate.prototype, name);
+        return [name, desc ? desc.enumerable : "missing"];
+      }),
+    );
+    expect(state).toEqual(Object.fromEntries(methods.map(name => [name, false])));
+  });
+
+  test("Object.keys(prototype) is empty, matching Node", () => {
+    // Like a Node ES6 class, no own property of the prototype is enumerable.
+    expect(Object.keys(X509Certificate.prototype)).toEqual([]);
+  });
+
+  test("walking the prototype does not invoke getters (no ERR_INVALID_THIS)", () => {
+    // Mirrors Bluebird's promisifyAll: enumerate the prototype keys and read each value.
+    // No own property is enumerable, so the loop body never runs and reading values
+    // (which would invoke the accessor getters with the prototype as `this`) must not throw.
+    const visited: string[] = [];
+    expect(() => {
+      for (const key in X509Certificate.prototype) {
+        visited.push(key);
+        void (X509Certificate.prototype as any)[key];
+      }
+    }).not.toThrow();
+    expect(visited).toEqual([]);
+  });
+});
+
 // checkIssued() must return a boolean to match Node.js. Previously Bun
 // returned the issuer certificate object on success and undefined on failure.
 // https://github.com/oven-sh/bun/issues/31570

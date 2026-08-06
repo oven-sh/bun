@@ -4293,13 +4293,18 @@ refs:
           stderr: "pipe",
         });
 
-        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        const [stdout, stderr, exitCode] = await Promise.all([
+          proc.stdout.text(),
+          proc.stderr.text(),
+          proc.exited,
+        ]);
 
         expect(stdout).toBe(
           "string: Symbol.toPrimitive returned an object\n" +
             "number: Symbol.toPrimitive returned an object\n" +
             "space: Symbol.toPrimitive returned an object\n",
         );
+        expect(stderr).toBe("");
         expect(exitCode).toBe(0);
       });
 

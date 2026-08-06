@@ -492,7 +492,10 @@ pub mod BunInfo {
         // `JSON.toAST(allocator, BunInfo, info)` — hand-expanded:
         let platform_props = bun_alloc::AstAlloc::vec_from_iter([
             prop(b"os", str_expr(os_tag_name(info.platform.os))),
-            prop(b"arch", str_expr(arch_tag_name(bun_core::Environment::ARCH))),
+            prop(
+                b"arch",
+                str_expr(arch_tag_name(bun_core::Environment::ARCH)),
+            ),
             prop(b"version", str_expr(info.platform.version)),
         ]);
         let platform_expr = Expr::init(

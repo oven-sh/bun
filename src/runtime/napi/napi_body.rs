@@ -1758,7 +1758,10 @@ impl napi_async_work {
             env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
             execute,
             // SAFETY: `event_loop()` is the live JS-thread loop (non-null,
-            // stable address) and outlives every napi_async_work.
+            // stable address). Liveness across a worker `terminate()` is
+            // guaranteed by `schedule()`'s `work_pool_task_ref()`: the worker
+            // shutdown barrier waits for `run()` to `work_pool_task_unref()`
+            // before the VM box (and this `EventLoop`) are freed.
             event_loop: unsafe { bun_ptr::BackRef::from_raw(global.bun_vm().event_loop()) },
             complete,
             data,
@@ -1777,12 +1780,28 @@ impl napi_async_work {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
+    /// Shutdown-drain release: unref the loop `KeepAlive` taken in
+    /// `schedule()` and free the box. Does not call `complete` (it would run
+    /// after `NapiEnv::cleanup()`); the addon's `data` is left for the
+    /// process to reclaim.
+    ///
+    /// # Safety
+    /// `this` must be the heap work popped from the shutdown drain; the pool
+    /// thread no longer holds it (`work_pool_pending` barrier).
+    pub(crate) unsafe fn release_for_shutdown(this: *mut napi_async_work) {
+        // SAFETY: see fn contract.
+        unsafe { core::mem::take(&mut (*this).poll_ref) }.unref(bun_io::js_vm_ctx());
+        Self::destroy(this);
+    }
+
     pub(crate) fn schedule(&mut self) {
         if self.scheduled {
             return;
         }
         self.scheduled = true;
         self.poll_ref.ref_(bun_io::js_vm_ctx());
+        // Matched by `work_pool_task_unref()` at the end of `run()`.
+        self.event_loop.work_pool_task_ref();
         WorkPool::schedule(&raw mut self.task);
     }
 
@@ -1794,6 +1813,11 @@ impl napi_async_work {
 
     fn run(&mut self) {
         let self_ptr: *mut Self = self;
+        // After `enqueue_task_concurrent` the JS thread may pick this work up,
+        // run `complete`, and `napi_delete_async_work` it before we reach the
+        // `work_pool_task_unref()` below; copy the handle out so that last
+        // access does not touch `self`.
+        let event_loop = self.event_loop;
         if let Err(state) = self.status.compare_exchange(
             AsyncWorkStatus::Pending as u32,
             AsyncWorkStatus::Started as u32,
@@ -1803,11 +1827,11 @@ impl napi_async_work {
             if state == AsyncWorkStatus::Cancelled as u32 {
                 // `concurrent_task` is the live inline field of this heap work;
                 // the queue takes ownership of its `next` link.
-                self.event_loop
-                    .enqueue_task_concurrent(core::ptr::NonNull::from(
-                        self.concurrent_task
-                            .from(self_ptr, AutoDeinit::ManualDeinit),
-                    ));
+                event_loop.enqueue_task_concurrent(core::ptr::NonNull::from(
+                    self.concurrent_task
+                        .from(self_ptr, AutoDeinit::ManualDeinit),
+                ));
+                event_loop.work_pool_task_unref();
                 return;
             }
         }
@@ -1817,11 +1841,11 @@ impl napi_async_work {
 
         // `concurrent_task` is the live inline field of this heap work; the
         // queue takes ownership of its `next` link.
-        self.event_loop
-            .enqueue_task_concurrent(core::ptr::NonNull::from(
-                self.concurrent_task
-                    .from(self_ptr, AutoDeinit::ManualDeinit),
-            ));
+        event_loop.enqueue_task_concurrent(core::ptr::NonNull::from(
+            self.concurrent_task
+                .from(self_ptr, AutoDeinit::ManualDeinit),
+        ));
+        event_loop.work_pool_task_unref();
     }
 
     pub(crate) fn cancel(&mut self) -> bool {

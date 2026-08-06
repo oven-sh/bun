@@ -1334,6 +1334,12 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             unsafe { Bun__deleteDeferredWorkTask(task.ptr.cast::<JSCDeferredWorkTask>()) };
             true
         }
+        task_tag::NapiAsyncWork => {
+            // SAFETY: tag identifies pointee; the pool-thread callback already
+            // posted this entry (`work_pool_pending` barrier).
+            unsafe { napi_async_work::release_for_shutdown(task.ptr.cast::<napi_async_work>()) };
+            true
+        }
         // Same reclaim `drop_concurrent_cpp_tasks` performs, but for tasks
         // that were already batch-moved into `self.tasks`. Must run before
         // JSC teardown: a Worker `dispatchExit` lambda's `~Ref<Worker>` walks

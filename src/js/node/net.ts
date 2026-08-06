@@ -3136,8 +3136,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
         detail: { host: address, port },
       });
     }
-  } else if (address.includes("\0") && address.charCodeAt(0) !== 0) {
-    // Interior NUL in a non-abstract path: EINVAL, as libuv's uv_pipe_connect2.
+  } else if (pipePathHasInteriorNul(address)) {
     err = UV_EINVAL;
   } else {
     const req: any = {};
@@ -3840,8 +3839,7 @@ Server.prototype[kRealListen] = function (
   // (hardcoded below); the stream layer implements allowHalfOpen=false
   // semantics itself, so the server option is consumed in JS only.
   if (path) {
-    if (path.includes("\0") && path.charCodeAt(0) !== 0) {
-      // Interior NUL in a non-abstract path: EINVAL, as libuv's uv_pipe_bind2;
+    if (pipePathHasInteriorNul(path)) {
       // formatListenError rewrites this into Node's listen error message.
       const err: any = new Error();
       err.code = "EINVAL";
@@ -4182,6 +4180,13 @@ function checkBindError(err, port, handle) {
 
 function isPipeName(s) {
   return typeof s === "string" && toNumber(s) === false;
+}
+
+// A non-abstract pipe path (leading NUL = abstract socket, Linux) with an
+// interior NUL would be silently truncated by the kernel; libuv's
+// uv_pipe_connect2/uv_pipe_bind2 reject it with EINVAL.
+function pipePathHasInteriorNul(path: string): boolean {
+  return path.charCodeAt(0) !== 0 && path.includes("\0");
 }
 
 function toNumber(x) {

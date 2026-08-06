@@ -134,7 +134,7 @@ describe("unix socket paths with interior NUL bytes are rejected", () => {
 describe.skipIf(!isLinux)("abstract socket names keep working", () => {
   test("Bun.listen/Bun.connect roundtrip, including interior NUL in the name", async () => {
     for (const name of [`\0bun-nul-test-${process.pid}`, `\0bun-nul-test-${process.pid}\0x`]) {
-      const { promise, resolve } = Promise.withResolvers<string>();
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
       const listener = Bun.listen({
         unix: name,
         socket: {
@@ -142,19 +142,35 @@ describe.skipIf(!isLinux)("abstract socket names keep working", () => {
             socket.end("hello");
           },
           data() {},
+          error(_socket, error) {
+            reject(error);
+          },
         },
       });
       try {
-        await Bun.connect({
+        const client = await Bun.connect({
           unix: name,
           socket: {
             data(_socket, data) {
               resolve(String(data));
             },
             open() {},
+            error(_socket, error) {
+              reject(error);
+            },
+            close() {
+              reject(new Error("closed before data"));
+            },
+            connectError(_socket, error) {
+              reject(error);
+            },
           },
         });
-        expect(await promise).toBe("hello");
+        try {
+          expect(await promise).toBe("hello");
+        } finally {
+          client.end();
+        }
       } finally {
         listener.stop(true);
       }

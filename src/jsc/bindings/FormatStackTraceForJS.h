@@ -70,6 +70,10 @@ WTF::String formatStackTrace(
     WTF::Vector<JSC::StackFrame>& stackTrace,
     JSC::JSObject* errorInstance);
 
+// Shared body of Error.captureStackTrace: collect frames (filtered past
+// `caller` when it is a function) and install them on `errorObject`.
+void captureStackTraceForError(Zig::GlobalObject* globalObject, JSC::JSObject* errorObject, JSC::JSValue caller);
+
 // JSC Host Functions - Error constructor methods
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace);
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace);

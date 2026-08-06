@@ -3311,6 +3311,7 @@ impl CollectionData for E::Object {
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
+    #[allow(clippy::needless_pass_by_value)] // must_use token: binding consumes the anchor
     fn bind_anchor(&mut self, anchor: PendingAnchor, node: Expr) -> Result<(), AllocError> {
         self.anchors
             .put(Enc::key_bytes(anchor.name.slice(self.input)), node)

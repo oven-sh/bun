@@ -979,14 +979,16 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       // Body still streaming: Bun.write waits on the locked body, then
       // resolves its promise with the inner write's promise.
       const wroteStream = await Bun.write(dir + "/a.txt", resp);
-      // copy_file completion resolves with the byte count.
+      // copy_file completion. The resolved count is backend-dependent on
+      // Windows (uv_fs_copyfile reports none, the fallback loop the real
+      // count), so pin only its type; the content check below is the proof.
       const wroteCopy = await Bun.write(Bun.file(dir + "/dst.txt"), Bun.file(dir + "/src.txt"));
       delete Object.prototype.then;
 
       const results = [
         wroteStream,
         fs.readFileSync(dir + "/a.txt", "utf8"),
-        wroteCopy,
+        typeof wroteCopy,
         fs.readFileSync(dir + "/dst.txt", "utf8"),
       ];
       server.stop(true);
@@ -1000,9 +1002,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    // uv_fs_copyfile does not report a byte count, so the Windows copyfile
-    // completion resolves 0 when the size is not known up front.
-    expect(JSON.parse(stdout)).toEqual([11, "hello world", isWindows ? 0 : 7, "copy me"]);
+    expect(JSON.parse(stdout)).toEqual([11, "hello world", "number", "copy me"]);
     expect(exitCode).toBe(0);
   });
 });

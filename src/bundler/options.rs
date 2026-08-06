@@ -444,8 +444,7 @@ pub(crate) fn normalize_specifier<'a>(
     let specifier = slice;
     let mut query: &[u8] = b"";
 
-    if let Some(i) = strings::index_of_char(slice, b'?') {
-        let i = i as usize;
+    if let Some(i) = strings::index_of_import_query(slice) {
         query = &slice[i..];
         slice = &slice[..i];
     }

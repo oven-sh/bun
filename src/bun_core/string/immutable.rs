@@ -1349,6 +1349,21 @@ pub fn index_of_char_usize(slice: &[u8], char: u8) -> Option<usize> {
     highway::index_of_char(slice, char)
 }
 
+/// Index of the query-string `?` in a module specifier; skips `?/` (POSIX dir-name byte, #7928).
+pub fn index_of_import_query(specifier: &[u8]) -> Option<usize> {
+    if cfg!(windows) {
+        return index_of_char_usize(specifier, b'?');
+    }
+    let mut from = 0usize;
+    loop {
+        let i = from + index_of_char_usize(&specifier[from..], b'?')?;
+        if specifier.get(i + 1) != Some(&b'/') {
+            return Some(i);
+        }
+        from = i + 1;
+    }
+}
+
 pub fn index_of_char_pos(slice: &[u8], char: u8, start_index: usize) -> Option<usize> {
     if start_index >= slice.len() {
         return None;

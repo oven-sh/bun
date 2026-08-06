@@ -1624,16 +1624,22 @@ describe("inbound stream lifecycle", () => {
   });
 });
 
-// CVE-2023-44487: a peer that opens a stream and immediately resets it in a tight loop must not
-// be able to drive unbounded handler invocations / response encoding. nghttp2 bounds inbound
-// RST_STREAM per connection (streamResetBurst tokens refilling at streamResetRate per second) and
-// tears the session down with GOAWAY(ENHANCE_YOUR_CALM) / NGHTTP2_ERR_FLOODED once the bucket is
-// empty; node surfaces that as a sessionError with code ERR_HTTP2_ERROR.
-describe("RST_STREAM flood (CVE-2023-44487 rapid-reset)", () => {
+// CVE-2023-44487 (rapid reset): a peer that opens a stream and immediately resets it in a tight
+// loop must not be able to drive unbounded handler invocations / response encoding. nghttp2
+// bounds stream resets per connection (streamResetBurst tokens refilling at streamResetRate per
+// second) and tears the session down with GOAWAY(ENHANCE_YOUR_CALM) / NGHTTP2_ERR_FLOODED once
+// the bucket is empty; node surfaces that as a sessionError with code ERR_HTTP2_ERROR.
+// CVE-2025-8671 (MadeYouReset): the same flood where the client never sends RST_STREAM itself —
+// it follows each HEADERS with a frame that makes the SERVER reset the stream (WINDOW_UPDATE
+// with a 0 increment, DATA after END_STREAM). Server-sent resets drain the same bucket, so the
+// reset-rate accounting cannot be evaded by farming the resets out to the server.
+describe("stream-reset floods (CVE-2023-44487 rapid-reset, CVE-2025-8671 MadeYouReset)", () => {
   async function floodRapidReset(opts: {
     serverOptions?: Parameters<typeof http2.createServer>[0];
     count: number;
     followUp?: boolean;
+    /** Frame sent after each HEADERS; defaults to the client's own RST_STREAM(CANCEL). */
+    second?: (sid: number) => Buffer;
   }) {
     let handlers = 0;
     let sessionErrorCode: string | undefined;
@@ -1658,10 +1664,11 @@ describe("RST_STREAM flood (CVE-2023-44487 rapid-reset)", () => {
       const block = requestHeaderBlock("GET");
       const cancel = Buffer.alloc(4);
       cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
+      const second = opts.second ?? ((sid: number) => encodeFrame(FrameType.RST_STREAM, 0, sid, cancel));
       const batch: Buffer[] = [];
       for (let i = 0; i < opts.count; i++) {
         const sid = 1 + 2 * i;
-        batch.push(encodeFrame(FrameType.HEADERS, 0x5, sid, block), encodeFrame(FrameType.RST_STREAM, 0, sid, cancel));
+        batch.push(encodeFrame(FrameType.HEADERS, 0x5, sid, block), second(sid));
       }
       c.send(Buffer.concat(batch));
       const followUpId = 1 + 2 * opts.count;
@@ -1671,7 +1678,8 @@ describe("RST_STREAM flood (CVE-2023-44487 rapid-reset)", () => {
         10_000,
       );
       const responseHeaders = c.frames.filter(f => f.type === FrameType.HEADERS).length;
-      return { c, frame, handlers, sessionErrorCode, responseHeaders };
+      const serverRsts = c.frames.filter(f => f.type === FrameType.RST_STREAM).length;
+      return { c, frame, handlers, sessionErrorCode, responseHeaders, serverRsts };
     } finally {
       c.destroy();
       server.close();
@@ -1682,7 +1690,7 @@ describe("RST_STREAM flood (CVE-2023-44487 rapid-reset)", () => {
     const { frame, handlers, sessionErrorCode, responseHeaders } = await floodRapidReset({ count: 1200 });
     expect(frame.type).toBe(FrameType.GOAWAY);
     expect(goawayErrorCode(frame)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
-    expect(Buffer.from(frame.payload.subarray(8)).toString()).toBe("too many RST_STREAM frames");
+    expect(Buffer.from(frame.payload.subarray(8)).toString()).toBe("too many stream resets");
     // The handler fires for every stream whose RST_STREAM has not yet emptied the token bucket
     // (node parity: test-http2-client-rststream-before-connect expects 'stream' to fire even when
     // the client immediately resets). The default burst is 1000, so >900 proves dispatch still
@@ -1724,4 +1732,82 @@ describe("RST_STREAM flood (CVE-2023-44487 rapid-reset)", () => {
     expect(responseHeaders).toBeGreaterThanOrEqual(1);
     expect(responseHeaders).toBeLessThan(50);
   });
+
+  test("a peer GOAWAY prefix does not bypass the flood protections", async () => {
+    // A peer-received GOAWAY sets the session's going-away flag, which must not exempt the
+    // session from reset accounting (the engine charges the bucket regardless). Like node, the
+    // JS layer answers a client GOAWAY by closing the session, so the flood sent behind the
+    // 17-byte prefix reaches no handler at all.
+    let handlers = 0;
+    const server = http2.createServer();
+    server.on("session", s => s.on("error", () => {}));
+    server.on("stream", (stream: any) => {
+      handlers++;
+      stream.on("error", () => {});
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      c.sendFrame(FrameType.GOAWAY, 0, 0, Buffer.alloc(8));
+      const reply = await c.waitFor(f => f.type === FrameType.GOAWAY);
+      expect(goawayErrorCode(reply)).toBe(ErrorCode.NO_ERROR);
+      const block = requestHeaderBlock("GET");
+      const cancel = Buffer.alloc(4);
+      cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
+      const batch: Buffer[] = [];
+      for (let i = 0; i < 200; i++) {
+        const sid = 1 + 2 * i;
+        batch.push(encodeFrame(FrameType.HEADERS, 0x5, sid, block), encodeFrame(FrameType.RST_STREAM, 0, sid, cancel));
+      }
+      c.send(Buffer.concat(batch));
+      await c.waitClosed(10_000);
+      expect(handlers).toBe(0);
+      expect(c.frames.filter(f => f.type === FrameType.HEADERS)).toHaveLength(0);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  // MadeYouReset: the client never sends RST_STREAM — each stream is opened and then killed by a
+  // frame the server must answer with its own RST_STREAM. Without server-sent resets draining
+  // the bucket this runs unbounded exactly like pre-mitigation rapid reset (node's nghttp2 is
+  // not exposed to these two shapes only because it escalates both to connection errors).
+  // A non-default burst (with rate 1 so refill stays negligible on slow lanes) keeps the flood
+  // small and the test fast; the default-sized bucket is covered by the RST_STREAM flood above.
+  const madeYouReset = [
+    {
+      name: "WINDOW_UPDATE with a 0 increment",
+      second: (sid: number) => encodeFrame(FrameType.WINDOW_UPDATE, 0, sid, Buffer.alloc(4)),
+    },
+    {
+      name: "DATA after END_STREAM",
+      second: (sid: number) => encodeFrame(FrameType.DATA, 0, sid, Buffer.from("x")),
+    },
+  ];
+  for (const { name, second } of madeYouReset) {
+    test(`a flood of server-side resets via ${name} is answered with GOAWAY(ENHANCE_YOUR_CALM)`, async () => {
+      const serverOptions = { streamResetBurst: 200, streamResetRate: 1 } as any;
+      const { frame, handlers, sessionErrorCode, serverRsts } = await floodRapidReset({
+        serverOptions,
+        count: 600,
+        second,
+      });
+      expect(frame.type).toBe(FrameType.GOAWAY);
+      expect(goawayErrorCode(frame)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
+      expect(Buffer.from(frame.payload.subarray(8)).toString()).toBe("too many stream resets");
+      // Every pair up to the bucket's edge was served and then reset by the server (the
+      // per-stream semantics are unchanged); the 201st server-sent reset trips the bucket.
+      // Refill (rate 1/s) can stretch the edge slightly on a slow lane.
+      expect(serverRsts).toBeGreaterThanOrEqual(200);
+      expect(serverRsts).toBeLessThan(450);
+      expect(handlers).toBeGreaterThanOrEqual(200);
+      expect(handlers).toBeLessThan(450);
+      expect(sessionErrorCode).toBe("ERR_HTTP2_ERROR");
+    });
+  }
 });

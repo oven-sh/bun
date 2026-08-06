@@ -110,8 +110,9 @@ pub struct Feed {
 /// behind a non-reading peer before the session is treated as flooded (NGHTTP2_ERR_FLOODED).
 const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 
-/// nghttp2's NGHTTP2_DEFAULT_STREAM_RESET_BURST / _RATE (CVE-2023-44487): inbound RST_STREAM
-/// token-bucket defaults, exposed to JS as node's streamResetBurst / streamResetRate.
+/// nghttp2's NGHTTP2_DEFAULT_STREAM_RESET_BURST / _RATE: stream-reset token-bucket defaults
+/// (CVE-2023-44487 rapid reset and CVE-2025-8671 "MadeYouReset"), exposed to JS as node's
+/// streamResetBurst / streamResetRate.
 pub const DEFAULT_STREAM_RESET_BURST: u32 = 1000;
 pub const DEFAULT_STREAM_RESET_RATE: u32 = 33;
 
@@ -286,12 +287,15 @@ pub struct Connection {
     /// obq_flood_counter_). Reset only via note_outbound_drained() when the
     /// embedder confirms its outbound buffer emptied — never per receive().
     obq_ack_pending: u32,
-    /// Inbound RST_STREAM token bucket (nghttp2's stream_reset_ratelim, CVE-2023-44487): each
-    /// peer-sent RST_STREAM drains one token; empty bucket → GOAWAY(ENHANCE_YOUR_CALM).
+    /// Stream-reset token bucket (nghttp2's stream_reset_ratelim): every peer-sent RST_STREAM
+    /// (CVE-2023-44487) and every RST_STREAM the engine sends in reaction to an inbound frame
+    /// (CVE-2025-8671) drains one token; empty bucket → GOAWAY(ENHANCE_YOUR_CALM).
     pub stream_reset_burst: u32,
     pub stream_reset_rate: u32,
     reset_tokens: u32,
     reset_last_refill: std::time::Instant,
+    /// The bucket ran dry mid-frame: receive() turns this into the teardown between frames.
+    reset_flood: bool,
 
     /// Scratch buffer for the outbound HPACK-encoded header block.
     enc_buf: Vec<u8>,
@@ -340,9 +344,10 @@ impl Connection {
             obq_ack_pending: 0,
             stream_reset_burst: DEFAULT_STREAM_RESET_BURST,
             stream_reset_rate: DEFAULT_STREAM_RESET_RATE,
-            // Start full: note_peer_reset clamps to whatever burst the embedder synced.
+            // Start full: note_stream_reset clamps to whatever burst the embedder synced.
             reset_tokens: u32::MAX,
             reset_last_refill: std::time::Instant::now(),
+            reset_flood: false,
             enc_buf: Vec::new(),
             replenish_buf: Vec::new(),
             evict_buf: Vec::new(),
@@ -432,6 +437,11 @@ impl Connection {
             stream_id,
             &code.as_u32().to_be_bytes(),
         );
+        // Every RST_STREAM the engine writes is a reaction to an inbound frame (all callers are
+        // inbound handlers; application-initiated resets go through the embedder's own writer),
+        // so a client farming server-side resets (CVE-2025-8671 "MadeYouReset") drains the same
+        // bucket as one sending RST_STREAM itself.
+        self.note_stream_reset();
     }
 
     // ---- Inbound --------------------------------------------------------
@@ -492,6 +502,12 @@ impl Connection {
             offset += avail;
             if inflight.payload_remaining == 0 {
                 self.finish_streamed_data(sink, &inflight);
+                if self.check_reset_flood(sink) {
+                    return Feed {
+                        consumed: offset,
+                        fatal: true,
+                    };
+                }
             } else {
                 self.data_in_flight = Some(inflight);
                 self.replenish_windows(sink);
@@ -544,6 +560,12 @@ impl Connection {
                             }
                             StreamedDataStart::Consumed(n) => {
                                 offset += n;
+                                if self.check_reset_flood(sink) {
+                                    return Feed {
+                                        consumed: offset,
+                                        fatal: true,
+                                    };
+                                }
                             }
                         }
                     }
@@ -581,6 +603,15 @@ impl Connection {
                 };
             }
             offset += total;
+            // A reset this frame caused may have emptied the stream-reset bucket; tearing down
+            // here (between frames) keeps the frame's own bookkeeping and dispatch ordering
+            // intact while bounding how much of a flooded batch is processed.
+            if self.check_reset_flood(sink) {
+                return Feed {
+                    consumed: offset,
+                    fatal: true,
+                };
+            }
         }
         // Re-open consumed receive windows once per batch (RFC 9113 §6.9; mirrors how the
         // application-consumption-driven update works in node) — doing it per frame would both spam
@@ -813,15 +844,21 @@ impl Connection {
         self.obq_ack_pending = 0;
     }
 
-    /// Drain one token from the inbound RST_STREAM bucket (nghttp2_ratelim, CVE-2023-44487),
-    /// refilling `stream_reset_rate` per elapsed second. Returns true if the session was GOAWAY'd.
-    fn note_peer_reset(&mut self, sink: &impl Sink) -> bool {
+    /// Drain one token from the stream-reset bucket (nghttp2's stream_reset_ratelim): refills
+    /// `stream_reset_rate` per elapsed second, capped at `stream_reset_burst`. Charged for both
+    /// directions of the reset-flood class — peer-sent RST_STREAM (CVE-2023-44487 rapid reset)
+    /// and RST_STREAM this engine sends in reaction to inbound frames (CVE-2025-8671
+    /// "MadeYouReset": HEADERS then a frame that makes the server reset the stream, e.g.
+    /// WINDOW_UPDATE with a 0 increment, costs the attacker exactly as little). Exhaustion only
+    /// sets `reset_flood`; receive() tears the session down between frames (check_reset_flood)
+    /// so the current frame's stream-level bookkeeping and JS dispatch complete first.
+    fn note_stream_reset(&mut self) {
         // nghttp2's session_update_stream_reset_ratelim is server-only. It also skips once a
         // GOAWAY has been locally submitted, but local_connection_error sets `terminated` so
         // receive() never reaches here afterwards; `going_away` is also set on a PEER-received
         // GOAWAY, which must NOT disable the limiter (a 17-byte GOAWAY prefix would defeat it).
-        if !self.is_server {
-            return false;
+        if !self.is_server || self.reset_flood {
+            return;
         }
         let now = std::time::Instant::now();
         let elapsed = now
@@ -830,8 +867,7 @@ impl Connection {
         if elapsed > 0 {
             let gain = u32::try_from(elapsed)
                 .unwrap_or(u32::MAX)
-                .checked_mul(self.stream_reset_rate)
-                .unwrap_or(u32::MAX);
+                .saturating_mul(self.stream_reset_rate);
             self.reset_tokens = self.reset_tokens.saturating_add(gain);
             // Advance by the whole seconds credited so the sub-second remainder carries over
             // (nghttp2_ratelim_update compares integer-seconds timestamps).
@@ -841,13 +877,23 @@ impl Connection {
         self.reset_tokens = self.reset_tokens.min(self.stream_reset_burst);
         if self.reset_tokens > 0 {
             self.reset_tokens -= 1;
+            return;
+        }
+        self.reset_flood = true;
+    }
+
+    /// Turn an exhausted stream-reset bucket into the session teardown — GOAWAY
+    /// (ENHANCE_YOUR_CALM) surfaced as NGHTTP2_ERR_FLOODED, like the other flood guards.
+    /// Returns true when the session was torn down.
+    fn check_reset_flood(&mut self, sink: &impl Sink) -> bool {
+        if !self.reset_flood || self.terminated {
             return false;
         }
         self.local_connection_error(
             sink,
             ErrorCode::EnhanceYourCalm,
             wire::lib_error::FLOODED,
-            b"too many RST_STREAM frames",
+            b"too many stream resets",
         );
         true
     }
@@ -1696,7 +1742,8 @@ impl Connection {
                 || hdr.stream_id <= sink.highest_started_stream_id())
         {
             // nghttp2 charges stream_reset_ratelim regardless of stream lookup.
-            return self.note_peer_reset(sink);
+            self.note_stream_reset();
+            return false;
         }
         if on_idle {
             self.send_go_away(sink, ErrorCode::ProtocolError, b"RST_STREAM on idle stream");
@@ -1704,8 +1751,9 @@ impl Connection {
         }
         sink.on_stream_reset(hdr.stream_id, code_raw);
         // CVE-2023-44487: charge after on_stream_reset so the stream is still torn down and
-        // accounted for before the session GOAWAYs.
-        self.note_peer_reset(sink)
+        // accounted for before the session GOAWAYs (receive() fires the teardown between frames).
+        self.note_stream_reset();
+        false
     }
 
     /// RFC 9113 §6.6 PUSH_PROMISE (clients only, §8.4): reserve the promised stream and assemble its

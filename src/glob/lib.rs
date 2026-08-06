@@ -32,11 +32,13 @@ pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
         while !slice.is_empty() {
             if let Some(idx) = bun_core::strings::index_of_char_usize(slice, token) {
                 // Check for even number of backslashes preceding the
-                // token to know that it's not escaped
+                // token to know that it's not escaped. `idx` is relative to
+                // `slice`; a backslash run can't extend past its start (the
+                // byte before it is the previous, unescaped-or-not, token).
                 let mut i = idx;
                 let mut backslash_count: u16 = 0;
 
-                while i > 0 && potential_pattern[i - 1] == b'\\' {
+                while i > 0 && slice[i - 1] == b'\\' {
                     backslash_count += 1;
                     i -= 1;
                 }

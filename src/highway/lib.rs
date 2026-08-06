@@ -499,6 +499,9 @@ pub fn index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
 /// `chars.len()` must be in 2..=16 (single-byte callers use [`last_index_of_char`]).
 #[inline(always)]
 pub fn last_index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
+    if chars.is_empty() {
+        return None;
+    }
     debug_assert!(chars.len() >= 2 && chars.len() <= 16);
     if haystack.len() < SCALAR_CUTOFF {
         return haystack.iter().rposition(|b| chars.contains(b));

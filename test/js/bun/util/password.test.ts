@@ -490,6 +490,17 @@ test("verify rejects encoded argon2 hashes with cost parameters above the suppor
   expect(hugeParallelism).not.toBe(hashed);
   expect(() => password.verifySync("correct horse", hugeParallelism)).toThrow("WeakParameters");
   await expect(password.verify("correct horse", hugeParallelism)).rejects.toThrow("WeakParameters");
+
+  // The argon2 decoder accepts a leading `+` on the cost fields (Rust's integer
+  // grammar), so the ceiling check must too rather than skipping the field.
+  const plusMemory = hashed.replace("$m=8,", "$m=+4294967294,");
+  expect(plusMemory).not.toBe(hashed);
+  expect(() => password.verifySync("correct horse", plusMemory)).toThrow("WeakParameters");
+  await expect(password.verify("correct horse", plusMemory)).rejects.toThrow("WeakParameters");
+
+  // A cost field the decoder can't parse is rejected up front as well.
+  const junkMemory = hashed.replace("$m=8,", "$m=8x,");
+  expect(() => password.verifySync("correct horse", junkMemory)).toThrow();
 });
 
 test("verifySync reads the password buffer only after every argument has been coerced", () => {

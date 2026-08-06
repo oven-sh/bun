@@ -226,14 +226,20 @@ pub mod argon2 {
                     let Some((key, value)) = strings::split_once_char(pair, b'=') else {
                         continue;
                     };
-                    let Ok(value) = bun_core::fmt::parse_unsigned::<u32>(value, 10) else {
-                        continue;
-                    };
                     let limit = match key {
                         b"m" => MAX_VERIFY_MEMORY_COST,
                         b"t" => MAX_VERIFY_TIME_COST,
                         b"p" => MAX_VERIFY_PARALLELISM,
                         _ => continue,
+                    };
+                    // Same grammar as rust-argon2's `decode_u32` (`str::parse`,
+                    // which accepts a leading `+`); anything it can't parse the
+                    // decoder can't either, so fail closed rather than skip the cap.
+                    let Some(value) = core::str::from_utf8(value)
+                        .ok()
+                        .and_then(|v| v.parse::<u32>().ok())
+                    else {
+                        return Err(crate::Error::InvalidEncoding);
                     };
                     if value > limit {
                         return Err(crate::Error::WeakParameters);

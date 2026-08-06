@@ -2710,7 +2710,10 @@ fn transpile_source_code_inner(
                 }
 
                 // JSON/TOML/YAML/JSON5/XML: export as a JS object.
-                if matches!(loader, L::Json | L::Jsonc | L::Toml | L::Yaml | L::Json5 | L::Xml) {
+                if matches!(
+                    loader,
+                    L::Json | L::Jsonc | L::Toml | L::Yaml | L::Json5 | L::Xml
+                ) {
                     // SAFETY: `jsc_vm.global` is set during init and live for
                     // VM lifetime; `global_object` (if non-null) is the live
                     // per-thread global.

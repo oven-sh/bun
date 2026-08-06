@@ -2,8 +2,7 @@ import { expect, it } from "bun:test";
 import { tempDir } from "harness";
 import { join } from "node:path";
 import empty from "./xml-empty.xml";
-import fixture from "./xml-fixture.xml";
-import * as namespace from "./xml-fixture.xml";
+import fixture, * as namespace from "./xml-fixture.xml";
 import xmlFromCustomTypeAttribute from "./xml-fixture.xml.txt" with { type: "xml" };
 
 const expectedFixture = {

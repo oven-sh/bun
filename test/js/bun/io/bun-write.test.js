@@ -943,4 +943,65 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
 
     expect(f.name).toBe(filePath);
   });
+
+  // The native write completions (copy_file, write_file, and the locked-body
+  // wait task) settle their promises from the event loop and must never leave
+  // an exception riding the tick. Pin both paths with a hostile
+  // `Object.prototype.then` accessor installed, mirroring the
+  // prototype-pollution state fuzzer processes run in.
+  it("write completions settle under Object.prototype.then pollution", async () => {
+    using dir = tempDir("bun-write-pollution", { "src.txt": "copy me" });
+    const fixture = `
+      const fs = require("fs");
+      const dir = ${JSON.stringify(String(dir))};
+      const server = Bun.serve({
+        port: 0,
+        async fetch() {
+          return new Response(new ReadableStream({
+            async pull(c) {
+              c.enqueue(new TextEncoder().encode("hello "));
+              await Bun.sleep(10);
+              c.enqueue(new TextEncoder().encode("world"));
+              c.close();
+            },
+          }));
+        },
+      });
+      const resp = await fetch("http://localhost:" + server.port + "/");
+
+      Object.defineProperty(Object.prototype, "then", {
+        configurable: true,
+        get() {
+          throw new Error("boom");
+        },
+      });
+      // Body still streaming: Bun.write waits on the locked body, then
+      // resolves its promise with the inner write's promise.
+      const wroteStream = await Bun.write(dir + "/a.txt", resp);
+      // copy_file completion. The resolved count is backend-dependent on
+      // Windows (uv_fs_copyfile reports none, the fallback loop the real
+      // count), so pin only its type; the content check below is the proof.
+      const wroteCopy = await Bun.write(Bun.file(dir + "/dst.txt"), Bun.file(dir + "/src.txt"));
+      delete Object.prototype.then;
+
+      const results = [
+        wroteStream,
+        fs.readFileSync(dir + "/a.txt", "utf8"),
+        typeof wroteCopy,
+        fs.readFileSync(dir + "/dst.txt", "utf8"),
+      ];
+      server.stop(true);
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([11, "hello world", "number", "copy me"]);
+    expect(exitCode).toBe(0);
+  });
 });

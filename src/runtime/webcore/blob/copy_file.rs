@@ -137,7 +137,14 @@ impl<'a> CopyFile<'a> {
         if let Some(store) = self.store.take() {
             drop(store); // deref()
         }
-        promise.reject(global_this, Ok(instance))
+        if promise.reject(global_this, Ok(instance)).is_err() {
+            // The settle error label erases Thrown, so probe the VM: report a
+            // pending non-termination exception instead of letting the task
+            // channel treat it as termination, and keep real termination as
+            // the `Err` that unwinds the tick loop.
+            return jsc::task::report_error_or_terminate(global_this, jsc::JsError::Thrown);
+        }
+        Ok(())
     }
 
     pub(crate) fn then(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
@@ -147,10 +154,17 @@ impl<'a> CopyFile<'a> {
             return self.reject(promise);
         }
 
-        promise.resolve(
-            self.global_this,
-            JSValue::js_number_from_uint64(self.read_len as u64),
-        )
+        if promise
+            .resolve(
+                self.global_this,
+                JSValue::js_number_from_uint64(self.read_len as u64),
+            )
+            .is_err()
+        {
+            // See `reject` above.
+            return jsc::task::report_error_or_terminate(self.global_this, jsc::JsError::Thrown);
+        }
+        Ok(())
     }
 
     #[cfg(not(windows))]
@@ -1642,7 +1656,12 @@ impl<'a> CopyFileWindows<'a> {
         // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
         unsafe { Self::destroy(core::ptr::from_mut(self)) };
         // `promise` points to a GC-owned `JSPromise` cell, not into `self`; valid after `destroy`.
-        let _ = promise.reject(global_this, err_instance); // TODO: properly propagate exception upwards
+        if promise.reject(global_this, err_instance).is_err() {
+            // A failed settle leaves an exception pending on the VM; report it
+            // so it cannot ride the tick into unrelated JS (the error label
+            // erases Thrown, so probe the VM instead).
+            global_this.report_active_exception_as_unhandled(jsc::JsError::Thrown);
+        }
     }
 
     pub(crate) fn on_complete(&mut self, written_actual: usize) {
@@ -1729,7 +1748,13 @@ impl<'a> CopyFileWindows<'a> {
         // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
         unsafe { Self::destroy(core::ptr::from_mut(self)) };
         // `promise` points to a GC-owned `JSPromise` cell, not into `self`; valid after `destroy`.
-        let _ = promise.resolve(global_this, JSValue::js_number_from_uint64(written as u64)); // TODO: properly propagate exception upwards
+        if promise
+            .resolve(global_this, JSValue::js_number_from_uint64(written as u64))
+            .is_err()
+        {
+            // See `throw` above: keep a failed settle's exception off the tick.
+            global_this.report_active_exception_as_unhandled(jsc::JsError::Thrown);
+        }
     }
 
     #[cold]

@@ -990,7 +990,7 @@ impl MultiPartUpload {
             self.state.set(State::SinglefileStarted);
             // we can do only 1 request
             self.ref_();
-            let _ = execute_simple_s3_request(
+            let started = execute_simple_s3_request(
                 &self.credentials,
                 s3_simple_request::S3RequestOptions {
                     path: &self.path,
@@ -1007,10 +1007,21 @@ impl MultiPartUpload {
                 },
                 s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
                 self.as_ctx_ptr(),
-            ); // TODO: properly propagate exception upwards
+            );
+            if started.is_err() {
+                // A failed settle leaves an exception pending on the VM; report
+                // it so it cannot ride the tick into unrelated JS (the error
+                // label erases Thrown, so probe the VM instead).
+                self.global_this
+                    .report_active_exception_as_unhandled(bun_jsc::JsError::Thrown);
+            }
         } else {
             // we need to split
-            let _ = self.process_multi_part(part_size); // TODO: properly propagate exception upwards
+            if self.process_multi_part(part_size).is_err() {
+                // See the single-request arm above.
+                self.global_this
+                    .report_active_exception_as_unhandled(bun_jsc::JsError::Thrown);
+            }
         }
     }
 

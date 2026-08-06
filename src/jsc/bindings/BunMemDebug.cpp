@@ -381,7 +381,7 @@ extern "C" void Bun__imageDumpNow(JSC::VM* vm, const char* path)
 }
 extern "C" void Bun__memdebugInstall()
 {
-    if (getenv("BUN_IMAGE_OUT")) Bun__imageSetBuilding(true);
+    if (getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT")) Bun__imageSetBuilding(true); // building: network fetches are refused so the process can become quiet
 
     s_dir = getenv("BUN_MEMDEBUG");
     if (!s_dir || !*s_dir) {

@@ -10,7 +10,7 @@
 // built binary, so it belongs in test/internal/source-lints/ per the README.
 
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
@@ -134,8 +134,7 @@ test("dead JS builtin exports do not reappear", () => {
   ]);
 });
 
-test("the CMake-era unified-source ruby script stays deleted", () => {
-  // scripts/build/unified.ts is the live TS reimplementation; nothing invokes
-  // ruby anywhere in the build.
-  expect(existsSync(path.join(repoRoot, "src/codegen/generate-unified-source-bundles.rb"))).toBe(false);
-});
+// No existence check for the deleted generate-unified-source-bundles.rb:
+// git-stash round-trips can temporarily restore files a branch deletes (see
+// the same note in dead-symbols-pub-exports-sweep.test.ts), so a working-tree
+// existsSync assertion is unreliable. The content checks above carry the lint.

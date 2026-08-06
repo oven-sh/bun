@@ -16,6 +16,7 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
             ("snapshot", __jsc_host_snapshot, 1),
             ("snapshotState", __jsc_host_snapshot_state, 0),
             ("recleanImagePages", __jsc_host_reclean_image_pages, 0),
+            ("embedImage", __jsc_host_embed_image, 3),
         ],
     )
 }
@@ -156,4 +157,59 @@ fn dump_mimalloc(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVal
         dump_zone_malloc_stats();
     }
     Ok(JSValue::UNDEFINED)
+}
+
+/// `Bun.unsafe.embedImage(exePath, imagePath, outPath?)`: what `bun build --compile --compile-image` does in its second pass, for build
+/// pipelines that compile via `Bun.build({ compile })`: embed a raw heap image (written by running the executable with `BUN_IMAGE_OUT`)
+/// into the compiled executable's section payload so the single file restores from itself. `outPath` defaults to overwriting `exePath`.
+#[bun_jsc::host_fn]
+fn embed_image(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [exe, img, out] = frame.arguments_as_array::<3>();
+    if !exe.is_string() || !img.is_string() {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "embedImage(exePath, imagePath, outPath?) expects string paths"
+        )));
+    }
+    let exe_path = exe.to_bun_string(global)?.to_owned_slice();
+    let img_path = img.to_bun_string(global)?.to_owned_slice();
+    let out_path = if out.is_string() {
+        out.to_bun_string(global)?.to_owned_slice()
+    } else {
+        exe_path.clone()
+    };
+    let image = match std::fs::read(String::from_utf8_lossy(&img_path).as_ref()) {
+        Ok(b) => b,
+        Err(e) => {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "embedImage: cannot read {}: {}",
+                bstr::BStr::new(&img_path),
+                e
+            )));
+        }
+    };
+    let (dir, name) = match out_path.iter().rposition(|&c| c == b'/') {
+        Some(i) => (&out_path[..i.max(1)], &out_path[i + 1..]),
+        None => (&b"."[..], &out_path[..]),
+    };
+    let dir_fd = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), dir) {
+        Ok(fd) => fd,
+        Err(e) => {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "embedImage: cannot open directory {}: {:?}",
+                bstr::BStr::new(dir),
+                e
+            )));
+        }
+    };
+    let vm = global.bun_vm();
+    // SAFETY: process-lifetime loader owned by the VM.
+    let env = unsafe { &mut *vm.transpiler.env };
+    match bun_standalone_graph::StandaloneModuleGraph::embed_image_into_executable(
+        &exe_path, &image, dir_fd, name, env,
+    ) {
+        Ok(bun_standalone_graph::StandaloneModuleGraph::CompileResult::Err(err)) => Err(global
+            .throw_invalid_arguments(format_args!("embedImage: {}", bstr::BStr::new(err.slice())))),
+        Ok(_) => Ok(JSValue::js_number(image.len() as f64)),
+        Err(e) => Err(global.throw_invalid_arguments(format_args!("embedImage: {}", e.name()))),
+    }
 }

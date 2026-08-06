@@ -1904,6 +1904,78 @@ pub fn append_image_to_serialized(bytes: &[u8], image: &[u8]) -> Option<Vec<u8>>
     Some(out)
 }
 
+/// Embed a heap image into an *existing* compiled executable (what `--compile-image` pass 2 does, for build pipelines that use the
+/// `Bun.build({compile})` API): recover the exact section payload from the file (`[body][Offsets][TRAILER]`), append the page-aligned
+/// image, and re-emit through the normal inject/sign path with `exe_path` as the template.
+pub fn embed_image_into_executable(
+    exe_path: &[u8],
+    image: &[u8],
+    out_dir: Fd,
+    out_name: &[u8],
+    env: &mut bun_dotenv::Loader,
+) -> crate::Result<CompileResult> {
+    let file = match std::fs::read(String::from_utf8_lossy(exe_path).as_ref()) {
+        Ok(f) => f,
+        Err(_) => {
+            return Ok(CompileResult::fail_fmt(format_args!(
+                "could not read {}",
+                bstr::BStr::new(exe_path)
+            )));
+        }
+    };
+    // The payload's trailer is the last TRAILER occurrence in the file (the section is the last thing before __LINKEDIT / appended on ELF).
+    let Some(tpos) = file.windows(TRAILER.len()).rposition(|w| w == TRAILER) else {
+        return Ok(CompileResult::fail_fmt(format_args!(
+            "{} is not a `bun build --compile` executable (no trailer)",
+            bstr::BStr::new(exe_path)
+        )));
+    };
+    if tpos < size_of::<Offsets>() {
+        return Ok(CompileResult::fail_fmt(format_args!(
+            "corrupt trailer in {}",
+            bstr::BStr::new(exe_path)
+        )));
+    }
+    let opos = tpos - size_of::<Offsets>();
+    // SAFETY: bounds checked; Offsets is repr(C) POD.
+    let offsets: Offsets =
+        unsafe { core::ptr::read_unaligned(file[opos..].as_ptr().cast::<Offsets>()) };
+    if offsets.byte_count > opos {
+        return Ok(CompileResult::fail_fmt(format_args!(
+            "corrupt payload length in {}",
+            bstr::BStr::new(exe_path)
+        )));
+    }
+    if offsets.image.length != 0 {
+        return Ok(CompileResult::fail_fmt(format_args!(
+            "{} already has an embedded image",
+            bstr::BStr::new(exe_path)
+        )));
+    }
+    let payload = &file[opos - offsets.byte_count..tpos + TRAILER.len()];
+    let Some(new_payload) = append_image_to_serialized(payload, image) else {
+        return Ok(CompileResult::fail_fmt(format_args!(
+            "could not append image"
+        )));
+    };
+    drop(file);
+    to_executable(
+        &CompileTarget::default(),
+        &[],
+        out_dir,
+        b"",
+        out_name,
+        env,
+        Format::Esm,
+        &WindowsOptions::default(),
+        b"",
+        Some(exe_path),
+        Flags::default(),
+        Some(&new_payload),
+        None,
+    )
+}
+
 pub fn to_executable(
     target: &CompileTarget,
     output_files: &[OutputFile],

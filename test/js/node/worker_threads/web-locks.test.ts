@@ -277,7 +277,11 @@ describe("basic behavior", () => {
     });
     // the late shared request cannot join the held shared lock because an
     // exclusive request is ahead of it in the queue
-    const joined = await navigator.locks.request("fairness", { mode: "shared", ifAvailable: true }, lock => lock !== null);
+    const joined = await navigator.locks.request(
+      "fairness",
+      { mode: "shared", ifAvailable: true },
+      lock => lock !== null,
+    );
     expect(joined).toBe(false);
     releaseShared.resolve();
     await Promise.all([first, excl, lateShared]);

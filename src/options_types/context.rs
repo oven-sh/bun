@@ -556,16 +556,39 @@ pub struct RuntimeOptions {
     pub cron_period: Box<[u8]>,
     pub cpu_prof: CpuProf,
     pub heap_prof: HeapProf,
+    /// `--check` / `-c`: parse the entry point (or stdin) without executing it,
+    /// like Node.js.
+    pub check_syntax: bool,
+    /// `--permission` was passed. The permission model itself is not yet
+    /// implemented on this branch; recorded so startup can emit a
+    /// `process.emitWarning` instead of silently running unsandboxed.
+    pub permission_flag: bool,
 }
 
 #[derive(Default)]
 pub struct Eval {
     pub script: Box<[u8]>,
     pub eval_and_print: bool,
+    /// True when `-e`/`-p` was passed at all (Node's `has_eval_string`):
+    /// distinguishes an empty script from an absent one so `bun -e ""` runs
+    /// an empty program and bare `bun -p` prints undefined.
+    pub provided: bool,
+    /// `--input-type`: module type for string input (stdin / `--eval`),
+    /// "module" or "commonjs". Empty when not passed.
+    pub input_type: Box<[u8]>,
     /// Under `--interactive`, `script` holds the node:repl bootstrap; this
     /// holds the user's actual `-e` bytes so `process._eval` reports them
     /// (or `undefined` when empty). `None` = not `--interactive`.
     pub interactive_script: Option<Box<[u8]>>,
+}
+
+impl Eval {
+    /// Whether an eval entry point should run: `-e`/`-p` was passed (even with
+    /// an empty script), or an internal path (piped stdin, `--check`'s no-op
+    /// entry) staged a script to run instead of a file.
+    pub fn has_entry(&self) -> bool {
+        self.provided || !self.script.is_empty()
+    }
 }
 
 pub struct CpuProf {
@@ -623,6 +646,8 @@ impl Default for RuntimeOptions {
             cron_period: Box::default(),
             cpu_prof: CpuProf::default(),
             heap_prof: HeapProf::default(),
+            check_syntax: false,
+            permission_flag: false,
         }
     }
 }

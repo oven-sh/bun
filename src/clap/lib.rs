@@ -224,6 +224,14 @@ pub enum Values {
     One,
     Many,
     OneOptional,
+    /// Like [`Values::One`], but a separate following argument that starts
+    /// with '-' is never consumed as the value (Node's behavior for `-e`):
+    /// the parse fails with a missing value instead.
+    OneNoDashValue,
+    /// Like [`Values::OneOptional`], but a separate following arg is only the
+    /// value when it does not start with '-' (Node's `-p`), and a short-cluster
+    /// remainder stays in the cluster (`-pe` is `-p` then `-e`).
+    OneOptionalNoDashValue,
 }
 
 /// Represents a parameter for the command line.
@@ -296,6 +304,22 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
+    /// The argument as written, with its leading dashes stripped. For a long
+    /// flag with an attached `=` this retains the `=` (e.g. `--eval=` yields
+    /// `b"eval="`), mirroring what the user typed.
+    pub fn arg(&self) -> &[u8] {
+        &self.arg
+    }
+    /// Short flag letter that failed, when the failing argument was a short.
+    pub fn short(&self) -> Option<u8> {
+        self.short
+    }
+    /// Long flag name (no leading `--`) that failed, when the failing argument
+    /// was a long.
+    pub fn long(&self) -> Option<&[u8]> {
+        self.long.as_deref()
+    }
+
     /// Default diagnostics reporter when all you want is English with no colors.
     /// Use this as a reference for implementing your own if needed.
     ///

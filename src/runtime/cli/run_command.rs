@@ -971,7 +971,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let entry: &[u8] = unsafe { &*entry_ptr };
         vm.set_main(entry);
 
-        if !ctx.runtime_options.eval.script.is_empty() {
+        if ctx.runtime_options.eval.has_entry() {
             // SAFETY: `ctx.runtime_options.eval.script` is process-lifetime
             // (CLI argv); erase the borrow lifetime so the `Source` (stored in
             // the VM for the process duration) can backref into it.
@@ -1387,6 +1387,22 @@ impl Run {
 
         self.add_conditional_globals();
 
+        // `--permission` is accepted but the model is not yet implemented here;
+        // warn so a caller expecting Node's sandbox is not silently unsandboxed.
+        if ctx.runtime_options.permission_flag {
+            let global = vm.global();
+            let mut msg = bun_core::String::static_(
+                b"--permission is not yet implemented in Bun. The permission model is not enforced.",
+            );
+            let mut kind = bun_core::String::static_(b"SecurityWarning");
+            if let Ok(msg_js) = bun_jsc::bun_string_jsc::transfer_to_js(&mut msg, global)
+                && let Ok(kind_js) = bun_jsc::bun_string_jsc::transfer_to_js(&mut kind, global)
+            {
+                let _ =
+                    global.emit_warning(msg_js, kind_js, JSValue::UNDEFINED, JSValue::UNDEFINED);
+            }
+        }
+
         // ── redis preconnect (must run under the API lock) ─────────────────
         'do_redis_preconnect: {
             if !ctx.runtime_options.redis_preconnect {
@@ -1568,50 +1584,39 @@ impl Run {
                 vm.auto_tick_active();
             }
 
-            if ctx.runtime_options.eval.eval_and_print {
-                let to_print: JSValue = 'brk: {
-                    let result = vm
-                        .entry_point_result
-                        .value
-                        .get()
-                        .unwrap_or(JSValue::UNDEFINED);
-                    if let Some(promise) = result.as_any_promise() {
-                        match promise.status() {
-                            PromiseStatus::Pending => {
-                                // C-ABI shims are emitted by
-                                // `generate-host-exports.ts` into
-                                // `crate::generated_host_exports` under their
-                                // link name (`Bun__on…EntryPointResult`).
-                                result.then2(
-                                    vm.global(),
-                                    JSValue::UNDEFINED,
-                                    crate::generated_host_exports::Bun__onResolveEntryPointResult,
-                                    crate::generated_host_exports::Bun__onRejectEntryPointResult,
-                                );
-                                vm.tick();
-                                vm.auto_tick_active();
-                                while vm.is_event_loop_alive() {
-                                    vm.tick();
-                                    vm.auto_tick_active();
-                                }
-                                break 'brk result;
-                            }
-                            _ => break 'brk promise.result(vm.jsc_vm()),
-                        }
-                    }
-                    result
+            // `--print` output is handled by internal/eval_print.ts (registered
+            // when the eval entry point's completion value is captured): it
+            // prints on beforeExit/exit, like Node.
+
+            // `--check`: the entry that just ran was a no-op stand-in (see
+            // `exec_check`); syntax-check the real target now that preloads
+            // (which may override the CommonJS module wrapper) have run.
+            if let Some((source, name, module_type)) = CHECK_SYNTAX_TARGET.get() {
+                unsafe extern "C" {
+                    fn Bun__checkSyntaxForCLI(
+                        global: *const JSGlobalObject,
+                        source_ptr: *const u8,
+                        source_len: usize,
+                        name_ptr: *const u8,
+                        name_len: usize,
+                        module_type: i32,
+                    ) -> i32;
+                }
+                // SAFETY: FFI; `vm.global` is live for the VM lifetime and the
+                // slices live in the process-lifetime `CHECK_SYNTAX_TARGET`.
+                let failed = unsafe {
+                    Bun__checkSyntaxForCLI(
+                        vm.global,
+                        source.as_ptr(),
+                        source.len(),
+                        name.as_ptr(),
+                        name.len(),
+                        *module_type,
+                    )
                 };
-                // SAFETY: `vals[..1]` is the single stack `to_print`; null
-                // `ctype` routes to the VM's stdout/stderr default.
-                unsafe {
-                    bun_jsc::ConsoleObject::message_with_type_and_level(
-                        ::core::ptr::null_mut(),
-                        bun_jsc::ConsoleObject::MessageType::Log,
-                        bun_jsc::ConsoleObject::MessageLevel::Log,
-                        vm.global(),
-                        &raw const to_print,
-                        1,
-                    );
+                Output::flush();
+                if failed != 0 {
+                    vm.exit_handler.exit_code = 1;
                 }
             }
 
@@ -2970,6 +2975,96 @@ impl RunCommand {
         Self::boot(ctx, entry, None)
     }
 
+    /// `--check` / `-c`: read the entry (or stdin), boot with a no-op eval so
+    /// `--require` preloads still run like `node --check`, then syntax-check in
+    /// `Run::start`. https://github.com/nodejs/node/blob/main/lib/internal/main/check_syntax.js
+    pub(crate) fn exec_check(ctx: &mut ContextData, tag: CommandTag) -> crate::Result<()> {
+        // RunCommand prepends a literal "run" positional (Auto/RunAsNode do
+        // not); strip it so the file lookup and `exec_eval` see only user args.
+        if tag == CommandTag::RunCommand
+            && ctx
+                .positionals
+                .first()
+                .is_some_and(|p| p.as_ref() == b"run")
+        {
+            ctx.positionals.remove(0);
+        }
+
+        let (source, display_name): (Box<[u8]>, Box<[u8]>) = if !ctx.positionals.is_empty() {
+            // Resolve the file argument against cwd, like a normal entry point.
+            let mut cwd_buf = PathBuffer::uninit();
+            let cwd = bun_core::getcwd(&mut cwd_buf)?;
+            let abs: Box<[u8]> =
+                paths::resolve_path::join_abs::<paths::resolve_path::platform::Auto>(
+                    cwd.as_bytes(),
+                    &ctx.positionals[0],
+                )
+                .to_vec()
+                .into_boxed_slice();
+
+            let mut contents = sys::File::openat(Fd::cwd(), &abs, sys::O::RDONLY, 0)
+                .and_then(|file| file.read_to_end());
+            let mut resolved = abs;
+            if contents.is_err() && !resolved.ends_with(b".js") {
+                // Node resolves the --check target like require(): an
+                // extensionless path falls back to "<path>.js".
+                let mut with_js = resolved.to_vec();
+                with_js.extend_from_slice(b".js");
+                let with_js: Box<[u8]> = with_js.into_boxed_slice();
+                if let Ok(bytes) = sys::File::openat(Fd::cwd(), &with_js, sys::O::RDONLY, 0)
+                    .and_then(|file| file.read_to_end())
+                {
+                    contents = Ok(bytes);
+                    resolved = with_js;
+                }
+            }
+            match contents {
+                Ok(bytes) => (bytes.into_boxed_slice(), resolved),
+                Err(_) => {
+                    // Same first line as Node's loader for a missing --check target.
+                    pretty_errorln!("Error: Cannot find module '{}'", bstr::BStr::new(&resolved));
+                    Output::flush();
+                    Global::exit(1);
+                }
+            }
+        } else {
+            // No file argument: check stdin, like `node --check` with piped input.
+            let mut list: Vec<u8> = Vec::new();
+            if let Err(err) = sys::File::stdin().read_to_end_into(&mut list) {
+                pretty_errorln!("Error: reading stdin: {}", err);
+                Output::flush();
+                Global::exit(1);
+            }
+            (list.into_boxed_slice(), Box::from(&b"[stdin]"[..]))
+        };
+
+        // 0 = detect (CommonJS first, then ES module), 1 = CommonJS, 2 = ES module.
+        let module_type: i32 = match &*ctx.runtime_options.eval.input_type {
+            b"module" => 2,
+            b"commonjs" => 1,
+            _ => {
+                if display_name.ends_with(b".mjs") {
+                    2
+                } else if display_name.ends_with(b".cjs") {
+                    1
+                } else {
+                    0
+                }
+            }
+        };
+        let _ = CHECK_SYNTAX_TARGET.set((source, display_name, module_type));
+
+        // No-op eval entry so preloads run and a JSC global exists. Sanitize
+        // eval state leaked from arg parsing (bare `-p`, `process._eval`):
+        // empty `interactive_script` makes `process._eval` report `undefined`.
+        ctx.runtime_options.eval.eval_and_print = false;
+        ctx.runtime_options.eval.provided = false;
+        ctx.runtime_options.eval.interactive_script = Some(Box::default());
+        ctx.runtime_options.eval.script = Box::from(&b"\n"[..]);
+        ctx.debug.hot_reload = cli::command::HotReload::None;
+        Self::exec_eval(ctx)
+    }
+
     /// `node` argv0 emulation. Port of `execAsIfNode`.
     pub(crate) fn exec_as_if_node(ctx: &mut ContextData) -> crate::Result<()> {
         // SAFETY: single-threaded CLI startup; `PRETEND_TO_BE_NODE` is set in
@@ -2981,6 +3076,10 @@ impl RunCommand {
         // values. Explicit `--env-file` is still honored. #6338
         ctx.args.disable_default_env_files = true;
 
+        if ctx.runtime_options.check_syntax {
+            return Self::exec_check(ctx, CommandTag::RunAsNodeCommand);
+        }
+
         // `node --interactive [-e code]`: same gate as AutoCommand — a script
         // positional wins, and `-p` currently bypasses the REPL (see mod.rs).
         if ctx.runtime_options.interactive
@@ -2990,7 +3089,7 @@ impl RunCommand {
             return Self::exec_node_repl(ctx);
         }
 
-        if !ctx.runtime_options.eval.script.is_empty() {
+        if ctx.runtime_options.eval.has_entry() {
             // synthetic `[eval]` path under cwd
             let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
             let mut cwd_buf = PathBuffer::uninit();
@@ -3092,6 +3191,12 @@ impl RunCommand {
 const EVAL_TRIGGER: &[u8] = b"\\[eval]";
 #[cfg(not(windows))]
 const EVAL_TRIGGER: &[u8] = b"/[eval]";
+
+/// `--check` target: (source, display name, module type 0=detect/1=CJS/2=ESM).
+/// Set in `exec_check` before `boot()`, read in `Run::start`. CLI-process
+/// (not per-VM) state: `--check` only ever applies to the one CLI entry point.
+static CHECK_SYNTAX_TARGET: std::sync::OnceLock<(Box<[u8]>, Box<[u8]>, i32)> =
+    std::sync::OnceLock::new();
 
 /// Escape `\ " \n \r \t` for
 /// embedding in a double-quoted JS string literal. Used by the cron-execution

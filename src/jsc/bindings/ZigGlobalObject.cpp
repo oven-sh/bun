@@ -3909,7 +3909,29 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
-extern "C" void Bun__VM__setEntryPointEvalResultESM(void*, EncodedJSValue);
+
+// `bun --print`: hand the eval entry's completion value to internal/eval_print.ts
+// (prints on beforeExit/exit, like Node's runScriptInContext). `awaitFirst` is set
+// when `result` is a TLA module's async-capability promise, not a user value.
+extern "C" void Bun__registerEvalPrintOnExit(Zig::GlobalObject* globalObject, JSC::EncodedJSValue encodedResult, bool awaitFirst)
+{
+    if (!JSC::Options::evalMode())
+        return;
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue registerFn = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::Field::InternalEvalPrint);
+    RETURN_IF_EXCEPTION(scope, );
+    ASSERT(registerFn.isCallable());
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(JSValue::decode(encodedResult));
+    arguments.append(jsBoolean(awaitFirst));
+
+    JSC::call(globalObject, registerFn, arguments, "Bun__registerEvalPrintOnExit"_s);
+    RETURN_IF_EXCEPTION(scope, );
+}
 
 JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,
     JSModuleLoader* moduleLoader, JSValue key,
@@ -3939,18 +3961,22 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
         //
         // Instead, when the module yielded, capture the async capability's
         // promise. Its resolution value is the module's final completion
-        // value; the --print loop in run_command.rs already unwraps promises
-        // via asAnyPromise + Bun__onResolveEntryPointResult.
+        // value; internal/eval_print.ts unwraps it (awaitFirst) before
+        // printing.
         JSC::JSValue valueToStore = result;
+        bool storedAsyncCapability = false;
         if (auto* moduleRecord = dynamicDowncast<JSC::AbstractModuleRecord>(moduleRecordValue)) {
             JSC::JSValue state = moduleRecord->internalField(JSC::AbstractModuleRecord::Field::State).get();
             bool moduleYielded = state.isNumber() && state.asNumber() != static_cast<int32_t>(JSC::JSGenerator::State::Executing);
             if (moduleYielded) {
-                if (auto* capability = moduleRecord->asyncCapability())
+                if (auto* capability = moduleRecord->asyncCapability()) {
                     valueToStore = capability;
+                    storedAsyncCapability = true;
+                }
             }
         }
-        Bun__VM__setEntryPointEvalResultESM(globalObject->bunVM(), JSValue::encode(valueToStore));
+        Bun__registerEvalPrintOnExit(globalObject, JSValue::encode(valueToStore), storedAsyncCapability);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return result;
@@ -4073,10 +4099,6 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onHandlerResolve;
     } else if (handler == Bun__HTMLRewriter__onHandlerReject) {
         return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onHandlerReject;
-    } else if (handler == Bun__onResolveEntryPointResult) {
-        return GlobalObject::PromiseFunctions::Bun__onResolveEntryPointResult;
-    } else if (handler == Bun__onRejectEntryPointResult) {
-        return GlobalObject::PromiseFunctions::Bun__onRejectEntryPointResult;
     } else if (handler == Bun__NodeHTTPRequest__onResolve) {
         return GlobalObject::PromiseFunctions::Bun__NodeHTTPRequest__onResolve;
     } else if (handler == Bun__NodeHTTPRequest__onReject) {

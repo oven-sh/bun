@@ -1086,7 +1086,8 @@ test.concurrent("--parallel=max:N caps the auto-detected worker count", async ()
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
     return Number(stdout.match(/(\d+)x PARALLEL/)?.[1]);
   };
@@ -1107,7 +1108,7 @@ test.concurrent.each(["--parallel=max:0", "--parallel=max:", "--parallel=max:abc
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain('--parallel expects a positive integer or "max:N"');
   expect(exitCode).toBe(1);
 });

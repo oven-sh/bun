@@ -118,27 +118,33 @@ it("Bun.TOML.parse throws on deeply nested inline tables instead of crashing", (
 // only hit when the parsed AST is converted to a JS object at import time.
 const deepDottedToml = "[" + Buffer.alloc(250_000 * 2, "a.").toString() + "a]\nd = 1\n";
 
-it.concurrent("importing a deeply nested table header throws instead of crashing", async () => {
-  using dir = tempDir("toml-deep-import", {
-    "deep.toml": deepDottedToml,
-    "main.js": `import d from "./deep.toml";\nconsole.log("unreachable");`,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.js"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("");
-  expect(stderr).toContain("RangeError: Maximum call stack size exceeded");
-  expect(exitCode).toBe(1);
-}, 30_000);
+it.concurrent(
+  "importing a deeply nested table header throws instead of crashing",
+  async () => {
+    using dir = tempDir("toml-deep-import", {
+      "deep.toml": deepDottedToml,
+      "main.js": `import d from "./deep.toml";\nconsole.log("unreachable");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("RangeError: Maximum call stack size exceeded");
+    expect(exitCode).toBe(1);
+  },
+  30_000,
+);
 
-it.concurrent("dynamic import of a deeply nested table header is catchable", async () => {
-  using dir = tempDir("toml-deep-dynamic", {
-    "deep.toml": deepDottedToml,
-    "main.js": `
+it.concurrent(
+  "dynamic import of a deeply nested table header is catchable",
+  async () => {
+    using dir = tempDir("toml-deep-dynamic", {
+      "deep.toml": deepDottedToml,
+      "main.js": `
       try {
         await import("./deep.toml");
         console.log("no-throw");
@@ -146,14 +152,16 @@ it.concurrent("dynamic import of a deeply nested table header is catchable", asy
         console.log("caught:", e.name);
       }
     `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.js"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("caught: RangeError\n");
-  expect(exitCode).toBe(0);
-}, 30_000);
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("caught: RangeError\n");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);

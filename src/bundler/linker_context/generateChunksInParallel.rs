@@ -275,6 +275,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // so unprintable parts keep the old dropped-code behavior there.
         if !IS_DEV_SERVER {
             let mut had_print_error = false;
+            // Without code splitting a failing file is printed once per chunk
+            // that includes it; report each file once.
+            let mut reported_sources = AutoBitSet::init_empty(c.parse_graph().input_files.len())?;
             for chunk in chunks.iter() {
                 for compile_result in chunk.compile_results_for_chunk.iter() {
                     let message: Cow<'static, [u8]> = match compile_result {
@@ -301,8 +304,15 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     };
                     had_print_error = true;
                     let source_index = compile_result.source_index();
-                    let source =
-                        (source_index != Index::INVALID.get()).then(|| c.get_source(source_index));
+                    let source = if source_index != Index::INVALID.get() {
+                        if reported_sources.is_set(source_index as usize) {
+                            continue;
+                        }
+                        reported_sources.set(source_index as usize);
+                        Some(c.get_source(source_index))
+                    } else {
+                        None
+                    };
                     c.log_mut().add_error(source, bun_ast::Loc::EMPTY, message);
                 }
             }

@@ -568,6 +568,23 @@ describe("Bun.build", () => {
     expect(x.logs[0].name).toBe("BuildMessage");
   });
 
+  test.concurrent("reports a module that fails to print once across entrypoints", async () => {
+    // Without code splitting the failing file is printed once per entry
+    // chunk; the error is still per-file, like parse errors.
+    using dir = tempDir("build-api-deep-toml-multi", {
+      "deep.toml": "[" + Buffer.alloc(200_000, "a.").toString() + "a]\nd = 1\n",
+      "a.js": `import d from "./deep.toml"; console.log(d);`,
+      "b.js": `import d from "./deep.toml"; console.log(Object.keys(d));`,
+    });
+    const x = await buildNoThrow({
+      entrypoints: [join(String(dir), "a.js"), join(String(dir), "b.js")],
+      outdir: join(String(dir), "out"),
+    });
+    expect(x.success).toBe(false);
+    expect(x.logs).toHaveLength(1);
+    expect(x.logs[0].message).toContain("Maximum call stack size exceeded while generating code for this file");
+  });
+
   test.concurrent("warnings do not fail a build", async () => {
     const x = await Bun.build({
       entrypoints: [join(import.meta.dir, "./fixtures/jsx-warning/index.jsx")],

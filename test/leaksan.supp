@@ -136,7 +136,7 @@ leak:napi_internal_enqueue_finalizer
 # region, so the libc-allocated UCalendar it holds is reported as a direct
 # leak even though it is reachable and bounded.
 leak:TemporalCore::withTimeZone
-# test/js/web/temporal/temporal.test.ts
+# test/js/bun/bun-object/deep-equals-temporal.test.ts
 # The calendar twin of withTimeZone above: up to 8 open UCalendars in a
 # process-lifetime LazyNeverDestroyed TinyLRUCache, one per calendar ID
 # (non-ISO arithmetic, plus pure-ISO PlainDateTime.prototype.with); LRU

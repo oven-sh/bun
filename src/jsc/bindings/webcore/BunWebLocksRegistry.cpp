@@ -5,6 +5,7 @@
 #include "ZigGlobalObject.h"
 #include <wtf/Locker.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/SetForScope.h>
 
 namespace WebCore {
 
@@ -135,7 +136,7 @@ void BunWebLocksRegistry::processQueue(Zig::GlobalObject* selfGlobalObject)
     static thread_local bool processingQueue = false;
     if (processingQueue)
         return;
-    processingQueue = true;
+    SetForScope processingScope { processingQueue, true };
 
     ScriptExecutionContextIdentifier self = 0;
     if (selfGlobalObject) {
@@ -184,8 +185,6 @@ void BunWebLocksRegistry::processQueue(Zig::GlobalObject* selfGlobalObject)
             deliverEvents(nullptr, 0, WTF::move(eventsByContext));
         }
     }
-
-    processingQueue = false;
 }
 
 uint64_t BunWebLocksRegistry::allocateId()

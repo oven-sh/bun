@@ -3484,6 +3484,22 @@ config:
         expect(YAML.stringify(obj, null, 2)).toBe("num: \n  3.14\nstr: world\nbool: \n  false");
       });
 
+      test("propagates exceptions thrown while unwrapping boxed primitives", () => {
+        const boxedString = new String("x");
+        boxedString.toString = () => {
+          throw new Error("boom string");
+        };
+        expect(() => YAML.stringify(boxedString)).toThrow("boom string");
+        expect(() => YAML.stringify({ a: boxedString })).toThrow("boom string");
+
+        const boxedNumber = new Number(5);
+        boxedNumber.valueOf = () => {
+          throw new Error("boom number");
+        };
+        expect(() => YAML.stringify(boxedNumber)).toThrow("boom number");
+        expect(() => YAML.stringify([boxedNumber])).toThrow("boom number");
+      });
+
       test("handles Date objects", () => {
         // Date objects get converted to ISO string via toString()
         const date = new Date("2024-01-15T10:30:00Z");

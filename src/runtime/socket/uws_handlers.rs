@@ -8,6 +8,10 @@
 //! old `NewSocketHandler.configure`/`unsafeConfigure` machinery, which built
 //! the same trampolines at runtime per `us_socket_context_t`.
 
+// `swallow()` uniformly sinks `()` and `Result<(), E>` consumers; passing the
+// unit-returning ones through it is the point, not an accident.
+#![allow(clippy::unit_arg)]
+
 use bun_ptr::ThisPtr;
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;

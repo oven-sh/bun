@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import vm from "node:vm";
 
 describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
@@ -170,6 +171,28 @@ describe.each([true, false])("Bun.deepEquals on Temporal values (strict: %p)", s
     // Field-wise, not balanced: one hour and sixty minutes are different Durations.
     [() => Temporal.Duration.from("PT1H"), () => Temporal.Duration.from("PT60M")],
     [() => Temporal.Duration.from("PT1H"), () => Temporal.Duration.from("-PT1H")],
+    // Every remaining Duration unit distinguishes values.
+    [() => Temporal.Duration.from({ years: 1 }), () => Temporal.Duration.from({ years: 2 })],
+    [() => Temporal.Duration.from({ months: 1 }), () => Temporal.Duration.from({ months: 2 })],
+    [() => Temporal.Duration.from({ weeks: 1 }), () => Temporal.Duration.from({ weeks: 2 })],
+    [() => Temporal.Duration.from({ days: 1 }), () => Temporal.Duration.from({ days: 2 })],
+    [() => Temporal.Duration.from({ minutes: 1 }), () => Temporal.Duration.from({ minutes: 2 })],
+    [() => Temporal.Duration.from({ seconds: 1 }), () => Temporal.Duration.from({ seconds: 2 })],
+    [() => Temporal.Duration.from({ milliseconds: 1 }), () => Temporal.Duration.from({ milliseconds: 2 })],
+    [() => Temporal.Duration.from({ microseconds: 1 }), () => Temporal.Duration.from({ microseconds: 2 })],
+    [() => Temporal.Duration.from({ nanoseconds: 1 }), () => Temporal.Duration.from({ nanoseconds: 2 })],
+    // The calendar distinguishes values for every calendar-bearing class.
+    [() => Temporal.PlainDate.from("2024-06-15"), () => Temporal.PlainDate.from("2024-06-15[u-ca=hebrew]")],
+    [
+      () => Temporal.PlainDateTime.from("2024-06-15T12:34:56"),
+      () => Temporal.PlainDateTime.from("2024-06-15T12:34:56[u-ca=hebrew]"),
+    ],
+    [
+      () => Temporal.ZonedDateTime.from("2024-06-15T12:34:56+02:00[Europe/Berlin]"),
+      () => Temporal.ZonedDateTime.from("2024-06-15T12:34:56+02:00[Europe/Berlin][u-ca=hebrew]"),
+    ],
+    [() => Temporal.PlainYearMonth.from("2024-06"), () => Temporal.PlainYearMonth.from("2024-06-15[u-ca=hebrew]")],
+    [() => Temporal.PlainMonthDay.from("06-15"), () => Temporal.PlainMonthDay.from("2024-06-15[u-ca=hebrew]")],
   ])("different values of the same class are not equal (case %#)", (makeA, makeB) => {
     expect(deepEquals(makeA(), makeB())).toBe(false);
     expect(deepEquals(makeB(), makeA())).toBe(false);
@@ -229,5 +252,26 @@ describe("expect().toEqual on Temporal values", () => {
     expect(Temporal.Instant.from("2024-06-15T12:34:56Z")).not.toEqual(Temporal.Instant.from("2024-06-15T12:34:57Z"));
     expect({ d: Temporal.PlainTime.from("07:32:00") }).toEqual({ d: Temporal.PlainTime.from("07:32:00") });
     expect({ d: Temporal.PlainTime.from("07:32:00") }).not.toEqual({ d: Temporal.PlainTime.from("07:32:01") });
+  });
+
+  it("ignores extra own properties in toEqual and toStrictEqual, matching Date", () => {
+    const withExtra = Object.assign(Temporal.PlainDate.from("2024-06-15"), { extra: 1 });
+    expect(withExtra).toEqual(Temporal.PlainDate.from("2024-06-15"));
+    expect(withExtra).toStrictEqual(Temporal.PlainDate.from("2024-06-15"));
+    expect(Temporal.PlainDate.from("2024-06-15")).toEqual(withExtra);
+  });
+});
+
+describe("util.isDeepStrictEqual on Temporal values", () => {
+  it("compares by value", () => {
+    expect(isDeepStrictEqual(Temporal.PlainDate.from("2024-06-15"), Temporal.PlainDate.from("2024-06-15"))).toBe(true);
+    expect(isDeepStrictEqual(Temporal.PlainDate.from("2020-01-01"), Temporal.PlainDate.from("1999-12-31"))).toBe(false);
+    expect(
+      isDeepStrictEqual(Temporal.Instant.from("2024-06-15T12:34:56Z"), Temporal.Instant.from("2024-06-15T12:34:56Z")),
+    ).toBe(true);
+    expect(
+      isDeepStrictEqual(Temporal.Instant.from("2024-06-15T12:34:56Z"), Temporal.Instant.from("2024-06-15T12:34:57Z")),
+    ).toBe(false);
+    expect(isDeepStrictEqual(Temporal.Duration.from("PT1H"), Temporal.Duration.from("PT60M"))).toBe(false);
   });
 });

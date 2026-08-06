@@ -1101,3 +1101,44 @@ devTest("multiple unprintable @imports are each reported", {
     await c.style(".b").color.expect.toBe("#00f");
   },
 });
+// The route's failure flag is only reset by an HTTP request, so a client that
+// recovers purely over hot updates used to be stuck with a css list that
+// never retraced, dropping later stylesheet additions.
+devTest("css list updates after a failure recovered over hot updates", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["main.css"],
+      scripts: ["index.ts"],
+      body: "hello",
+    }),
+    "index.ts": `import.meta.hot.accept();\nimport "./a.css";\n`,
+    "main.css": `.base { color: red; }\n`,
+    "a.css": `.a { color: red; }\n`,
+    "b.css": `.b { color: green; }\n`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".a").color.expect.toBe("red");
+
+    // Break and fix a.css entirely over hot updates; no page request.
+    await dev.write(
+      "a.css",
+      Array.from({ length: 30 }, (_, i) => `.x${i}:fullscreen {`).join("\n") +
+        "\ncolor: red;\n" +
+        Buffer.alloc(30, "}").toString() +
+        "\n",
+      {
+        dedent: false,
+        errors: ["a.css: error: Failed to generate CSS for this file (PrintError)"],
+      },
+    );
+    await dev.write("a.css", ".a { color: blue; }\n", { dedent: false });
+    await c.style(".a").color.expect.toBe("#00f");
+
+    // A new stylesheet import must still reach the page.
+    await dev.write("index.ts", `import.meta.hot.accept();\nimport "./a.css";\nimport "./b.css";\n`, {
+      dedent: false,
+    });
+    await c.style(".b").color.expect.toBe("green");
+  },
+});

@@ -4123,11 +4123,17 @@ pub(super) fn finalize_bundle(
                 &log,
                 false,
             )?;
+            let file_index = dev
+                .client_graph
+                .get_file_index(entry_key)
+                .expect("insert_failure registered the entry");
             // Cache the entry's file index so pass 2 still diffs the chunk's
             // `@import` edges; editing an imported child file must find the
             // edge to re-enqueue this chunk.
             *ctx.get_cached_index(bake::Side::Client, index) =
-                CachedFileIndex::from(dev.client_graph.get_file_index(entry_key));
+                CachedFileIndex::from(Some(file_index));
+            dev.client_graph
+                .restore_failed_css_root(file_index, hash(entry_key));
             // Keep the server-graph stub so server-side route tracing can
             // bridge to the failed client entry (mirrors the success path).
             if metadata.imported_on_server {
@@ -4624,14 +4630,10 @@ pub(super) fn finalize_bundle(
             }
             w_int!(i32, i32::try_from(i).expect("int cast"));
 
-            // SAFETY: statement-scoped read; no `&mut` into `*route_bundle` is live.
-            let route_has_failures = unsafe { (*route_bundle).server_state }
-                == route_bundle::State::PossibleBundlingFailures;
             // If no edges were changed, then it is impossible to
-            // change the list of CSS files. A route with bundling failures
-            // keeps its previous list: tracing it would drop the failed
-            // chunk (css ids are path-stable, so recovery reuses them).
-            if had_adjusted_edges && !route_has_failures {
+            // change the list of CSS files. Failed chunk entries keep their
+            // css slot in the trace, so the list stays complete while broken.
+            if had_adjusted_edges {
                 ctx.gts.clear();
                 dev.client_graph.current_css_files.clear();
                 // SAFETY: `trace_all_route_imports` does not mutate `route_bundles`;

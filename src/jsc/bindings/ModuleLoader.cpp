@@ -33,6 +33,7 @@
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSMapInlines.h>
+#include <wtf/Scope.h>
 
 #include "../modules/ObjectModule.h"
 #include "JSCommonJSModule.h"
@@ -330,6 +331,14 @@ static OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSV
     return handleOnLoadResultNotPromise(globalObject, objectValue, specifier, wasModuleMock);
 }
 
+// A rejected fetch promise makes JSC cache the failure in its module registry,
+// which then hands later importers a rebuilt copy of the error. Remember the key
+// so the next import drops the entry (see dropFailedPluginModuleEntry).
+static void didFailToLoadVirtualModule(Zig::GlobalObject* globalObject, BunString* specifier)
+{
+    globalObject->onLoadPlugins.didFailToLoad(specifier->toWTFString());
+}
+
 template<bool allowPromise>
 static JSValue handleVirtualModuleResult(
     Zig::GlobalObject* globalObject,
@@ -348,6 +357,10 @@ static JSValue handleVirtualModuleResult(
 
     const auto reject = [&](JSC::JSValue exception) -> JSValue {
         if constexpr (allowPromise) {
+            // require() turns this rejection back into a throw, so only the ESM
+            // fetch hook hands the failure to the module registry.
+            if (!commonJSModule)
+                didFailToLoadVirtualModule(globalObject, specifier);
             return rejectedInternalPromise(globalObject, exception);
         } else {
             throwException(globalObject, scope, exception);
@@ -369,6 +382,8 @@ static JSValue handleVirtualModuleResult(
         if (auto* exception = scope.exception()) {
             if constexpr (allowPromise) {
                 (void)scope.tryClearException();
+                if (!commonJSModule)
+                    didFailToLoadVirtualModule(globalObject, specifier);
                 RELEASE_AND_RETURN(scope, rejectedInternalPromise(globalObject, exception));
             } else {
                 return exception;
@@ -1236,8 +1251,14 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
     pendingModule->internalField(1).set(vm, pendingModule, JSC::jsUndefined());
     JSC::JSPromise* promise = pendingModule->internalPromise();
 
+    // Bun::toString(JSGlobalObject*, JSValue) hands over a +1 on the StringImpl
+    // and BunString has no destructor, so these have to be released by hand.
     BunString specifier = Bun::toString(globalObject, specifierString);
     BunString referrer = Bun::toString(globalObject, referrerString);
+    auto derefStrings = WTF::makeScopeExit([&] {
+        specifier.deref();
+        referrer.deref();
+    });
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     bool wasModuleMock = pendingModule->wasModuleMock;
@@ -1247,6 +1268,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
         throwException(globalObject, scope, result);
     }
     if (scope.exception()) [[unlikely]] {
+        didFailToLoadVirtualModule(static_cast<Zig::GlobalObject*>(globalObject), &specifier);
         auto retValue = JSValue::encode(promise->rejectWithCaughtException(vm, scope));
         pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
         return retValue;
@@ -1262,9 +1284,13 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject, (JSC::JSGlobalObjec
     auto& vm = JSC::getVM(globalObject);
     JSC::JSValue reason = callFrame->argument(0);
     PendingVirtualModuleResult* pendingModule = uncheckedDowncast<PendingVirtualModuleResult>(callFrame->argument(1));
+    BunString specifier = Bun::toString(globalObject, pendingModule->internalField(0).get());
+    auto derefSpecifier = WTF::makeScopeExit([&] { specifier.deref(); });
     pendingModule->internalField(0).set(vm, pendingModule, JSC::jsUndefined());
     pendingModule->internalField(1).set(vm, pendingModule, JSC::jsUndefined());
     JSC::JSPromise* promise = pendingModule->internalPromise();
+
+    didFailToLoadVirtualModule(static_cast<Zig::GlobalObject*>(globalObject), &specifier);
 
     pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
     promise->reject(vm, reason);

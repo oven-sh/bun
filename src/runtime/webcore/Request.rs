@@ -18,7 +18,7 @@ use crate::webcore::jsc::{
 };
 use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
 use bun_alloc::AllocError;
-use bun_core::{Output, fmt as bun_fmt};
+use bun_core::{Output, UnwrapOrOom, fmt as bun_fmt};
 use bun_core::{OwnedStringCell, String as BunString, ZigString, strings};
 use bun_http_jsc::fetch_enums_jsc::{
     fetch_cache_mode_to_js, fetch_redirect_to_js, fetch_request_mode_to_js,
@@ -1230,12 +1230,10 @@ impl Request {
                         // Mark every remaining field consumed so the dictionary
                         // fallbacks below never run JS getters against the input.
                         if !fields.contains(Fields::Url) {
-                            // A Bun.serve request materializes its URL lazily
-                            // from the request context; a detached one stays
-                            // empty and reaches the "url is required" throw.
-                            // The field is consumed from internal state either
-                            // way, keeping the getter fallback off.
-                            let _ = request.ensure_url();
+                            // A Bun.serve request materializes its URL lazily;
+                            // a detached one stays empty and reaches the "url
+                            // is required" throw, with the field consumed.
+                            request.ensure_url().unwrap_or_oom();
                             let url = request.url.get();
                             if !url.is_empty() {
                                 req.url.set(url.dupe_ref());
@@ -1610,7 +1608,7 @@ impl Request {
         preserve_url: bool,
     ) -> JsResult<()> {
         // allocator param dropped (global mimalloc)
-        let _ = self.ensure_url();
+        self.ensure_url().unwrap_or_oom();
         let body_ = self.clone_body_value_via_cached_stream(global_this)?;
         // BodyValue's Drop frees `body_` on the `?` error path
         let body = body::hive_alloc(body_);

@@ -1165,8 +1165,11 @@ impl JSValkeyClient {
                 .expect("unreachable");
                 let len = start - cur.len();
                 let msg = &buf[..len];
-                let _ = self.client_fail(msg, protocol::RedisError::IdleTimeout);
-                // TODO: properly propagate exception upwards
+                if let Err(e) = self.client_fail(msg, protocol::RedisError::IdleTimeout) {
+                    // A failed settle inside `fail` leaves an exception pending
+                    // on the VM; this timer callback has nowhere to bubble it.
+                    self.global_object.report_active_exception_as_unhandled(e);
+                }
             }
             valkey::Status::Disconnected | valkey::Status::Connecting => {
                 use std::io::Write;
@@ -1180,8 +1183,10 @@ impl JSValkeyClient {
                 .expect("unreachable");
                 let len = start - cur.len();
                 let msg = &buf[..len];
-                let _ = self.client_fail(msg, protocol::RedisError::ConnectionTimeout);
-                // TODO: properly propagate exception upwards
+                if let Err(e) = self.client_fail(msg, protocol::RedisError::ConnectionTimeout) {
+                    // See the idle-timeout arm above.
+                    self.global_object.report_active_exception_as_unhandled(e);
+                }
             }
         }
     }

@@ -1536,3 +1536,40 @@ describe("uid/gid", () => {
     expect(thrown?.code).toBe("EPERM");
   });
 });
+
+// The native exit completion settles the cached `exited` promise and then
+// immediately runs more JS (onExit callback, IPC teardown) in the same task,
+// so a failed settle must never leave its exception pending on the VM. The
+// settle values are primitives, so a hostile `Object.prototype.then` accessor
+// (prototype pollution persists across scripts in fuzzer processes) must not
+// be consulted and both the exit-code and signal paths must stay healthy.
+it.if(isPosix)("exited settles under Object.prototype.then pollution", async () => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        Object.defineProperty(Object.prototype, "then", {
+          configurable: true,
+          get() {
+            throw new Error("boom");
+          },
+        });
+        const exited7 = Bun.spawn({ cmd: ["sh", "-c", "exit 7"] }).exited;
+        const killed = Bun.spawn({ cmd: ["sleep", "1000"] });
+        const exitedKilled = killed.exited;
+        killed.kill("SIGKILL");
+        const codes = [await exited7, await exitedKilled];
+        delete Object.prototype.then;
+        console.log(JSON.stringify(codes));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual([7, 137]);
+  expect(exitCode).toBe(0);
+});

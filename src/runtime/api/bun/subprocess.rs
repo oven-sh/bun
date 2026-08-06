@@ -1119,34 +1119,35 @@ impl Subprocess<'_> {
                         did_update_has_pending_activity = true;
                     }
 
-                    match status {
-                        Status::Exited(exited) => {
-                            let _ = promise
-                                .as_any_promise()
-                                .unwrap()
-                                .resolve(global_this, JSValue::js_number(exited.code as f64));
-                            // TODO: properly propagate exception upwards
-                        }
+                    let settled = match status {
+                        Status::Exited(exited) => promise
+                            .as_any_promise()
+                            .unwrap()
+                            .resolve(global_this, JSValue::js_number(exited.code as f64)),
                         Status::Err(err) => {
                             let js_err = err.to_js(global_this);
-                            let _ = promise
+                            promise
                                 .as_any_promise()
                                 .unwrap()
-                                .reject_with_async_stack(global_this, js_err);
-                            // TODO: properly propagate exception upwards
+                                .reject_with_async_stack(global_this, js_err)
                         }
-                        Status::Signaled(signaled) => {
-                            let _ = promise.as_any_promise().unwrap().resolve(
-                                global_this,
-                                JSValue::js_number(128u8.wrapping_add(*signaled) as f64),
-                            );
-                            // TODO: properly propagate exception upwards
-                        }
+                        Status::Signaled(signaled) => promise.as_any_promise().unwrap().resolve(
+                            global_this,
+                            JSValue::js_number(128u8.wrapping_add(*signaled) as f64),
+                        ),
                         _ => {
                             // crash in debug mode
                             #[cfg(debug_assertions)]
                             unreachable!();
+                            #[cfg(not(debug_assertions))]
+                            Ok(())
                         }
+                    };
+                    if settled.is_err() {
+                        // A failed settle leaves an exception pending on the VM;
+                        // the exit callback below must not run with it (the
+                        // error label erases Thrown, so probe the VM instead).
+                        global_this.report_active_exception_as_unhandled(jsc::JsError::Thrown);
                     }
                 }
 

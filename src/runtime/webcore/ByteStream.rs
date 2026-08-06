@@ -620,11 +620,17 @@ impl ByteStream {
 
         if let Some(mut action) = self.buffer_action.replace(None) {
             let global = self.parent_const().global_this();
-            // TODO: properly propagate exception upwards
-            let _ = action.reject(
-                global,
-                &streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort),
-            );
+            if action
+                .reject(
+                    global,
+                    &streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort),
+                )
+                .is_err()
+            {
+                // A failed settle leaves an exception pending on the VM (the
+                // error label erases Thrown, so probe the VM instead).
+                global.report_active_exception_as_unhandled(jsc::JsError::Thrown);
+            }
             self.buffer_action.set(None);
         }
     }

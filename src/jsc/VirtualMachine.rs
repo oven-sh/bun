@@ -535,6 +535,11 @@ impl ExitHandler {
 
 pub const MAIN_FILE_NAME: &[u8] = b"bun:main";
 
+/// Byte width at which the error code-frame printer clamps each source line
+/// and appends `... truncated`. Also the single source of truth for
+/// [`crate::saved_source_map::CachedCodeFrame::PRINTER_CLAMP`].
+pub(crate) const CODE_FRAME_MAX_LINE_LENGTH: usize = 1024;
+
 /// Instead of storing timestamp as a i128, we store it as a u64.
 /// We subtract the timestamp from Jan 1, 2000 (Y2K)
 pub(crate) const ORIGIN_RELATIVE_EPOCH: i128 = 946_684_800 * 1_000_000_000;
@@ -5294,6 +5299,8 @@ impl VirtualMachine {
         };
 
         if let Some(lookup) = maybe_lookup {
+            use crate::saved_source_map::CachedCodeFrame;
+
             // The source-map Arc drops on scope exit.
             let mapping = lookup.mapping;
             let display_url = if !already_remapped {
@@ -5301,70 +5308,15 @@ impl VirtualMachine {
             } else {
                 None
             };
-            let external_code = if enable_source_code_preview.get()
-                && !already_remapped
+            let is_external = !already_remapped
                 && lookup
                     .source_map
                     .as_deref()
-                    .is_some_and(|m| m.is_external())
-            {
-                lookup.get_source_code(top_source_url.slice())
-            } else {
-                drop(lookup);
-                None
-            };
+                    .is_some_and(|m| m.is_external());
 
             if let Some(src) = display_url {
                 frames[top].source_url.deref();
                 frames[top].source_url = src;
-            }
-
-            let code: bun_core::ZigStringSlice = 'code: {
-                if !enable_source_code_preview.get() {
-                    break 'code bun_core::ZigStringSlice::EMPTY;
-                }
-                if let Some(src) = external_code {
-                    break 'code src;
-                }
-                if top_frame_is_builtin {
-                    // Avoid printing "export default 'native'"
-                    break 'code bun_core::ZigStringSlice::EMPTY;
-                }
-                let mut log = bun_ast::Log::default();
-                let Ok(original_source) = Self::fetch_without_on_load_plugins(
-                    self,
-                    global,
-                    // `top.source_url` is passed by
-                    // value (no `dupeRef`); `bun_core::String` is `Copy`.
-                    frames[top].source_url,
-                    bun_core::String::empty(),
-                    &mut log,
-                    FetchFlags::PrintSource,
-                ) else {
-                    return;
-                };
-                *must_reset_parser_arena_later = true;
-                // Note: the transpile path `clone_utf8`s the source for
-                // `.print_source`
-                // (the backing `parse_result` drops on return — see
-                // jsc_hooks.rs Note at the `PrintSource` arm), leaving
-                // `source_code` with a +1 strong ref this caller never
-                // consumed. `to_utf8()` takes its own ref via
-                // `ZigStringSlice::WTF`, so balance the clone here. Also
-                // release the `dupe_ref` / `create_if_different` refs on
-                // `specifier` / `source_url` — this caller never reads them.
-                // Skipping the `source_code` deref leaks one WTFStringImpl
-                // (~file-size) per `Bun.inspect(new Error)` and fails
-                // inspect-error-leak.test.js.
-                let code = original_source.source_code.to_utf8();
-                original_source.source_code.deref();
-                original_source.specifier.deref();
-                original_source.source_url.deref();
-                code
-            };
-
-            if enable_source_code_preview.get() && code.slice().is_empty() {
-                exception.collect_source_lines(error_instance, global);
             }
 
             // Direct copy; both sides are `bun_core::Ordinal`.
@@ -5374,37 +5326,150 @@ impl VirtualMachine {
             frames[top].remapped = true;
 
             let last_line = frames[top].position.line.zero_based().max(0);
-            if let Some(lines_buf) = bun_core::strings::get_lines_in_text::<
-                { crate::zig_exception::Holder::SOURCE_LINES_COUNT },
-            >(code.slice(), last_line as u32)
-            {
-                let lines = lines_buf.as_slice();
-                const N: usize = crate::zig_exception::Holder::SOURCE_LINES_COUNT;
-                // SAFETY: `Holder` backs both arrays with `[_; SOURCE_LINES_COUNT]`.
-                let source_lines =
-                    unsafe { bun_core::ffi::slice_mut(exception.stack.source_lines_ptr, N) };
-                // SAFETY: `Holder` backs `source_lines_numbers` with `[i32; SOURCE_LINES_COUNT]`.
-                let source_line_numbers =
-                    unsafe { bun_core::ffi::slice_mut(exception.stack.source_lines_numbers, N) };
-                for s in source_lines.iter_mut() {
-                    *s = bun_core::String::empty();
-                }
-                source_line_numbers.fill(0);
 
-                let take = lines.len().min(N);
-                let mut current_line_number = last_line;
-                for (i, line) in lines[..take].iter().enumerate() {
-                    // To minimize duplicate allocations, we use the same slice
-                    // as above — it should virtually always be UTF-8 and thus
-                    // not cloned.
-                    source_lines[i] = bun_core::String::init(*line);
-                    source_line_numbers[i] = current_line_number;
-                    current_line_number -= 1;
-                }
-                exception.stack.source_lines_len = take as u8;
-            }
+            const N: usize = crate::zig_exception::Holder::SOURCE_LINES_COUNT;
 
-            if !code.slice().is_empty() {
+            'preview: {
+                if !enable_source_code_preview.get() {
+                    drop(lookup);
+                    break 'preview;
+                }
+
+                let cache_path_hash = bun_wyhash::hash(top_source_url.slice());
+                let cache_source_index = if is_external {
+                    u32::try_from(mapping.source_index).unwrap_or(CachedCodeFrame::NO_SOURCE_INDEX)
+                } else {
+                    CachedCodeFrame::NO_SOURCE_INDEX
+                };
+
+                if let Some(filled) = self.source_mappings.fill_code_frame_from_cache(
+                    cache_path_hash,
+                    cache_source_index,
+                    last_line,
+                    // SAFETY: `Holder` backs the array with `[_; SOURCE_LINES_COUNT]`.
+                    unsafe { bun_core::ffi::slice_mut(exception.stack.source_lines_ptr, N) },
+                    // SAFETY: `Holder` backs the array with `[i32; SOURCE_LINES_COUNT]`.
+                    unsafe { bun_core::ffi::slice_mut(exception.stack.source_lines_numbers, N) },
+                ) {
+                    drop(lookup);
+                    if filled > 0 {
+                        exception.stack.source_lines_len = filled;
+                    } else {
+                        exception.collect_source_lines(error_instance, global);
+                    }
+                    break 'preview;
+                }
+
+                let external_code = if is_external {
+                    lookup.get_source_code(top_source_url.slice())
+                } else {
+                    drop(lookup);
+                    None
+                };
+
+                let code: bun_core::ZigStringSlice = 'code: {
+                    if let Some(src) = external_code {
+                        break 'code src;
+                    }
+                    if top_frame_is_builtin {
+                        // Avoid printing "export default 'native'"
+                        break 'code bun_core::ZigStringSlice::EMPTY;
+                    }
+                    let mut log = bun_ast::Log::default();
+                    let Ok(original_source) = Self::fetch_without_on_load_plugins(
+                        self,
+                        global,
+                        // `top.source_url` is passed by
+                        // value (no `dupeRef`); `bun_core::String` is `Copy`.
+                        frames[top].source_url,
+                        bun_core::String::empty(),
+                        &mut log,
+                        FetchFlags::PrintSource,
+                    ) else {
+                        return;
+                    };
+                    *must_reset_parser_arena_later = true;
+                    // Note: the transpile path `clone_utf8`s the source for
+                    // `.print_source`
+                    // (the backing `parse_result` drops on return — see
+                    // jsc_hooks.rs Note at the `PrintSource` arm), leaving
+                    // `source_code` with a +1 strong ref this caller never
+                    // consumed. `to_utf8()` takes its own ref via
+                    // `ZigStringSlice::WTF`, so balance the clone here. Also
+                    // release the `dupe_ref` / `create_if_different` refs on
+                    // `specifier` / `source_url` — this caller never reads them.
+                    // Skipping the `source_code` deref leaks one WTFStringImpl
+                    // (~file-size) per `Bun.inspect(new Error)` and fails
+                    // inspect-error-leak.test.js.
+                    let code = original_source.source_code.to_utf8();
+                    original_source.source_code.deref();
+                    original_source.specifier.deref();
+                    original_source.source_url.deref();
+                    code
+                };
+
+                if code.slice().is_empty() {
+                    exception.collect_source_lines(error_instance, global);
+                    if !top_frame_is_builtin {
+                        self.source_mappings.put_cached_code_frame(
+                            cache_path_hash,
+                            cache_source_index,
+                            last_line,
+                            None,
+                        );
+                    }
+                    break 'preview;
+                }
+
+                if let Some(lines_buf) = bun_core::strings::get_lines_in_text::<
+                    { crate::zig_exception::Holder::SOURCE_LINES_COUNT },
+                >(code.slice(), last_line as u32)
+                {
+                    let lines = lines_buf.as_slice();
+                    // SAFETY: `Holder` backs both arrays with `[_; SOURCE_LINES_COUNT]`.
+                    let source_lines =
+                        unsafe { bun_core::ffi::slice_mut(exception.stack.source_lines_ptr, N) };
+                    // SAFETY: `Holder` backs `source_lines_numbers` with `[i32; SOURCE_LINES_COUNT]`.
+                    let source_line_numbers = unsafe {
+                        bun_core::ffi::slice_mut(exception.stack.source_lines_numbers, N)
+                    };
+                    for s in source_lines.iter_mut() {
+                        *s = bun_core::String::empty();
+                    }
+                    source_line_numbers.fill(0);
+
+                    let take = lines.len().min(N);
+                    let mut current_line_number = last_line;
+                    let mut cached = CachedCodeFrame {
+                        lines: Default::default(),
+                        start_line: last_line,
+                    };
+                    for (i, line) in lines[..take].iter().enumerate() {
+                        // To minimize duplicate allocations, we use the same slice
+                        // as above — it should virtually always be UTF-8 and thus
+                        // not cloned.
+                        source_lines[i] = bun_core::String::init(*line);
+                        source_line_numbers[i] = current_line_number;
+                        current_line_number -= 1;
+                        cached.lines.0.push(CachedCodeFrame::line_for_cache(line));
+                    }
+                    exception.stack.source_lines_len = take as u8;
+                    self.source_mappings.put_cached_code_frame(
+                        cache_path_hash,
+                        cache_source_index,
+                        last_line,
+                        Some(cached),
+                    );
+                } else {
+                    exception.collect_source_lines(error_instance, global);
+                    self.source_mappings.put_cached_code_frame(
+                        cache_path_hash,
+                        cache_source_index,
+                        last_line,
+                        None,
+                    );
+                }
+
                 *source_code_slice = Some(code);
             }
         } else if enable_source_code_preview.get() {
@@ -5653,7 +5718,7 @@ impl VirtualMachine {
         // case very well — at the very least, we shouldn't dump 100 KB of
         // minified code into your terminal.
         const MAX_LINE_LENGTH_WITH_DIVOT: usize = 512;
-        const MAX_LINE_LENGTH: usize = 1024;
+        const MAX_LINE_LENGTH: usize = CODE_FRAME_MAX_LINE_LENGTH;
 
         // SAFETY: `source_lines_numbers[..source_lines_len]` is the
         // caller-owned buffer (see ZigStackTrace contract).

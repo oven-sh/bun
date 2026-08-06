@@ -253,14 +253,22 @@ static JSObject* dcChannel(Zig::GlobalObject* globalObject, WebLocksClient::DCCh
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!client.dcChannelsInitialized) {
-        client.dcChannelsInitialized = true;
+        // Latched only on success: a failed initialization (a stack-exhausted
+        // first request, say) is swallowed and retried by the next request
+        // rather than disabling diagnostics for the rest of the thread's life.
         JSValue dcModuleValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::NodeDiagnosticsChannel);
-        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            return nullptr;
+        }
         if (!dcModuleValue || !dcModuleValue.isObject()) [[unlikely]]
             return nullptr;
         auto* dcModule = asObject(dcModuleValue);
         JSValue channelFunction = dcModule->get(globalObject, Identifier::fromString(vm, "channel"_s));
-        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            return nullptr;
+        }
         auto callData = JSC::getCallData(channelFunction);
         if (callData.type == CallData::Type::None) [[unlikely]]
             return nullptr;
@@ -274,10 +282,14 @@ static JSObject* dcChannel(Zig::GlobalObject* globalObject, WebLocksClient::DCCh
             MarkedArgumentBuffer args;
             args.append(jsString(vm, String(channelNames[i])));
             JSValue channel = JSC::call(globalObject, channelFunction, callData, dcModule, args);
-            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+                return nullptr;
+            }
             if (auto* channelObject = channel.getObject())
                 client.dcChannels[i] = JSC::Strong<JSObject> { vm, channelObject };
         }
+        client.dcChannelsInitialized = true;
     }
     scope.release();
     return client.dcChannels[which].get();

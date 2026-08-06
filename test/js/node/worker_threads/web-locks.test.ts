@@ -893,4 +893,34 @@ describe("diagnostics_channel", () => {
     expect(sub.events.grant).toHaveLength(2);
     expect(sub.events.miss).toHaveLength(0);
   });
+
+  test("a failed channel initialization neither breaks the request nor disables diagnostics", async () => {
+    // The channels are created lazily on the thread's first request; if that
+    // fails, the request must still work and the next request must retry.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const dc = require("node:diagnostics_channel");
+        const origChannel = dc.channel;
+        dc.channel = () => { throw new Error("dc-init-boom"); };
+        const first = await navigator.locks.request("dc-retry", () => "first");
+        console.log("first:", first);
+        dc.channel = origChannel;
+        const events = [];
+        dc.subscribe("locks.request.start", e => events.push(e.name));
+        const second = await navigator.locks.request("dc-retry", () => "second");
+        console.log("second:", second);
+        console.log("events:", JSON.stringify(events));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe('first: first\nsecond: second\nevents: ["dc-retry"]\n');
+    expect(exitCode).toBe(0);
+  });
 });

@@ -1711,3 +1711,70 @@ describe("NODE_NO_WARNINGS", () => {
     expect(await warn("1")).not.toMatch(/Warning: foo/);
   });
 });
+
+describe("process.throwDeprecation", () => {
+  it.concurrent("set at runtime throws deprecation warnings as uncaught exceptions", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.on("warning", w => console.log("warning-event", w.name));
+         process.throwDeprecation = true;
+         console.log("throwDeprecation ->", process.throwDeprecation);
+         process.emitWarning("use of legacy widget", "DeprecationWarning", "DEP_WIDGET");`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("throwDeprecation -> true\n");
+    expect(stderr).toContain("DeprecationWarning: use of legacy widget");
+    expect(stderr).toContain("DEP_WIDGET");
+    expect(exitCode).toBe(1);
+  });
+
+  it.concurrent("set at runtime throws util.deprecate warnings as uncaught exceptions", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const util = require("util");
+         process.on("warning", w => console.log("warning-event", w.name));
+         process.throwDeprecation = true;
+         console.log("readback", process.throwDeprecation);
+         util.deprecate(() => {}, "legacy widget", "DEP_WIDGET")();`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("readback true\n");
+    expect(stderr).toContain("DeprecationWarning: legacy widget");
+    expect(stderr).toContain("DEP_WIDGET");
+    expect(exitCode).toBe(1);
+  });
+
+  it.concurrent("--throw-deprecation can be turned off at runtime", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--throw-deprecation",
+        "-e",
+        `console.log("initial ->", process.throwDeprecation);
+         process.throwDeprecation = false;
+         console.log("after ->", process.throwDeprecation);
+         process.on("warning", w => console.log("warning-event", w.name));
+         process.emitWarning("use of legacy widget", "DeprecationWarning", "DEP_WIDGET");`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    void stderr;
+    expect(stdout).toBe("initial -> true\nafter -> false\nwarning-event DeprecationWarning\n");
+    expect(exitCode).toBe(0);
+  });
+});

@@ -2795,6 +2795,7 @@ JSC_DEFINE_CUSTOM_GETTER(processThrowDeprecation, (JSC::JSGlobalObject * lexical
 
 JSC_DEFINE_CUSTOM_SETTER(setProcessThrowDeprecation, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName))
 {
+    Bun__Node__ProcessThrowDeprecation = JSC::JSValue::decode(encodedValue).toBoolean(globalObject);
     return true;
 }
 

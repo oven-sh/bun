@@ -66,9 +66,8 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
     stream.debugId = ++debugId;
   }
 
-  // Define the private field directly: an ordinary put would consult the prototype
-  // chain, and user code can graft ReadableStream.prototype (which has a $bunNativePtr
-  // accessor meant for actual ReadableStreams) underneath node stream prototypes.
+  // Define the own property directly: an ordinary put would walk the prototype
+  // chain, which user code can graft onto ReadableStream.prototype's accessors.
   $putByIdDirectPrivate(stream, "bunNativePtr", bunNativePtr);
   stream[kRefCount] = 0;
   stream[kConstructed] = false;

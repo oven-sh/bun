@@ -786,11 +786,9 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_blob, (JSGlobalObject
 }
 
 // Bun private-name accessors ($bunNativePtr / $bunNativeType / $disturbed).
-// JSC brand-checks DOMAttribute getters centrally (PropertySlot::customGetter), but
-// nothing checks custom setters: an ordinary put whose receiver merely inherits
-// ReadableStream.prototype (e.g. a node stream after Object.setPrototypeOf surgery)
-// reaches them with that foreign receiver as thisValue, so each accessor must
-// verify the receiver itself.
+// JSC brand-checks DOMAttribute getters (PropertySlot::customGetter) but invokes
+// custom setters with any receiver inheriting the accessor, so each one validates
+// thisValue itself.
 
 JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototype_nativePtrGetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {

@@ -2807,6 +2807,7 @@ pub mod bv2_impl {
             this.linker.options.public_path =
                 unsafe { interned_slice(&this.transpiler.options.public_path) };
             this.linker.options.target = this.transpiler.options.target;
+            this.linker.options.css_target = this.transpiler.options.css_target();
             this.linker.options.output_format = this.transpiler.options.output_format;
             this.linker.options.generate_bytecode_cache = this.transpiler.options.bytecode;
             this.linker.options.compile_mode = this.transpiler.options.compile_mode;

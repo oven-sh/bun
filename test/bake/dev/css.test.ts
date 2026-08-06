@@ -720,6 +720,168 @@ devTest("css imported on the server gets browser-target processing", {
   },
 });
 
+devTest("css chunks are printed with browser targets", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `<div class="a"><div class="b">hello</div></div>`,
+    }),
+    "styles.css": `
+      .a {
+        .b {
+          color: light-dark(white, black);
+        }
+      }
+    `,
+  },
+  async test(dev) {
+    const html = await (await dev.fetch("/")).text();
+    const href = html.match(/href="([^"]+\.css[^"]*)"/)?.[1];
+    expect(href).toBeDefined();
+    const css = await (await dev.fetch(href!)).text();
+    // Stylesheets are served to the browser, so print-gated downleveling for
+    // the default browser targets must apply even though the primary
+    // transpiler targets the server: nesting is flattened and light-dark()
+    // is replaced with a fallback.
+    expect(css).toContain(".a .b");
+    expect(css).not.toContain("light-dark(");
+  },
+});
+
+devTest("external css imports are printed with browser targets", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `<div class="a">hello</div>`,
+    }),
+    // The URL stays an external @import in the output; nothing fetches it.
+    "styles.css": `
+      @import url("https://example.com/x.css") screen and (width >= 500px);
+      .a {
+        color: red;
+      }
+    `,
+  },
+  async test(dev) {
+    const html = await (await dev.fetch("/")).text();
+    const href = html.match(/href="([^"]+\.css[^"]*)"/)?.[1];
+    expect(href).toBeDefined();
+    const css = await (await dev.fetch(href!)).text();
+    // The external import is preserved, and media range syntax in its
+    // condition is downleveled for the default browser targets.
+    expect(css).toContain('@import "https://example.com/x.css" screen and (min-width: 500px)');
+    expect(css).not.toContain(">=");
+  },
+});
+
+devTest("nested external css import conditions are printed with browser targets", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `<div class="a">hello</div>`,
+    }),
+    // An external import reached through a conditional internal import keeps
+    // its nesting via a data: URL stylesheet wrapper; the wrapper's contents
+    // are printed separately from the chunk body.
+    "styles.css": `
+      @import "./mid.css" screen and (width >= 500px);
+      .a {
+        color: red;
+      }
+    `,
+    "mid.css": `
+      @import url("https://example.com/x.css") (width <= 300px);
+    `,
+  },
+  async test(dev) {
+    const html = await (await dev.fetch("/")).text();
+    const href = html.match(/href="([^"]+\.css[^"]*)"/)?.[1];
+    expect(href).toBeDefined();
+    const css = await (await dev.fetch(href!)).text();
+    // Both the outer condition and the inner condition inside the data: URL
+    // wrapper are downleveled for the default browser targets.
+    expect(css).toContain("data:text/css");
+    expect(css).toContain("(min-width: 500px)");
+    expect(css).toContain("max-width");
+    expect(css).not.toContain(">=");
+    expect(css).not.toContain("<=");
+  },
+});
+
+devTest("css layer statements are printed with browser targets", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `<div class="b">hello</div>`,
+    }),
+    // The duplicated conditional import leaves a bare "@layer foo;" statement
+    // (wrapped in the import's media condition) for the deduplicated copy,
+    // which prints through the layer-statement path.
+    "styles.css": `
+      @import "./dup.css" layer(foo) screen and (width >= 500px);
+      @import "./other.css";
+      @import "./dup.css" layer(foo) screen and (width >= 500px);
+    `,
+    "dup.css": `
+      .b {
+        color: blue;
+      }
+    `,
+    "other.css": `
+      .c {
+        color: green;
+      }
+    `,
+  },
+  async test(dev) {
+    const html = await (await dev.fetch("/")).text();
+    const href = html.match(/href="([^"]+\.css[^"]*)"/)?.[1];
+    expect(href).toBeDefined();
+    const css = await (await dev.fetch(href!)).text();
+    // The bare layer statement's wrapping media condition is downleveled for
+    // the default browser targets.
+    expect(css).toContain("@layer foo;");
+    expect(css).toContain("(min-width: 500px)");
+    expect(css).not.toContain(">=");
+  },
+});
+
+devTest("light-dark() polyfill spans minify and print for server-imported css", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import "../styles.css";
+      export default function (req, meta) {
+        return new Response(JSON.stringify(meta.styles), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    `,
+    "styles.css": `
+      :root {
+        color-scheme: light dark;
+      }
+      .a {
+        color: light-dark(white, black);
+      }
+    `,
+  },
+  async test(dev) {
+    const styles = await (await dev.fetch("/")).json();
+    expect(styles).toHaveLength(1);
+    const css = await (await dev.fetch(styles[0])).text();
+    // The polyfill has two halves: the variable definitions and the
+    // prefers-color-scheme toggle are injected at minify time, the
+    // light-dark() references are rewritten at print time. Both halves must
+    // be present; references without definitions compute to an invalid value
+    // and drop the declaration in every browser.
+    expect(css).toMatch(/--buncss-light:\s*initial/);
+    expect(css).toMatch(/prefers-color-scheme:\s*dark/);
+    expect(css).toContain("var(--buncss-light");
+    expect(css).not.toContain("light-dark(");
+  },
+});
+
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);
   if (!url) {

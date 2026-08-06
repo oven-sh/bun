@@ -1538,10 +1538,12 @@ impl<'a> BundleOptions<'a> {
         self.framework.is_some() || self.has_dev_server()
     }
 
-    /// The target whose CSS feature set (vendor prefixing, selector
-    /// downleveling) stylesheets are minified for. Bake builds emit every
-    /// stylesheet into the client bundle, so CSS is compiled for the browser
-    /// even when the importing graph is a server one.
+    /// The target whose CSS feature set stylesheets are minified and printed
+    /// for. Bake builds emit every stylesheet into the client bundle, so CSS
+    /// compiles for the browser even when the importing graph is a server
+    /// one. Minify and print must both resolve targets here: the
+    /// `light-dark()` polyfill injects definitions at minify and rewrites
+    /// references at print, and either half alone is broken.
     #[inline]
     pub(crate) fn css_target(&self) -> Target {
         if self.is_bake_build() {

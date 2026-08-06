@@ -378,7 +378,7 @@ unsafe extern "C" {
     safe fn Bun__emitHandledPromiseEvent(global: &JSGlobalObject, promise: JSValue) -> bool;
 
     safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
-    safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
+    safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8) -> bool;
     safe fn Bun__closeAllSQLiteDatabasesForTermination();
     safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__WebView__closeAllForTermination();
@@ -512,9 +512,13 @@ impl ExitHandler {
     /// parent via `container_of` would escape the provenance of `&mut self`
     /// (which only covers the `ExitHandler` field). Callers pass the VM
     /// reference instead; the body re-enters JS so no `&mut` is held.
-    pub(crate) fn dispatch_on_exit(vm: &VirtualMachine) {
+    pub(crate) fn dispatch_on_exit(vm: &VirtualMachine, drain_microtasks_after_emit: bool) {
         let exit_code = vm.exit_handler.exit_code;
-        Process__dispatchOnExit(vm.global(), exit_code);
+        let emitted = Process__dispatchOnExit(vm.global(), exit_code);
+        if drain_microtasks_after_emit && emitted {
+            // Promise-only (not nextTick): Node's post-_exiting checkpoint skips nextTick.
+            vm.jsc_vm().drain_microtasks();
+        }
         if vm.worker.is_none() {
             Bun__closeAllSQLiteDatabasesForTermination();
             Bun__closeAllNodeSqliteDatabasesForTermination(vm.global());
@@ -1382,6 +1386,7 @@ impl VirtualMachine {
                 return false;
             }
             self.run_error_handler(err, None);
+            self.unhandled_error_counter += 1;
             // SAFETY: `global_object` is the live VM global; `process_exit` is
             // `bun_runtime::node::process::exit` (main-thread `noreturn`).
             unsafe { (hooks.process_exit)(global_object.as_ptr(), 7) };
@@ -1405,6 +1410,7 @@ impl VirtualMachine {
                 // throws. No handler is running, so drop the recursion guard or
                 // that re-entry exits 7 ("handler threw") instead of 1.
                 self.is_handling_uncaught_exception = false;
+                self.unhandled_error_counter += 1;
                 // SAFETY: see above.
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
                 panic!("made it past process.exit()");
@@ -1430,6 +1436,57 @@ impl VirtualMachine {
             return None;
         }
         Some(self.rare_data().hot_map())
+    }
+
+    /// True when `load_entry_point` left the entry promise `Pending` (unsettled TLA).
+    pub fn entry_promise_is_pending(&self) -> bool {
+        // `is_protected` gate: an already-settled promise is unrooted and GC-eligible.
+        self.pending_internal_promise_is_protected
+            && matches!(
+                self.pending_internal_promise,
+                Some(p) if crate::JSPromise::status_ptr(p) == crate::js_promise::Status::Pending,
+            )
+    }
+
+    /// After the loop drained: `Pending` → Node's warn + exit 13; late-`Rejected` → `uncaughtException`.
+    pub fn report_unsettled_entry_promise(&mut self) {
+        // Unprotected = settled inside `load_entry_point`; pointer is GC-eligible.
+        if !self.pending_internal_promise_is_protected {
+            return;
+        }
+        let Some(p) = self.pending_internal_promise else {
+            return;
+        };
+        match crate::JSPromise::status_ptr(p) {
+            crate::js_promise::Status::Pending => {
+                if self.exit_handler.exit_code == 0 {
+                    bun_core::pretty_errorln!(
+                        "<r><yellow>warn<r><d>:<r> Detected unsettled top-level await at or below <b>{}<r>",
+                        bstr::BStr::new(self.main()),
+                    );
+                    bun_core::Output::flush();
+                    self.exit_handler.exit_code = 13;
+                }
+            }
+            crate::js_promise::Status::Rejected => {
+                if self.pending_internal_promise_reported_at != self.hot_reload_counter {
+                    // SAFETY: `p` is a live GC cell tracked by the VM.
+                    let promise = unsafe { &mut *p };
+                    // SAFETY: `self.jsc_vm` set in `init`.
+                    let result = promise.result(unsafe { &*self.jsc_vm });
+                    let global = self.global;
+                    // `on_before_exit` armed this; suspend so a user listener is consulted.
+                    let was_exit_on_uncaught = self.exit_on_uncaught_exception;
+                    self.exit_on_uncaught_exception = false;
+                    // SAFETY: `global` valid for VM lifetime.
+                    let _ = self.uncaught_exception(unsafe { &*global }, result, true);
+                    self.exit_on_uncaught_exception = was_exit_on_uncaught;
+                    promise.set_handled();
+                    self.pending_internal_promise_reported_at = self.hot_reload_counter;
+                }
+            }
+            crate::js_promise::Status::Fulfilled => {}
+        }
     }
 
     pub fn on_before_exit(&mut self) {
@@ -1488,7 +1545,10 @@ impl VirtualMachine {
             }
         }
 
-        ExitHandler::dispatch_on_exit(self);
+        // Natural shutdown drains post-'exit' microtasks; exit()/fatal paths drop them.
+        let drain_after_exit =
+            self.unhandled_error_counter == 0 && !self.is_handling_uncaught_exception;
+        ExitHandler::dispatch_on_exit(self, drain_after_exit);
 
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
         if !self.is_inside_deferred_task_queue.get() {
@@ -2462,7 +2522,20 @@ impl VirtualMachine {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
-            self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+            // Not `wait_for_promise`: a never-settling TLA would busy-spin at 100% CPU.
+            while crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Pending {
+                self.event_loop_mut().tick();
+                if crate::JSPromise::status_ptr(promise) != crate::js_promise::Status::Pending {
+                    break;
+                }
+                if !self.is_event_loop_alive() {
+                    // JSC unroots this once settled; protect before the caller may GC.
+                    JSValue::from_cell(promise).protect();
+                    self.pending_internal_promise_is_protected = true;
+                    break;
+                }
+                self.auto_tick();
+            }
         }
 
         Ok(self.pending_internal_promise.unwrap_or(promise))

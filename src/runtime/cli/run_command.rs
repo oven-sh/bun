@@ -1563,9 +1563,24 @@ impl Run {
                 vm.event_loop_ref().tick_possibly_forever();
             }
         } else {
-            while vm.is_event_loop_alive() {
-                vm.tick();
-                vm.auto_tick_active();
+            loop {
+                while vm.is_event_loop_alive() {
+                    vm.tick();
+                    vm.auto_tick_active();
+                }
+
+                vm.on_before_exit();
+
+                // load_entry_point() may have left the entry promise pending.
+                // A beforeExit listener may have just scheduled work that
+                // settles it; drain once and re-enter if so.
+                if vm.entry_promise_is_pending() {
+                    vm.tick();
+                    if vm.is_event_loop_alive() {
+                        continue;
+                    }
+                }
+                break;
             }
 
             if ctx.runtime_options.eval.eval_and_print {
@@ -1615,7 +1630,9 @@ impl Run {
                 }
             }
 
-            vm.on_before_exit();
+            // Node: still-pending entry TLA → warn + exit 13; late-rejected
+            // (resumed body threw) → surface via uncaughtException.
+            vm.report_unsettled_entry_promise();
         }
 
         if log_has_msgs(vm) {

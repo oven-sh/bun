@@ -802,10 +802,9 @@ describe("should not hang", () => {
   }
 });
 
-describe("unref() + .exited with nothing else ref'd (Windows)", () => {
-  // Windows: with only an unref'd uv_process_t left, uv_run() used to skip its
-  // body and never dequeue the IOCP exit packet, so these children busy-spun
-  // forever. us_loop_pump now forces one non-blocking iteration (POSIX parity).
+describe("unref() + await .exited with nothing else ref'd", () => {
+  // An unref'd child does not keep the loop alive, so a top-level
+  // `await p.exited` is an unsettled TLA: exit 13, do not busy-spin.
   for (const [name, body] of [
     ["unref() then await .exited", `const p = Bun.spawn(opts); p.unref(); await p.exited;`],
     [".exited then unref() then await", `const p = Bun.spawn(opts); const done = p.exited; p.unref(); await done;`],
@@ -829,10 +828,10 @@ describe("unref() + .exited with nothing else ref'd (Windows)", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-      expect({ stdout, stderr, exitCode, signalCode: child.signalCode }).toEqual({
-        stdout: "resolved\n",
-        stderr: "",
-        exitCode: 0,
+      expect(stderr).toContain("unsettled top-level await");
+      expect({ stdout, exitCode, signalCode: child.signalCode }).toEqual({
+        stdout: "",
+        exitCode: 13,
         signalCode: null,
       });
     });

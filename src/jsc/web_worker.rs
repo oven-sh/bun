@@ -1571,11 +1571,8 @@ fn on_unhandled_rejection(
     {
         let _ = global_object.try_take_exception();
     }
-    // node runs the worker's process 'exit' handlers on an uncaught exception (code 1;
-    // they may change process.exitCode). Run them before arming termination — a pending
-    // termination exception makes dispatchExitInternal skip 'exit' (as terminate() should),
-    // and its processIsExiting guard stops shutdown() from running them twice.
-    virtual_machine::ExitHandler::dispatch_on_exit(vm);
+    // Emit 'exit' before arming termination; m_isExiting prevents the shutdown() re-emit.
+    virtual_machine::ExitHandler::dispatch_on_exit(vm, false);
     let _ = worker.set_requested_terminate();
     // Do NOT call `worker.shutdown()` here —
     // `shutdown()` RETURNS, so calling it here would destroy

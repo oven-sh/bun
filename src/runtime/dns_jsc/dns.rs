@@ -650,6 +650,27 @@ impl c_ares::HostentHandler for GetHostByAddrInfoRequest {
     }
 }
 
+/// Settle a DNS request promise with the converted JS result. An empty
+/// `result` means the conversion threw and left the exception pending on the
+/// VM; reject with that exception instead of resolving. If settling itself
+/// leaves an exception pending, report it so it cannot leak into the next
+/// promise settled in the same task (the drain loops settle several in a row,
+/// and `JSPromise::resolve` must not be entered with an exception pending).
+fn settle_lookup_promise(
+    promise: &mut JSPromiseStrong,
+    global_this: &JSGlobalObject,
+    result: JSValue,
+) {
+    let settled = if result.is_empty() {
+        promise.reject(global_this, Err(jsc::JsError::Thrown))
+    } else {
+        promise.resolve_task(global_this, result)
+    };
+    if settled.is_err() {
+        global_this.report_active_exception_as_unhandled(jsc::JsError::Thrown);
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // CAresNameInfo
 // ──────────────────────────────────────────────────────────────────────────
@@ -725,8 +746,10 @@ impl CAresNameInfo {
             }
             return;
         };
+        // Empty on conversion failure; `settle_lookup_promise` rejects with
+        // the pending exception.
         let array = super::cares_jsc::nameinfo_to_js_response(&mut name_info, global_this)
-            .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            .unwrap_or(JSValue::ZERO);
         // SAFETY: see fn contract.
         unsafe { Self::on_complete(this, array) };
     }
@@ -737,7 +760,7 @@ impl CAresNameInfo {
         let mut promise = unsafe { core::mem::take(&mut (*this).promise) };
         // SAFETY: see fn contract — `this` is a live node.
         let global_this = unsafe { (*this).global_this() };
-        let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+        settle_lookup_promise(&mut promise, global_this, result);
         // SAFETY: see fn contract.
         unsafe { Self::destroy(this) };
     }
@@ -1503,9 +1526,11 @@ impl CAresReverse {
                 Self::destroy(this);
                 return;
             };
-            // node is a valid c-ares hostent for the callback's duration
+            // node is a valid c-ares hostent for the callback's duration.
+            // Empty on conversion failure; `settle_lookup_promise` rejects with
+            // the pending exception.
             let array = super::cares_jsc::hostent_to_js_response(&mut *node, global_this, b"")
-                .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                .unwrap_or(JSValue::ZERO);
             Self::on_complete(this, array);
         }
     }
@@ -1516,7 +1541,7 @@ impl CAresReverse {
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
             let global_this = (*this).global_this();
-            let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+            settle_lookup_promise(&mut promise, global_this, result);
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
@@ -1653,9 +1678,11 @@ impl<T: CAresRecordType> CAresLookup<T> {
             };
 
             // node is a valid c-ares reply for the callback's duration; freed by `_free` guard.
+            // Empty on conversion failure; `settle_lookup_promise` rejects with
+            // the pending exception.
             let array = (*node)
                 .to_js_response(global_this, T::TYPE_NAME)
-                .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                .unwrap_or(JSValue::ZERO);
             Self::on_complete(this, array);
         }
     }
@@ -1666,7 +1693,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
             let global_this = (*this).global_this();
-            let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+            settle_lookup_promise(&mut promise, global_this, result);
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
@@ -1753,10 +1780,24 @@ impl DNSLookup {
         bun_output::scoped_log!(DNSLookup, "onCompleteNative");
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
-            let array = super::options_jsc::result_any_to_js(result, (*this).global_this())
-                .ok()
-                .flatten()
-                .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            let array = match super::options_jsc::result_any_to_js(result, (*this).global_this())
+            {
+                Ok(Some(array)) => array,
+                Ok(None) => {
+                    error_to_deferred(
+                        c_ares::Error::ENOTFOUND,
+                        b"getaddrinfo",
+                        None,
+                        &mut (*this).promise,
+                    )
+                    .reject_later((*this).global_this());
+                    Self::destroy(this);
+                    return;
+                }
+                // Conversion threw; the empty sentinel makes
+                // `settle_lookup_promise` reject with the pending exception.
+                Err(_) => JSValue::ZERO,
+            };
             Self::on_complete_with_array(this, array);
         }
     }
@@ -1826,9 +1867,11 @@ impl DNSLookup {
         // SAFETY: caller contract — `this` is live; result is a live c-ares AddrInfo
         // owned by the caller's scopeguard; JSGlobalObject outlives the request.
         unsafe {
+            // Empty on conversion failure; `settle_lookup_promise` rejects with
+            // the pending exception.
             let array =
                 super::cares_jsc::addr_info_to_js_array(&mut *result, (*this).global_this())
-                    .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                    .unwrap_or(JSValue::ZERO);
             Self::on_complete_with_array(this, array);
         }
     }
@@ -1840,7 +1883,7 @@ impl DNSLookup {
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
             let global_this = (*this).global_this();
-            let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+            settle_lookup_promise(&mut promise, global_this, result);
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
@@ -4185,9 +4228,11 @@ impl Resolver {
         unsafe {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this();
+            // Empty on conversion failure; `settle_lookup_promise` rejects with
+            // the pending exception.
             let mut array = (*addr)
                 .to_js_response(prev_global, T::TYPE_NAME)
-                .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                .unwrap_or(JSValue::ZERO);
             // SAFETY: addr is the c-ares-allocated reply; freed once after all consumers run.
             let _free_addr = scopeguard::guard(addr, |a| T::destroy(a));
             array.ensure_still_alive();
@@ -4198,10 +4243,12 @@ impl Resolver {
 
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this();
-                if !core::ptr::eq(prev_global, new_global) {
+                // Re-convert after a failure: the previous settle consumed the
+                // pending exception, so the empty sentinel must not be reused.
+                if array.is_empty() || !core::ptr::eq(prev_global, new_global) {
                     array = (*addr)
                         .to_js_response(new_global, T::TYPE_NAME)
-                        .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                        .unwrap_or(JSValue::ZERO);
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;
@@ -4251,8 +4298,10 @@ impl Resolver {
         unsafe {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this();
+            // Empty on conversion failure; `settle_lookup_promise` rejects with
+            // the pending exception.
             let mut array = super::cares_jsc::addr_info_to_js_array(&mut *addr, prev_global)
-                .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                .unwrap_or(JSValue::ZERO);
             // SAFETY: addr is the c-ares-allocated AddrInfo; freed once after all consumers run.
             // Move the raw pointer into the guard so the loop body can keep borrowing `*addr`.
             let _free_addr = scopeguard::guard(addr, |a| c_ares::AddrInfo::destroy(a));
@@ -4264,9 +4313,11 @@ impl Resolver {
 
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this();
-                if !core::ptr::eq(prev_global, new_global) {
+                // Re-convert after a failure: the previous settle consumed the
+                // pending exception, so the empty sentinel must not be reused.
+                if array.is_empty() || !core::ptr::eq(prev_global, new_global) {
                     array = super::cares_jsc::addr_info_to_js_array(&mut *addr, new_global)
-                        .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                        .unwrap_or(JSValue::ZERO);
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;
@@ -4292,11 +4343,12 @@ impl Resolver {
         let _g = unsafe { Self::ref_scope(self.as_ctx_ptr()) };
 
         let mut array: JSValue = match super::options_jsc::result_any_to_js(result, global_object)
-            .unwrap_or(None)
         {
-            // TODO: properly propagate exception upwards
-            Some(a) => a,
-            None => {
+            Ok(Some(a)) => a,
+            // Conversion threw; the empty sentinel makes
+            // `settle_lookup_promise` reject with the pending exception.
+            Err(_) => JSValue::ZERO,
+            Ok(None) => {
                 // SAFETY: `key.lookup` is the heap-allocated request stored in the
                 // pending-cache slot; consumed via `heap::take` below.
                 unsafe {
@@ -4335,10 +4387,14 @@ impl Resolver {
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this();
                 pending = (*value.as_ptr()).next;
-                if !core::ptr::eq(prev_global, new_global) {
+                // Re-convert after a failure: the previous settle consumed the
+                // pending exception, so the empty sentinel must not be reused.
+                // `Ok(None)` is unreachable here (the head already classified
+                // `result` as non-null), so it folds into the empty sentinel.
+                if array.is_empty() || !core::ptr::eq(prev_global, new_global) {
                     array = super::options_jsc::result_any_to_js(result, new_global)
                         .unwrap_or(None)
-                        .unwrap(); // TODO: properly propagate exception upwards
+                        .unwrap_or(JSValue::ZERO);
                     prev_global = new_global;
                 }
 
@@ -4390,8 +4446,10 @@ impl Resolver {
             //  The callback need not and should not attempt to free the memory
             //  pointed to by hostent; the ares library will free it when the
             //  callback returns.
+            // Empty on conversion failure; `settle_lookup_promise` rejects with
+            // the pending exception.
             let mut array = super::cares_jsc::hostent_to_js_response(&mut *addr, prev_global, b"")
-                .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                .unwrap_or(JSValue::ZERO);
             array.ensure_still_alive();
             CAresReverse::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
             drop(bun_core::heap::take(key.lookup));
@@ -4400,9 +4458,11 @@ impl Resolver {
 
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this();
-                if !core::ptr::eq(prev_global, new_global) {
+                // Re-convert after a failure: the previous settle consumed the
+                // pending exception, so the empty sentinel must not be reused.
+                if array.is_empty() || !core::ptr::eq(prev_global, new_global) {
                     array = super::cares_jsc::hostent_to_js_response(&mut *addr, new_global, b"")
-                        .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                        .unwrap_or(JSValue::ZERO);
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;
@@ -4453,8 +4513,10 @@ impl Resolver {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this();
 
+            // Empty on conversion failure; `settle_lookup_promise` rejects with
+            // the pending exception.
             let mut array = super::cares_jsc::nameinfo_to_js_response(&mut name_info, prev_global)
-                .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                .unwrap_or(JSValue::ZERO);
             array.ensure_still_alive();
             CAresNameInfo::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
             drop(bun_core::heap::take(key.lookup));
@@ -4463,9 +4525,11 @@ impl Resolver {
 
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this();
-                if !core::ptr::eq(prev_global, new_global) {
+                // Re-convert after a failure: the previous settle consumed the
+                // pending exception, so the empty sentinel must not be reused.
+                if array.is_empty() || !core::ptr::eq(prev_global, new_global) {
                     array = super::cares_jsc::nameinfo_to_js_response(&mut name_info, new_global)
-                        .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                        .unwrap_or(JSValue::ZERO);
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;

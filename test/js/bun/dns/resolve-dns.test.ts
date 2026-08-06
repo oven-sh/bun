@@ -223,6 +223,62 @@ describe("dns", () => {
     expect(isIP(result[0].address)).toBeGreaterThan(0);
   });
 
+  // The native completion callbacks settle several coalesced lookup promises
+  // in one task. Resolving a promise reads `then` off the result array, so a
+  // hostile `Object.prototype.then` accessor throws inside every resolve in
+  // the loop; each promise must reject with that error and the next promise
+  // in the drain must still settle, with no pending exception carried over.
+  test.concurrent("coalesced lookups settle when the result array is a hostile thenable", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          Object.defineProperty(Object.prototype, "then", {
+            configurable: true,
+            get() {
+              throw new Error("boom");
+            },
+          });
+          const lookups = [];
+          for (let i = 0; i < 8; i++) {
+            lookups.push(Bun.dns.lookup("localhost", { backend: "system" }));
+            lookups.push(Bun.dns.lookup("localhost", { backend: "libc" }));
+            lookups.push(Bun.dns.lookup("0.0.0.0", { backend: "c-ares" }));
+          }
+          // Promise.allSettled would resolve its result promise with an array
+          // and trip the accessor itself, so count rejections by hand.
+          let remaining = lookups.length;
+          for (const promise of lookups) {
+            promise.then(
+              () => {
+                console.log("expected rejection");
+                process.exit(1);
+              },
+              reason => {
+                if (reason?.message !== "boom") {
+                  console.log("unexpected reason: " + reason);
+                  process.exit(1);
+                }
+                if (--remaining === 0) {
+                  delete Object.prototype.then;
+                  console.log("ok");
+                }
+              },
+            );
+          }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
+  });
+
   describe("setServers", () => {
     test("triple with non-int32 family (double) throws TypeError", () => {
       // @ts-expect-error

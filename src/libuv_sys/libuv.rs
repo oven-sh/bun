@@ -492,7 +492,7 @@ pub mod open_handles {
     /// tty / process handle — through its owner when it has one, directly when
     /// nothing adopted it. Owners may close other handles from their callbacks,
     /// so take one entry at a time.
-    pub fn close_all_for_teardown() {
+    pub fn stop_all_for_vm_teardown() {
         loop {
             let Some(e) = OPEN.with(|o| o.borrow_mut().pop()) else { break };
             log!("teardown: closing open {} handle @{:p} (owner {:p})", match e.kind { Kind::Pipe => "pipe", Kind::Tty => "tty", Kind::Process => "process" }, e.handle, e.owner);
@@ -573,7 +573,7 @@ impl Loop {
     /// closed while its owner was alive; what remains here is uSockets' own
     /// pre/check/async/timer, closed by us_loop_free and freed by their close
     /// callbacks when the loop next turns.
-    pub fn shutdown() {
+    pub fn close_thread_loop() {
         THREADLOCAL_LOOP.with(|slot| {
             let loop_ = slot.get();
             if loop_.is_null() {
@@ -684,7 +684,7 @@ impl Loop {
     }
 }
 
-/// `Loop::shutdown` diagnostics: which handles keep the worker's loop busy.
+/// `Loop::close_thread_loop` diagnostics: which handles keep the worker's loop busy.
 unsafe extern "C" fn log_unclosed_cb(handle: *mut uv_handle_t, data: *mut c_void) {
     // SAFETY: libuv passes live handles.
     if unsafe { uv_is_closing(handle) } == 0 {

@@ -654,7 +654,7 @@ impl WindowsNamedPipe {
             }
             // Until the writer adopts it (start_with_pipe), a thread teardown closes
             // this pipe through us; afterwards the writer re-records itself as owner.
-            uv::open_handles::set_owner(pipe.cast(), self.root_ptr().cast(), Some(Self::close_for_teardown));
+            uv::open_handles::set_owner(pipe.cast(), self.root_ptr().cast(), Some(Self::stop_for_vm_teardown));
 
             // SAFETY: as above.
             if let Err(e) = server
@@ -704,7 +704,7 @@ impl WindowsNamedPipe {
         }
         // Until the writer adopts it (start_with_pipe), a thread teardown closes
         // this pipe through us; afterwards the writer re-records itself as owner.
-        uv::open_handles::set_owner(pipe.cast(), self.root_ptr().cast(), Some(Self::close_for_teardown));
+        uv::open_handles::set_owner(pipe.cast(), self.root_ptr().cast(), Some(Self::stop_for_vm_teardown));
 
         // SAFETY: as above.
         if let Err(e) = unsafe { (*pipe).open(fd.uv()) }.to_result(bun_sys::Tag::open) {
@@ -745,7 +745,7 @@ impl WindowsNamedPipe {
         }
         // Until the writer adopts it (start_with_pipe), a thread teardown closes
         // this pipe through us; afterwards the writer re-records itself as owner.
-        uv::open_handles::set_owner(pipe.cast(), self.root_ptr().cast(), Some(Self::close_for_teardown));
+        uv::open_handles::set_owner(pipe.cast(), self.root_ptr().cast(), Some(Self::stop_for_vm_teardown));
 
         let ctx: *mut Self = self.root_ptr();
         let req: *mut uv::uv_connect_t = self.connect_req.as_ptr();
@@ -906,7 +906,7 @@ impl WindowsNamedPipe {
 
     /// `uv::open_handles` closes a not-yet-adopted pipe through here at teardown.
     #[cfg(windows)]
-    unsafe fn close_for_teardown(this: *mut core::ffi::c_void) {
+    unsafe fn stop_for_vm_teardown(this: *mut core::ffi::c_void) {
         // SAFETY: recorded right after `pipe.init` by this live object; replaced by
         // the writer at adoption or dropped with the pipe (discard_unadopted_pipe).
         let this = unsafe { &*this.cast::<Self>() };

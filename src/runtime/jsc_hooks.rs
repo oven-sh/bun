@@ -105,7 +105,7 @@ pub(crate) struct RuntimeState {
 /// A native handle behind a JS object that must be stopped while the VM is
 /// alive rather than by a GC finalizer during `~VM` (Node's `HandleWrap` list):
 /// registered while open, removed by its own close, and closed by
-/// [`close_active_handles`] in every teardown's stop phase and at the
+/// [`stop_active_handles_for_vm_teardown`] in every teardown's stop phase and at the
 /// `bun test --isolate` global swap.
 pub enum ActiveHandle {
     FsWatcher(ptr::NonNull<crate::node::node_fs_watcher::FSWatcher>),
@@ -1478,13 +1478,13 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     load_standalone_sourcemap,
     apply_standalone_runtime_flags,
     parse_worker_exec_argv_allow_addons,
-    cron_clear_all_teardown,
+    stop_cron_for_vm_teardown,
     cron_clear_all_reload,
     retroactively_report_discovered_tests,
     cancel_all_timers,
-    close_dns_for_terminate,
-    close_active_handles: close_active_handles_hook,
-    close_timer_loop_handles,
+    stop_dns_for_vm_teardown,
+    stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
+    close_timer_loop_handles_after_vm_destroyed,
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1562,13 +1562,13 @@ unsafe fn parse_worker_exec_argv_allow_addons(
 /// stops every in-process `Bun.cron()` job registered on
 /// this VM and releases the pending-promise ref so the struct frees (the event
 /// loop is dying; settle callbacks will never run).
-fn cron_clear_all_teardown(vm: &mut VirtualMachine) {
+fn stop_cron_for_vm_teardown(vm: &mut VirtualMachine) {
     use crate::api::cron::{ClearMode, CronJob};
     CronJob::clear_all_for_vm::<{ ClearMode::Teardown }>(vm);
 }
 
 /// `jsc.API.cron.CronJob.clearAllForVM(vm, .reload)` —
-/// same impl as [`cron_clear_all_teardown`] but skips
+/// same impl as [`stop_cron_for_vm_teardown`] but skips
 /// the pending-promise force-release (the event loop survives a hot reload, so
 /// settle callbacks will still run).
 fn cron_clear_all_reload(vm: &mut VirtualMachine) {
@@ -1608,35 +1608,35 @@ unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
     }
 }
 
-/// `RuntimeHooks::close_timer_loop_handles`: teardown-only companion of
+/// `RuntimeHooks::close_timer_loop_handles_after_vm_destroyed`: teardown-only companion of
 /// `cancel_all_timers` (which the `--isolate` swap also uses on a live VM).
 ///
 /// # Safety
 /// `runtime_state()` is installed; JS thread; the JSC VM is already destroyed.
-unsafe fn close_timer_loop_handles(_vm: *mut VirtualMachine) {
+unsafe fn close_timer_loop_handles_after_vm_destroyed(_vm: *mut VirtualMachine) {
     #[cfg(windows)]
     {
         let state = runtime_state();
         debug_assert!(!state.is_null());
         // SAFETY: live boxed per-thread RuntimeState (fn contract).
-        unsafe { (*state).timer.close_loop_handles_for_teardown() };
+        unsafe { (*state).timer.close_loop_handles_for_vm_teardown() };
     }
 }
 
-/// `RuntimeHooks::close_active_handles` — see [`close_active_handles`].
+/// `RuntimeHooks::stop_active_handles_for_vm_teardown` — see [`stop_active_handles_for_vm_teardown`].
 ///
 /// # Safety
 /// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
-unsafe fn close_active_handles_hook(vm: *mut VirtualMachine) {
+unsafe fn stop_active_handles_for_vm_teardown_hook(vm: *mut VirtualMachine) {
     // SAFETY: per the contract above.
-    close_active_handles(unsafe { &mut *vm });
+    stop_active_handles_for_vm_teardown(unsafe { &mut *vm });
 }
 
-/// `RuntimeHooks::close_dns_for_terminate` — destroy the per-VM global DNS
+/// `RuntimeHooks::stop_dns_for_vm_teardown` — destroy the per-VM global DNS
 /// resolver's c-ares channel now so its `ARES_EDESTRUCTION` and socket-state
 /// callbacks run while the JSC VM, `RareData.file_polls`, and `runtime_state`
 /// are all still live. See `Resolver::close_channel_for_terminate`.
-fn close_dns_for_terminate() {
+fn stop_dns_for_vm_teardown() {
     let state = runtime_state();
     if state.is_null() {
         return;
@@ -1650,7 +1650,7 @@ fn close_dns_for_terminate() {
     crate::dns_jsc::dns_sd::SharedConnection::close_for_terminate();
 }
 
-pub(crate) fn close_active_handles(vm: &mut VirtualMachine) {
+pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) {
     let state = runtime_state();
     if state.is_null() {
         return;
@@ -1693,7 +1693,7 @@ pub(crate) fn close_active_handles(vm: &mut VirtualMachine) {
             ActiveHandle::StatWatcher(w) => bun_ptr::ParentRef::from(w).close(),
             ActiveHandle::Server(mut s) => s.stop(true),
             // Live until it unregisters in `do_stop`/`finalize`.
-            ActiveHandle::Listener(l) => crate::socket::Listener::stop_for_teardown(unsafe { l.as_ref() }),
+            ActiveHandle::Listener(l) => crate::socket::Listener::stop_for_vm_teardown(unsafe { l.as_ref() }),
         }
     }
 }

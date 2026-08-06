@@ -2068,7 +2068,7 @@ mod spawn_process_body {
         // The process handle is open on this thread's loop until `close()`; a
         // thread teardown closes it through us (the child keeps running, as with
         // Node's ProcessWrap), so no exit callback can fire after the VM is gone.
-        unsafe fn close_for_teardown(p: *mut c_void) {
+        unsafe fn stop_for_vm_teardown(p: *mut c_void) {
             // SAFETY: recorded for this live Process; the handle leaves the list
             // when `close()` issues its uv_close.
             unsafe { (*p.cast::<Process>()).close() };
@@ -2079,7 +2079,7 @@ mod spawn_process_body {
             uv::open_handles::set_owner(
                 core::ptr::from_mut(uv_proc).cast(),
                 process.cast(),
-                Some(close_for_teardown),
+                Some(stop_for_vm_teardown),
             );
         }
 

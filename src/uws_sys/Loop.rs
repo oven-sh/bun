@@ -661,6 +661,6 @@ unsafe extern "C" {
 /// created it — the native loop). Call when a thread that ran a uws loop (a
 /// Worker) exits, after everything registered on the loop is gone. On Windows
 /// the loop borrows the thread's libuv loop; close that afterwards.
-pub fn on_thread_exit() {
+pub fn free_thread_loop() {
     bun_free_loop_at_thread_exit()
 }

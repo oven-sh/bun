@@ -701,7 +701,7 @@ impl All {
     /// handle queue when the teardown closes the loop — before this struct's
     /// storage is freed.
     #[cfg(windows)]
-    pub(crate) fn close_loop_handles_for_teardown(&mut self) {
+    pub(crate) fn close_loop_handles_for_vm_teardown(&mut self) {
         unsafe extern "C" fn timer_closed(_: *mut uv::Timer) {}
         unsafe extern "C" fn idle_closed(_: *mut uv::uv_idle_t) {}
         if !self.uv_timer.data.is_null() {

@@ -1093,7 +1093,7 @@ impl Drop for RareData {
             __bun_stdio_blob_store_deinit(store.as_ptr().cast());
         }
 
-        self.deinit_socket_groups();
+        self.detach_socket_groups_from_loop();
     }
 }
 
@@ -1101,7 +1101,7 @@ impl RareData {
     /// Detach every embedded socket group from the thread's uSockets loop
     /// (asserting each is empty). A thread teardown calls this before it frees
     /// that loop; `Drop` calls it for every other owner. Idempotent.
-    pub(crate) fn deinit_socket_groups(&mut self) {
+    pub(crate) fn detach_socket_groups_from_loop(&mut self) {
         // closeAllSocketGroups() must have already run (before JSC teardown) so
         // these are empty; deinit() asserts that in debug.
         for_each_socket_group!(self, |g| {

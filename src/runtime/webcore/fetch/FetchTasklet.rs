@@ -553,7 +553,7 @@ impl FetchTasklet {
     ///   * `true` — a non-final `on_progress_update` is queued (this entry is
     ///     still in `in_flight`, so the *final* `callback` hasn't run). That
     ///     queued node owns the JS-side ref. The JS thread releases it from
-    ///     `release_queued_tasks_for_shutdown` *after* the HTTP daemon parks;
+    ///     `release_queued_tasks` *after* the HTTP daemon parks;
     ///     dropping it here too would leave the queued node pointing at a
     ///     freed `FetchTasklet`. Drop only the HTTP-side ref.
     ///

@@ -1258,7 +1258,7 @@ unsafe fn __bun_tick_queue_with_count(
 // had no callers; `__bun_tick_queue_with_count` above is the sole entry point.)
 
 /// `__bun_release_task_at_shutdown` body — declared `extern "Rust"` in
-/// `bun_jsc::event_loop`. Called from `release_queued_tasks_for_shutdown` on
+/// `bun_jsc::event_loop`. Called from `release_queued_tasks` on
 /// the JS thread for every queued task that will never be dispatched (the JS
 /// thread is past `global_exit`'s `is_shutting_down` flip and the loop will
 /// not tick again), after the HTTP daemon has parked and before
@@ -1305,7 +1305,7 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
         // `destroy()` resets `JSPromiseStrong` (touches the StrongRootBlock list)
         // and unrefs the loop `KeepAlive`, both of which are still valid
         // here — we're before `destructOnExit`. Before
-        // `release_queued_tasks_for_shutdown` existed these boxes stayed
+        // `release_queued_tasks` existed these boxes stayed
         // reachable via `concurrent_tasks` (rooted by the static `VMHolder`),
         // so LSan didn't flag them; the drain unhooks that root and surfaces
         // the real leak.
@@ -1345,7 +1345,7 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
         // that were already batch-moved into `self.tasks`. Must run before
         // JSC teardown: a Worker `dispatchExit` lambda's `~Ref<Worker>` walks
         // `~JSEventListener` Weak<> handles. Worker `shutdown()` calls
-        // `release_queued_tasks_for_shutdown` for the same reason.
+        // `release_queued_tasks` for the same reason.
         task_tag::CppTask => {
             unsafe extern "C" {
                 fn Bun__deleteEventLoopTask(task: *mut CppTask);

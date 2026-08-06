@@ -1554,14 +1554,14 @@ impl Subprocess<'_> {
                 bun_sys::windows::libuv::open_handles::set_owner(
                     core::ptr::from_ref::<bun_sys::windows::libuv::Pipe>(&**buffer).cast_mut().cast(),
                     this.cast(),
-                    Some(Self::close_stdio_pipes_for_teardown),
+                    Some(Self::stop_for_vm_teardown),
                 );
             }
         }
     }
 
     /// `uv::open_handles` entry point: close every stdio pipe still held here.
-    unsafe fn close_stdio_pipes_for_teardown(this: *mut core::ffi::c_void) {
+    unsafe fn stop_for_vm_teardown(this: *mut core::ffi::c_void) {
         // SAFETY: recorded by `record_stdio_pipe_ownership` for this live
         // Subprocess; each pipe leaves the list as its uv_close is issued.
         let me = unsafe { &*this.cast::<Self>() };

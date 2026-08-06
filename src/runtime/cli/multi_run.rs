@@ -196,10 +196,10 @@ impl<'a> ProcessHandle<'a> {
             // the Box out of the spawn *result* — `WindowsStdioResult::take()`
             // leaves `Unavailable` behind so `spawned`'s drop is a no-op.
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {
-                self.stdout_reader.reader.source = Some(bun_io::Source::Pipe(pipe));
+                self.stdout_reader.reader.set_source(bun_io::Source::Pipe(pipe));
             }
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
-                self.stderr_reader.reader.source = Some(bun_io::Source::Pipe(pipe));
+                self.stderr_reader.reader.set_source(bun_io::Source::Pipe(pipe));
             }
         }
 

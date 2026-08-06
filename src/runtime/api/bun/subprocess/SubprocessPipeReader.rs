@@ -124,7 +124,7 @@ impl PipeReader {
             // `.buffer` payload is a heap-allocated `uv::Pipe`. Ownership
             // transfers to `reader.source`; `stdio_result` is left `Unavailable`.
             if let StdioResult::Buffer(pipe) = this.stdio_result.take() {
-                this.reader.source = Some(bun_io::Source::Pipe(pipe));
+                this.reader.set_source(bun_io::Source::Pipe(pipe));
             }
         }
 

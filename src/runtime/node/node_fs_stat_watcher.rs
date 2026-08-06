@@ -755,7 +755,7 @@ impl StatWatcher {
 
     /// Stops file watching but does not free the instance.
     ///
-    /// Always runs on the JS thread (`do_close`, `close_active_handles`,
+    /// Always runs on the JS thread (`do_close`, `stop_active_handles_for_vm_teardown`,
     /// `shutdown_for_exit`), so this is where the watcher leaves the
     /// isolation registry — `deinit` can fire on the work-pool thread where
     /// the thread-local registry is unreachable.

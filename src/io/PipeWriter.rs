@@ -1110,7 +1110,7 @@ pub trait BaseWindowsPipeWriter: Sized {
     fn set_closed_without_reporting(&mut self, v: bool);
 
     /// `uv::open_handles` closes this writer's stream through here at teardown.
-    unsafe fn close_for_teardown(this: *mut c_void) {
+    unsafe fn stop_for_vm_teardown(this: *mut c_void) {
         // SAFETY: recorded via `Source::set_owner` by this live writer; cleared
         // when the writer closes (source taken → uv_close → off the list).
         unsafe { (*this.cast::<Self>()).close() };
@@ -1249,7 +1249,7 @@ pub trait BaseWindowsPipeWriter: Sized {
     fn start_sync(&mut self, fd: Fd, _pollable: bool) -> sys::Result<()> {
         debug_assert!(self.source().is_none());
         let mut source = Source::SyncFile(Source::open_file(fd));
-        source.set_owner(core::ptr::from_mut(self).cast::<c_void>(), Self::close_for_teardown);
+        source.set_owner(core::ptr::from_mut(self).cast::<c_void>(), Self::stop_for_vm_teardown);
         *self.source_mut() = Some(source);
         let p = self.parent_ptr();
         self.set_parent(p);
@@ -1259,7 +1259,7 @@ pub trait BaseWindowsPipeWriter: Sized {
     fn start_with_file(&mut self, fd: Fd) -> sys::Result<()> {
         debug_assert!(self.source().is_none());
         let mut source = Source::File(Source::open_file(fd));
-        source.set_owner(core::ptr::from_mut(self).cast::<c_void>(), Self::close_for_teardown);
+        source.set_owner(core::ptr::from_mut(self).cast::<c_void>(), Self::stop_for_vm_teardown);
         *self.source_mut() = Some(source);
         let p = self.parent_ptr();
         self.set_parent(p);
@@ -1284,7 +1284,7 @@ pub trait BaseWindowsPipeWriter: Sized {
         // TODO: take ownership of the fd for pipe/tty sources via a MovableFd
         // overload.
         let _ = matches!(source, Source::Pipe(_) | Source::Tty(_));
-        source.set_owner(core::ptr::from_mut(self).cast::<c_void>(), Self::close_for_teardown);
+        source.set_owner(core::ptr::from_mut(self).cast::<c_void>(), Self::stop_for_vm_teardown);
         *self.source_mut() = Some(source);
         let p = self.parent_ptr();
         self.set_parent(p);

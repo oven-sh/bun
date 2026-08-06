@@ -925,10 +925,10 @@ void WebSocket::stop()
     cancelUpgradeClient();
     switch (std::exchange(m_connectedWebSocketKind, ConnectedWebSocketKind::None)) {
     case ConnectedWebSocketKind::Client:
-        Bun__WebSocketClient__terminateImmediately(std::exchange(m_connectedWebSocket.client, nullptr));
+        Bun__WebSocketClient__dropConnectionWithoutCallback(std::exchange(m_connectedWebSocket.client, nullptr));
         break;
     case ConnectedWebSocketKind::ClientSSL:
-        Bun__WebSocketClientTLS__terminateImmediately(std::exchange(m_connectedWebSocket.clientSSL, nullptr));
+        Bun__WebSocketClientTLS__dropConnectionWithoutCallback(std::exchange(m_connectedWebSocket.clientSSL, nullptr));
         break;
     case ConnectedWebSocketKind::None:
         break;

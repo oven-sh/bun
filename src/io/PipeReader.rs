@@ -1444,6 +1444,8 @@ impl WindowsBufferedReader {
         self.flags = other.flags;
         self._buffer = mem::take(other.buffer());
         self._offset = other._offset;
+        // Ownership of the handle moves with the source; `set_parent` below
+        // re-records this reader as the one a VM teardown stops it through.
         self.source = other.source.take();
 
         other.flags.insert(WindowsFlags::IS_DONE);
@@ -1476,7 +1478,7 @@ impl WindowsBufferedReader {
             // immutable-then-mutable-borrow conflict.
             let self_ptr = core::ptr::from_mut(self).cast::<c_void>();
             if let Some(source) = self.source.as_mut() {
-                source.set_owner(self_ptr, Self::close_for_teardown);
+                source.set_owner(self_ptr, Self::stop_for_vm_teardown);
             }
         }
     }
@@ -1616,7 +1618,7 @@ impl WindowsBufferedReader {
     pub fn start_with_current_pipe(&mut self) -> sys::Result<()> {
         debug_assert!(!self.source.as_ref().unwrap().is_closed());
         let self_ptr = core::ptr::from_mut(self).cast::<c_void>();
-        self.source.as_mut().unwrap().set_owner(self_ptr, Self::close_for_teardown);
+        self.source.as_mut().unwrap().set_owner(self_ptr, Self::stop_for_vm_teardown);
         self.buffer().clear();
         self.flags.remove(WindowsFlags::IS_DONE);
         // Debug-only fault injection for test/js/bun/spawn/spawn-pipe-start-error.test.ts:
@@ -1635,12 +1637,25 @@ impl WindowsBufferedReader {
     #[cfg(windows)]
     pub unsafe fn start_with_pipe(&mut self, pipe: *mut uv::Pipe) -> sys::Result<()> {
         // SAFETY: caller contract — Box-allocated, ownership transfers.
-        self.source = Some(Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
+        self.set_source(Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
         self.start_with_current_pipe()
     }
 
+    /// Take ownership of `source` (reading starts later, or never). For a pipe
+    /// or tty this reader is from now on the one a VM teardown stops the handle
+    /// through — whether or not it ever starts reading — so nothing else may
+    /// close that handle while it sits here.
+    pub fn set_source(&mut self, source: Source) {
+        debug_assert!(self.source.is_none());
+        self.source = Some(source);
+        let self_ptr = core::ptr::from_mut(self).cast::<c_void>();
+        if let Some(source @ (Source::Pipe(_) | Source::Tty(_))) = self.source.as_mut() {
+            source.set_owner(self_ptr, Self::stop_for_vm_teardown);
+        }
+    }
+
     /// `uv::open_handles` closes this reader's stream through here at teardown.
-    unsafe fn close_for_teardown(this: *mut c_void) {
+    unsafe fn stop_for_vm_teardown(this: *mut c_void) {
         // SAFETY: recorded via `Source::set_owner` by this live reader; the slot
         // is replaced/dropped before the reader goes away (close_impl / from / Drop).
         unsafe { (*this.cast::<WindowsBufferedReader>()).close() };
@@ -1655,7 +1670,7 @@ impl WindowsBufferedReader {
             sys::Result::Err(err) => return sys::Result::Err(err),
             sys::Result::Ok(source) => source,
         };
-        self.source = Some(source);
+        self.set_source(source);
         self.start_with_current_pipe()
     }
 

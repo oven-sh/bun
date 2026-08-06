@@ -1120,7 +1120,7 @@ impl SendQueue {
     /// teardown: close now (pending writes finish ECANCELED) and let the owner
     /// observe the disconnect, rather than waiting for writes as a user close does.
     #[cfg(windows)]
-    unsafe fn close_for_teardown(this: *mut c_void) {
+    unsafe fn stop_for_vm_teardown(this: *mut c_void) {
         // SAFETY: recorded at configure time by this live SendQueue; the pipe
         // leaves the list when `windows_close` issues its uv_close.
         let this = unsafe { &*this.cast::<SendQueue>() };
@@ -1679,7 +1679,7 @@ impl SendQueue {
         // SAFETY: caller contract — `this` is a live SendQueue.
         let self_ = unsafe { &*this };
         self_.socket.set(SocketUnion::Open(ipc_pipe));
-        uv::open_handles::set_owner(ipc_pipe.cast(), this.cast(), Some(Self::close_for_teardown));
+        uv::open_handles::set_owner(ipc_pipe.cast(), this.cast(), Some(Self::stop_for_vm_teardown));
         self_.windows.with_mut(|w| w.is_server = true);
         // SAFETY: pipe is the live uv handle just stored in the socket cell.
         unsafe { (*ipc_pipe).data = this.cast() };
@@ -1733,7 +1733,7 @@ impl SendQueue {
         // SAFETY: caller contract — `this` is a live SendQueue.
         let self_ = unsafe { &*this };
         self_.socket.set(SocketUnion::Open(ipc_pipe));
-        uv::open_handles::set_owner(ipc_pipe.cast(), this.cast(), Some(Self::close_for_teardown));
+        uv::open_handles::set_owner(ipc_pipe.cast(), this.cast(), Some(Self::stop_for_vm_teardown));
         self_.windows.with_mut(|w| w.is_server = false);
 
         // SAFETY: ipc_pipe is the live uv handle just stored in the socket cell.

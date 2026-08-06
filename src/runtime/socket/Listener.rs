@@ -834,7 +834,7 @@ impl Listener {
     /// The VM (or the finished `--isolate` file) is being torn down: stop
     /// listening and close accepted connections now, while script can still
     /// run their close handlers, instead of from the GC finalizer.
-    pub(crate) fn stop_for_teardown(this: &Self) {
+    pub(crate) fn stop_for_vm_teardown(this: &Self) {
         Self::do_stop(this, true);
     }
 

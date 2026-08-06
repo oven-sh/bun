@@ -207,7 +207,7 @@ unsafe extern "Rust" {
     /// Defined in `bun_runtime::dispatch`. Link-time resolved.
     fn __bun_run_wtf_timer(timer: *mut (), vm: *mut VirtualMachine);
     /// Tag-specific shutdown release for a queued-but-never-run task. Called
-    /// from `release_queued_tasks_for_shutdown` (after `shutdown_for_exit`,
+    /// from `release_queued_tasks` (after `shutdown_for_exit`,
     /// before `destructOnExit`) for every entry left in `self.tasks`.
     /// Returns `true` iff the tag was consumed; `false` means the entry
     /// must be left in the queue (it stays reachable from the static-rooted
@@ -751,7 +751,7 @@ impl EventLoop {
     /// pre-`532a5411961b` state). Consuming them silently here unhooked that
     /// root and surfaced the boxes as direct leaks (e.g. `AnyTaskJob<_>`); the
     /// definer can't safely dispatch every erased callback at shutdown.
-    pub fn release_queued_tasks_for_shutdown(&mut self) {
+    pub fn release_queued_tasks(&mut self) {
         self.drop_concurrent_cpp_tasks();
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
         while let Some(task) = self.tasks.read_item() {
@@ -789,7 +789,7 @@ impl EventLoop {
     pub fn deinit(&mut self) {
         // Free (don't run — running could re-enter the dying VM) queued
         // ManagedTask boxes. Other tags are left in place: they were re-queued
-        // by `release_queued_tasks_for_shutdown` because their callback can't
+        // by `release_queued_tasks` because their callback can't
         // be no-op-dispatched safely (some callbacks call into JS) and
         // their box may be aliased by the originator. Keeping them in
         // `self.tasks` (a field of the static-rooted `VirtualMachine` box that
@@ -799,7 +799,7 @@ impl EventLoop {
         // here: this runs after JSC VM teardown on both worker and main paths,
         // and a Worker dispatchExit task's `~Ref<Worker>` would walk freed
         // WeakBlock storage via `~JSEventListener`. They are reclaimed before
-        // teardown by `release_queued_tasks_for_shutdown`'s CppTask arm.
+        // teardown by `release_queued_tasks`'s CppTask arm.
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
         while let Some(task) = self.tasks.read_item() {
             if task.tag == bun_event_loop::task_tag::ManagedTask {
@@ -821,7 +821,7 @@ impl EventLoop {
         }
         debug_assert!(
             self.immediate_tasks.is_empty() && self.next_immediate_tasks.is_empty(),
-            "pending immediates must be released (release_queued_tasks_for_shutdown) while the loop is alive"
+            "pending immediates must be released (release_queued_tasks) while the loop is alive"
         );
         // Free the deferred-task map's storage. The tasks must not be run (same rule as the
         // queued tasks above), and an entry owns nothing but a `Copy` ctx pointer whose owner

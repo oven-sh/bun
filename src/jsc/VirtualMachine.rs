@@ -1577,7 +1577,7 @@ impl VirtualMachine {
         Zig__GlobalObject__prepareForDestruction(vm.global());
         if let Some(hooks) = hooks {
             // SAFETY: fn contract; JSC heap alive.
-            unsafe { (hooks.close_active_handles)(this) };
+            unsafe { (hooks.stop_active_handles_for_vm_teardown)(this) };
         }
         // Every pipe / tty / child-process handle open on this thread's loop
         // closes now — through whoever drives it (reader, writer, IPC channel,
@@ -1585,7 +1585,7 @@ impl VirtualMachine {
         // writes complete (ECANCELED) against a live VM and no request on them
         // can hold up the loop drain in B.
         #[cfg(windows)]
-        bun_sys::windows::libuv::open_handles::close_all_for_teardown();
+        bun_sys::windows::libuv::open_handles::stop_all_for_vm_teardown();
         if let Some(rare) = vm.rare_data.as_deref_mut() {
             // `close_all_socket_groups` walks the loop's group list through the
             // VM and never touches `rare_data`, so the re-derived shared borrow
@@ -1596,7 +1596,7 @@ impl VirtualMachine {
         // channel re-created after this would outlive the runtime state that
         // `ares_destroy`'s callbacks dereference.
         if let Some(hooks) = hooks {
-            (hooks.close_dns_for_terminate)();
+            (hooks.stop_dns_for_vm_teardown)();
         }
         if matches!(kind, Teardown::MainThreadExit) {
             // The HTTP thread holds a `Box<ThreadlocalAsyncHTTP>` per in-flight
@@ -1614,7 +1614,7 @@ impl VirtualMachine {
             unsafe { uws::Timer::close::<true>(t.as_ptr()) };
         }
         if let Some(hooks) = hooks {
-            (hooks.cron_clear_all_teardown)(vm);
+            (hooks.stop_cron_for_vm_teardown)(vm);
             // Drop every TimeoutObject/ImmediateObject's heap node, JS pin and
             // +1 while runtime state and the JSC heap are alive. The heap itself
             // (and the loop handle it embeds) stays up: JSC's own RunLoop timers
@@ -1655,7 +1655,7 @@ impl VirtualMachine {
         // can go (Windows uv_timer/uv_idle), before the loop close unlinks them.
         if let Some(hooks) = hooks {
             // SAFETY: fn contract; runtime state still installed.
-            unsafe { (hooks.close_timer_loop_handles)(this) };
+            unsafe { (hooks.close_timer_loop_handles_after_vm_destroyed)(this) };
         }
         teardown_log!("teardown: JSC VM destroyed");
 
@@ -1666,13 +1666,13 @@ impl VirtualMachine {
             // would keep the loop close below spinning.
             vm.event_loop_mut().apply_concurrent_ref_delta();
             if let Some(rare) = vm.rare_data.as_deref_mut() {
-                rare.deinit_socket_groups();
+                rare.detach_socket_groups_from_loop();
             }
             // SAFETY: this thread's loop; nothing ticks it any more.
             unsafe { (*vm.uws_loop()).internal_loop_data.jsc_vm = core::ptr::null_mut() };
-            bun_uws::on_thread_exit();
+            bun_uws::free_thread_loop();
             #[cfg(windows)]
-            bun_sys::windows::libuv::Loop::shutdown();
+            bun_sys::windows::libuv::Loop::close_thread_loop();
             teardown_log!("teardown: loops closed");
         }
 
@@ -1689,8 +1689,8 @@ impl VirtualMachine {
     /// it is still there. Teardown phase B; also the one thing an owner that
     /// calls `destroy()` without a teardown (bake's build VM) must do first.
     pub fn release_queued_work(&mut self) {
-        self.regular_event_loop.release_queued_tasks_for_shutdown();
-        self.macro_event_loop.release_queued_tasks_for_shutdown();
+        self.regular_event_loop.release_queued_tasks();
+        self.macro_event_loop.release_queued_tasks();
     }
 }
 
@@ -1853,9 +1853,9 @@ pub struct RuntimeHooks {
         unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> Option<bool>,
     /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in
     /// `bun_runtime::api::cron`.
-    pub cron_clear_all_teardown: fn(vm: &mut VirtualMachine),
+    pub stop_cron_for_vm_teardown: fn(vm: &mut VirtualMachine),
     /// `CronJob.clearAllForVM(vm, .reload)`.
-    /// Same impl as `cron_clear_all_teardown` but
+    /// Same impl as `stop_cron_for_vm_teardown` but
     /// the `.reload` mode preserves the next-fire schedule across the new
     /// global so timers re-register instead of being torn down.
     pub cron_clear_all_reload: fn(vm: &mut VirtualMachine),
@@ -1897,21 +1897,21 @@ pub struct RuntimeHooks {
     /// runs those callbacks against freed state. No-op when the resolver was
     /// never lazily created. Called from `WebWorker::shutdown` / `global_exit`
     /// right after `close_all_socket_groups`.
-    pub close_dns_for_terminate: fn(),
+    pub stop_dns_for_vm_teardown: fn(),
     /// Stop every registered native handle behind a JS object (servers,
     /// listeners, fs watchers) — the stop phase for Rust-side JS classes, run
     /// with the VM alive right after the WebCore stop phase.
     ///
     /// # Safety
     /// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
-    pub close_active_handles: unsafe fn(vm: *mut VirtualMachine),
+    pub stop_active_handles_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine),
     /// Teardown-only, after ~VM (JSC's RunLoop timers use the heap until then):
     /// close the loop handles the timer heap embeds (Windows uv_timer/uv_idle)
     /// so the loop close unlinks them before the runtime state is freed.
     ///
     /// # Safety
     /// JS thread; `runtime_state` installed.
-    pub close_timer_loop_handles: unsafe fn(vm: *mut VirtualMachine),
+    pub close_timer_loop_handles_after_vm_destroyed: unsafe fn(vm: *mut VirtualMachine),
 }
 
 /// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS
@@ -4419,7 +4419,7 @@ impl VirtualMachine {
         // `debug_assert!(cron_jobs.is_empty())` fires.
         if self.rare_data.is_some() {
             if let Some(hooks) = runtime_hooks() {
-                (hooks.cron_clear_all_teardown)(self);
+                (hooks.stop_cron_for_vm_teardown)(self);
             }
         }
         if let Some(rare) = self.rare_data.take() {

@@ -2473,7 +2473,7 @@ unsafe fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         // callback + double-free on reader close).
         if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
             debug_assert!(core::ptr::eq(Box::as_ref(&pipe), stderr_pipe_ptr));
-            s!().stderr_reader().source = Some(bun_io::Source::Pipe(pipe));
+            s!().stderr_reader().set_source(bun_io::Source::Pipe(pipe));
             s!().stderr_reader().set_parent(this_ptr);
             *s!().remaining_fds() += 1;
             if s!().stderr_reader().start_with_current_pipe().is_err() {

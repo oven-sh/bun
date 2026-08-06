@@ -433,10 +433,8 @@ static JSValue handleVirtualModuleResult(
 
     case OnLoadResultTypePromise: {
         JSC::JSPromise* promise = uncheckedDowncast<JSC::JSPromise>(onLoadResult.value.promise);
-        // An already-rejected promise would otherwise be chained below and read
-        // as Pending (its reaction is a microtask away), so require() would
-        // report the misleading "async module" error and orphan the chained
-        // internal promise, turning the reason into an unhandled rejection.
+        // Chained below, an already-rejected promise would still read as Pending
+        // (its reaction is a microtask away) and require() would misreport it.
         if (promise->status() == JSC::JSPromise::Status::Rejected) {
             promise->markAsHandled();
             RELEASE_AND_RETURN(scope, reject(promise->result()));
@@ -690,8 +688,7 @@ JSValue fetchCommonJSModule(
             }
             case JSPromise::Status::Pending: {
                 // The plugin's promise stays chained to this internal promise;
-                // mark it handled so the eventual settlement doesn't surface as
-                // an unhandled rejection after require() has already thrown.
+                // unmarked, its eventual rejection would be process-level unhandled.
                 promise->markAsHandled();
                 JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, specifierWtfString, "\" is unsupported. use \"await import()\" instead."_s));
                 RELEASE_AND_RETURN(scope, JSValue {});
@@ -749,8 +746,7 @@ JSValue fetchCommonJSModule(
             }
             case JSPromise::Status::Pending: {
                 // The plugin's promise stays chained to this internal promise;
-                // mark it handled so the eventual settlement doesn't surface as
-                // an unhandled rejection after require() has already thrown.
+                // unmarked, its eventual rejection would be process-level unhandled.
                 promise->markAsHandled();
                 JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, specifierWtfString, "\" is unsupported. use \"await import()\" instead."_s));
                 RELEASE_AND_RETURN(scope, JSValue {});

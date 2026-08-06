@@ -41,6 +41,12 @@ test("a failed connect evicts the host's DNS cache entry", async () => {
 });
 
 describe("dns.prefetch", () => {
+  it("rejects a hostname containing a NUL byte", () => {
+    // The worker hands the hostname to getaddrinfo as a C string; an embedded
+    // NUL would silently resolve only the prefix.
+    expect(() => dns.prefetch("localhost\0.example.invalid", 443)).toThrow("must not contain null bytes");
+  });
+
   it("should prefetch", async () => {
     // A local server keeps the test off the external network. "localhost" is a
     // real DNS lookup, so prefetch and fetch share the same cache entry.

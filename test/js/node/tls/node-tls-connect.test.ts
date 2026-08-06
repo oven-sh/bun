@@ -1292,3 +1292,44 @@ describe("throwing 'secureConnect' listener", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("servernames containing NUL bytes", () => {
+  // The SNI servername becomes the C string handed to
+  // SSL_set_tlsext_host_name, so "good.example\0evil" would silently send
+  // "good.example" on the wire while JS-level checks see the full string.
+  it("tls.connect rejects a servername containing a NUL byte", async () => {
+    // Reserved port 1: nothing listens there in CI, and the servername check
+    // must refuse before any connection is attempted anyway.
+    let err: any;
+    try {
+      const socket = tls.connect({
+        host: "127.0.0.1",
+        port: 1,
+        servername: "localhost\0.example.invalid",
+        rejectUnauthorized: false,
+      });
+      err = await new Promise((resolve, reject) => {
+        socket.on("error", resolve);
+        socket.on("secureConnect", () => reject(new Error("handshake completed")));
+      });
+      socket.destroy();
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.message).toContain("must not contain null bytes");
+  });
+
+  it("server.addContext rejects a hostname pattern containing a NUL byte", async () => {
+    // The SNI tree registers the C string, so "a.example\0evil" would
+    // register a certificate under "a.example".
+    const server = tls.createServer(COMMON_CERT_);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      expect(() => server.addContext("a.example.invalid\0evil", COMMON_CERT_)).toThrow(
+        "must not contain null bytes",
+      );
+    } finally {
+      server.close();
+    }
+  });
+});

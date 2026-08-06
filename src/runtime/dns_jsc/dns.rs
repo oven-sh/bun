@@ -2955,6 +2955,13 @@ pub mod internal {
             );
         };
 
+        // The cache key keeps the full bytes but the worker hands `key.host` to
+        // getaddrinfo as a C string, which would resolve only the pre-NUL prefix.
+        if hostname_slice.slice().contains(&0) {
+            return Err(global_this
+                .throw_invalid_arguments(format_args!("hostname must not contain null bytes")));
+        }
+
         let hostname_z = bun::ZBox::from_bytes(hostname_slice.slice());
 
         let port: u16 = if arguments.len() > 1 && !arguments[1].is_undefined_or_null() {
@@ -5521,6 +5528,14 @@ impl Resolver {
         // ZigStringSlice has no `into_owned_slice_z`; build the
         // NUL-terminated buffer inline.
         let bytes = str_.slice();
+        // `ares_inet_pton` reads to the first NUL, so "127.0.0.1\0junk" would
+        // silently parse as "127.0.0.1". A valid IP never contains a NUL.
+        if bytes.contains(&0) {
+            return Err(jsc::Error::INVALID_IP_ADDRESS.throw(
+                global_this,
+                format_args!("Invalid IP address: \"{}\"", bstr::BStr::new(bytes)),
+            ));
+        }
         let mut slice = bytes.to_vec();
         slice.push(0);
 

@@ -12685,6 +12685,22 @@ describe("shared createInstance validation (no server)", () => {
     },
   );
 
+  test.concurrent.each(["postgres", "mysql"] as const)(
+    "%s: rejects hostname containing null bytes",
+    async adapter => {
+      // The hostname becomes the C string handed to getaddrinfo, so
+      // "127.0.0.1\0evil" would silently connect to 127.0.0.1 while JS-level
+      // checks (allow/deny lists) see the full string.
+      await using sql = new SQL({ ...base, adapter, hostname: "127.0.0.1\0evil.example.invalid", username: "u" });
+      const err: any = await sql`select 1`.then(
+        () => null,
+        e => e,
+      );
+      expect(err?.message).toBe("hostname must not contain null bytes");
+      expect(err?.code).toBe("ERR_INVALID_ARG_TYPE");
+    },
+  );
+
   test.concurrent("SSL_CTX creation failure throws the structured BoringSSL error", async () => {
     // An unparseable CA makes `SSL_CTX` creation fail synchronously inside
     // createInstance, before any socket exists. The failure carries

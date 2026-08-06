@@ -643,3 +643,30 @@ test("sendMany() sends every packet of a larger-than-one-batch call", async () =
     server.close();
   }
 });
+
+describe("hostnames containing NUL bytes", () => {
+  // Bind/connect hostnames become C strings; an embedded NUL would silently
+  // bind or connect to the truncated prefix ("127.0.0.1\0evil" -> 127.0.0.1)
+  // while JS-level checks see the full string.
+  test.concurrent("bind hostname is rejected", async () => {
+    let err;
+    try {
+      const socket = await udpSocket({ hostname: "127.0.0.1\0.example.invalid", port: 0 });
+      socket.close();
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.message).toContain("must not contain null bytes");
+  });
+
+  test.concurrent("connect hostname is rejected", async () => {
+    let err;
+    try {
+      const socket = await udpSocket({ connect: { hostname: "127.0.0.1\0.example.invalid", port: 53 } });
+      socket.close();
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.message).toContain("must not contain null bytes");
+  });
+});

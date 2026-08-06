@@ -3346,6 +3346,23 @@ inline JSValue processBindingConfig(Zig::GlobalObject* globalObject, JSC::VM& vm
     return config;
 }
 
+extern "C" bool Debugger__isEnabled();
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionInspectorIsEnabled, (JSGlobalObject*, CallFrame*))
+{
+    return JSValue::encode(jsBoolean(Debugger__isEnabled()));
+}
+
+// Only `isEnabled` is exposed: the rest of Node's internal inspector binding
+// is reachable as public `node:inspector` API, and a stub that answered for
+// methods Bun does not implement would be worse than the missing property.
+inline JSValue processBindingInspector(Zig::GlobalObject* globalObject, JSC::VM& vm)
+{
+    auto* binding = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+    binding->putDirect(vm, JSC::Identifier::fromString(vm, "isEnabled"_s), JSC::JSFunction::create(vm, globalObject, 0, String("isEnabled"_s), jsFunctionInspectorIsEnabled, ImplementationVisibility::Public), 0);
+    return binding;
+}
+
 JSValue createCryptoX509Object(JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3375,7 +3392,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     if (moduleName == "fs_event_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("fs_event_wrap");
     if (moduleName == "http_parser"_s) return JSValue::encode(globalObject->processBindingHTTPParser());
     if (moduleName == "icu"_s) PROCESS_BINDING_NOT_IMPLEMENTED("icu");
-    if (moduleName == "inspector"_s) PROCESS_BINDING_NOT_IMPLEMENTED("inspector");
+    if (moduleName == "inspector"_s) return JSValue::encode(processBindingInspector(globalObject, vm));
     if (moduleName == "js_stream"_s) PROCESS_BINDING_NOT_IMPLEMENTED("js_stream");
     if (moduleName == "natives"_s) return JSValue::encode(process->bindingNatives());
     if (moduleName == "os"_s) PROCESS_BINDING_NOT_IMPLEMENTED("os");
@@ -4204,6 +4221,14 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
 }
 
 static uint16_t debugPort = 9229;
+
+// The CLI inspector server binds on the debugger thread; once it is listening
+// it reports the resolved port here so process.debugPort reflects it, as in
+// Node. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/pre_execution.js (updates via the inspector)
+extern "C" void Bun__setProcessDebugPort(uint16_t port)
+{
+    debugPort = port;
+}
 
 JSC_DEFINE_CUSTOM_GETTER(processDebugPort, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {

@@ -275,6 +275,124 @@ function ownSourceMappingURL(source: string): string {
   return source.slice(at + SOURCE_MAPPING_URL_COMMENT.length, end < 0 ? source.length : end).trim();
 }
 
+// ── RemoteObject / ObjectPreview ───────────────────────────────────────────
+// V8 reports NaN/±Infinity/-0/bigint via `unserializableValue`; JSC sends
+// `value: null` + `description`. https://chromedevtools.github.io/devtools-protocol/tot/Runtime/#type-UnserializableValue
+const UNSERIALIZABLE_NUMBERS = new Set(["NaN", "Infinity", "-Infinity", "-0"]);
+
+// Commands whose reply carries `wasThrown`; a thrown reply is enriched with
+// the exception's stack before it is forwarded (see #replyEvaluateLike).
+const EVALUATE_LIKE_METHODS = new Set(["Runtime.evaluate", "Runtime.callFunctionOn", "Debugger.evaluateOnCallFrame"]);
+
+// JSC names a collection by its class alone and puts the element count in a
+// separate `size` field; V8 folds the count into the description and has no
+// such field.
+function collectionDescription(description: string | undefined, size: number | undefined): string | undefined {
+  if (description === undefined || size === undefined) return description;
+  return `${description}(${size})`;
+}
+
+// JSC gives every Error line/column/sourceURL own properties (plus the raw
+// originalLine/originalColumn pair) that V8 errors do not have; previews must
+// not show them. V8 lists stack before message.
+const JSC_ERROR_LOCATION_PROPS = new Set(["line", "column", "sourceURL", "originalLine", "originalColumn"]);
+
+function toV8ErrorPreviewProperties(properties: AnyObject[]): AnyObject[] {
+  const filtered = properties.filter(property => !JSC_ERROR_LOCATION_PROPS.$has(property?.name));
+  const stackAt = filtered.findIndex(property => property?.name === "stack");
+  if (stackAt > 0) {
+    const stack = filtered[stackAt];
+    filtered.splice(stackAt, 1);
+    filtered.unshift(stack);
+  }
+  return filtered;
+}
+
+function toCdpObjectPreview(preview: AnyObject | undefined, nested = false): AnyObject | undefined {
+  if (!preview) return preview;
+  const { lossless, size, properties, entries, valuePreview, description, ...rest } = preview;
+  const out: AnyObject = rest;
+  out.description = collectionDescription(description, size);
+  // JSC's `lossless` is the negation of V8's `overflow`. JSC sends `overflow`
+  // too, but only for some types, so derive it whenever `lossless` is present.
+  if (lossless !== undefined) out.overflow = !lossless;
+  if (properties) {
+    out.properties =
+      rest.subtype === "error"
+        ? toV8ErrorPreviewProperties(properties).map(toCdpPropertyPreview)
+        : properties.map(toCdpPropertyPreview);
+    // The JSC-only properties were what made the preview lossy.
+    if (rest.subtype === "error") out.overflow = false;
+  }
+  // V8 omits `entries` when empty (JSC sends []) and only on the top-level
+  // preview (nested Map/Set is elided to overflow); Node's REPL branches on
+  // the field's presence, so match V8.
+  if (entries && entries.length > 0) {
+    if (nested) {
+      out.overflow = true;
+    } else {
+      out.entries = entries.map(toCdpEntryPreview);
+    }
+  }
+  if (valuePreview) out.valuePreview = toCdpObjectPreview(valuePreview, nested);
+  return out;
+}
+
+function toCdpPropertyPreview(property: AnyObject): AnyObject {
+  const { valuePreview } = property;
+  if (!valuePreview) return property;
+  return { ...property, valuePreview: toCdpObjectPreview(valuePreview, true) };
+}
+
+function toCdpEntryPreview(entry: AnyObject): AnyObject {
+  const { key, value } = entry;
+  const out: AnyObject = { ...entry };
+  if (key) out.key = toCdpObjectPreview(key, true);
+  if (value) out.value = toCdpObjectPreview(value, true);
+  return out;
+}
+
+function toCdpRemoteObject(remote: AnyObject | undefined): AnyObject | undefined {
+  if (!remote || typeof remote !== "object") return remote;
+  const { size, preview, description, type, ...rest } = remote;
+  const out: AnyObject = rest;
+  if (type !== undefined) out.type = type;
+  if (description !== undefined) out.description = description;
+  const unserializable =
+    description !== undefined && (type === "bigint" || (type === "number" && UNSERIALIZABLE_NUMBERS.$has(description)));
+  if (unserializable) {
+    delete out.value;
+    out.unserializableValue = description;
+  } else if (size !== undefined) {
+    out.description = collectionDescription(description, size);
+  }
+  if (preview) out.preview = toCdpObjectPreview(preview);
+  return out;
+}
+
+function toCdpPropertyDescriptor(property: AnyObject): AnyObject {
+  const { value, get, set, symbol } = property;
+  const out: AnyObject = { configurable: false, enumerable: false, ...property };
+  if (value) out.value = toCdpRemoteObject(value);
+  if (get) out.get = toCdpRemoteObject(get);
+  if (set) out.set = toCdpRemoteObject(set);
+  if (symbol) out.symbol = toCdpRemoteObject(symbol);
+  return out;
+}
+
+// JSC and V8 word the same protocol failures differently. CDP clients match on
+// the message text, so translate the ones with a V8 counterpart.
+// https://github.com/nodejs/node/blob/v26.3.0/test/parallel/test-debugger-breakpoint-exists.js
+const BACKEND_ERROR_MESSAGES: Record<string, string> = {
+  __proto__: null,
+  "Breakpoint for given location already exists": "Breakpoint at specified location already exists.",
+} as any;
+
+function toCdpErrorMessage(message: string | undefined): string {
+  if (message === undefined) return "Unknown error";
+  return BACKEND_ERROR_MESSAGES[message] ?? message;
+}
+
 // Null-proto so a key not present as an own property does not fall through to
 // Object.prototype: the in-process Session runs this adapter on the user's
 // main thread, where Object.prototype may have been tampered with.
@@ -343,6 +461,13 @@ class InspectorCDPAdapter {
   #writeToBackend: (message: string) => void;
   #writeToClient: (message: string) => void;
   #nextExceptionId = 1;
+  // V8 reports the pause that ends a step command with reason "step"; JSC does
+  // not distinguish it from any other pause, so track the step here.
+  #steppingToNextPause = false;
+  // V8 labels the --inspect-brk pause "Break on start"; Bun's injected
+  // `debugger;` is indistinguishable to JSC, so latch the release of a waiting
+  // target and relabel the pause it triggers.
+  #breakOnStartPending = false;
   #pending = new Map<
     number,
     { clientId: number | string | null; method: string; onResult?: (result: AnyObject, error?: AnyObject) => void }
@@ -380,6 +505,11 @@ class InspectorCDPAdapter {
   #profilerTracking = false;
   #profilerStartTime = 0;
   #profilerStopClientIds: (number | string)[] = [];
+  // console.profile() starts JSC tracking with no client Profiler.start;
+  // V8 announces those as consoleProfileStarted/Finished instead of a
+  // Profiler.stop reply.
+  #consoleProfileActive = false;
+  #consoleProfileSeq = 0;
   // NodeRuntime domain state, per connection, mirroring Node's RuntimeAgent.
   #nodeRuntimeEnabled = false;
   #notifyWhenWaitingForDisconnect = false;
@@ -512,7 +642,7 @@ class InspectorCDPAdapter {
 
   #onEvaluateForAwaitPromise(id: number, method: string, params: AnyObject, result: AnyObject, error: AnyObject) {
     if (error) {
-      this.#replyErrorToClient(id, error.code ?? -32000, error.message ?? "Unknown error");
+      this.#replyErrorToClient(id, error.code ?? -32000, toCdpErrorMessage(error.message));
       return;
     }
     const remote = result.result;
@@ -533,15 +663,157 @@ class InspectorCDPAdapter {
       );
       return;
     }
-    // Primitive/thrown: nothing to await. A thrown non-primitive already has an objectId (step one
-    // forced returnByValue:false), which clients inspect via exceptionDetails — do not re-serialize.
-    this.#replyToClient(id, this.#translateResult(method, result));
+    // Primitive / thrown: nothing to await. Primitives already carry value
+    // regardless of returnByValue; a thrown non-primitive comes back as an
+    // objectId (the first step forced returnByValue:false), which
+    // DevTools/vscode-js-debug inspect via exceptionDetails, so we do not
+    // re-serialize it to honour the client's returnByValue.
+    this.#replyEvaluateLike(id, method, result);
+  }
+
+  // V8's exceptionDetails carry throw site + stackTrace + formatted stack;
+  // JSC reports only the bare exception. Recover from the error's own
+  // stack/line/column/sourceURL via one extra Runtime.getProperties roundtrip.
+  #replyEvaluateLike(clientId: number | string, method: string, jscResult: AnyObject): void {
+    const remote = jscResult.result;
+    const objectId = jscResult.wasThrown ? remote?.objectId : undefined;
+    if (objectId) {
+      this.#sendToBackend("Runtime.getProperties", { objectId, ownProperties: true }, null, method, (props, error) => {
+        const properties = error ? [] : (props.properties ?? []);
+        this.#replyToClient(clientId, this.#translateThrownResult(method, jscResult, properties));
+      });
+      return;
+    }
+    // An error VALUE with a preview: JSC caps preview properties at five, and
+    // an error's five JSC location properties crowd `stack` out entirely, so
+    // recover it from the object itself (V8 lists it first).
+    if (remote?.subtype === "error" && remote.preview && remote.objectId) {
+      this.#sendToBackend(
+        "Runtime.getProperties",
+        { objectId: remote.objectId, ownProperties: true },
+        null,
+        method,
+        (props, error) => {
+          const out = this.#translateResult(method, jscResult);
+          const preview = out.result?.preview;
+          if (!error && preview?.properties) {
+            let stack: unknown;
+            for (const property of props.properties ?? []) {
+              if (property?.name === "stack") stack = property.value?.value;
+            }
+            const hasStack = preview.properties.some((property: AnyObject) => property?.name === "stack");
+            if (typeof stack === "string" && !hasStack) {
+              preview.properties.unshift({ name: "stack", type: "string", value: stack });
+            }
+          }
+          this.#replyToClient(clientId, out);
+        },
+      );
+      return;
+    }
+    this.#replyToClient(clientId, this.#translateResult(method, jscResult));
+  }
+
+  #translateThrownResult(method: string, jscResult: AnyObject, properties: AnyObject[]): AnyObject {
+    const out = this.#translateResult(method, jscResult);
+    const details = out.exceptionDetails;
+    if (!details) return out;
+    let stack: string | undefined;
+    let line: number | undefined;
+    let column: number | undefined;
+    let generatedLine: number | undefined;
+    let generatedColumn: number | undefined;
+    let sourceURL: string | undefined;
+    for (const property of properties) {
+      const value = property?.value?.value;
+      switch (property?.name) {
+        case "stack":
+          if (typeof value === "string") stack = value;
+          break;
+        // Bun stores the raw JSC throw position in originalLine/originalColumn
+        // and the source-mapped one in line/column (all 1-based).
+        case "line":
+          if (typeof value === "number") line = value;
+          break;
+        case "column":
+          if (typeof value === "number") column = value;
+          break;
+        case "originalLine":
+          if (typeof value === "number") generatedLine = value;
+          break;
+        case "originalColumn":
+          if (typeof value === "number") generatedColumn = value;
+          break;
+        case "sourceURL":
+          if (typeof value === "string") sourceURL = value;
+          break;
+      }
+    }
+    // details.exception and out.result are the same object; V8 formats both
+    // with the message followed by the frames, which is exactly Bun's
+    // Error#stack. A tampered stack that dropped the message keeps it.
+    const remote = details.exception;
+    if (stack !== undefined && stack !== "") {
+      const description = typeof remote.description === "string" ? remote.description : "";
+      remote.description = stack.startsWith(description) ? stack : `${description}\n${stack}`;
+
+      const callFrames: AnyObject[] = [];
+      for (const frameLine of stack.split("\n")) {
+        const match = /^\s+at\s+(?:(.+?)\s+\()?(.+?):(\d+):(\d+)\)?$/.exec(frameLine);
+        if (match === null) continue;
+        const frameUrl = match[2];
+        callFrames.push({
+          functionName: match[1] ?? "",
+          scriptId: this.#scriptIdsByUrl.get(frameUrl) ?? "",
+          url: frameUrl,
+          lineNumber: Number(match[3]) - 1,
+          columnNumber: Number(match[4]) - 1,
+        });
+      }
+      if (callFrames.length > 0) details.stackTrace = { callFrames };
+    }
+    // JSC is 1-based and records the callee position; V8/CDP is 0-based and
+    // reports the throwing statement's start. Approximate the latter via the
+    // source-map mapping at-or-before the generated position, walked to line start.
+    const scriptId = sourceURL !== undefined ? this.#scriptIdsByUrl.get(sourceURL) : undefined;
+    const statementStart =
+      scriptId !== undefined && typeof generatedLine === "number" && generatedLine > 0
+        ? this.#originalStatementStart(
+            scriptId,
+            generatedLine - 1,
+            typeof generatedColumn === "number" && generatedColumn > 0 ? generatedColumn - 1 : 0,
+          )
+        : undefined;
+    if (statementStart !== undefined) {
+      details.lineNumber = statementStart.lineNumber;
+      details.columnNumber = statementStart.columnNumber;
+      details.scriptId = scriptId;
+    } else if (typeof line === "number" && line > 0) {
+      details.lineNumber = line - 1;
+      details.columnNumber = typeof column === "number" && column > 0 ? column - 1 : 0;
+      if (scriptId !== undefined) details.scriptId = scriptId;
+    }
+    return out;
+  }
+
+  #originalStatementStart(scriptId: string, genLine: number, genColumn: number): OriginalPosition | undefined {
+    const map = this.#sourceMapFor(scriptId);
+    const lineMappings = map?.byGeneratedLine?.[genLine];
+    if (!lineMappings || lineMappings.columns.length === 0) return undefined;
+    const { columns, lineNumbers, columnNumbers } = lineMappings;
+    let at = 0;
+    for (let i = 0; i < columns.length; i++) {
+      if (columns[i] <= genColumn) at = i;
+    }
+    const lineNumber = lineNumbers[at];
+    while (at > 0 && lineNumbers[at - 1] === lineNumber) at--;
+    return { lineNumber, columnNumber: columnNumbers[at] };
   }
 
   #onProfilerStartReply(id: number, _result: AnyObject, error: AnyObject) {
     if (error) {
       this.#profilerTracking = false;
-      this.#replyErrorToClient(id, error.code ?? -32000, error.message ?? "Unknown error");
+      this.#replyErrorToClient(id, error.code ?? -32000, toCdpErrorMessage(error.message));
       return;
     }
     this.#replyToClient(id, {});
@@ -552,7 +824,7 @@ class InspectorCDPAdapter {
     if (error) {
       const at = this.#profilerStopClientIds.indexOf(id);
       if (at >= 0) this.#profilerStopClientIds.splice(at, 1);
-      this.#replyErrorToClient(id, error.code ?? -32000, error.message ?? "Unknown error");
+      this.#replyErrorToClient(id, error.code ?? -32000, toCdpErrorMessage(error.message));
     }
   }
 
@@ -577,7 +849,11 @@ class InspectorCDPAdapter {
   #onGlobalObjectForCallFunctionOn(id: number, method: string, params: AnyObject, result: AnyObject, error: AnyObject) {
     const globalObjectId = result.result?.objectId;
     if (error || !globalObjectId) {
-      this.#replyErrorToClient(id, error?.code ?? -32000, error?.message ?? "Failed to resolve global object");
+      this.#replyErrorToClient(
+        id,
+        error?.code ?? -32000,
+        error ? toCdpErrorMessage(error.message) : "Failed to resolve global object",
+      );
       return;
     }
     this.#forwardCallFunctionOn(id, method, params, globalObjectId);
@@ -594,7 +870,7 @@ class InspectorCDPAdapter {
     error: AnyObject,
   ) {
     if (error) {
-      this.#replyErrorToClient(id, error.code ?? -32000, error.message ?? "Unknown error");
+      this.#replyErrorToClient(id, error.code ?? -32000, toCdpErrorMessage(error.message));
       return;
     }
     const breakpointId = result.breakpointId;
@@ -657,6 +933,7 @@ class InspectorCDPAdapter {
     // A synchronous scriptParsed listener may have already decoded the map
     // (#sourceMapFor consumes mappings into map), so check both states.
     if (!script || (script.mappings === undefined && script.map === undefined)) return;
+    const resets: { clientBreakpointId: string; bp: AnyObject; generated: AnyObject }[] = [];
     for (const [clientBreakpointId, bp] of this.#preParseBreakpoints) {
       if (bp.resolved) continue;
       const { url: bpUrl, urlRegex: bpUrlRegex } = bp;
@@ -681,8 +958,16 @@ class InspectorCDPAdapter {
       if (generated.lineNumber === bp.lineNumber && (generated.columnNumber ?? 0) === (bp.columnNumber ?? 0)) {
         continue; // The map is an identity for this position.
       }
+      resets.push({ clientBreakpointId, bp, generated });
+    }
+    // Remove all before re-adding any: JSC merges pre-parse requests on an
+    // unmapped line to one pause location, so removing one after a re-add
+    // resolved to the same spot cleared the re-added one too.
+    for (const { bp } of resets) {
       bp.resetPending = true;
       this.#sendToBackend("Debugger.removeBreakpoint", { breakpointId: bp.jscId });
+    }
+    for (const { clientBreakpointId, bp, generated } of resets) {
       const options: AnyObject = {};
       const { condition } = bp;
       if (condition) options.condition = condition;
@@ -692,7 +977,7 @@ class InspectorCDPAdapter {
           lineNumber: generated.lineNumber,
           columnNumber: generated.columnNumber,
           options,
-          urlRegex: bpUrlRegex ?? breakpointUrlRegex(bpUrl!),
+          urlRegex: bp.urlRegex ?? breakpointUrlRegex(bp.url!),
         },
         null,
         "Debugger.setBreakpointByUrl",
@@ -763,7 +1048,11 @@ class InspectorCDPAdapter {
       }
       if (clientId === null || clientId === undefined) return;
       if (error) {
-        this.#replyErrorToClient(clientId, error.code ?? -32000, error.message ?? "Unknown error");
+        this.#replyErrorToClient(clientId, error.code ?? -32000, toCdpErrorMessage(error.message));
+        return;
+      }
+      if (EVALUATE_LIKE_METHODS.$has(pending.method)) {
+        this.#replyEvaluateLike(clientId, pending.method, parsed.result || {});
         return;
       }
       this.#replyToClient(clientId, this.#translateResult(pending.method, parsed.result || {}));
@@ -832,6 +1121,9 @@ class InspectorCDPAdapter {
         return;
 
       case "Runtime.runIfWaitingForDebugger":
+        // Only a target parked in wait-for-debugger state can produce the
+        // "Break on start" pause; --inspect (no -brk/-wait) never waits.
+        if (this.#isWaitingForDebugger()) this.#breakOnStartPending = true;
         // Inspector.initialized resolves Bun's wait-for-debugger state, which
         // unblocks inspector.open(port, host, true) on the inspected thread.
         this.#sendToBackend("Inspector.initialized");
@@ -939,13 +1231,18 @@ class InspectorCDPAdapter {
         this.#sendToBackend("Debugger.setPauseOnDebuggerStatements", { enabled: true }, id, method);
         return;
 
-      case "Debugger.disable":
-      case "Debugger.pause":
-      case "Debugger.resume":
       case "Debugger.stepInto":
       case "Debugger.stepOut":
       case "Debugger.stepOver":
+        this.#steppingToNextPause = true;
+        this.#sendToBackend(method, params, id, method);
+        return;
+
+      case "Debugger.disable":
+      case "Debugger.pause":
+      case "Debugger.resume":
       case "Debugger.setBreakpointsActive":
+        this.#steppingToNextPause = false;
         this.#sendToBackend(method, params, id, method);
         return;
 
@@ -1105,6 +1402,45 @@ class InspectorCDPAdapter {
         this.#sendToBackend("Heap.gc", undefined, id, method);
         return;
 
+      // V8 streams the snapshot as addHeapSnapshotChunk events, then answers
+      // the command. JSC's Heap.snapshot uses its own format, so build the
+      // V8-format snapshot on the inspected thread instead and chunk it here.
+      case "HeapProfiler.takeHeapSnapshot": {
+        const reportProgress = !!params.reportProgress;
+        this.#sendToBackend(
+          "Runtime.evaluate",
+          {
+            expression: 'Bun.generateHeapSnapshot("v8")',
+            returnByValue: true,
+            doNotPauseOnExceptionsAndMuteConsole: true,
+          },
+          null,
+          method,
+          (result, error) => {
+            const snapshot = !error && !result.wasThrown ? result.result?.value : undefined;
+            if (typeof snapshot !== "string") {
+              this.#replyErrorToClient(id, -32000, "Failed to take heap snapshot");
+              return;
+            }
+            if (reportProgress) {
+              this.#emitToClient("HeapProfiler.reportHeapSnapshotProgress", {
+                done: 1,
+                total: 1,
+                finished: true,
+              });
+            }
+            const chunkSize = 100 * 1024;
+            for (let offset = 0; offset < snapshot.length; offset += chunkSize) {
+              this.#emitToClient("HeapProfiler.addHeapSnapshotChunk", {
+                chunk: snapshot.slice(offset, offset + chunkSize),
+              });
+            }
+            this.#replyToClient(id, {});
+          },
+        );
+        return;
+      }
+
       // V8's CPU profiler maps onto JSC's ScriptProfiler: track with samples,
       // then reshape them into a V8 profile (#translateSamplingProfile).
       case "Profiler.start":
@@ -1211,31 +1547,46 @@ class InspectorCDPAdapter {
       case "Debugger.enable":
         return { debuggerId: "(bun)", ...result };
 
+      // Breakpoint replies carry resolved positions in generated coordinates;
+      // clients print them (the debugger REPL's `breakpoints` list), so they
+      // need the same original-position translation as pause locations.
+      case "Debugger.setBreakpoint": {
+        const out: AnyObject = { ...result };
+        if (out.actualLocation) out.actualLocation = this.#toOriginalLocation(out.actualLocation);
+        return out;
+      }
+
+      case "Debugger.setBreakpointByUrl": {
+        const out: AnyObject = { ...result };
+        if ($isJSArray(out.locations)) {
+          out.locations = out.locations.map((location: AnyObject) => this.#toOriginalLocation(location));
+        }
+        return out;
+      }
+
       case "Runtime.evaluate":
       case "Runtime.callFunctionOn":
       case "Debugger.evaluateOnCallFrame": {
-        const out: AnyObject = { result: result.result ?? { type: "undefined" } };
+        const remote = toCdpRemoteObject(result.result) ?? { type: "undefined" };
+        const out: AnyObject = { result: remote };
         if (result.wasThrown) {
           out.exceptionDetails = {
             exceptionId: this.#nextExceptionId++,
-            text: result.result?.description ?? "Uncaught",
+            // V8's text for a thrown evaluation is the fixed string
+            // "Uncaught"; the message lives in the exception's description.
+            text: "Uncaught",
             lineNumber: 0,
             columnNumber: 0,
-            exception: result.result,
+            exception: remote,
           };
         }
         return out;
       }
 
       case "Runtime.getProperties": {
-        const properties = (result.properties ?? []).map((property: AnyObject) => ({
-          configurable: false,
-          enumerable: false,
-          ...property,
-        }));
-        const out: AnyObject = { result: properties };
+        const out: AnyObject = { result: (result.properties ?? []).map(toCdpPropertyDescriptor) };
         const { internalProperties } = result;
-        if (internalProperties) out.internalProperties = internalProperties;
+        if (internalProperties) out.internalProperties = internalProperties.map(toCdpPropertyDescriptor);
         return out;
       }
 
@@ -1335,7 +1686,9 @@ class InspectorCDPAdapter {
           canBeRestarted: false,
         }));
         const { data, asyncStackTrace } = params;
-        const cdpParams: AnyObject = { callFrames, reason: "other", data };
+        const stepped = this.#steppingToNextPause;
+        this.#steppingToNextPause = false;
+        const cdpParams: AnyObject = { callFrames, reason: stepped ? "step" : "other", data };
         switch (params.reason) {
           case "exception":
             cdpParams.reason = "exception";
@@ -1344,8 +1697,19 @@ class InspectorCDPAdapter {
             cdpParams.reason = "assert";
             break;
           case "Breakpoint":
+            // A breakpoint reached mid-step is a breakpoint hit to V8, not a
+            // completed step.
+            cdpParams.reason = "other";
             if (data?.breakpointId) cdpParams.hitBreakpoints = [this.#toClientBreakpointId(data.breakpointId)];
             break;
+        }
+        // The first pause after releasing a parked target is "Break on start";
+        // it wins over a breakpoint (V8 does too) but not over an exception,
+        // which means user code already ran.
+        const breakOnStart = this.#breakOnStartPending;
+        this.#breakOnStartPending = false;
+        if (breakOnStart && cdpParams.reason !== "exception" && cdpParams.reason !== "assert") {
+          cdpParams.reason = "Break on start";
         }
         if (asyncStackTrace) cdpParams.asyncStackTrace = this.#translateStackTrace(asyncStackTrace);
         this.#emitToClient("Debugger.paused", cdpParams);
@@ -1377,6 +1741,16 @@ class InspectorCDPAdapter {
 
       case "ScriptProfiler.trackingStart":
         this.#profilerStartTime = params.timestamp ?? 0;
+        // Tracking that no client requested was started programmatically by
+        // console.profile(); V8 announces it. JSC does not report the call
+        // site, so the location is empty.
+        if (!this.#profilerTracking) {
+          this.#consoleProfileActive = true;
+          this.#emitToClient("Profiler.consoleProfileStarted", {
+            id: String(++this.#consoleProfileSeq),
+            location: { scriptId: "0", lineNumber: 0, columnNumber: 0 },
+          });
+        }
         return;
 
       case "ScriptProfiler.trackingComplete": {
@@ -1386,6 +1760,15 @@ class InspectorCDPAdapter {
           // ended. The issuing session already cleared #profilerTracking at
           // Profiler.stop and may have re-armed it with a pipelined start.
           this.#profilerTracking = false;
+          if (this.#consoleProfileActive) {
+            this.#consoleProfileActive = false;
+            this.#emitToClient("Profiler.consoleProfileFinished", {
+              id: String(this.#consoleProfileSeq),
+              location: { scriptId: "0", lineNumber: 0, columnNumber: 0 },
+              profile: this.#translateSamplingProfile(params),
+            });
+            this.#profilerStartTime = 0;
+          }
           return;
         }
         this.#replyToClient(clientId, { profile: this.#translateSamplingProfile(params) });

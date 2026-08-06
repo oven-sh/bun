@@ -186,6 +186,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait"
     ),
     parse_param!(
+        "--inspect-port <STR>              Set the [host:]port used by the debugger and reported by process.debugPort"
+    ),
+    parse_param!(
         "--cpu-prof                        Start CPU profiler and write profile to disk on exit"
     ),
     parse_param!("--cpu-prof-name <STR>             Specify the name of the CPU profile file"),
@@ -305,6 +308,10 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--trace-exit"),
     parse_param!("--expose-internals"),
     parse_param!("--stack-trace-limit <STR>"),
+    // Rejected below with Node's DEP0062 message. Declared so `--debug=<port>`
+    // does not swallow the entrypoint before the rejection runs.
+    parse_param!("--debug <STR>?"),
+    parse_param!("--debug-brk <STR>?"),
 ];
 
 const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
@@ -1166,6 +1173,16 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             Global::exit(1);
         }
 
+        // Node exits 9 on `--debug`/`--debug-brk` (DEP0062).
+        // https://github.com/nodejs/node/blob/v26.3.0/src/node_options.cc#L56-L60
+        if args.option(b"--debug").is_some() || args.option(b"--debug-brk").is_some() {
+            Output::err_generic(
+                "[DEP0062]: `node --debug` and `node --debug-brk` are invalid. Please use `node --inspect` and `node --inspect-brk` instead.",
+                (),
+            );
+            Global::exit(9);
+        }
+
         if let Some(inspect_flag) = args.option(b"--inspect") {
             ctx.runtime_options.debugger = if inspect_flag.is_empty() {
                 Debugger::Enable(Default::default())
@@ -1203,6 +1220,31 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                     ..Default::default()
                 })
             };
+        }
+
+        unsafe extern "C" {
+            // Defined in BunProcess.cpp; backs process.debugPort.
+            fn Bun__setProcessDebugPort(port: u16);
+        }
+        // Node's --inspect-port=[host:]port: process.debugPort always, and the
+        // active `--inspect*` listener's port unless `--inspect=<port>` set
+        // one. https://github.com/nodejs/node/blob/main/src/node_options.cc
+        if let Some(inspect_port_flag) = args.option(b"--inspect-port") {
+            let port_bytes = match inspect_port_flag.iter().rposition(|&byte| byte == b':') {
+                Some(at) => &inspect_port_flag[at + 1..],
+                None => inspect_port_flag,
+            };
+            if let Ok(port) = core::str::from_utf8(port_bytes)
+                .unwrap_or("")
+                .parse::<u16>()
+            {
+                unsafe { Bun__setProcessDebugPort(port) };
+                if let Debugger::Enable(ref mut enable) = ctx.runtime_options.debugger {
+                    if enable.path_or_port.is_empty() {
+                        enable.path_or_port = Box::<[u8]>::from(inspect_port_flag);
+                    }
+                }
+            }
         }
 
         let cpu_prof_flag = args.flag(b"--cpu-prof");

@@ -381,7 +381,10 @@ it("process.binding", () => {
   expect(() => process.binding("fs_event_wrap")).toThrow();
   expect(() => process.binding("http_parser")).not.toThrow();
   expect(() => process.binding("icu")).toThrow();
-  expect(() => process.binding("inspector")).toThrow();
+  // Only isEnabled() is implemented; test-inspector-enabled.js covers what it
+  // reports under --inspect and after process._debugEnd().
+  expect(() => process.binding("inspector")).not.toThrow();
+  expect(process.binding("inspector").isEnabled).toBeInstanceOf(Function);
   expect(() => process.binding("js_stream")).toThrow();
   expect(() => process.binding("natives")).not.toThrow();
   expect(() => process.binding("os")).toThrow();

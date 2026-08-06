@@ -15,6 +15,8 @@
 #include "debug-helpers.h"
 #include "BunInjectedScriptHost.h"
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
+#include <JavaScriptCore/ConsoleClient.h>
+#include <JavaScriptCore/ScriptArguments.h>
 #include <wtf/JSONValues.h>
 
 #include "InspectorLifecycleAgent.h"
@@ -989,6 +991,8 @@ static NodeInspectorState& nodeInspectorState()
     return instance.get();
 }
 
+extern "C" void Bun__setProcessDebugPort(uint16_t port);
+
 // Called by internal/debugger.ts on the debugger thread once the node:inspector
 // server is listening (url, controlCallback) or failed to start ("", undefined, error).
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportNodeInspectorServerStarted);
@@ -1002,6 +1006,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReportNodeInspectorServerStarted, (JSGlobalOb
     JSValue controlCallbackValue = callFrame->argument(1);
     String error = callFrame->argument(2).isUndefined() ? String() : callFrame->argument(2).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+
+    // Node resolves process.debugPort to the bound port once the inspector
+    // server is listening; mirror that for the CLI-started server (the
+    // inspector.open() path assigns process.debugPort from JS instead).
+    if (!url.isEmpty()) {
+        if (auto port = WTF::URL(url).port())
+            Bun__setProcessDebugPort(*port);
+    }
 
     auto& state = nodeInspectorState();
     {
@@ -1140,6 +1152,23 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_waitForNodeInspectorConnection, (JSGlobalObj
     return JSValue::encode(jsUndefined());
 }
 
+// The listening node-inspector server's URL, or null when none is listening.
+// node:inspector cannot cache this: --inspect starts the server on the
+// debugger thread before the module is ever required.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_getNodeInspectorUrl, (JSGlobalObject * globalObject, CallFrame*))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto& state = nodeInspectorState();
+    String url;
+    {
+        Locker<Lock> locker(state.lock);
+        if (!state.serverStarted || state.url.isEmpty())
+            return JSValue::encode(jsNull());
+        url = state.url.isolatedCopy();
+    }
+    return JSValue::encode(jsString(vm, url));
+}
+
 // Dispatches one JSC-protocol message from the in-process Session synchronously and returns
 // the reply + any events as an array of JSON strings. Connects the channel on first use.
 // https://github.com/nodejs/node/blob/main/lib/inspector.js
@@ -1257,6 +1286,142 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_disconnectInProcessInspector, (JSGlobalObjec
         return JSValue::encode(jsUndefined());
     }
     detachInProcessFrontend(globalObject, channel);
+    return JSValue::encode(jsUndefined());
+}
+
+// node:inspector's `inspector.console`: inspector-only, no stdio. Call the
+// inspector controller's console client directly (Bun::ConsoleObject would
+// also write to the terminal). https://github.com/nodejs/node/blob/main/lib/inspector.js
+JSC_DEFINE_HOST_FUNCTION(jsFunction_inspectorConsoleCall, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    uint32_t rawMethod = callFrame->argument(0).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (rawMethod > kLastInspectorConsoleMethod) {
+        throwTypeError(globalObject, scope, "invalid inspector console method"_s);
+        return {};
+    }
+    auto method = static_cast<InspectorConsoleMethod>(rawMethod);
+
+    // Every argument is coerced before the console client is reached, because
+    // a `toString` can run user JS that disconnects the frontend.
+    String label;
+    size_t firstValueArgument = 1;
+    switch (method) {
+    case InspectorConsoleMethod::Count:
+    case InspectorConsoleMethod::CountReset:
+    case InspectorConsoleMethod::Time:
+    case InspectorConsoleMethod::TimeLog:
+    case InspectorConsoleMethod::TimeEnd:
+        // JSC's console spells the omitted label this way too.
+        label = callFrame->argument(1).isUndefined() ? "default"_s : callFrame->argument(1).toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        firstValueArgument = 2;
+        break;
+    case InspectorConsoleMethod::Profile:
+    case InspectorConsoleMethod::ProfileEnd:
+        label = callFrame->argument(1).isUndefined() ? String() : callFrame->argument(1).toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        firstValueArgument = 2;
+        break;
+    case InspectorConsoleMethod::Assert: {
+        bool condition = callFrame->argument(1).toBoolean(globalObject);
+        // console.assert only reports when the assertion failed.
+        if (condition)
+            return JSValue::encode(jsUndefined());
+        firstValueArgument = 2;
+        break;
+    }
+    default:
+        break;
+    }
+
+    if (!globalObject->inspectable())
+        return JSValue::encode(jsUndefined());
+    auto client = globalObject->inspectorController().consoleClient();
+    if (!client)
+        return JSValue::encode(jsUndefined());
+
+    Vector<JSC::Strong<JSC::Unknown>> values;
+    size_t argumentCount = callFrame->argumentCount();
+    if (argumentCount > firstValueArgument) {
+        values.reserveInitialCapacity(argumentCount - firstValueArgument);
+        for (size_t i = firstValueArgument; i < argumentCount; i++)
+            values.append(JSC::Strong<JSC::Unknown>(vm, callFrame->uncheckedArgument(i)));
+    }
+    Ref<Inspector::ScriptArguments> arguments = Inspector::ScriptArguments::create(globalObject, WTF::move(values));
+
+    switch (method) {
+    case InspectorConsoleMethod::Log:
+        client->logWithLevel(globalObject, WTF::move(arguments), MessageLevel::Log);
+        break;
+    case InspectorConsoleMethod::Info:
+        client->logWithLevel(globalObject, WTF::move(arguments), MessageLevel::Info);
+        break;
+    case InspectorConsoleMethod::Debug:
+        client->logWithLevel(globalObject, WTF::move(arguments), MessageLevel::Debug);
+        break;
+    case InspectorConsoleMethod::Warn:
+        client->logWithLevel(globalObject, WTF::move(arguments), MessageLevel::Warning);
+        break;
+    case InspectorConsoleMethod::Error:
+        client->logWithLevel(globalObject, WTF::move(arguments), MessageLevel::Error);
+        break;
+    case InspectorConsoleMethod::Dir:
+        client->dir(globalObject, WTF::move(arguments));
+        break;
+    case InspectorConsoleMethod::DirXML:
+        client->dirXML(globalObject, WTF::move(arguments));
+        break;
+    case InspectorConsoleMethod::Table:
+        client->table(globalObject, WTF::move(arguments));
+        break;
+    case InspectorConsoleMethod::Trace:
+        client->trace(globalObject, WTF::move(arguments));
+        break;
+    case InspectorConsoleMethod::Clear:
+        client->clear(globalObject);
+        break;
+    case InspectorConsoleMethod::Assert:
+        client->assertion(globalObject, WTF::move(arguments));
+        break;
+    case InspectorConsoleMethod::Group:
+        client->group(globalObject, WTF::move(arguments));
+        break;
+    case InspectorConsoleMethod::GroupCollapsed:
+        client->groupCollapsed(globalObject, WTF::move(arguments));
+        break;
+    case InspectorConsoleMethod::GroupEnd:
+        client->groupEnd(globalObject, WTF::move(arguments));
+        break;
+    case InspectorConsoleMethod::Count:
+        client->count(globalObject, label);
+        break;
+    case InspectorConsoleMethod::CountReset:
+        client->countReset(globalObject, label);
+        break;
+    case InspectorConsoleMethod::Profile:
+        client->profile(globalObject, label);
+        break;
+    case InspectorConsoleMethod::ProfileEnd:
+        client->profileEnd(globalObject, label);
+        break;
+    case InspectorConsoleMethod::Time:
+        client->time(globalObject, label);
+        break;
+    case InspectorConsoleMethod::TimeLog:
+        client->timeLog(globalObject, label, WTF::move(arguments));
+        break;
+    case InspectorConsoleMethod::TimeEnd:
+        client->timeEnd(globalObject, label);
+        break;
+    case InspectorConsoleMethod::TimeStamp:
+        client->timeStamp(globalObject, WTF::move(arguments));
+        break;
+    }
+
     return JSValue::encode(jsUndefined());
 }
 

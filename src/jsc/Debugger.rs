@@ -240,11 +240,7 @@ impl Debugger {
         });
 
         bun_core::scoped_log!(debugger, "spin");
-        // `FUTEX_ATOMIC` starts at 0 and nothing ever stores `1` before this
-        // load, so this loop is a no-op on first call.
-        while FUTEX_ATOMIC.load(Ordering::Relaxed) > 0 {
-            bun_threading::Futex::wait_forever(&FUTEX_ATOMIC, 1);
-        }
+        Debugger::wait_for_thread_startup();
         if bun_core::Environment::ENABLE_LOGS {
             bun_core::scoped_log!(
                 debugger,
@@ -384,6 +380,15 @@ impl Debugger {
         }
     }
 
+    /// Block until the debugger thread finishes startup: `create()` arms the
+    /// futex before spawning, `start_js_debugger_thread` clears it on every
+    /// exit path. No-op once the thread already started.
+    pub fn wait_for_thread_startup() {
+        while FUTEX_ATOMIC.load(Ordering::Relaxed) > 0 {
+            bun_threading::Futex::wait_forever(&FUTEX_ATOMIC, 1);
+        }
+    }
+
     /// `Debugger.create(vm, global)` — first-time debugger setup: create the
     /// JSC inspector context, spawn the debugger VM thread, and arm the
     /// keep-alive on the parent loop.
@@ -413,6 +418,10 @@ impl Debugger {
 
         if !this_ref.has_started_debugger {
             this_ref.as_mut().has_started_debugger = true;
+            // Armed before spawn, cleared on every `start_js_debugger_thread`
+            // exit; `wait_for_thread_startup` blocks on it so `--inspect`
+            // prints its banner before script output, as Node does.
+            FUTEX_ATOMIC.store(1, Ordering::Relaxed);
             // `std::thread::spawn` requires `Send`; raw `*mut
             // VirtualMachine` is `!Send`. Wrap in a `Send` newtype — the
             // pointer is only ever dereferenced on the debugger thread under
@@ -785,6 +794,15 @@ pub fn debug_end() {
     if let Some(dbg) = VirtualMachine::get().debugger_mut() {
         dbg.debug_ended = true;
     }
+}
+
+/// `process.binding('inspector').isEnabled()`: whether this thread has an
+/// inspector agent that `process._debugEnd()` has not stopped.
+// HOST_EXPORT(Debugger__isEnabled, c)
+pub fn is_enabled() -> bool {
+    VirtualMachine::get()
+        .debugger_mut()
+        .is_some_and(|dbg| !dbg.debug_ended)
 }
 
 // HOST_EXPORT(Debugger__didConnect, c)

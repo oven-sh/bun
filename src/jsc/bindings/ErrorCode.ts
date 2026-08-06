@@ -65,6 +65,8 @@ const errors: ErrorCodeMapping = [
   ["ERR_CRYPTO_UNKNOWN_CIPHER", Error],
   ["ERR_CRYPTO_UNKNOWN_DH_GROUP", Error],
   ["ERR_CRYPTO_UNSUPPORTED_OPERATION", Error],
+  ["ERR_DEBUGGER_ERROR", Error],
+  ["ERR_DEBUGGER_STARTUP_ERROR", Error],
   ["ERR_DIR_CLOSED", Error],
   ["ERR_DLOPEN_DISABLED", Error],
   ["ERR_DLOPEN_FAILED", Error],

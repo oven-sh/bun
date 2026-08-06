@@ -49,11 +49,18 @@ const drainInProcessInspectorMessages = $newCppFunction(
 );
 const disconnectInProcessInspector = $newCppFunction("BunDebugger.cpp", "jsFunction_disconnectInProcessInspector", 0);
 const closeNodeInspector = $newCppFunction("BunDebugger.cpp", "jsFunction_closeNodeInspector", 0);
+const getNodeInspectorUrl = $newCppFunction("BunDebugger.cpp", "jsFunction_getNodeInspectorUrl", 0);
+// Emits one console message to attached inspector sessions only; see
+// `console` below.
+const inspectorConsoleCall = $newCppFunction("BunDebugger.cpp", "jsFunction_inspectorConsoleCall", 1);
 
 // Captured at load so console-hook stack capture survives user tampering with globalThis.Error.
 const ErrorObject = globalThis.Error;
 const errorCaptureStackTrace = ErrorObject.captureStackTrace;
 
+// Set only by open(): flags that the debugger thread owns a backend Sessions
+// must share (what #handleMethod's Debugger.* forwarding keys off). --inspect
+// sets no such backend, so url()/close()/waitForDebugger() use getNodeInspectorUrl().
 let activeInspectorUrl: string | undefined;
 
 // Same check as Node's internal/net.js isLoopback().
@@ -67,13 +74,20 @@ function isLoopbackHost(host: string) {
   );
 }
 
+// URL of the listening node-inspector server (from open() or --inspect).
+// Workers never have one: the main thread owns it and open() rejects there.
+function listeningInspectorUrl(): string | undefined {
+  if (!Bun.isMainThread) return undefined;
+  return getNodeInspectorUrl() ?? undefined;
+}
+
 function open(port?: number, host?: string, wait?: boolean) {
-  if (activeInspectorUrl !== undefined) {
-    throw $ERR_INSPECTOR_ALREADY_ACTIVATED();
-  }
   if (!Bun.isMainThread) {
     // Node supports per-worker inspectors; Bun does not yet.
     throw $ERR_WORKER_UNSUPPORTED_OPERATION("inspector.open() is not supported in workers");
+  }
+  if (listeningInspectorUrl() !== undefined) {
+    throw $ERR_INSPECTOR_ALREADY_ACTIVATED();
   }
 
   if (port !== undefined && port !== null) {
@@ -141,7 +155,7 @@ function open(port?: number, host?: string, wait?: boolean) {
 }
 
 function close() {
-  if (activeInspectorUrl === undefined) {
+  if (listeningInspectorUrl() === undefined) {
     return;
   }
   // Blocks until the debugger thread has stopped the server, so the port is refused on return.
@@ -151,11 +165,11 @@ function close() {
 
 function url() {
   // https://nodejs.org/api/inspector.html#inspectorurl
-  return activeInspectorUrl;
+  return listeningInspectorUrl();
 }
 
 function waitForDebugger() {
-  if (activeInspectorUrl === undefined) {
+  if (listeningInspectorUrl() === undefined) {
     throw $ERR_INSPECTOR_NOT_ACTIVE();
   }
   waitForNodeInspectorConnection();
@@ -1016,7 +1030,6 @@ class Session extends EventEmitter {
   #adapter: any = undefined;
   #pendingResults: Map<number, (err: any, result?: any) => void> = new SafeMap();
   #nextCommandId = 1;
-  #dispatchingClientCommand = false;
 
   // Lazily route untranslated commands through the CDP<->JSC adapter; replies land in #pendingResults.
   #inProcessAdapter() {
@@ -1056,9 +1069,9 @@ class Session extends EventEmitter {
     }
   }
 
-  // Replies produced during post() are deferred until dispatch unwinds so a throwing callback isn't
-  // misread as command failure. Events deliver immediately — Debugger.paused nested in a dispatch
-  // must reach listeners before execution continues (#onClientMessage contains listener throws).
+  // Synchronous, replies included: in Node the reply reaches the callback
+  // before post() returns. #onClientMessage turns a throw into a warning.
+  // https://github.com/nodejs/node/blob/main/src/inspector_js_api.cc
   #deliverClientMessage(clientMessage: string) {
     let parsed;
     try {
@@ -1066,11 +1079,7 @@ class Session extends EventEmitter {
     } catch {
       return;
     }
-    if (this.#dispatchingClientCommand && parsed?.id !== undefined) {
-      queueMicrotask(this.#onClientMessage.bind(this, parsed));
-    } else {
-      this.#onClientMessage(parsed);
-    }
+    this.#onClientMessage(parsed);
   }
 
   // HeapProfiler.addHeapSnapshotChunk chunked delivery: https://chromedevtools.github.io/devtools-protocol/tot/HeapProfiler/#event-addHeapSnapshotChunk
@@ -1087,14 +1096,7 @@ class Session extends EventEmitter {
     const id = this.#nextCommandId++;
     this.#pendingResults.set(id, done);
     const message = JSON.stringify(params === undefined ? { id, method } : { id, method, params });
-    const wasDispatching = this.#dispatchingClientCommand;
-    this.#dispatchingClientCommand = true;
-    try {
-      adapter.handleClientMessage(message);
-    } finally {
-      // Restore, not clear: a re-entered post() must not flip the outer dispatch to sync delivery.
-      this.#dispatchingClientCommand = wasDispatching;
-    }
+    adapter.handleClientMessage(message);
   }
 
   connect() {
@@ -1160,8 +1162,8 @@ class Session extends EventEmitter {
     }
     if (callback !== undefined) validateFunction(callback, "callback");
 
+    // Node throws here even when a callback was given (verified on v26.3.0).
     if (!this.#connected) {
-      // Node throws synchronously regardless of callback: https://github.com/nodejs/node/blob/main/lib/inspector.js
       throw $ERR_INSPECTOR_NOT_CONNECTED();
     }
 
@@ -1179,7 +1181,13 @@ class Session extends EventEmitter {
     }
 
     if (callback) {
-      queueMicrotask(settleLocalPost.bind(undefined, callback, result));
+      // Same contract as a reply from the backend: synchronous, and a throw
+      // from the callback becomes a process warning rather than escaping.
+      try {
+        settleLocalPost(callback, result);
+      } catch (thrown) {
+        process.emitWarning(toWarning(thrown));
+      }
     }
     // Node's post() always returns undefined; protocol errors without a callback are unobservable.
   }
@@ -1419,6 +1427,34 @@ class Session extends EventEmitter {
       case "NodeWorker.detach":
         return {};
 
+      // Node's tracing-agent category list, same order (Bun emits a subset).
+      // https://github.com/nodejs/node/blob/v26.3.0/src/inspector/tracing_agent.cc#L181-L206
+      case "NodeTracing.getCategories":
+        return {
+          categories: [
+            "node",
+            "node.async_hooks",
+            "node.bootstrap",
+            "node.console",
+            "node.dns.native",
+            "node.environment",
+            "node.fs.async",
+            "node.fs.sync",
+            "node.fs_dir.async",
+            "node.fs_dir.sync",
+            "node.http",
+            "node.net.native",
+            "node.perf",
+            "node.perf.timerify",
+            "node.perf.usertiming",
+            "node.promises.rejections",
+            "node.threadpoolwork.async",
+            "node.threadpoolwork.sync",
+            "node.vm.script",
+            "v8",
+          ],
+        };
+
       case "NodeTracing.start": {
         if (!Bun.isMainThread) {
           return {
@@ -1461,8 +1497,67 @@ class Session extends EventEmitter {
   }
 }
 
+// Node's `inspector.console` = V8's inspector console: Runtime.consoleAPICalled
+// only, no stdio. Ids match Bun::InspectorConsoleMethod in BunDebugger.h.
+// https://github.com/nodejs/node/blob/main/lib/inspector.js
+const InspectorConsoleMethod = {
+  log: 0,
+  info: 1,
+  debug: 2,
+  warn: 3,
+  error: 4,
+  dir: 5,
+  dirxml: 6,
+  table: 7,
+  trace: 8,
+  clear: 9,
+  assert: 10,
+  group: 11,
+  groupCollapsed: 12,
+  groupEnd: 13,
+  count: 14,
+  countReset: 15,
+  profile: 16,
+  profileEnd: 17,
+  time: 18,
+  timeLog: 19,
+  timeEnd: 20,
+  timeStamp: 21,
+};
+
+function makeInspectorConsoleMethod(name: string) {
+  const id = InspectorConsoleMethod[name];
+  const method = function (...args: unknown[]) {
+    inspectorConsoleCall(id, ...args);
+  };
+  Object.defineProperty(method, "name", { __proto__: null, value: name, configurable: true });
+  return method;
+}
+
+// Same keys, in the same order, as Node v26.3.0's `inspector.console`.
 const console = {
-  ...globalThis.console,
+  debug: makeInspectorConsoleMethod("debug"),
+  error: makeInspectorConsoleMethod("error"),
+  info: makeInspectorConsoleMethod("info"),
+  log: makeInspectorConsoleMethod("log"),
+  warn: makeInspectorConsoleMethod("warn"),
+  dir: makeInspectorConsoleMethod("dir"),
+  dirxml: makeInspectorConsoleMethod("dirxml"),
+  table: makeInspectorConsoleMethod("table"),
+  trace: makeInspectorConsoleMethod("trace"),
+  group: makeInspectorConsoleMethod("group"),
+  groupCollapsed: makeInspectorConsoleMethod("groupCollapsed"),
+  groupEnd: makeInspectorConsoleMethod("groupEnd"),
+  clear: makeInspectorConsoleMethod("clear"),
+  count: makeInspectorConsoleMethod("count"),
+  countReset: makeInspectorConsoleMethod("countReset"),
+  assert: makeInspectorConsoleMethod("assert"),
+  profile: makeInspectorConsoleMethod("profile"),
+  profileEnd: makeInspectorConsoleMethod("profileEnd"),
+  time: makeInspectorConsoleMethod("time"),
+  timeLog: makeInspectorConsoleMethod("timeLog"),
+  timeEnd: makeInspectorConsoleMethod("timeEnd"),
+  timeStamp: makeInspectorConsoleMethod("timeStamp"),
   context: {
     console: globalThis.console,
   },

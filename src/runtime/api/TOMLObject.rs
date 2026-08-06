@@ -70,7 +70,11 @@ fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     }
 
     let unwrapped = value.unwrap_boxed_primitive(global)?;
-    if !unwrapped.is_object() || unwrapped.is_array() || unwrapped.is_date() {
+    if !unwrapped.is_object()
+        || unwrapped.is_array()
+        || unwrapped.is_date()
+        || temporal_object_type(unwrapped) != 0
+    {
         return Err(global.throw(format_args!(
             "TOML.stringify expects an object at the top level (a TOML document is a table)"
         )));
@@ -176,13 +180,18 @@ impl Stringifier {
             }
             while let Some(item) = iter.next()? {
                 let item = item.unwrap_boxed_primitive(global)?;
-                if !item.is_object() || item.is_array() || item.is_date() || item.is_function() {
+                if !item.is_object()
+                    || item.is_array()
+                    || item.is_date()
+                    || item.is_function()
+                    || temporal_object_type(item) != 0
+                {
                     return Ok(Layout::Keyval);
                 }
             }
             return Ok(Layout::ArrayOfTables);
         }
-        if value.is_object() && !value.is_date() {
+        if value.is_object() && !value.is_date() && temporal_object_type(value) == 0 {
             return Ok(Layout::Table);
         }
         Ok(Layout::Keyval)
@@ -257,6 +266,7 @@ impl Stringifier {
                             || item.is_array()
                             || item.is_date()
                             || item.is_function()
+                            || temporal_object_type(item) != 0
                         {
                             self.path.pop();
                             return Err(self.err_changed(global));
@@ -319,6 +329,11 @@ impl Stringifier {
 
         if value.is_date() {
             return self.append_datetime(global, value);
+        }
+
+        let temporal_type = temporal_object_type(value);
+        if temporal_type != 0 {
+            return self.append_temporal(global, value, temporal_type);
         }
 
         if value.is_array() {
@@ -473,6 +488,50 @@ impl Stringifier {
         Ok(())
     }
 
+    /// A Temporal object as the TOML date/time literal of its type: `Instant`
+    /// and `ZonedDateTime` emit offset date-times (the latter dropping its
+    /// time-zone annotation), `PlainDateTime`/`PlainDate`/`PlainTime` their
+    /// local forms. `PlainYearMonth`/`PlainMonthDay`/`Duration` have no TOML
+    /// representation and throw.
+    fn append_temporal(
+        &mut self,
+        global: &JSGlobalObject,
+        value: JSValue,
+        temporal_type: u8,
+    ) -> StringifyResult<()> {
+        if temporal_type > TEMPORAL_ZONED_DATE_TIME {
+            return Err(global
+                .throw(format_args!(
+                    "TOML.stringify cannot serialize {} (it has no TOML representation)",
+                    temporal_type_name(temporal_type)
+                ))
+                .into());
+        }
+        let mut buf = [0u8; 64];
+        // SAFETY: `buf` is a live stack buffer for the duration of the call.
+        let len = unsafe {
+            jsc::cpp::Bun__Temporal__toTOMLDateTime(
+                global,
+                value,
+                temporal_type,
+                buf.as_mut_ptr(),
+                buf.len(),
+            )
+        }?;
+        // The expanded-year form (leading `+`/`-`) has a 6-digit year, which
+        // TOML's 4-digit `date-fullyear` cannot carry.
+        if len < 1 || !buf[0].is_ascii_digit() {
+            return Err(global
+                .throw(format_args!(
+                    "TOML.stringify cannot serialize a {} outside years 0000-9999",
+                    temporal_type_name(temporal_type)
+                ))
+                .into());
+        }
+        self.builder.append_latin1(&buf[..len as usize]);
+        Ok(())
+    }
+
     // ── errors ─────────────────────────────────────────────────────────────
 
     fn err_null_value(&mut self, global: &JSGlobalObject, key: &BunString) -> StringifyError {
@@ -506,6 +565,30 @@ impl Stringifier {
                 "TOML.stringify cannot serialize a value that changed during serialization"
             ))
             .into()
+    }
+}
+
+/// The `Bun__Temporal__toTOMLDateTime` discriminant for `ZonedDateTime`, the
+/// last Temporal type with a TOML representation (1-5; 6-8 have none).
+const TEMPORAL_ZONED_DATE_TIME: u8 = 5;
+
+/// Classifies `value` via `Bun__JSValue__temporalObjectType`: 0 for anything
+/// that is not a Temporal object, else the 1-8 discriminant
+/// `temporal_type_name` describes.
+fn temporal_object_type(value: JSValue) -> u8 {
+    jsc::cpp::Bun__JSValue__temporalObjectType(value)
+}
+
+fn temporal_type_name(temporal_type: u8) -> &'static str {
+    match temporal_type {
+        1 => "Temporal.Instant",
+        2 => "Temporal.PlainDateTime",
+        3 => "Temporal.PlainDate",
+        4 => "Temporal.PlainTime",
+        5 => "Temporal.ZonedDateTime",
+        6 => "Temporal.PlainYearMonth",
+        7 => "Temporal.PlainMonthDay",
+        _ => "Temporal.Duration",
     }
 }
 

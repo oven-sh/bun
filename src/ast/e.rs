@@ -1975,6 +1975,67 @@ impl fmt::Display for EString {
     }
 }
 
+/// Which of the four TOML date/time kinds a `DateTime` literal is, and the
+/// Temporal class it materializes as. Discriminants cross the FFI boundary
+/// (`Bun__Temporal__fromDateTimeLiteral`) — keep them in sync with the C++
+/// switch.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum DateTimeKind {
+    /// `1979-05-27T00:32:00-07:00` → `Temporal.Instant`
+    OffsetDateTime = 1,
+    /// `1979-05-27T07:32:00` → `Temporal.PlainDateTime`
+    LocalDateTime = 2,
+    /// `1979-05-27` → `Temporal.PlainDate`
+    LocalDate = 3,
+    /// `07:32:00` → `Temporal.PlainTime`
+    LocalTime = 4,
+}
+
+impl DateTimeKind {
+    /// Unqualified Temporal class name (`Instant`, `PlainDateTime`, …).
+    pub fn temporal_class(self) -> &'static [u8] {
+        match self {
+            DateTimeKind::OffsetDateTime => b"Instant",
+            DateTimeKind::LocalDateTime => b"PlainDateTime",
+            DateTimeKind::LocalDate => b"PlainDate",
+            DateTimeKind::LocalTime => b"PlainTime",
+        }
+    }
+}
+
+/// A date/time literal that materializes as a Temporal object. Produced only
+/// by the TOML parser; JavaScript has no such literal.
+pub struct DateTime {
+    /// Source text of the literal. Always ASCII, already validated by the
+    /// producing parser, and accepted verbatim by `Temporal.*.from` (fractional
+    /// seconds are pre-truncated to the 9 digits Temporal carries).
+    pub data: Str,
+    pub kind: DateTimeKind,
+}
+
+impl DateTime {
+    /// `data` is arena-owned (source text or bump arena) and bulk-freed;
+    /// `StoreStr` records it under the `StoreRef` contract.
+    pub fn init(data: &[u8], kind: DateTimeKind) -> Self {
+        Self {
+            data: Str::new(data),
+            kind,
+        }
+    }
+
+    #[inline]
+    pub fn slice(&self) -> &[u8] {
+        self.data.slice()
+    }
+}
+
+impl fmt::Display for DateTime {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "E.DateTime({})", bstr::BStr::new(&self.data))
+    }
+}
+
 // value is in the Node
 pub struct TemplatePart {
     pub value: ExprNodeIndex,

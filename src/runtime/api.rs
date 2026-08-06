@@ -313,6 +313,19 @@ fn expr_to_js_with_check(
         ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
         ExprData::ENumber(number) => Ok(JSValue::js_number(number.value())),
         ExprData::EString(str) => estring_to_js(str.get(), global),
+        ExprData::EDateTime(dt) => {
+            let dt = dt.get();
+            let text = dt.slice();
+            // SAFETY: `text` is an arena-owned ASCII slice that outlives the call.
+            unsafe {
+                bun_jsc::cpp::Bun__Temporal__fromDateTimeLiteral(
+                    global,
+                    text.as_ptr(),
+                    text.len(),
+                    dt.kind as u8,
+                )
+            }
+        }
         ExprData::EArray(arr) => {
             JSValue::create_array_from_iter(global, arr.slice().iter(), |item| {
                 expr_to_js_with_check(*item, global, stack_check)

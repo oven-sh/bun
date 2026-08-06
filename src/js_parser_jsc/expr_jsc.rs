@@ -71,6 +71,20 @@ fn data_to_js_with_check(
         }),
         ExprData::ENumber(e) => Ok(number_to_js(*e)),
         // ExprData::EBigInt(e) => e.to_js(ctx, exception),
+        ExprData::EDateTime(e) => {
+            let e = e.get();
+            let text = e.slice();
+            // SAFETY: `text` is an arena-owned ASCII slice that outlives the call.
+            unsafe {
+                bun_jsc::cpp::Bun__Temporal__fromDateTimeLiteral(
+                    global,
+                    text.as_ptr(),
+                    text.len(),
+                    e.kind as u8,
+                )
+            }
+            .map_err(js_err)
+        }
         ExprData::EInlinedEnum(inlined) => {
             data_to_js_with_check(&inlined.value.data, global, stack_check)
         }

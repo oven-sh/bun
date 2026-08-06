@@ -3215,6 +3215,25 @@ pub(crate) mod __gated_printer {
                         self.print(b")");
                     }
                 }
+                ExprData::EDateTime(e) => {
+                    // A date/time literal has no JS literal form; it prints as
+                    // the `Temporal.*.from` call that reconstructs the value.
+                    let wrap = level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall);
+                    if wrap {
+                        self.print(b"(");
+                    }
+                    self.print_space_before_identifier();
+                    self.add_source_mapping(expr.loc);
+                    self.print(b"Temporal.");
+                    self.print(e.kind.temporal_class());
+                    self.print(b".from(\"");
+                    // Always ASCII (validated by the TOML scanner); no escaping.
+                    self.print(e.slice());
+                    self.print(b"\")");
+                    if wrap {
+                        self.print(b")");
+                    }
+                }
                 ExprData::ERequireMain => {
                     self.print_space_before_identifier();
                     self.add_source_mapping(expr.loc);

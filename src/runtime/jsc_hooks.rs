@@ -2737,12 +2737,19 @@ fn transpile_source_code_inner(
                             // `SExpr` part; anything else is a parser bug.
                             unreachable!("JSON/TOML/YAML parse result is always SExpr")
                         };
-                        bun_js_parser_jsc::expr_to_js(&s_expr.value, global).unwrap_or_else(|e| {
-                            bun_core::Output::panic(format_args!(
+                        match bun_js_parser_jsc::expr_to_js(&s_expr.value, global) {
+                            Ok(value) => value,
+                            // A thrown exception (e.g. constructing a Temporal
+                            // date/time while Temporal is disabled) fails the
+                            // module load with that exception pending.
+                            Err(bun_ast::ToJSError::JSError | bun_ast::ToJSError::JSTerminated) => {
+                                return Err(crate::Error::JSError);
+                            }
+                            Err(e) => bun_core::Output::panic(format_args!(
                                 "Unexpected JS error: {}",
                                 <&'static str>::from(e)
-                            ))
-                        })
+                            )),
+                        }
                     };
                     return Ok(OwnedResolvedSource::from(ResolvedSource {
                         specifier: input_specifier.dupe_ref(),

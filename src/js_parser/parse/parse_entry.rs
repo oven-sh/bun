@@ -559,6 +559,14 @@ impl<'a> Parser<'a> {
 
         let mut final_expr = expr;
 
+        // Date/time literals (produced by the TOML parser) materialize as
+        // `Temporal.*.from("...")` calls. Bundled modules share one scope, so
+        // the reference must be a real unbound `Temporal` symbol: the chunk
+        // renamer then reserves the name and renames a user binding called
+        // `Temporal` instead of letting it capture these calls.
+        let mut temporal_ref: Option<js_ast::Ref> = None;
+        lower_date_time_literals(p, &mut final_expr, &mut temporal_ref)?;
+
         // Optionally call a runtime API function to transform the expression
         if !runtime_api_call.is_empty() {
             let args_slice: &mut [Expr] = p.arena.alloc_slice_fill_with(1, |_| expr);
@@ -604,7 +612,87 @@ impl<'a> Parser<'a> {
             b"",
         )?))
     }
+}
 
+/// Rewrites every `E::DateTime` in `expr` (in place) into the
+/// `Temporal.<Class>.from("<text>")` call it prints as, referencing an
+/// unbound `Temporal` symbol declared on first use. The calls are annotated
+/// as removable-if-unused: constructing a Temporal value from a validated
+/// literal has no observable side effects, so tree shaking may drop unused
+/// exports.
+fn lower_date_time_literals<'a>(
+    p: &mut JavaScriptParser<'a>,
+    expr: &mut Expr,
+    temporal_ref: &mut Option<js_ast::Ref>,
+) -> Result<(), Error> {
+    match expr.data {
+        js_ast::ExprData::EDateTime(dt) => {
+            let ref_ = match *temporal_ref {
+                Some(ref_) => ref_,
+                None => {
+                    let ref_ =
+                        p.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"Temporal")?;
+                    *temporal_ref = Some(ref_);
+                    ref_
+                }
+            };
+            let (class, text) = {
+                let dt = dt.get();
+                (dt.kind.temporal_class(), dt.slice())
+            };
+            let loc = expr.loc;
+            p.record_usage(ref_);
+            let namespace = p.new_expr(E::Identifier::init(ref_), loc);
+            let class_dot = p.new_expr(
+                E::Dot {
+                    target: namespace,
+                    name: E::Str::new(class),
+                    name_loc: loc,
+                    can_be_removed_if_unused: true,
+                    ..Default::default()
+                },
+                loc,
+            );
+            let from_dot = p.new_expr(
+                E::Dot {
+                    target: class_dot,
+                    name: E::Str::new(b"from"),
+                    name_loc: loc,
+                    can_be_removed_if_unused: true,
+                    ..Default::default()
+                },
+                loc,
+            );
+            let arg = p.new_expr(E::String::init(text), loc);
+            let args_slice: &mut [Expr] = p.arena.alloc_slice_fill_with(1, |_| arg);
+            *expr = p.new_expr(
+                E::Call {
+                    target: from_dot,
+                    args: Vec::from_arena_slice(args_slice),
+                    can_be_unwrapped_if_unused: E::CallUnwrap::IfUnused,
+                    ..Default::default()
+                },
+                loc,
+            );
+        }
+        js_ast::ExprData::EArray(mut arr) => {
+            for item in arr.items.slice_mut() {
+                lower_date_time_literals(p, item, temporal_ref)?;
+            }
+        }
+        js_ast::ExprData::EObject(mut obj) => {
+            for property in obj.properties.slice_mut() {
+                if let Some(value) = &mut property.value {
+                    lower_date_time_literals(p, value, temporal_ref)?;
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+impl<'a> Parser<'a> {
     fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
         // `Source.path` is `Path<'static>`, so
         // `path.text` satisfies `Action::Parse(&'static [u8])` directly.

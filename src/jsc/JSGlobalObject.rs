@@ -317,6 +317,22 @@ impl JSGlobalObject {
         if !bun_core::image::building() {
             return Ok(());
         }
+        if bun_core::env_var::BUN_IMAGE_IO_WARN.get().unwrap_or(false) {
+            let err = self
+                .create_error_instance(format_args!("[image] {what} while building a snapshot"));
+            let stack = err
+                .get(self, "stack")
+                .ok()
+                .flatten()
+                .map(|v| {
+                    v.to_bun_string(self)
+                        .map(|s| String::from_utf8_lossy(s.to_utf8().slice()).into_owned())
+                        .unwrap_or_default()
+                })
+                .unwrap_or_default();
+            eprintln!("{stack}");
+            return Ok(());
+        }
         Err(self.throw_invalid_arguments(format_args!("{what} is disabled while building a snapshot; do it after restore (process.on('restore'))")))
     }
 

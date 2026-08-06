@@ -2610,4 +2610,21 @@ describe("paths with embedded null bytes", () => {
       db.close();
     }
   });
+
+  it("loadExtension() rejects entry points containing them", () => {
+    const db = new Database(":memory:");
+    try {
+      expect(() => db.loadExtension("does-not-exist.so", "entry\0point")).toThrow(
+        "The extension entry point must not contain null bytes",
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("setCustomSQLite() rejects them", () => {
+    expect(() => Database.setCustomSQLite("libsqlite3\0.dylib")).toThrow(
+      "The SQLite library path must not contain null bytes",
+    );
+  });
 });

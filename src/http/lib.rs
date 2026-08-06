@@ -657,6 +657,8 @@ pub struct ProxySettings {
     http_proxy: Box<[u8]>,
     https_proxy: Box<[u8]>,
     no_proxy: Box<[u8]>,
+    /// Set when `from_env()` fell back to the Windows system proxy; `resolve()` uses it for `<local>` bypass and PAC.
+    system: Option<&'static bun_dotenv::windows_system_proxy::SystemProxy>,
 }
 
 impl ProxySettings {
@@ -675,10 +677,11 @@ impl ProxySettings {
             http_proxy: http_proxy.into(),
             https_proxy: https_proxy.into(),
             no_proxy: no_proxy.unwrap_or(b"").into(),
+            system: None,
         }))
     }
 
-    /// Capture `http_proxy` / `https_proxy` / `no_proxy` from the process env.
+    /// Capture `http_proxy`/`https_proxy`/`no_proxy` from env; falls back to the Windows system proxy when none are set.
     pub fn from_env(env: &bun_dotenv::Loader) -> Option<Box<Self>> {
         #[inline]
         fn is_emptyish(v: &[u8]) -> bool {
@@ -692,11 +695,19 @@ impl ProxySettings {
                 .or_else(|| env.get(upper))?;
             if is_emptyish(v) { None } else { Some(v) }
         };
-        Self::new(
-            read(b"http_proxy", b"HTTP_PROXY"),
-            read(b"https_proxy", b"HTTPS_PROXY"),
-            read(b"no_proxy", b"NO_PROXY"),
-        )
+        let http = read(b"http_proxy", b"HTTP_PROXY");
+        let https = read(b"https_proxy", b"HTTPS_PROXY");
+        let no_proxy = read(b"no_proxy", b"NO_PROXY");
+        if http.is_some() || https.is_some() {
+            return Self::new(http, https, no_proxy);
+        }
+        let sys = bun_dotenv::windows_system_proxy::get()?;
+        Some(Box::new(Self {
+            http_proxy: sys.http_proxy().unwrap_or(b"").into(),
+            https_proxy: sys.https_proxy().unwrap_or(b"").into(),
+            no_proxy: no_proxy.unwrap_or(b"").into(),
+            system: Some(sys),
+        }))
     }
 
     /// Build from an explicit `fetch(url, { proxy })` option. The same proxy is
@@ -712,77 +723,27 @@ impl ProxySettings {
 
     /// Proxy href to use for `url`, or `None` for a direct connection.
     pub fn resolve(&self, url: &URL<'_>) -> Option<&[u8]> {
+        if no_proxy_matches(&self.no_proxy, url.hostname, url.host) {
+            return None;
+        }
+        if let Some(sys) = self.system {
+            if sys.is_bypassed(url.hostname, url.host) {
+                return None;
+            }
+        }
         let href: &[u8] = if url.is_http() {
             &self.http_proxy
         } else {
             &self.https_proxy
         };
-        if href.is_empty() {
-            return None;
+        if !href.is_empty() {
+            return Some(href);
         }
-        if no_proxy_matches(&self.no_proxy, url.hostname, url.host) {
-            return None;
-        }
-        Some(href)
+        self.system.and_then(|sys| sys.resolve(url))
     }
 }
 
-/// Returns true if the given hostname/host should bypass the proxy according
-/// to the supplied `no_proxy` list. Runs on the HTTP thread from a captured
-/// copy of the env value; see https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/.
-fn no_proxy_matches(no_proxy_text: &[u8], hostname: &[u8], host: &[u8]) -> bool {
-    if hostname.is_empty() {
-        return false;
-    }
-    for item in no_proxy_text.split(|&b| b == b',') {
-        let mut entry = strings::trim(item, &strings::WHITESPACE_CHARS);
-        if entry.is_empty() {
-            continue;
-        }
-        if entry == b"*" {
-            return true;
-        }
-        if strings::starts_with_char(entry, b'.') {
-            entry = &entry[1..];
-            if entry.is_empty() {
-                continue;
-            }
-        }
-
-        // IPv6 literals contain multiple colons (e.g., "::1"); bracketed IPv6
-        // with port is "[::1]:8080"; host:port has a single colon.
-        let colon_count = entry.iter().filter(|&&b| b == b':').count();
-        let has_port = if strings::starts_with_char(entry, b'[') {
-            strings::index_of(entry, b"]:").is_some()
-        } else {
-            colon_count == 1
-        };
-
-        if has_port {
-            if strings::eql_case_insensitive_ascii(host, entry, true) {
-                return true;
-            }
-        } else {
-            let entry_len = entry.len();
-            if hostname.len() == entry_len {
-                if strings::eql_case_insensitive_ascii(hostname, entry, true) {
-                    return true;
-                }
-            } else if hostname.len() > entry_len
-                && hostname[hostname.len() - entry_len - 1] == b'.'
-                && strings::eql_case_insensitive_ascii(
-                    &hostname[hostname.len() - entry_len..],
-                    entry,
-                    true,
-                )
-            {
-                return true;
-            }
-        }
-    }
-
-    false
-}
+use bun_dotenv::env_loader::no_proxy_list_matches as no_proxy_matches;
 
 // TODO: reduce the size of this struct
 // Many of these fields can be moved to a packed struct and use less space

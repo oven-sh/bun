@@ -559,27 +559,6 @@ extern "C" JSC::EncodedJSValue BunString__createArray(
     return JSValue::encode(array);
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__toWTFString(BunString* bunString)
-{
-    WTF::String str;
-    if (bunString->tag == BunStringTag::ZigString) {
-        if (Zig::isTaggedExternalPtr(bunString->impl.zig.ptr)) {
-            str = Zig::toString(bunString->impl.zig);
-        } else {
-            str = Zig::toStringCopy(bunString->impl.zig);
-        }
-
-    } else if (bunString->tag == BunStringTag::StaticZigString) {
-        str = Zig::toStringStatic(bunString->impl.zig);
-    } else {
-        return;
-    }
-
-    auto impl = str.releaseImpl();
-    bunString->impl.wtf = impl.leakRef();
-    bunString->tag = BunStringTag::WTFStringImpl;
-}
-
 extern "C" BunString URL__getFileURLString(BunString* filePath)
 {
     return Bun::toStringRef(WTF::URL::fileURLWithFileSystemPath(filePath->toWTFString()).stringWithoutFragmentIdentifier());

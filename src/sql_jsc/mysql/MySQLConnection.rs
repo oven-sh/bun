@@ -780,9 +780,6 @@ impl MySQLConnection {
                     affected_rows: 0,
                     last_insert_id: 0,
                     status_flags: StatusFlags::default(),
-                    warnings: 0,
-                    info: Data::Empty,
-                    session_state_changes: Data::Empty,
                     packet_size: header_length,
                 };
                 ok.decode_internal(reader)?;
@@ -1384,9 +1381,6 @@ impl MySQLConnection {
             affected_rows: 0,
             last_insert_id: 0,
             status_flags: StatusFlags::default(),
-            warnings: 0,
-            info: Data::Empty,
-            session_state_changes: Data::Empty,
             packet_size: header_length,
         };
         match PacketType(first_byte) {

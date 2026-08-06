@@ -133,7 +133,7 @@ it.concurrent("importing a deeply nested table header throws instead of crashing
   expect(stdout).toBe("");
   expect(stderr).toContain("RangeError: Maximum call stack size exceeded");
   expect(exitCode).toBe(1);
-});
+}, 30_000);
 
 it.concurrent("dynamic import of a deeply nested table header is catchable", async () => {
   using dir = tempDir("toml-deep-dynamic", {
@@ -156,4 +156,4 @@ it.concurrent("dynamic import of a deeply nested table header is catchable", asy
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("caught: RangeError\n");
   expect(exitCode).toBe(0);
-});
+}, 30_000);

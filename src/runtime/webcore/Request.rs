@@ -1231,13 +1231,16 @@ impl Request {
                         // fallbacks below never run JS getters against the input.
                         if !fields.contains(Fields::Url) {
                             // A Bun.serve request materializes its URL lazily
-                            // from the request context.
+                            // from the request context; a detached one stays
+                            // empty and reaches the "url is required" throw.
+                            // The field is consumed from internal state either
+                            // way, keeping the getter fallback off.
                             let _ = request.ensure_url();
                             let url = request.url.get();
                             if !url.is_empty() {
                                 req.url.set(url.dupe_ref());
-                                fields.insert(Fields::Url);
                             }
+                            fields.insert(Fields::Url);
                         }
                         if !fields.contains(Fields::Signal) {
                             if let Some(signal) = request.signal.get() {

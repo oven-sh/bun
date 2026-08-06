@@ -244,6 +244,8 @@ describe("new Request(request) copies internal state without calling getters", (
   });
 
   test("init members win; everything else comes from the input's internal state", () => {
+    // Internal values differ from both the defaults and the getter values, so
+    // this discriminates "getter ignored" and "internal value actually copied".
     class MyRequest extends Request {
       get url() {
         return "http://localhost/from-getter";
@@ -252,22 +254,37 @@ describe("new Request(request) copies internal state without calling getters", (
         return new Headers({ "x-from-getter": "1" });
       }
       get redirect() {
-        return "error";
+        return "manual";
+      }
+      get cache() {
+        return "force-cache";
+      }
+      get mode() {
+        return "no-cors";
       }
     }
 
-    const input = new MyRequest("http://localhost/original", { headers: { "x-real": "1" } });
+    const input = new MyRequest("http://localhost/original", {
+      headers: { "x-real": "1" },
+      redirect: "error",
+      cache: "no-store",
+      mode: "same-origin",
+    });
     const copy = new Request(input, { method: "POST" });
     expect({
       url: copy.url,
       method: copy.method,
       headers: [...copy.headers],
       redirect: copy.redirect,
+      cache: copy.cache,
+      mode: copy.mode,
     }).toEqual({
       url: "http://localhost/original",
       method: "POST",
       headers: [["x-real", "1"]],
-      redirect: "follow",
+      redirect: "error",
+      cache: "no-store",
+      mode: "same-origin",
     });
   });
 
@@ -392,6 +409,44 @@ describe("new Request(request) copies internal state without calling getters", (
       method: "POST",
       single: `http://localhost:${server.port}/real-path`,
     });
+  });
+
+  test("a detached Bun.serve request never falls back to its url getter", async () => {
+    // A handler that responds synchronously without touching req.url leaves
+    // the internal url empty forever once the request context is torn down.
+    let saved: Request | undefined;
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        saved = req;
+        return new Response("ok");
+      },
+    });
+    const res = await fetch(`http://localhost:${server.port}/x`);
+    expect(await res.text()).toBe("ok");
+
+    let hits = 0;
+    Object.defineProperty(saved!, "url", {
+      get() {
+        hits++;
+        return "http://localhost/from-getter";
+      },
+    });
+    expect(() => new Request(saved!, {})).toThrow("url is required");
+    expect(hits).toBe(0);
+  });
+
+  test('init body: "" is a real empty body and replaces the input body', async () => {
+    const fresh = new Request("http://localhost/", { method: "POST", body: "hello" });
+    const replaced = new Request(fresh, { body: "" });
+    expect(replaced.body).not.toBeNull();
+    expect(await replaced.text()).toBe("");
+
+    // a non-null init body means the used input body is never read: no throw
+    const used = new Request("http://localhost/", { method: "POST", body: "x" });
+    await used.text();
+    const afterUsed = new Request(used, { body: "" });
+    expect(await afterUsed.text()).toBe("");
   });
 
   test("a Request passed as init (second argument) keeps dictionary getter semantics", () => {

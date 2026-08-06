@@ -52,7 +52,7 @@ function headTree(): Set<string> {
 test("dead Rust symbols (bun_jsc FFI glue) do not reappear", () => {
   const checks: Array<[string, RegExp]> = [
     // DeprecatedStrong::unref: never called (sole user test_runner/Collection.rs
-    // uses init + Drop only, per the file's own 2026-06 audit note).
+    // uses init + Drop only).
     ["src/jsc/DeprecatedStrong.rs", /pub fn unref\b/],
     // Unused extern "C" imports of C++ fns with zero Rust call sites; the
     // C++ definitions were removed with them (see the HEAD checks below).

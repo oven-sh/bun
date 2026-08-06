@@ -34,38 +34,40 @@ impl<'a> HTMLScanner<'a> {
     fn create_import_record(&mut self, input_path: &[u8], kind: ImportKind) -> Result<(), Error> {
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
-        let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
-            resolve_path::join_abs_string::<platform::Auto>(
-                fs::FileSystem::instance().top_level_dir,
-                &[&input_path[1..]],
-            )
-        }
-        // Check if imports to (e.g) "App.tsx" are actually relative imoprts w/o the "./"
-        else if input_path.len() > 2 && input_path[0] != b'.' && input_path[1] != b'/' {
-            'blk: {
-                let Some(index_of_dot) = input_path.iter().rposition(|&b| b == b'.') else {
-                    break 'blk input_path;
-                };
-                let ext = &input_path[index_of_dot..];
-                if ext.len() > 4 {
-                    break 'blk input_path;
-                }
-                // /foo/bar/index.html -> /foo/bar
-                let dirname = resolve_path::dirname::<platform::Auto>(self.source.path.text());
-                if dirname.is_empty() {
-                    break 'blk input_path;
-                }
-                let resolved =
-                    resolve_path::join_abs_string_z::<platform::Auto>(dirname, &[input_path]);
-                if sys::exists_z(resolved) {
-                    resolved.as_bytes()
-                } else {
-                    input_path
-                }
+        // But "//cdn.example.com/lib.js" is a protocol-relative URL, not a rooted path; let the resolver mark it external.
+        let path_to_use: &[u8] =
+            if input_path.len() > 1 && input_path[0] == b'/' && input_path[1] != b'/' {
+                resolve_path::join_abs_string::<platform::Auto>(
+                    fs::FileSystem::instance().top_level_dir,
+                    &[&input_path[1..]],
+                )
             }
-        } else {
-            input_path
-        };
+            // Check if imports to (e.g) "App.tsx" are actually relative imoprts w/o the "./"
+            else if input_path.len() > 2 && input_path[0] != b'.' && input_path[1] != b'/' {
+                'blk: {
+                    let Some(index_of_dot) = input_path.iter().rposition(|&b| b == b'.') else {
+                        break 'blk input_path;
+                    };
+                    let ext = &input_path[index_of_dot..];
+                    if ext.len() > 4 {
+                        break 'blk input_path;
+                    }
+                    // /foo/bar/index.html -> /foo/bar
+                    let dirname = resolve_path::dirname::<platform::Auto>(self.source.path.text());
+                    if dirname.is_empty() {
+                        break 'blk input_path;
+                    }
+                    let resolved =
+                        resolve_path::join_abs_string_z::<platform::Auto>(dirname, &[input_path]);
+                    if sys::exists_z(resolved) {
+                        resolved.as_bytes()
+                    } else {
+                        input_path
+                    }
+                }
+            } else {
+                input_path
+            };
 
         let owned: &'static [u8] =
             Box::leak(AstAlloc::vec_from_slice(path_to_use).into_boxed_slice());

@@ -146,6 +146,31 @@ describe("bundler", () => {
     },
   });
 
+  // Test protocol-relative (scheme-relative) external assets
+  itBundled("html/external-assets-protocol-relative", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="//cdn.example.com/style.css">
+    <script src="//cdn.example.com/script.js"></script>
+  </head>
+  <body>
+    <img src="//cdn.example.com/logo.png">
+  </body>
+</html>`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      expect(html).toContain('href="//cdn.example.com/style.css"');
+      expect(html).toContain('src="//cdn.example.com/script.js"');
+      expect(html).toContain('src="//cdn.example.com/logo.png"');
+    },
+  });
+
   // Test mixed local and external assets
   itBundled("html/mixed-assets", {
     outdir: "out/",

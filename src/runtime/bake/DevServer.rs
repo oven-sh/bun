@@ -4627,8 +4627,14 @@ pub(super) fn finalize_bundle(
             w_int!(i32, i32::try_from(i).expect("int cast"));
 
             // If no edges were changed, then it is impossible to
-            // change the list of CSS files.
-            if had_adjusted_edges {
+            // change the list of CSS files. A route with bundling failures
+            // keeps its previous list: tracing it would drop the failed
+            // chunk (css ids are path-stable, so recovery reuses them).
+            // SAFETY: statement-scoped read; no `&mut` into `*route_bundle` is live.
+            if had_adjusted_edges
+                && unsafe { (*route_bundle).server_state }
+                    != route_bundle::State::PossibleBundlingFailures
+            {
                 ctx.gts.clear();
                 dev.client_graph.current_css_files.clear();
                 // SAFETY: `trace_all_route_imports` does not mutate `route_bundles`;

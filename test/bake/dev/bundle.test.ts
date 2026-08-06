@@ -992,3 +992,44 @@ devTest("editing an @imported stylesheet recovers a failed CSS print", {
     await c.style(".visible").color.expect.toBe("#00f");
   },
 });
+// While a chunk is failed its entry has Unknown content; a hot update that
+// adjusts the chunk's edges used to recurse the css trace through it into a
+// CssChild and trip a debug assert, killing the dev server.
+devTest("adjusting @imports of a failed stylesheet keeps the dev server alive", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["main.css"],
+      body: "hello",
+    }),
+    "main.css": `@import "./child.css";\nbody { margin: 0; }\n`,
+    "child.css": `.fine { color: red; }\n`,
+    "other.css": `.other { color: green; }\n`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".fine").color.expect.toBe("red");
+
+    // One bundle that both fails to print and adjusts the chunk's edges.
+    {
+      await using _batch = await dev.batchChanges({
+        errors: ["main.css: error: Failed to generate CSS for this file (PrintError)"],
+      });
+      await dev.write(
+        "child.css",
+        Array.from({ length: 30 }, (_, i) => `.x${i}:fullscreen {`).join("\n") +
+          "\ncolor: red;\n" +
+          Buffer.alloc(30, "}").toString() +
+          "\n",
+        { dedent: false },
+      );
+      await dev.write("main.css", `@import "./child.css";\n@import "./other.css";\nbody { margin: 0; }\n`, {
+        dedent: false,
+      });
+    }
+
+    // Fixing the child restyles the same page: both imports apply.
+    await dev.write("child.css", ".visible { color: blue; }\n", { dedent: false });
+    await c.style(".visible").color.expect.toBe("#00f");
+    await c.style(".other").color.expect.toBe("green");
+  },
+});

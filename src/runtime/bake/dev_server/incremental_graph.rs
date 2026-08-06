@@ -1232,6 +1232,15 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     }
                 }
 
+                // A failed file contributes nothing, and its imports may be
+                // css children that only a css root may reach; stop here for
+                // every goal except the error collector below.
+                if goal != TraceImportGoal::FindErrors
+                    && self.bundled_files.values()[file_index.get() as usize].failed
+                {
+                    return Ok(());
+                }
+
                 if goal == TraceImportGoal::FindClientModules {
                     let len = self.bundled_files.values()[file_index.get() as usize]
                         .content

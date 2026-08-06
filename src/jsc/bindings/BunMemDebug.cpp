@@ -1808,6 +1808,7 @@ static void imageRestoreAndRun(const char* path)
         }
         if (hdr.reserved[0]) mi_theap_freeze((mi_theap_t*)hdr.reserved[0]);
         mi_arenas_seal_existing(); // every arena that exists now is image memory: nobody (any thread) allocates into its free space again
+        { uint64_t top = 0; for (auto& r : regions) if (r.addr >= 0x20000000000ull && r.addr < 0x300000000000ull) top = std::max<uint64_t>(top, r.addr + r.len); if (top) mi_os_hint_floor((void*)(top + (1ull << 30))); } // the overlay brought the builder's hint pointer (or none): fresh OS memory goes above everything imaged, never kernel-placed
         { uint64_t top = 0; for (auto& r : regions) if (r.addr >= 0x20000000000ull && r.addr < 0x300000000000ull) top = std::max<uint64_t>(top, r.addr + r.len); if (top) mi_os_hint_floor((void*)(top + (1ull << 30))); } // the overlay brought the builder's hint pointer; make sure fresh memory goes above everything imaged
         mi_arena_id_t freshArena = 0; mi_heap_t* fresh = nullptr;
         if (getenv("BUN_IMAGE_FRESHARENA") ? strcmp(getenv("BUN_IMAGE_FRESHARENA"), "0") != 0 : (bool)OS_DARWIN_ONLY(1)) { // dedicated post-restore arena (default on macOS; on Linux the general path — sealed image arenas + hint floor — is used until the exclusive-arena binding is sorted)

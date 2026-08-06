@@ -281,10 +281,14 @@ function run(options: Record<string, unknown> = kEmptyObject) {
   if (opts.watch) throwNotImplemented("run({ watch: true })", 5090, "Use `bun:test --watch` in the interim.");
   if (opts.coverage) throwNotImplemented("run({ coverage: true })", 5090, "Use `bun:test --coverage` in the interim.");
   if (opts.shard) throwNotImplemented("run({ shard })", 5090);
-  if (opts.globalSetupPath != null) throwNotImplemented("run({ globalSetupPath })", 5090);
-  if (opts.only) throwNotImplemented("run({ only: true })", 5090);
-  if (opts.testNamePatterns != null) throwNotImplemented("run({ testNamePatterns })", 5090);
-  if (opts.testSkipPatterns != null) throwNotImplemented("run({ testSkipPatterns })", 5090);
+  // Name/skip patterns and `only` are applied by pruning the merged queue, so
+  // they only reach the tests under isolation 'none'. Process isolation runs
+  // each file through `bun test`, which never sees them.
+  if (opts.isolation !== "none") {
+    if (opts.only) throwNotImplemented("run({ only: true })", 5090);
+    if (opts.testNamePatterns != null) throwNotImplemented("run({ testNamePatterns })", 5090);
+    if (opts.testSkipPatterns != null) throwNotImplemented("run({ testSkipPatterns })", 5090);
+  }
 
   if (opts.isolation === "none") {
     // Set synchronously so an overlapping run() hits the recursion guard
@@ -325,6 +329,37 @@ function discoverRunFiles(opts: ReturnType<typeof validateRunOptions>): string[]
     }
   }
   return Array.from(results).sort();
+}
+
+function readExecArgvValue(name: string): string | undefined {
+  const argv = process.execArgv;
+  const prefix = `${name}=`;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i].startsWith(prefix)) return argv[i].slice(prefix.length);
+    if (argv[i] === name && i + 1 < argv.length) return argv[i + 1];
+  }
+  return undefined;
+}
+
+// node's setupGlobalSetupTeardownFunctions (utils.js:733-751): the module is
+// imported once in the runner process — never in the per-file children — and
+// only its `globalSetup`/`globalTeardown` exports are consulted.
+async function loadGlobalSetupModule(globalSetupPath: string | undefined, cwd: string) {
+  if (globalSetupPath == null) return null;
+  const { resolve } = require("node:path");
+  const { pathToFileURL } = require("node:url");
+  const mod = await import(pathToFileURL(resolve(cwd, globalSetupPath)).href);
+  let globalSetupFunction;
+  let globalTeardownFunction;
+  if (mod.globalSetup) {
+    validateFunction(mod.globalSetup, "globalSetupModule.globalSetup");
+    globalSetupFunction = mod.globalSetup;
+  }
+  if (mod.globalTeardown) {
+    validateFunction(mod.globalTeardown, "globalSetupModule.globalTeardown");
+    globalTeardownFunction = mod.globalTeardown;
+  }
+  return { __proto__: null, globalSetupFunction, globalTeardownFunction };
 }
 
 function makeRunCounts() {
@@ -371,6 +406,15 @@ function emitRunDiagnostics(reporter: TestsStream, counts: Record<string, number
   reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `duration_ms ${durationMs}` });
 }
 
+// node's WorkerIdPool (runner.js): ids are handed out round-robin over the
+// run's concurrency limit, so a child can key per-worker scratch state on
+// NODE_TEST_WORKER_ID and see it reused once the limit is reached.
+function maxWorkerConcurrency(concurrency: unknown): number {
+  if (concurrency === true) return Math.max(require("node:os").availableParallelism() - 1, 1);
+  if (typeof concurrency === "number" && concurrency >= 1) return concurrency;
+  return 1;
+}
+
 // Per-run bookkeeping for SIGINT/SIGTERM: kept as a closure local so two
 // overlapping run() calls cannot clobber each other's child/interrupt state.
 type RunInterruptState = {
@@ -380,6 +424,9 @@ type RunInterruptState = {
   // Cumulative nesting-0 verdict number across every file in the run (node's
   // runner renumbers pass/fail run-wide; test:complete keeps per-file numbers).
   verdictNumber: number;
+  // Round-robin cursor over the run's worker ids (node's WorkerIdPool).
+  nextWorkerId: number;
+  maxWorkerId: number;
 };
 
 // Runs each file in its own `bun test` child and republishes the child's events
@@ -387,7 +434,14 @@ type RunInterruptState = {
 async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: TestsStream) {
   const started = performance.now();
   const counts = makeRunCounts();
-  const state: RunInterruptState = { interrupted: false, childProc: null, fileNode: null, verdictNumber: 0 };
+  const state: RunInterruptState = {
+    interrupted: false,
+    childProc: null,
+    fileNode: null,
+    verdictNumber: 0,
+    nextWorkerId: 0,
+    maxWorkerId: maxWorkerConcurrency(opts.concurrency),
+  };
 
   // run() returns the stream before any file starts, and callers attach their
   // listeners synchronously on the returned stream. Yield first so the earliest
@@ -395,6 +449,10 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
   await Promise.resolve();
 
   try {
+    // node awaits the globalSetup module (its bootstrap promise) before the
+    // run's own setup callback — runner.js runChain().
+    const globalHooks = await loadGlobalSetupModule(opts.globalSetupPath as string | undefined, opts.cwd as string);
+    if (globalHooks?.globalSetupFunction !== undefined) await globalHooks.globalSetupFunction();
     if (typeof opts.setup === "function") await opts.setup(reporter);
 
     // Explicit files keep their spelling: the per-file test is named by the
@@ -450,6 +508,9 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
       duration_ms: durationMs,
       file: undefined,
     });
+    // node runs globalTeardown from the root's postRun, after the summary, and
+    // skips it entirely when globalSetup threw (harness.js:280).
+    if (globalHooks?.globalTeardownFunction !== undefined) await globalHooks.globalTeardownFunction();
   } catch (err) {
     reporter.destroy(err as Error);
     return;
@@ -544,7 +605,12 @@ async function runOneFile(
     proc = Bun.spawn({
       cmd: args,
       cwd: opts.cwd as string,
-      env: { ...(opts.env ?? process.env), BUN_TEST_DRAIN_EVENT_LOOP: "1", [kRunChildEnv]: kRunChildEnvValue },
+      env: {
+        ...(opts.env ?? process.env),
+        BUN_TEST_DRAIN_EVENT_LOOP: "1",
+        [kRunChildEnv]: kRunChildEnvValue,
+        NODE_TEST_WORKER_ID: String((state.nextWorkerId++ % state.maxWorkerId) + 1),
+      },
       stdout: "pipe",
       stderr: "pipe",
       signal: opts.signal,
@@ -1900,16 +1966,40 @@ class MockTracker {
 const mock = MockTracker.createFileScoped();
 
 // -----------------------------------------------------------------------------
-// Assertions (t.assert + custom assertion registry)
+// Snapshots (internal/test/snapshot — node's lib/internal/test_runner/snapshot.js)
 // -----------------------------------------------------------------------------
 
-function fileSnapshot(_value: unknown, _path: string, _options: { serializers?: Function[] } = kEmptyObject) {
-  throwNotImplemented("fileSnapshot()", 5090, "Use `bun:test` in the interim.");
+// node builds the manager lazily (test.js lazyAssertObject) and flushes from the
+// root test's postRun. Bun has no single postRun, so the flush is an exit hook
+// installed only when snapshots are being regenerated.
+let snapshotManager;
+let snapshotAssert: Function;
+let fileSnapshotAssert: Function;
+function initSnapshotManager() {
+  const { SnapshotManager } = require("internal/test/snapshot");
+  snapshotManager = new SnapshotManager(process.execArgv.includes("--test-update-snapshots"));
+  snapshotAssert = snapshotManager.createAssert();
+  fileSnapshotAssert = snapshotManager.createFileAssert();
+  if (snapshotManager.updateSnapshots) process.on("exit", writeSnapshotFilesOnExit);
 }
 
-function snapshot(_value: unknown, _options: { serializers?: Function[] } = kEmptyObject) {
-  throwNotImplemented("snapshot()", 5090, "Use `bun:test` in the interim.");
+function writeSnapshotFilesOnExit() {
+  snapshotManager?.writeSnapshotFiles();
 }
+
+function snapshot(this: unknown, ...args: unknown[]) {
+  if (snapshotManager === undefined) initSnapshotManager();
+  return snapshotAssert.$apply(this, args);
+}
+
+function fileSnapshot(this: unknown, ...args: unknown[]) {
+  if (snapshotManager === undefined) initSnapshotManager();
+  return fileSnapshotAssert.$apply(this, args);
+}
+
+// -----------------------------------------------------------------------------
+// Assertions (t.assert + custom assertion registry)
+// -----------------------------------------------------------------------------
 
 const nodeAssert = require("node:assert");
 const { innerOk } = require("internal/assert/utils");
@@ -3511,6 +3601,58 @@ function pruneStandaloneEntries(entries: StandaloneEntry[], filters: string[]): 
   return kept;
 }
 
+// node's testMatchesPattern (test.js): a node matches when its own name, any
+// ancestor's name, or the space-joined ancestor path matches any pattern.
+function nameMatchesPatterns(name: string, ancestors: string[], patterns: RegExp[]): boolean {
+  for (const pattern of patterns) {
+    if (pattern.exec(name) !== null) return true;
+  }
+  for (const ancestor of ancestors) {
+    for (const pattern of patterns) {
+      if (pattern.exec(ancestor) !== null) return true;
+    }
+  }
+  const joined = ancestors.length === 0 ? name : ancestors.join(" ") + " " + name;
+  for (const pattern of patterns) {
+    if (pattern.exec(joined) !== null) return true;
+  }
+  return false;
+}
+
+// Drops the tests --test-name-pattern excludes and the ones --test-skip-pattern
+// selects; a suite survives when it is not itself excluded or when any
+// descendant survives (node unfilters the ancestors of a kept test).
+function pruneByNamePatterns(
+  entries: StandaloneEntry[],
+  namePatterns: RegExp[] | null,
+  skipPatterns: RegExp[] | null,
+  ancestors: string[],
+): StandaloneEntry[] {
+  const kept: StandaloneEntry[] = [];
+  for (const entry of entries) {
+    const name = entry.node.name;
+    const excluded =
+      (namePatterns !== null && !nameMatchesPatterns(name, ancestors, namePatterns)) ||
+      (skipPatterns !== null && nameMatchesPatterns(name, ancestors, skipPatterns));
+    if (!entry.isSuite) {
+      if (!excluded) kept.push(entry);
+      continue;
+    }
+    ancestors.push(name);
+    const keptChildren = pruneByNamePatterns(
+      entry.node.standaloneChildren ?? [],
+      namePatterns,
+      skipPatterns,
+      ancestors,
+    );
+    ancestors.pop();
+    entry.node.standaloneChildren = keptChildren;
+    entry.node.childrenCount = keptChildren.length;
+    if (!excluded || keptChildren.length > 0) kept.push(entry);
+  }
+  return kept;
+}
+
 // run({ isolation: 'none' }): every file imports into this process (all
 // registrations first, like node), then one merged queue executes with shared
 // root hooks. Events flow through the same restructuring as process isolation.
@@ -3531,13 +3673,23 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
   const savedRootHooks = callerRoot.hooks;
   const savedRootReportedCount = callerRoot.reportedCount;
   const savedSink = standaloneSink;
-  callerRoot.hooks = { before: [], after: [], beforeEach: [], afterEach: [] };
+  // Root hooks registered before the run (node's --require/--import preloads
+  // land on the same root) stay in effect; the copy keeps the run's own
+  // additions out of the caller's object.
+  callerRoot.hooks = {
+    before: [...savedRootHooks.before],
+    after: [...savedRootHooks.after],
+    beforeEach: [...savedRootHooks.beforeEach],
+    afterEach: [...savedRootHooks.afterEach],
+  };
   callerRoot.reportedCount = 0;
 
   // Callers attach listeners synchronously on the returned stream; yield first.
   await Promise.resolve();
 
   try {
+    const globalHooks = await loadGlobalSetupModule(opts.globalSetupPath as string | undefined, opts.cwd as string);
+    if (globalHooks?.globalSetupFunction !== undefined) await globalHooks.globalSetupFunction();
     if (typeof opts.setup === "function") await opts.setup(reporter);
 
     const files = discoverRunFiles(opts);
@@ -3547,6 +3699,13 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     // (isolation 'none': abort leaves every file running to a normal verdict).
     // Root is started so top-level before() hooks execute immediately, in order.
     callerRoot.started = true;
+    process.env.NODE_TEST_WORKER_ID = "1";
+    // Hooks already on the root when it starts run now, ahead of the ones the
+    // files register during import. runBeforeHookOnce memoizes the promise, so
+    // executeStandaloneQueue awaits these same results (and their failures).
+    for (const hook of callerRoot.hooks.before) {
+      runBeforeHookOnce(hook, callerRoot, hookArgFor(callerRoot)).catch(kDefaultFunction);
+    }
     try {
       for (const file of files) {
         if (file === Bun.main) {
@@ -3583,6 +3742,10 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     // be appending to; node awaits Suite.buildPromise before consulting them.
     // Awaited unconditionally so a late it.only() is visible to the only-scan.
     await awaitSuiteBuilds(standaloneQueue);
+    // node evaluates only-ness when each test is constructed, so a queue whose
+    // only-marked tests are later dropped by a name/tag filter still runs in
+    // only mode (and reports nothing) rather than falling back to running all.
+    const queueHasOnly = standaloneQueueHasOnly(standaloneQueue);
     const filters = opts.testTagFilterExpressions as string[] | null;
     if (filters !== null && filters.length > 0) {
       const pruned = pruneStandaloneEntries(standaloneQueue, filters);
@@ -3590,9 +3753,17 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
       standaloneQueue.push(...pruned);
     }
 
+    const namePatterns = (opts.testNamePatterns ?? null) as RegExp[] | null;
+    const skipPatterns = (opts.testSkipPatterns ?? null) as RegExp[] | null;
+    if (namePatterns !== null || skipPatterns !== null) {
+      const pruned = pruneByNamePatterns(standaloneQueue, namePatterns, skipPatterns, []);
+      standaloneQueue.length = 0;
+      standaloneQueue.push(...pruned);
+    }
+
     // node honors `only` in the shared process: when any registration carries
     // it, everything outside the only-marked branches is dropped silently.
-    if (standaloneQueueHasOnly(standaloneQueue)) {
+    if (queueHasOnly) {
       const pruned = pruneToOnly(standaloneQueue);
       standaloneQueue.length = 0;
       standaloneQueue.push(...pruned);
@@ -3615,6 +3786,7 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
       duration_ms: durationMs,
       file: undefined,
     });
+    if (globalHooks?.globalTeardownFunction !== undefined) await globalHooks.globalTeardownFunction();
   } catch (err) {
     restoreAfterInProcessRun();
     reporter.destroy(err as Error);
@@ -3680,12 +3852,20 @@ async function runStandalone() {
     standaloneQueue.push(...pruned);
   }
 
+  // node's harness runs the --test-global-setup module's globalSetup before the
+  // first test executes and its globalTeardown after the run, in every mode —
+  // including a file run directly, without --test.
+  const globalSetupPath = readExecArgvValue("--test-global-setup");
+
   try {
+    const globalHooks = await loadGlobalSetupModule(globalSetupPath, process.cwd());
+    if (globalHooks?.globalSetupFunction !== undefined) await globalHooks.globalSetupFunction();
     const hookError = await executeStandaloneQueue(root);
     if (hookError !== undefined) {
       console.error(hookError);
       counts.failed++;
     }
+    if (globalHooks?.globalTeardownFunction !== undefined) await globalHooks.globalTeardownFunction();
   } catch (err) {
     console.error(err);
     counts.failed++;
@@ -3918,16 +4098,15 @@ function bunTestOptions(options: TestOptions) {
   // a sync body still passes like in Node); bun:test's watchdog measures the
   // whole wrapper, so only tell it about timeouts past its 5s default.
   const { timeout } = options;
-  if (timeout === Infinity) {
-    // Node's "no timeout" must override bun:test's default (bun saturates it).
-    return { timeout };
-  }
   if (typeof timeout === "number" && Number.isFinite(timeout)) {
     // Keep bun:test's watchdog at or above both the node-style timeout and
     // bun's default so a lower `--timeout` cannot cut a node timeout short.
     return { timeout: Math.max(timeout, kBunTestDefaultTimeoutMs) };
   }
-  return undefined;
+  // node:test has no default per-test timeout (test.js kDefaultTimeout is
+  // null), so bun:test's 5s watchdog must not apply either; bun saturates
+  // Infinity to its maximum.
+  return { timeout: Infinity };
 }
 
 function currentCollectionParent(): TestNode {
@@ -4472,14 +4651,6 @@ function afterEach(arg0: unknown, arg1: unknown) {
   hookOwner().hooks.afterEach.push(createHook(arg0, arg1));
 }
 
-function setDefaultSnapshotSerializer(_serializers: unknown[]) {
-  throwNotImplemented("setDefaultSnapshotSerializer()", 5090, "Use `bun:test` in the interim.");
-}
-
-function setResolveSnapshotPath(_fn: unknown) {
-  throwNotImplemented("setResolveSnapshotPath()", 5090, "Use `bun:test` in the interim.");
-}
-
 test.describe = describe;
 test.suite = describe;
 test.test = test;
@@ -4489,10 +4660,21 @@ test.after = after;
 test.beforeEach = beforeEach;
 test.afterEach = afterEach;
 test.assert = assert;
-test.snapshot = {
-  setDefaultSnapshotSerializer,
-  setResolveSnapshotPath,
-};
+// node exposes these lazily through a cached getter on module.exports
+// (lib/test.js:44) so requiring node:test does not pull the snapshot module in.
+let lazySnapshotNamespace;
+Object.defineProperty(test, "snapshot", {
+  __proto__: null,
+  configurable: true,
+  enumerable: true,
+  get() {
+    if (lazySnapshotNamespace === undefined) {
+      const { setDefaultSnapshotSerializers, setResolveSnapshotPath } = require("internal/test/snapshot");
+      lazySnapshotNamespace = { __proto__: null, setDefaultSnapshotSerializers, setResolveSnapshotPath };
+    }
+    return lazySnapshotNamespace;
+  },
+});
 test.run = run;
 test.mock = mock;
 test.getTestContext = getTestContext;

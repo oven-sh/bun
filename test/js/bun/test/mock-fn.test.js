@@ -1079,11 +1079,12 @@ describe("spyOn", () => {
     // replaced with a getter/setter spy; historically this crashed the process.
     test("spyOn on a function's prototype property throws instead of crashing", () => {
       function Foo() {}
+      const fooPrototype = Foo.prototype;
       expect(() => spyOn(Foo, "prototype")).toThrow(
         "Cannot spy on the `prototype` property because it is not a function",
       );
       // the function is left untouched
-      expect(Object.keys(Foo.prototype)).toEqual([]);
+      expect(Foo.prototype).toBe(fooPrototype);
       expect(new Foo()).toBeInstanceOf(Foo);
 
       class K {
@@ -1091,9 +1092,11 @@ describe("spyOn", () => {
           return 42;
         }
       }
+      const kPrototype = K.prototype;
       expect(() => spyOn(K, "prototype")).toThrow(
         "Cannot spy on the `prototype` property because it is not a function",
       );
+      expect(K.prototype).toBe(kPrototype);
       expect(new K().m()).toBe(42);
 
       // arrow functions have no prototype property at all
@@ -1101,6 +1104,7 @@ describe("spyOn", () => {
       expect(() => spyOn(arrow, "prototype")).toThrow(
         "Cannot spy on the `prototype` property because it is not a function",
       );
+      expect(Object.hasOwn(arrow, "prototype")).toBe(false);
     });
 
     test("spyOn still works when a function's prototype is itself a function", () => {

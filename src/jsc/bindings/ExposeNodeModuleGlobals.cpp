@@ -108,6 +108,19 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__preExecutionBootstrap(Zig::GlobalOb
     }
 }
 
+// Evaluate `internal/freeze_intrinsics`. Called after load_preloads so
+// --require/--import polyfills land before the freeze (Node.js ordering).
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__freezeIntrinsics(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::InternalFreezeIntrinsics);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        CLEAR_IF_EXCEPTION(scope);
+        Bun__reportError(globalObject, JSC::JSValue::encode(exception));
+    }
+}
+
 // Set up require(), module, __filename, __dirname on globalThis for the REPL.
 // Creates a CommonJS module object rooted at the given directory so require() resolves correctly.
 extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__REPL__setupGlobalRequire(

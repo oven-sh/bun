@@ -126,10 +126,11 @@ function printEnvTrace(kind: EnvOpKind, key: string | null): void {
       // The capture burns 3 frames on trace machinery (printEnvTrace, the
       // proxy trap, and the Error line); widen the limit so the user still
       // sees `Error.stackTraceLimit` real frames.
+      const stlWritable = require("internal/shared").isErrorStackTraceLimitWritable();
       const limit = Error.stackTraceLimit;
-      Error.stackTraceLimit = limit + 3;
+      if (stlWritable) Error.stackTraceLimit = limit + 3;
       const stack = new Error().stack!.split("\n");
-      Error.stackTraceLimit = limit;
+      if (stlWritable) Error.stackTraceLimit = limit;
       // stack[0] = "Error", [1] = printEnvTrace, [2] = the proxy trap.
       let corrected = false;
       for (let i = 3; i < stack.length; i++) {

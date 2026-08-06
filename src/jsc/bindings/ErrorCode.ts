@@ -174,6 +174,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_PARSE_ARGS_INVALID_OPTION_VALUE", TypeError],
   ["ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL", TypeError],
   ["ERR_PARSE_ARGS_UNKNOWN_OPTION", TypeError],
+  ["ERR_PROTO_ACCESS", Error],
   ["ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2", Error, "PostgresError"],
   ["ERR_POSTGRES_CONNECTION_CLOSED", Error, "PostgresError"],
   ["ERR_POSTGRES_CONNECTION_TIMEOUT", Error, "PostgresError"],

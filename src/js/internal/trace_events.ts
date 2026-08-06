@@ -696,6 +696,7 @@ function wrapFsAsyncMethod(original, names: string[]) {
 // semantics mirror Node: count starts at 1, countReset emits 0, time/timeLog/
 // timeEnd emit 'b'/'n'/'e' under `time::<label>` only while the label is live.
 function installConsoleInstrumentation() {
+  if (Object.isFrozen(console)) return;
   const counts = new Map<string, number>();
   const timeLabels = new Set<string>();
   const originalCount = console.count;

@@ -2291,6 +2291,18 @@ impl VirtualMachine {
         }
     }
 
+    /// Runs `internal/freeze_intrinsics` for `--frozen-intrinsics`. Called
+    /// after `load_preloads` so `--require`/`--import` polyfills land first.
+    fn maybe_freeze_intrinsics(&self) {
+        unsafe extern "C" {
+            static Bun__Node__FrozenIntrinsics: core::sync::atomic::AtomicBool;
+        }
+        // SAFETY: `#[no_mangle]` static defined in `bun_runtime::cli::Arguments`.
+        if unsafe { Bun__Node__FrozenIntrinsics.load(core::sync::atomic::Ordering::Relaxed) } {
+            crate::cpp::Bun__freezeIntrinsics(self.global());
+        }
+    }
+
     /// `reloadEntryPoint(entry_path)` — set `main`, generate the synthetic
     /// `bun:main` entry, run preloads, and kick off module evaluation.
     pub(crate) fn reload_entry_point(
@@ -2366,6 +2378,8 @@ impl VirtualMachine {
                     }
                 }
 
+                self.maybe_freeze_intrinsics();
+
                 // Check if Module.runMain was patched.
                 if self.has_patched_run_main {
                     bun_core::hint::cold();
@@ -2389,6 +2403,8 @@ impl VirtualMachine {
                     return Ok(resolved);
                 }
             }
+
+            self.maybe_freeze_intrinsics();
 
             // Note: reshaped for borrowck — capture raw ptr before &self call.
             let global = self.global;
@@ -2414,6 +2430,7 @@ impl VirtualMachine {
             JSValue::from_cell(promise).ensure_still_alive();
             Ok(promise)
         } else {
+            self.maybe_freeze_intrinsics();
             let global = self.global;
             let main_str = bun_core::String::from_bytes(self.main());
             let promise =
@@ -4464,6 +4481,8 @@ impl VirtualMachine {
                 }
             }
         }
+
+        self.maybe_freeze_intrinsics();
 
         // Note: reshaped for borrowck.
         let global = self.global;

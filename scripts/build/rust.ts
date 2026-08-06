@@ -410,6 +410,15 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   if (!cfg.ci) {
     rustflags.push("-Zthreads=8");
   }
+  // Polonius alpha borrow checker: accepts NLL "problem case 3" (a borrow
+  // returned/escaping on one path no longer blocks the other paths), which
+  // workspace code now relies on — e.g. `src/collections/linear_fifo.rs`
+  // no longer compiles under the stock checker. Nightly-only; the pinned
+  // toolchain is nightly. Must stay in sync with the generated
+  // `.cargo/config.toml` (cargo-config.ts) so plain `cargo check`,
+  // rust-analyzer, and `rust:check-all` accept the same code the ninja
+  // build does.
+  rustflags.push("-Zpolonius=next");
   // rustc does not emit `.llvm_addrsig` by default on *any* target (verified
   // empirically — Linux-gnu, musl, darwin, msvc all missing it). lld's
   // `--icf=safe` (flags.ts:960) and lld-link's `/OPT:SAFEICF` (flags.ts:778)

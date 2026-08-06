@@ -191,20 +191,16 @@ impl Loader {
         buf: &'b mut PathBuffer,
     ) -> Option<&'b ZStr> {
         // Check NODE or npm_node_execpath env var, but only use it if the file actually exists.
-        // NLL workaround: compute the length in an inner scope so the borrow of `buf` for the
-        // executable check ends before we either return a fresh borrow or fall through to `which`.
-        let env_len = self
+        if let Some(node) = self
             .get(b"NODE")
             .or_else(|| self.get(b"npm_node_execpath"))
             .filter(|n| !n.is_empty() && n.len() < MAX_PATH_BYTES)
-            .map(|node| {
-                buf[..node.len()].copy_from_slice(node);
-                buf[node.len()] = 0;
-                node.len()
-            });
-        if let Some(len) = env_len {
-            if bun_sys::is_executable_file_path(ZStr::from_buf(&buf[..], len)) {
-                return Some(ZStr::from_buf(&buf[..], len));
+        {
+            buf[..node.len()].copy_from_slice(node);
+            buf[node.len()] = 0;
+            let node_path = ZStr::from_buf(&buf[..], node.len());
+            if bun_sys::is_executable_file_path(node_path) {
+                return Some(node_path);
             }
         }
 
@@ -1104,17 +1100,13 @@ impl<'a> Parser<'a> {
         if end >= self.src.len() {
             return Ok(&self.src[self.src.len()..]);
         }
-        // reshaped for borrowck — `parse_quoted` returns a borrow of
-        // `self.value_buffer`; capture only its length, then re-borrow the buffer
-        // after the match so the unquoted fallthrough can re-borrow `self`.
-        let quoted_len: Option<usize> = match self.src[end] {
-            b'`' => self.parse_quoted::<b'`'>()?.map(|v| v.len()),
-            b'"' => self.parse_quoted::<b'"'>()?.map(|v| v.len()),
-            b'\'' => self.parse_quoted::<b'\''>()?.map(|v| v.len()),
+        let quoted = match self.src[end] {
+            b'`' => self.parse_quoted::<b'`'>()?,
+            b'"' => self.parse_quoted::<b'"'>()?,
+            b'\'' => self.parse_quoted::<b'\''>()?,
             _ => None,
         };
-        if let Some(len) = quoted_len {
-            let value = &self.value_buffer[..len];
+        if let Some(value) = quoted {
             return Ok(if IS_PROCESS {
                 value
             } else {

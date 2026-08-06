@@ -308,27 +308,20 @@ impl Chunk {
         // Look up the CSS chunk via the JS chunk's css_chunks indices.
         // This correctly handles deduplicated CSS chunks that are shared
         // across multiple HTML entry points (see issue #23668).
-        // Note: reshaped for borrowck — we scan immutably for the JS chunk, copy the
-        // css-chunk index into a local, drop the borrow, then re-borrow mutably.
         let entry_point_id = self.entry_point.entry_point_id();
-        let css_idx: Option<usize> = 'find: {
-            for other in chunks.iter() {
-                if let Content::Javascript(js) = &other.content {
-                    if other.entry_point.is_entry_point()
-                        && other.entry_point.entry_point_id() == entry_point_id
-                    {
-                        let css_chunk_indices = &js.css_chunks[..];
-                        if !css_chunk_indices.is_empty() {
-                            break 'find Some(css_chunk_indices[0] as usize);
-                        }
-                        break 'find None;
+        for other in chunks.iter() {
+            if let Content::Javascript(js) = &other.content {
+                if other.entry_point.is_entry_point()
+                    && other.entry_point.entry_point_id() == entry_point_id
+                {
+                    let css_chunk_indices = &js.css_chunks[..];
+                    if !css_chunk_indices.is_empty() {
+                        let idx = css_chunk_indices[0] as usize;
+                        return Some(&mut chunks[idx]);
                     }
+                    break;
                 }
             }
-            None
-        };
-        if let Some(idx) = css_idx {
-            return Some(&mut chunks[idx]);
         }
         // Fallback: match by entry_point_id for cases without a JS chunk.
         for other in chunks.iter_mut() {

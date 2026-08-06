@@ -10174,12 +10174,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
         // ever store a single path component that was returned from the
         // filesystem.
         let mut dir_name_buf = PathBuffer::uninit();
-        let mut dir_name_len = sub_path.len().min(dir_name_buf.len());
-        dir_name_buf[..dir_name_len].copy_from_slice(&sub_path[..dir_name_len]);
-        // `dir_name` conceptually aliases either `sub_path` or `dir_name_buf`;
-        // the borrow checker won't let that alias survive the copy/reassignment
-        // below, so track `(is_sub_path, len)` and re-slice on each use.
-        let mut dir_name_is_sub_path = true;
+        let mut dir_name: &[u8] = sub_path;
 
         // Here we must avoid recursion, in order to provide O(1) memory guarantee of this function.
         // Go through each entry and if it is not a directory, delete it. If it is a directory,
@@ -10202,8 +10197,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                                 dir = new_dir;
                                 let n = entry_name.len().min(dir_name_buf.len());
                                 dir_name_buf[..n].copy_from_slice(&entry_name[..n]);
-                                dir_name_len = n;
-                                dir_name_is_sub_path = false;
+                                dir_name = &dir_name_buf[..n];
                                 continue 'scan_dir;
                             }
                             Err(E::ENOTDIR) => {
@@ -10240,11 +10234,6 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
             // Now to remove the directory itself.
             dir.close();
 
-            let dir_name: &[u8] = if dir_name_is_sub_path {
-                sub_path
-            } else {
-                &dir_name_buf[..dir_name_len]
-            };
             if let Some(d) = cleanup_dir_parent {
                 match dt_delete_dir(&d, dir_name) {
                     Ok(()) | Err(E::ENOENT) | Err(E::ENOTEMPTY) | Err(E::EEXIST) => {

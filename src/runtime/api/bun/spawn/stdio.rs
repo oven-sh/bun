@@ -191,10 +191,6 @@ impl Stdio {
                 }
             }
 
-            // Note: reshaped for borrowck — `remain` borrows `*self`, so we
-            // must drop it before mutating `self`. Shadowing ends the borrow here.
-            let _ = remain;
-
             // Assigning to `*self` drops the previous variant via `Drop`
             // (and closes a prior `.memfd`).
             *self = Stdio::Memfd(fd);

@@ -1478,10 +1478,8 @@ pub(crate) fn install_isolated_packages(
                                 }
                                 unreachable!();
                             };
-                            // Reshaped for borrowck — copy members to
-                            // avoid holding a borrow into scc_stack while mutating.
-                            let members: Vec<u32> = scc_stack[start..].to_vec();
-                            for &m in &members {
+                            let members = &scc_stack[start..];
+                            for &m in members {
                                 on_stack[m as usize] = false;
                             }
                             if members.len() == 1 {
@@ -1546,7 +1544,7 @@ pub(crate) fn install_isolated_packages(
                                 scc_ext.clear_retaining_capacity();
                                 let mut member_sub: Vec<u64> = Vec::new();
                                 let mut any_ineligible = false;
-                                for &m in &members {
+                                for &m in members {
                                     if entry_hashes[m as usize] == 0 {
                                         any_ineligible = true;
                                     }
@@ -1608,7 +1606,7 @@ pub(crate) fn install_isolated_packages(
                                     h = 1;
                                 }
                                 let final_h: u64 = if any_ineligible { 0 } else { h };
-                                for &m in &members {
+                                for &m in members {
                                     entry_hashes[m as usize] = final_h;
                                 }
                             }

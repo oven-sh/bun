@@ -490,9 +490,18 @@ export function windowsEnv(
       return internalEnv[p];
     },
     set(_, p, value) {
-      const k = String(p).toUpperCase();
-      $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
+      // Node's env setter does `ToString` on key and value, which throws on a
+      // Symbol; JS `String()` special-cases Symbols, so reject explicitly.
+      if (typeof p === "symbol" || typeof value === "symbol") {
+        throw new TypeError("Cannot convert a Symbol value to a string");
+      }
+      const k = (p as string).toUpperCase();
       value = String(value); // If toString() throws, we want to avoid it existing in the envMapList
+      // Node silently ignores empty names and names containing '=' (the
+      // assignment succeeds but nothing is stored, matching RealEnvStore::Set).
+      if (k === "" || k.indexOf("=") !== -1) {
+        return true;
+      }
       // Track the key for enumeration if it isn't already there. Don't gate on
       // `k in internalEnv`: the proxy-related env-var accessors (HTTP_PROXY,
       // HTTPS_PROXY, NO_PROXY and lowercase variants) always exist on
@@ -519,22 +528,57 @@ export function windowsEnv(
       return p in internalEnv;
     },
     deleteProperty(_, p) {
-      const k = String(p).toUpperCase();
+      if (typeof p === "symbol") return true;
+      const k = (p as string).toUpperCase();
       const i = envMapList.findIndex(x => x.toUpperCase() === k);
       if (i !== -1) {
         envMapList.splice(i, 1);
       }
       editWindowsEnvVar(k, null);
-      return typeof p !== "symbol" ? delete internalEnv[k] : false;
+      return delete internalEnv[k];
     },
     defineProperty(_, p, attributes) {
-      const k = String(p).toUpperCase();
-      $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
-      if (!(k in internalEnv) && !envMapList.includes(p)) {
+      if (typeof p === "symbol") {
+        throw new TypeError("Cannot convert a Symbol value to a string");
+      }
+      const k = (p as string).toUpperCase();
+      // Node only accepts a fully-permissive data descriptor and routes it
+      // through the env setter (RealEnvStore::PropertyDefinerCallback).
+      if ("get" in attributes || "set" in attributes) {
+        throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(
+          "'process.env' does not accept an accessor(getter/setter) descriptor",
+        );
+      }
+      if (
+        !("value" in attributes) ||
+        attributes.configurable !== true ||
+        attributes.writable !== true ||
+        attributes.enumerable !== true
+      ) {
+        throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(
+          "'process.env' only accepts a configurable, writable, and enumerable data descriptor",
+        );
+      }
+      if (typeof attributes.value === "symbol") {
+        throw new TypeError("Cannot convert a Symbol value to a string");
+      }
+      const value = String(attributes.value);
+      if (k === "" || k.indexOf("=") !== -1) {
+        return true;
+      }
+      if (!envMapList.includes(p) && !envMapList.some(x => x.toUpperCase() === k)) {
         envMapList.push(p);
       }
-      editWindowsEnvVar(k, internalEnv[k]);
-      return $Object.$defineProperty(internalEnv, k, attributes);
+      editWindowsEnvVar(k, value);
+      internalEnv[k] = value;
+      return true;
+    },
+    preventExtensions() {
+      // Node: Object.freeze/seal/preventExtensions on process.env throw.
+      return false;
+    },
+    isExtensible() {
+      return true;
     },
     getOwnPropertyDescriptor(target, p) {
       if (typeof p === "string") {

@@ -2173,7 +2173,9 @@ pub(crate) mod environment_variables {
     ) -> bool {
         let vm = global_object.bun_vm();
         let name_slice = name.to_utf8();
-        let Some(val) = vm.env_loader().get(name_slice.slice()) else {
+        // `Loader::get` strips a leading `$` (bunfig/.env interpolation); this
+        // is the `process.env[key]` read path, so look the map up directly.
+        let Some(val) = vm.env_loader().map.get(name_slice.slice()) else {
             return false;
         };
         value.write(BunString::borrow_utf8(val));
@@ -2240,6 +2242,100 @@ pub(crate) mod environment_variables {
         let sliced = name.to_slice();
         let value = vm.env_loader().get(sliced.slice())?;
         Some(ZigString::init_utf8(value))
+    }
+
+    // setenv/unsetenv take C strings; Node truncates at the first NUL.
+    #[inline]
+    fn truncate_at_nul(s: &[u8]) -> &[u8] {
+        match bun_core::strings::index_of_char(s, 0) {
+            Some(i) => &s[..i as usize],
+            None => s,
+        }
+    }
+
+    /// `process.env[name] = value`: update the env_loader map, and on the main
+    /// thread also `setenv()` so a native library's `getenv()` observes the
+    /// write. Key/value are NUL-truncated and empty / `=`-containing keys are
+    /// dropped here so every C++ caller (JSProcessEnvMap, JSSharedEnvMap via
+    /// syncOSEnv) sees the same contract.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__ProcessEnv__put(
+        global_object: &JSGlobalObject,
+        name: &BunString,
+        value: &BunString,
+    ) {
+        let vm = global_object.bun_vm().as_mut();
+        let name_slice = name.to_utf8();
+        let key = truncate_at_nul(name_slice.slice());
+        if key.is_empty() || bun_core::strings::index_of_char(key, b'=').is_some() {
+            return;
+        }
+        let value_slice = value.to_utf8();
+        let val = truncate_at_nul(value_slice.slice());
+
+        {
+            // Serialise against a concurrently-spawning worker's
+            // env.map.clone_with_allocator (web_worker.rs holds this same lock).
+            let _slots = vm.proxy_env_storage.lock();
+            bun_core::handle_oom(vm.transpiler.env_mut().map.put(key, val));
+        }
+
+        if vm.is_main_thread() {
+            #[cfg(not(windows))]
+            {
+                let Ok(key_z) = std::ffi::CString::new(key) else {
+                    return;
+                };
+                let Ok(val_z) = std::ffi::CString::new(val) else {
+                    return;
+                };
+                let _g = bun_core::environ_write_lock();
+                // SAFETY: NUL-terminated C strings; setenv copies both. The
+                // write lock excludes bun_core::getenv_z on other threads.
+                unsafe { libc::setenv(key_z.as_ptr(), val_z.as_ptr(), 1) };
+                bun_core::env_var::invalidate_for_setenv(key, Some(val));
+            }
+        }
+    }
+
+    /// `delete process.env[name]`: remove from the env_loader map, and on the
+    /// main thread also `unsetenv()`.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__ProcessEnv__delete(
+        global_object: &JSGlobalObject,
+        name: &BunString,
+    ) {
+        let vm = global_object.bun_vm().as_mut();
+        let name_slice = name.to_utf8();
+        let key = truncate_at_nul(name_slice.slice());
+        if key.is_empty() {
+            return;
+        }
+
+        {
+            let mut slots = vm.proxy_env_storage.lock();
+            // Clear a matching proxy-var slot so a later worker spawn's
+            // sync_into doesn't re-insert the deleted value.
+            if let Some(slot) = slots.slot(key) {
+                *slot.ptr = None;
+            }
+            // Ordered remove so Object.keys(process.env) keeps the relative
+            // order of remaining keys after delete (Node/unsetenv shift
+            // environ in place).
+            vm.transpiler.env_mut().map.map.ordered_remove(key);
+        }
+
+        if vm.is_main_thread() {
+            #[cfg(not(windows))]
+            {
+                if let Ok(key_z) = std::ffi::CString::new(key) {
+                    let _g = bun_core::environ_write_lock();
+                    // SAFETY: NUL-terminated C string.
+                    unsafe { libc::unsetenv(key_z.as_ptr()) };
+                    bun_core::env_var::invalidate_for_setenv(key, None);
+                }
+            }
+        }
     }
 }
 

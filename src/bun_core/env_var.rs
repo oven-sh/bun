@@ -29,7 +29,7 @@
 // `New`/`PlatformSpecificNew` are `macro_rules!` that emit a module per env var; the macros
 // must be defined (or `#[macro_use]`d) before the declarations.
 
-use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 // MOVE_DOWN: bun_core::ZStr → bun_core (move-in pass).
 use crate::ZStr;
@@ -318,7 +318,13 @@ pub(crate) mod kind {
 
         // A single Cache struct; per-var uniqueness comes from each var owning its own
         // `static CACHE: Cache`.
+        //
+        // `(ptr, len)` is a split-word cache of an owned leaked copy of the
+        // env value; `seq` is a seqlock so a concurrent reader never pairs a
+        // stale `len` with a new `ptr` when the cached slice changes (initial
+        // load racing a `process.env` write's `set_owned()`).
         pub(crate) struct Cache {
+            seq: AtomicU32,
             ptr_value: AtomicPtr<u8>,
             len_value: AtomicUsize,
         }
@@ -334,27 +340,59 @@ pub(crate) mod kind {
         impl Cache {
             pub(crate) const fn new() -> Self {
                 Self {
+                    seq: AtomicU32::new(0),
                     ptr_value: AtomicPtr::new(NOT_LOADED_PTR),
                     len_value: AtomicUsize::new(NOT_LOADED_LEN),
                 }
             }
 
             pub(crate) fn get_cached(&self) -> Output {
-                let len = self.len_value.load(Ordering::Acquire);
-
-                if len == NOT_LOADED_LEN {
-                    return CacheOutput::Unknown;
+                loop {
+                    let s1 = self.seq.load(Ordering::Acquire);
+                    if s1 & 1 != 0 {
+                        core::hint::spin_loop();
+                        continue;
+                    }
+                    let len = self.len_value.load(Ordering::Acquire);
+                    let ptr = self.ptr_value.load(Ordering::Acquire);
+                    if self.seq.load(Ordering::Acquire) != s1 {
+                        core::hint::spin_loop();
+                        continue;
+                    }
+                    if len == NOT_LOADED_LEN {
+                        return CacheOutput::Unknown;
+                    }
+                    if len == NOT_SET_LEN {
+                        return CacheOutput::NotSet;
+                    }
+                    // SAFETY: (ptr, len) were stored together under the seqlock
+                    // from a leaked Box<[u8]> (getenv_z and set_owned both
+                    // leak before passing in). No pointer into libc environ is
+                    // ever cached, so musl freeing a previous setenv-allocated
+                    // string cannot dangle it.
+                    return CacheOutput::Value(unsafe { core::slice::from_raw_parts(ptr, len) });
                 }
+            }
 
-                if len == NOT_SET_LEN {
-                    return CacheOutput::NotSet;
+            #[inline]
+            fn write_under_seqlock(&self, f: impl FnOnce()) {
+                // Odd seq = write in progress; even = stable. CAS even→odd so
+                // concurrent writers exclude one another (fetch_add would let a
+                // second writer bump odd→even and run f() alongside the first).
+                loop {
+                    let s = self.seq.load(Ordering::Relaxed);
+                    if s & 1 == 0
+                        && self
+                            .seq
+                            .compare_exchange_weak(s, s + 1, Ordering::AcqRel, Ordering::Relaxed)
+                            .is_ok()
+                    {
+                        break;
+                    }
+                    core::hint::spin_loop();
                 }
-
-                let ptr = self.ptr_value.load(Ordering::Relaxed);
-
-                // SAFETY: ptr/len were stored together in deser_and_invalidate from a valid
-                // &'static [u8] returned by getenv_z (envp memory lives for process lifetime).
-                CacheOutput::Value(unsafe { core::slice::from_raw_parts(ptr, len) })
+                f();
+                self.seq.fetch_add(1, Ordering::Release);
             }
 
             #[inline]
@@ -362,20 +400,23 @@ pub(crate) mod kind {
                 &self,
                 raw_env: Option<&'static [u8]>,
             ) -> Option<ValueType> {
-                // The implementation is racy and allows two threads to both set the value at
-                // the same time, as long as the value they are setting is the same. This is
-                // difficult to write an assertion for since it requires the DEV path take a
-                // .swap() path rather than a plain .store().
-
-                if let Some(ev) = raw_env {
-                    self.ptr_value
-                        .store(ev.as_ptr().cast_mut(), Ordering::Relaxed);
-                    self.len_value.store(ev.len(), Ordering::Release);
-                } else {
-                    self.ptr_value.store(NOT_SET_PTR, Ordering::Relaxed);
-                    self.len_value.store(NOT_SET_LEN, Ordering::Release);
-                }
-
+                // The previous cached slice is deliberately never freed: a
+                // concurrent `get_cached()` may have already returned it past
+                // the seqlock (e.g. into `BunString::init`), so reclaiming it
+                // here would be UAF. Callers pass a leaked Box (`getenv_z`
+                // leaks under its read lock; `set_owned` leaks the
+                // process.env write's value), so the stored `(ptr, len)` is
+                // always Bun-owned and `&'static`.
+                self.write_under_seqlock(|| {
+                    if let Some(ev) = raw_env {
+                        self.ptr_value
+                            .store(ev.as_ptr().cast_mut(), Ordering::Release);
+                        self.len_value.store(ev.len(), Ordering::Release);
+                    } else {
+                        self.ptr_value.store(NOT_SET_PTR, Ordering::Release);
+                        self.len_value.store(NOT_SET_LEN, Ordering::Release);
+                    }
+                });
                 raw_env
             }
         }
@@ -698,6 +739,12 @@ macro_rules! platform_specific_new {
                         $crate::hint::cold();
 
                         let env_var = $crate::getenv_z(k);
+                        // A concurrent `set_owned()` may have filled the cache
+                        // while getenv_z ran; don't overwrite it with the
+                        // stale pre-write value.
+                        if !matches!(CACHE.get_cached(), CacheOutput::Unknown) {
+                            return platform_get();
+                        }
                         let maybe_reloaded = CACHE.deser_and_invalidate(env_var);
 
                         if let Some(v) = maybe_reloaded {
@@ -772,11 +819,29 @@ macro_rules! platform_specific_new {
                 }
             }
 
+            /// Replace the cached value from the `process.env` write path.
+            /// Leaks a copy so the cache never holds a pointer into `environ`
+            /// (musl frees the previous setenv-allocated string on overwrite);
+            /// the previous cached slice is never freed because a concurrent
+            /// `get()` caller may already hold it past the seqlock. Bounded to
+            /// one small leak per runtime write to one of ten well-known keys.
+            pub fn set_owned(value: Option<&[u8]>) {
+                let leaked: Option<&'static [u8]> = value.map(|v| {
+                    let s: &'static [u8] = Box::leak(Box::<[u8]>::from(v));
+                    $crate::asan::ignore_object(s.as_ptr());
+                    s
+                });
+                CACHE.deser_and_invalidate(leaked);
+            }
+
             /// Retrieve the value of the environment variable, reloading it from the environment.
             /// Fails if the current platform is unsupported.
             fn get_force_reload() -> Option<K::ValueType> {
                 assert_platform_supported();
                 let env_var = $crate::getenv_z(key());
+                if !matches!(CACHE.get_cached(), CacheOutput::Unknown) {
+                    return get();
+                }
                 let maybe_reloaded = CACHE.deser_and_invalidate(env_var);
 
                 if let Some(v) = maybe_reloaded {
@@ -960,3 +1025,35 @@ macro_rules! new_feature_flag {
     };
 }
 pub(crate) use new_feature_flag;
+
+/// Replace the cached value for the typed accessor whose key matches `name`
+/// with an owned copy of `value` (or mark it unset). `process.env` writes call
+/// `setenv()` and then this so `os.homedir()` etc. observe the change; the
+/// cache stores a leaked owned slice rather than a pointer into `environ`,
+/// because musl frees the previous setenv-allocated string on overwrite.
+///
+/// Only the string-kind accessors that are read at runtime (after VM startup)
+/// are listed; the `BUN_*` flags are read once on boot and intentionally left
+/// cached.
+pub fn invalidate_for_setenv(name: &[u8], value: Option<&[u8]>) {
+    macro_rules! try_var {
+        ($v:ident) => {
+            if let Some(k) = $v::platform_key() {
+                if crate::strings::eql(k.as_bytes(), name) {
+                    $v::set_owned(value);
+                    return;
+                }
+            }
+        };
+    }
+    try_var!(HOME);
+    try_var!(PATH);
+    try_var!(USER);
+    try_var!(TMPDIR);
+    try_var!(TEMP);
+    try_var!(TMP);
+    try_var!(SHELL);
+    try_var!(XDG_CACHE_HOME);
+    try_var!(XDG_CONFIG_HOME);
+    try_var!(XDG_DATA_HOME);
+}

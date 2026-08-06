@@ -317,9 +317,35 @@ impl core::ops::Deref for ZStr {
     }
 }
 
-/// `bun.getenvZ` — read an environment variable. Returns the value as borrowed
-/// process-static bytes (env block lives for the process). On POSIX wraps
-/// `libc::getenv`; on Windows scans `environ` case-insensitively.
+/// Serialises Bun's own `libc::getenv` / `environ` readers against the
+/// `process.env` write path's `libc::setenv`/`unsetenv`. `getenv()` does not
+/// take glibc's internal envlock (it is async-signal-safe), so a concurrent
+/// `setenv()` that `realloc`s `__environ` while the transpiler pool or a
+/// worker is inside `getenv_z()` would be a UAF inside libc. Native addons'
+/// direct `getenv()` calls are not covered (same limitation Node carries).
+static ENVIRON_LOCK: RwLock<()> = RwLock::new(());
+
+/// Hold this write guard around `libc::setenv`/`unsetenv` so [`getenv_z`] and
+/// [`getenv_z_any_case`] on other threads don't walk `__environ` mid-realloc.
+pub fn environ_write_lock() -> RwLockWriteGuard<'static, ()> {
+    ENVIRON_LOCK.write()
+}
+
+// Leak an owned copy of `src` as `&'static [u8]`, LSAN-ignored. Used so the
+// returned slice outlives any later `setenv()` that (on musl) may free the
+// source environ string.
+#[cfg(unix)]
+#[inline]
+fn leak_static_copy(src: &[u8]) -> &'static [u8] {
+    let s: &'static [u8] = Box::leak(Box::<[u8]>::from(src));
+    crate::asan::ignore_object(s.as_ptr());
+    s
+}
+
+/// `bun.getenvZ` — read an environment variable. On POSIX wraps
+/// `libc::getenv`; on Windows scans `environ` case-insensitively. Returns an
+/// owned leaked copy so the `&'static [u8]` is valid regardless of a later
+/// `setenv()` (musl frees the previous setenv-allocated string on overwrite).
 pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
     #[cfg(not(any(unix, windows)))]
     {
@@ -328,15 +354,19 @@ pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
     }
     #[cfg(unix)]
     unsafe {
+        let _g = ENVIRON_LOCK.read();
         // SAFETY: key is NUL-terminated by ZStr invariant; getenv reads until NUL.
         let p = libc::getenv(key.as_ptr());
         if p.is_null() {
             return None;
         }
-        // SAFETY: getenv returns a pointer into the process env block, valid for
-        // process lifetime (modulo setenv races).
+        // SAFETY: getenv returns a pointer into the process env block; the
+        // read lock serialises against Bun's own setenv path while we copy.
         let len = libc::strlen(p);
-        return Some(core::slice::from_raw_parts(p.cast::<u8>(), len));
+        return Some(leak_static_copy(core::slice::from_raw_parts(
+            p.cast::<u8>(),
+            len,
+        )));
     }
     #[cfg(windows)]
     {
@@ -372,6 +402,7 @@ pub fn c_environ() -> *const *const core::ffi::c_char {
 pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
     #[cfg(unix)]
     unsafe {
+        let _g = ENVIRON_LOCK.read();
         // SAFETY: `environ` is the C env block; entries are NUL-terminated `KEY=VALUE`.
         let mut p = c_environ();
         while !(*p).is_null() {
@@ -381,7 +412,7 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
                 &line[..key_end],
                 key.as_bytes(),
             ) {
-                return Some(&line[(key_end + 1).min(line.len())..]);
+                return Some(leak_static_copy(&line[(key_end + 1).min(line.len())..]));
             }
             p = p.add(1);
         }

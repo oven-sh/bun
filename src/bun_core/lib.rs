@@ -2770,6 +2770,7 @@ pub mod asan {
         safe fn __asan_describe_address(ptr: *const c_void);
         safe fn __lsan_register_root_region(ptr: *const c_void, size: usize);
         safe fn __lsan_unregister_root_region(ptr: *const c_void, size: usize);
+        safe fn __lsan_ignore_object(ptr: *const c_void);
     }
 
     #[inline]
@@ -2806,6 +2807,16 @@ pub mod asan {
         __lsan_register_root_region(ptr, size);
         #[cfg(not(bun_asan))]
         let _ = (ptr, size);
+    }
+    /// Tell LSAN the allocation containing `ptr` is an intentional
+    /// process-lifetime leak (e.g. a `Box::leak`'d static cache entry whose
+    /// pointer may later be overwritten and so become unreachable to LSAN).
+    #[inline]
+    pub fn ignore_object<T>(ptr: *const T) {
+        #[cfg(bun_asan)]
+        __lsan_ignore_object(ptr.cast());
+        #[cfg(not(bun_asan))]
+        let _ = ptr;
     }
     /// Undo a prior `register_root_region(ptr, size)` with identical arguments.
     #[inline]

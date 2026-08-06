@@ -1375,6 +1375,21 @@ impl<V, C: ArrayHashContext<[u8]> + Default, A: MapAllocator> StringArrayHashMap
         true
     }
 
+    /// O(n); preserves insertion order of remaining entries.
+    pub fn ordered_remove(&mut self, key: &[u8]) -> bool {
+        let Some(i) = self.find(key) else {
+            return false;
+        };
+        self.inner.keys.remove(i);
+        self.inner.hashes.remove(i);
+        self.inner.values.remove(i);
+        self.inner.drop_index();
+        if self.inner.keys.len() > INDEX_THRESHOLD {
+            self.inner.rebuild_index();
+        }
+        true
+    }
+
     /// Removes the entry (swapping the last element into its slot) and
     /// returns the owned key/value pair.
     pub fn fetch_swap_remove(&mut self, key: &[u8]) -> Option<KV<Box<[u8], A>, V>> {

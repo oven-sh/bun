@@ -19,6 +19,7 @@
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/PropertyDescriptor.h>
 #include "BunProcess.h"
+#include "ErrorCode.h"
 #include "ScriptExecutionContext.h"
 #include "SharedEnvStore.h"
 #include "wtf/NeverDestroyed.h"
@@ -32,6 +33,8 @@ extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
 extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const ZigString* name, ZigString* value);
 extern "C" bool Bun__getEnvValueBunString(JSGlobalObject* globalObject, const BunString* name, BunString* value);
 extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
+extern "C" void Bun__ProcessEnv__put(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
+extern "C" void Bun__ProcessEnv__delete(JSGlobalObject* globalObject, const BunString* name);
 
 namespace Bun {
 
@@ -322,24 +325,33 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
 }
 #endif
 
-// Founding a SHARE_ENV tree swaps main's process.env off the windowsEnv Proxy that
-// called SetEnvironmentVariableW, so every mutation of a main-rooted shared store has
-// to re-apply that write-through. Gated on the *store*, not the writing thread: node
-// roots a main-founded tree at its RealEnvStore, so a worker writing through that tree
-// reaches the OS env too. `value == nullptr` deletes.
-static ALWAYS_INLINE void syncWindowsEnv(SharedEnvStore* store, const String& key, const String* value)
+// Founding a SHARE_ENV tree swaps main's process.env off the object whose
+// put()/delete() wrote through to the OS environment (the Windows Proxy's
+// SetEnvironmentVariableW or the POSIX JSProcessEnvMap's setenv/unsetenv), so
+// every mutation of a main-rooted shared store has to re-apply that write-
+// through. Gated on the *store*, not the writing thread. On Windows a worker
+// writing through a main-rooted tree reaches the OS env (Node parity); on
+// POSIX Bun__ProcessEnv__put still gates setenv on vm.is_main_thread(), so
+// only main-thread writes reach environ and a worker's write lands only in
+// the shared store. `value == nullptr` deletes.
+static ALWAYS_INLINE void syncOSEnv(JSGlobalObject* globalObject, SharedEnvStore* store, const String& key, const String* value)
 {
-#if OS(WINDOWS)
     if (!store || !store->isMainRooted())
         return;
+#if OS(WINDOWS)
+    UNUSED_PARAM(globalObject);
     if (value)
         Bun__Process__editWindowsEnvVar(Bun::toString(key), Bun::toString(*value));
     else
         Bun__Process__editWindowsEnvVar(Bun::toString(key), { .tag = BunStringTag::Dead });
 #else
-    UNUSED_PARAM(store);
-    UNUSED_PARAM(key);
-    UNUSED_PARAM(value);
+    BunString name = Bun::toString(key);
+    if (value) {
+        BunString val = Bun::toString(*value);
+        Bun__ProcessEnv__put(globalObject, &name, &val);
+    } else {
+        Bun__ProcessEnv__delete(globalObject, &name);
+    }
 #endif
 }
 
@@ -544,7 +556,7 @@ bool JSSharedEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNam
 
     String keyStr = String(uid);
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);
-    syncWindowsEnv(store, keyStr, &stringValue);
+    syncOSEnv(globalObject, store, keyStr, &stringValue);
     store->set(keyStr, stringValue);
     return true;
 }
@@ -562,7 +574,7 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
         return Base::deleteProperty(cell, globalObject, propertyName, slot);
     }
 
-    syncWindowsEnv(store, String(uid), nullptr);
+    syncOSEnv(globalObject, store, String(uid), nullptr);
     store->remove(String(uid));
     // Also drop any own property the Base fallback installed (accessor descriptors).
     return Base::deleteProperty(cell, globalObject, propertyName, slot);
@@ -594,7 +606,7 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
             if (auto* store = sharedEnvStoreFor(object)) {
                 String existing = store->get(String(uid));
                 if (!existing.isNull()) {
-                    syncWindowsEnv(store, String(uid), nullptr);
+                    syncOSEnv(globalObject, store, String(uid), nullptr);
                     store->remove(String(uid));
                     object->putDirect(vm, propertyName, jsString(vm, existing), 0);
                 }
@@ -614,7 +626,7 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
 
     String keyStr = String(uid);
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);
-    syncWindowsEnv(store, keyStr, &stringValue);
+    syncOSEnv(globalObject, store, keyStr, &stringValue);
     store->set(keyStr, stringValue);
     return true;
 }
@@ -643,7 +655,7 @@ bool JSSharedEnvMap::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalO
     }
 
     String keyStr = String::number(index);
-    syncWindowsEnv(store, keyStr, nullptr);
+    syncOSEnv(globalObject, store, keyStr, nullptr);
     store->remove(keyStr);
     return Base::deletePropertyByIndex(cell, globalObject, index);
 }
@@ -654,6 +666,237 @@ JSValue createSharedEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     auto* structure = JSSharedEnvMap::createStructure(vm, globalObject, globalObject->objectPrototype());
     return JSSharedEnvMap::create(vm, structure);
 }
+
+#if !OS(WINDOWS)
+// ============================================================================
+// POSIX process.env: exotic object backed by the env_loader map.
+//
+// Node's process.env is an exotic object (node_env_var.cc RealEnvStore): every
+// set coerces to string, rejects symbol keys/values, silently drops `=`/empty
+// keys, truncates at NUL, rejects accessor/non-permissive defineProperty, and
+// writes through to setenv/unsetenv.
+//
+// On Windows process.env is a Proxy (ProcessObjectInternals.ts) that applies
+// the same coercion/validation in JS and writes through to
+// SetEnvironmentVariableW; this class is POSIX-only.
+
+// setenv/unsetenv take C strings, so Node truncates key and value at the first
+// NUL (node_env_var.cc). Keep the same shape here so a JS write and the
+// subsequent readback agree.
+static ALWAYS_INLINE String truncateAtNUL(const String& s)
+{
+    size_t nul = s.find('\0');
+    return nul == notFound ? s : s.substring(0, nul);
+}
+
+class JSProcessEnvMap final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags
+        | JSC::OverridesGetOwnPropertySlot
+        | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero
+        | JSC::OverridesPut
+        | JSC::OverridesGetOwnPropertyNames
+        | JSC::GetOwnPropertySlotMayBeWrongAboutDontEnum
+        | JSC::ProhibitsPropertyCaching;
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSProcessEnvMap, Base);
+        return &vm.plainObjectSpace();
+    }
+
+    DECLARE_INFO;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+    static JSProcessEnvMap* create(JSC::VM& vm, JSC::Structure* structure)
+    {
+        JSProcessEnvMap* ptr = new (NotNull, JSC::allocateCell<JSProcessEnvMap>(vm)) JSProcessEnvMap(vm, structure);
+        ptr->finishCreation(vm);
+        return ptr;
+    }
+
+    static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
+    static bool put(JSCell*, JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
+    static bool deleteProperty(JSCell*, JSGlobalObject*, JSC::PropertyName, JSC::DeletePropertySlot&);
+    static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, JSC::PropertySlot&);
+    static bool putByIndex(JSCell*, JSGlobalObject*, unsigned, JSC::JSValue, bool shouldThrow);
+    static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned);
+    static void getOwnPropertyNames(JSObject*, JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
+    static bool defineOwnProperty(JSObject*, JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
+    static bool preventExtensions(JSObject*, JSGlobalObject*);
+
+private:
+    JSProcessEnvMap(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM& vm)
+    {
+        Base::finishCreation(vm);
+    }
+};
+
+const JSC::ClassInfo JSProcessEnvMap::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSProcessEnvMap) };
+
+bool JSProcessEnvMap::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto* uid = propertyName.uid();
+    if (propertyName.isSymbol() || !uid || uid->isEmpty())
+        return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
+
+    String key = truncateAtNUL(String(uid));
+    if (key.isEmpty())
+        return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
+
+    BunString name = Bun::toString(key);
+    BunString value = { BunStringTag::Dead };
+    if (!Bun__getEnvValueBunString(globalObject, &name, &value))
+        return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
+
+    slot.setValue(object, 0, jsString(vm, value.toWTFString()));
+    return true;
+}
+
+bool JSProcessEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* uid = propertyName.uid();
+    if (propertyName.isSymbol() || !uid) {
+        // Node: symbol key on process.env throws TypeError (V8's named-
+        // interceptor stringifies the property). `uid` is null for private
+        // symbols, which Node has no equivalent of; fall through for those.
+        if (propertyName.isSymbol() && uid) {
+            throwTypeError(globalObject, scope, "Cannot convert a Symbol value to a string"_s);
+            return false;
+        }
+        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
+    }
+
+    if (value.isSymbol()) {
+        throwTypeError(globalObject, scope, "Cannot convert a Symbol value to a string"_s);
+        return false;
+    }
+
+    String stringValue = truncateAtNUL(value.toWTFString(globalObject));
+    RETURN_IF_EXCEPTION(scope, false);
+
+    String key = truncateAtNUL(String(uid));
+    // Node silently ignores empty names and names containing '=' (setenv would
+    // EINVAL); the assignment succeeds but nothing is stored.
+    if (key.isEmpty() || key.find('=') != notFound)
+        return true;
+
+    applySharedEnvSideEffects(globalObject, key, stringValue);
+
+    BunString name = Bun::toString(key);
+    BunString val = Bun::toString(stringValue);
+    Bun__ProcessEnv__put(globalObject, &name, &val);
+    return true;
+}
+
+bool JSProcessEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
+{
+    auto* uid = propertyName.uid();
+    if (propertyName.isSymbol() || !uid)
+        return Base::deleteProperty(cell, globalObject, propertyName, slot);
+
+    String key = truncateAtNUL(String(uid));
+    if (!key.isEmpty()) {
+        BunString name = Bun::toString(key);
+        Bun__ProcessEnv__delete(globalObject, &name);
+    }
+    return Base::deleteProperty(cell, globalObject, propertyName, slot);
+}
+
+bool JSProcessEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* uid = propertyName.uid();
+    if (propertyName.isSymbol() || !uid) {
+        if (propertyName.isSymbol() && uid) {
+            throwTypeError(globalObject, scope, "Cannot convert a Symbol value to a string"_s);
+            return false;
+        }
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
+    }
+
+    // Node only accepts a fully-permissive data descriptor (value present,
+    // configurable/writable/enumerable all true) and routes it through the env
+    // setter; anything else is ERR_INVALID_OBJECT_DEFINE_PROPERTY.
+    if (descriptor.isAccessorDescriptor()) {
+        throwError(globalObject, scope, ErrorCode::ERR_INVALID_OBJECT_DEFINE_PROPERTY,
+            "'process.env' does not accept an accessor(getter/setter) descriptor"_s);
+        return false;
+    }
+    if (!descriptor.value()
+        || !(descriptor.configurablePresent() && descriptor.configurable())
+        || !(descriptor.writablePresent() && descriptor.writable())
+        || !(descriptor.enumerablePresent() && descriptor.enumerable())) {
+        throwError(globalObject, scope, ErrorCode::ERR_INVALID_OBJECT_DEFINE_PROPERTY,
+            "'process.env' only accepts a configurable, writable, and enumerable data descriptor"_s);
+        return false;
+    }
+
+    PutPropertySlot slot(object, shouldThrow);
+    RELEASE_AND_RETURN(scope, put(object, globalObject, propertyName, descriptor.value(), slot));
+}
+
+bool JSProcessEnvMap::preventExtensions(JSObject*, JSGlobalObject*)
+{
+    // Node: preventExtensions / seal / freeze throw TypeError. Returning false
+    // makes the Object.{freeze,seal,preventExtensions} builtins throw their
+    // own TypeError.
+    return false;
+}
+
+void JSProcessEnvMap::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
+{
+    VM& vm = JSC::getVM(globalObject);
+    void* list;
+    size_t count = Bun__getEnvCount(globalObject, &list);
+    for (size_t i = 0; i < count; i++) {
+        unsigned char* chars;
+        size_t len = Bun__getEnvKey(list, i, &chars);
+        auto key = String::fromUTF8ReplacingInvalidSequences(std::span { chars, len });
+        propertyNames.add(JSC::Identifier::fromString(vm, key));
+    }
+    Base::getOwnPropertyNames(object, globalObject, propertyNames, mode);
+}
+
+bool JSProcessEnvMap::getOwnPropertySlotByIndex(JSObject* object, JSGlobalObject* globalObject, unsigned index, PropertySlot& slot)
+{
+    VM& vm = JSC::getVM(globalObject);
+    return getOwnPropertySlot(object, globalObject, Identifier::from(vm, index), slot);
+}
+
+bool JSProcessEnvMap::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
+{
+    VM& vm = JSC::getVM(globalObject);
+    PutPropertySlot slot(cell, shouldThrow);
+    return put(cell, globalObject, Identifier::from(vm, index), value, slot);
+}
+
+bool JSProcessEnvMap::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index)
+{
+    String key = String::number(index);
+    BunString name = Bun::toString(key);
+    Bun__ProcessEnv__delete(globalObject, &name);
+    return Base::deletePropertyByIndex(cell, globalObject, index);
+}
+#endif
 
 RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalObject)
 {
@@ -728,6 +971,12 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if !OS(WINDOWS)
+    UNUSED_PARAM(scope);
+    auto* structure = JSProcessEnvMap::createStructure(vm, globalObject, globalObject->objectPrototype());
+    return JSProcessEnvMap::create(vm, structure);
+#else
+
     void* list;
     size_t count = Bun__getEnvCount(globalObject, &list);
     JSC::JSObject* object = nullptr;
@@ -737,10 +986,8 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         object = constructEmptyObject(globalObject, globalObject->objectPrototype());
     }
 
-#if OS(WINDOWS)
     JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);
     RETURN_IF_EXCEPTION(scope, {});
-#endif
 
     static NeverDestroyed<String> TZ = MAKE_STATIC_STRING_IMPL("TZ");
     String NODE_TLS_REJECT_UNAUTHORIZED = String("NODE_TLS_REJECT_UNAUTHORIZED"_s);
@@ -756,10 +1003,6 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     bool hasProxyVar[proxyVarCount] = {};
 
     auto isProxyVar = [&](const String& name) -> std::optional<size_t> {
-        for (size_t j = 0; j < proxyVarCount; j++) {
-            if (name == proxyVarNames[j]) return j;
-        }
-#if OS(WINDOWS)
         // Windows env var names are case-insensitive, so the OS env block can
         // carry any casing (`Http_Proxy`, `HTTP_proxy`, ...). Without this
         // fallback the per-key loop falls through, the bottom loop then adds
@@ -769,7 +1012,6 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         for (size_t j = 0; j < proxyVarCount; j++) {
             if (equalIgnoringASCIICase(name, proxyVarNames[j])) return j;
         }
-#endif
         return std::nullopt;
     };
 
@@ -781,9 +1023,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         size_t len = Bun__getEnvKey(list, i, &chars);
         // We can't really trust that the OS gives us valid UTF-8
         auto name = String::fromUTF8ReplacingInvalidSequences(std::span { chars, len });
-#if OS(WINDOWS)
         keyArray->putByIndexInline(globalObject, (unsigned)i, jsString(vm, name), false);
-#endif
         if (name == TZ) {
             hasTZ = true;
             continue;
@@ -801,11 +1041,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
             continue;
         }
         ASSERT(len > 0);
-#if OS(WINDOWS)
         String idName = name.convertToASCIIUppercase();
-#else
-        String idName = name;
-#endif
         Identifier identifier = Identifier::fromString(vm, idName);
 
         // CustomGetterSetter doesn't support indexed properties yet.
@@ -871,7 +1107,6 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
             attrs);
     }
 
-#if OS(WINDOWS)
     auto editWindowsEnvVar = JSC::JSFunction::create(vm, globalObject, 0, String("editWindowsEnvVar"_s), jsEditWindowsEnvVar, ImplementationVisibility::Public);
 
     JSC::JSFunction* getSourceEvent = JSC::JSFunction::create(vm, globalObject, processObjectInternalsWindowsEnvCodeGenerator(vm), globalObject);
@@ -892,8 +1127,6 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     }
 
     RELEASE_AND_RETURN(scope, result);
-#else
-    return object;
 #endif
 }
 }

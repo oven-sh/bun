@@ -902,8 +902,12 @@ impl WebWorker {
         // `heap::alloc`'d and stashed on `self` so `shutdown()` step 5 reclaims
         // it on every path — including the early-terminate checkpoint below,
         // which calls `shutdown()` before the VM exists.
-        let loader_ptr: *mut bun_dotenv::Loader =
-            bun_core::heap::into_raw(Box::new(bun_dotenv::Loader::init_with_map(map)));
+        let mut loader = bun_dotenv::Loader::init_with_map(map);
+        // The cloned map already holds the parent's environ snapshot; walking
+        // libc environ again on this thread would race a main-thread
+        // process.env write's setenv() (which may realloc __environ).
+        loader.did_load_process = true;
+        let loader_ptr: *mut bun_dotenv::Loader = bun_core::heap::into_raw(Box::new(loader));
         self.worker_env_loader.set(loader_ptr);
 
         // Checkpoint before the expensive part: initWorker builds a full JSC
@@ -993,6 +997,13 @@ impl WebWorker {
 
         // SAFETY: see post-publish note above.
         unsafe {
+            // The main-thread entry points (run/test/repl) set this before
+            // configure_defines(); without it the worker's transpiler inlines
+            // `process.env.X` from its DotEnv map (which it seeds from environ
+            // on spawn), so a main-thread `process.env.X = ...` + setenv leaks
+            // into the worker's source as a literal.
+            (*vm).transpiler.options.env.behavior =
+                bun_dotenv::DotEnvBehavior::LoadAllWithoutInlining;
             if (*vm).transpiler.configure_defines().is_err() {
                 // Fall through to spin() → shutdown() for full teardown under
                 // the API lock (flushLogs runs JS). Set terminate so spin()

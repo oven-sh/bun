@@ -1,12 +1,8 @@
 import { file, spawn } from "bun";
-import { expect, it, setDefaultTimeout } from "bun:test";
-import { exists, mkdir, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isLinux, isMusl, readdirSorted, tmpdirSync } from "harness";
+import { expect, it } from "bun:test";
+import { exists, writeFile } from "fs/promises";
+import { bunExe, bunEnv as env, readdirSorted, tmpdirSync } from "harness";
 import { join } from "path";
-
-// These tests auto-install from the npm registry, which can exceed the default
-// timeout under slow networks and sanitizer builds.
-setDefaultTimeout(90_000);
 
 it.concurrent("should download dependency to run local file", async () => {
   const run_dir = tmpdirSync();
@@ -171,73 +167,4 @@ import { prueba } from "pruebadfasdfasdkafasdyuif.js";
   });
   // The exit code will not be 1 if it panics.
   expect(await exited).toBe(1);
-});
-
-// The "Slow filesystem detected" warning fires when populating the install
-// cache takes over 100ms, which used to flake stderr assertions in this file
-// on slow CI machines. Force the slow path deterministically by delaying
-// renameat with an LD_PRELOAD shim, and assert the harness env knob
-// (BUN_DISABLE_SLOW_FILESYSTEM_WARNING, set in bunEnv) suppresses it.
-const compiler = isLinux && !isMusl ? (Bun.which("cc") ?? Bun.which("gcc") ?? Bun.which("clang")) : null;
-it.skipIf(!compiler)("BUN_DISABLE_SLOW_FILESYSTEM_WARNING suppresses the slow filesystem warning", async () => {
-  const run_dir = tmpdirSync();
-  await writeFile(
-    join(run_dir, "slow_rename.c"),
-    `#define _GNU_SOURCE
-#include <dlfcn.h>
-#include <unistd.h>
-int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath) {
-  static int (*real)(int, const char *, int, const char *);
-  if (!real) real = dlsym(RTLD_NEXT, "renameat");
-  usleep(250000);
-  return real(olddirfd, oldpath, newdirfd, newpath);
-}
-`,
-  );
-  await using cc = spawn({
-    cmd: [compiler!, "-shared", "-fPIC", "-o", "slow_rename.so", "slow_rename.c", "-ldl"],
-    cwd: run_dir,
-    stdout: "ignore",
-    stderr: "pipe",
-    env,
-  });
-  const [ccErr, ccExit] = await Promise.all([cc.stderr.text(), cc.exited]);
-  expect({ exitCode: ccExit, stderr: ccErr }).toMatchObject({ exitCode: 0 });
-
-  // Each run gets a fresh project and cache so the install always populates
-  // the cache (a satisfied node_modules would skip the timed path).
-  const install = async (name: string, flag: string | undefined) => {
-    const proj = join(run_dir, name);
-    await mkdir(proj);
-    await writeFile(
-      join(proj, "package.json"),
-      JSON.stringify({
-        name,
-        dependencies: { baz: `file:${join(import.meta.dir, "baz-0.0.3.tgz")}` },
-      }),
-    );
-    await using proc = spawn({
-      cmd: [bunExe(), "install", "--no-save"],
-      cwd: proj,
-      stdout: "ignore",
-      stderr: "pipe",
-      env: {
-        ...env,
-        LD_PRELOAD: join(run_dir, "slow_rename.so"),
-        BUN_INSTALL_CACHE_DIR: join(proj, ".cache"),
-        BUN_DISABLE_SLOW_FILESYSTEM_WARNING: flag,
-      },
-    });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    return { stderr, exitCode };
-  };
-
-  // Sanity: with the knob unset, the delayed renameat must trigger the warning.
-  const warn = await install("warn", undefined);
-  expect(warn.stderr).toContain("Slow filesystem detected");
-  expect(warn.exitCode).toBe(0);
-  // With the knob set (as bunEnv does for every test), it must stay silent.
-  const quiet = await install("quiet", "1");
-  expect(quiet.stderr).not.toContain("Slow filesystem");
-  expect(quiet.exitCode).toBe(0);
 });

@@ -1101,3 +1101,142 @@ it.skipIf(isWindows)("reports a resolution error for an absolute specifier of th
   expect(stdout).toBe("ResolveMessage ERR_MODULE_NOT_FOUND\n");
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/10438
+// A published package's tsconfig.json describes its own build (paths -> src/ TypeScript).
+// Resolution for consumers must use package.json#imports (-> dist/ JS), same as Node and
+// esbuild, which both ignore tsconfig.json files found inside node_modules.
+it("a node_modules package's own tsconfig paths does not override its package.json#imports", async () => {
+  using dir = tempDir("tsconfig-own-paths-node-modules", {
+    "package.json": JSON.stringify({ name: "app", type: "module" }),
+    "entry.mjs": `import { which } from "pkg"; console.log(which);`,
+
+    "node_modules/pkg/package.json": JSON.stringify({
+      name: "pkg",
+      type: "module",
+      exports: { ".": "./dist/index.js" },
+      imports: { "#internal": "./dist/internal.js" },
+    }),
+    "node_modules/pkg/tsconfig.json": JSON.stringify({
+      compilerOptions: { baseUrl: ".", paths: { "#internal": ["./src/internal.ts"] } },
+    }),
+    "node_modules/pkg/dist/index.js": `export { which } from "#internal";`,
+    "node_modules/pkg/dist/internal.js": `export const which = "dist";`,
+    // If tsconfig paths were applied, "#internal" would resolve here and the re-exported
+    // type would fail ESM linking with "export 'which' not found" (the #10438 symptom).
+    "node_modules/pkg/src/internal.ts": `export type which = never;`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("dist\n");
+  expect(exitCode).toBe(0);
+});
+
+it("a node_modules package's own tsconfig baseUrl is not applied to its imports", async () => {
+  using dir = tempDir("tsconfig-own-baseurl-node-modules", {
+    "package.json": JSON.stringify({ name: "app" }),
+    "entry.js": `console.log(require("pkg"));`,
+
+    "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "lib/index.js" }),
+    "node_modules/pkg/tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: "./src" } }),
+    "node_modules/pkg/lib/index.js": `module.exports = require("shadowed");`,
+    "node_modules/pkg/src/shadowed/index.js": `module.exports = "src-via-baseurl";`,
+    "node_modules/pkg/node_modules/shadowed/package.json": JSON.stringify({ name: "shadowed", main: "index.js" }),
+    "node_modules/pkg/node_modules/shadowed/index.js": `module.exports = "node-modules";`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("node-modules\n");
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/5377
+// The project's own tsconfig must keep working for project files, but must not rewrite
+// bare specifiers inside dependencies (where it would bypass nested node_modules copies).
+it("project tsconfig paths are not applied to imports from inside node_modules", async () => {
+  using dir = tempDir("tsconfig-paths-node-modules", {
+    "package.json": JSON.stringify({ name: "app", dependencies: { outer: "1.0.0", inner: "2.0.0" } }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { baseUrl: ".", paths: { "*": ["node_modules/*", "src/types/*"] } },
+    }),
+    "entry.js": `
+      const outer = require("outer");
+      const alias = require("only-via-paths");
+      console.log(JSON.stringify({ outer, alias }));
+    `,
+    "src/types/only-via-paths/index.js": `module.exports = "paths-mapped";`,
+
+    "node_modules/inner/package.json": JSON.stringify({ name: "inner", version: "2.0.0", main: "index.js" }),
+    "node_modules/inner/index.js": `module.exports = "hoisted";`,
+
+    "node_modules/outer/package.json": JSON.stringify({
+      name: "outer",
+      version: "1.0.0",
+      main: "index.js",
+      dependencies: { inner: "1.0.0" },
+    }),
+    "node_modules/outer/index.js": `module.exports = require("inner");`,
+    "node_modules/outer/node_modules/inner/package.json": JSON.stringify({
+      name: "inner",
+      version: "1.0.0",
+      main: "index.js",
+    }),
+    "node_modules/outer/node_modules/inner/index.js": `module.exports = "nested";`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ outer: "nested", alias: "paths-mapped" });
+  expect(exitCode).toBe(0);
+});
+
+// Guard: the app's own tsconfig can still `extends` a config that lives inside
+// node_modules. Only auto-discovery of tsconfig.json *for* a node_modules directory
+// is skipped; following an `extends` target into node_modules is unchanged.
+it("project tsconfig extends into node_modules is still honored", async () => {
+  using dir = tempDir("tsconfig-extends-node-modules", {
+    "package.json": JSON.stringify({ name: "app" }),
+    "tsconfig.json": JSON.stringify({ extends: "./node_modules/tsconfig-base/tsconfig.json" }),
+    "node_modules/tsconfig-base/package.json": JSON.stringify({ name: "tsconfig-base" }),
+    "node_modules/tsconfig-base/tsconfig.json": JSON.stringify({
+      compilerOptions: { baseUrl: "../..", paths: { "@app/*": ["src/*"] } },
+    }),
+    "src/hello.ts": `export const hello = "from-extends";`,
+    "entry.ts": `import { hello } from "@app/hello"; console.log(hello);`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("from-extends\n");
+  expect(exitCode).toBe(0);
+});

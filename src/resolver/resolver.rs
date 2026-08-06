@@ -6104,10 +6104,20 @@ impl<'a> Resolver<'a> {
         // }
 
         if let Some(parent_) = parent {
+            if parent_.is_node_modules() || parent_.is_inside_node_modules() {
+                info.flags
+                    .set_present(DirInfo::Flag::InsideNodeModules, true);
+            }
+
             // Propagate the browser scope into child directories
             info.enclosing_browser_scope = parent_.enclosing_browser_scope;
             info.package_json_for_browser_field = parent_.package_json_for_browser_field;
-            info.enclosing_tsconfig_json = parent_.enclosing_tsconfig_json;
+            // The enclosing tsconfig is cut off at the node_modules boundary for the
+            // same reason we skip loading tsconfig.json inside node_modules below: a
+            // project's `paths`/`baseUrl` must not rewrite a dependency's own imports.
+            if !info.is_inside_node_modules() {
+                info.enclosing_tsconfig_json = parent_.enclosing_tsconfig_json;
+            }
 
             if let Some(parent_package_json) = parent_.package_json() {
                 // https://github.com/oven-sh/bun/issues/229
@@ -6205,11 +6215,6 @@ impl<'a> Resolver<'a> {
                     }
                 }
             }
-
-            if parent_.is_node_modules() || parent_.is_inside_node_modules() {
-                info.flags
-                    .set_present(DirInfo::Flag::InsideNodeModules, true);
-            }
         }
 
         // Record if this directory has a package.json file
@@ -6280,8 +6285,20 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // Record if this directory has a tsconfig.json or jsconfig.json file
-        if self.opts.load_tsconfig_json {
+        // Record if this directory has a tsconfig.json or jsconfig.json file.
+        //
+        // Except don't do this if we're inside a "node_modules" directory. Package
+        // authors often publish their "tsconfig.json" files to npm because of npm's
+        // default-include publishing model. These configs describe the package's own
+        // build (e.g. `paths` pointing at its `src/` TypeScript), not how a consumer
+        // should resolve or transpile the shipped code, so honoring them breaks
+        // packages that also ship `package.json#imports` and compiled `dist/` output.
+        // Node ignores tsconfig.json entirely, and esbuild explicitly skips it here
+        // for the same reason.
+        //
+        // https://github.com/oven-sh/bun/issues/10438
+        // https://github.com/oven-sh/bun/issues/5377
+        if self.opts.load_tsconfig_json && !info.is_inside_node_modules() {
             let mut tsconfig_path: Option<&[u8]> = None;
             if self.opts.tsconfig_override.is_none() {
                 if let Some(lookup) = entries!().get_comptime_query(b"tsconfig.json") {

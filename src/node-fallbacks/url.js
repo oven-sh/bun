@@ -66,12 +66,6 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
   unwise = ["{", "}", "|", "\\", "^", "`"].concat(delims),
   // Allowed by RFCs, but cause of XSS attacks.  Always escape these.
   autoEscape = ["'"].concat(unwise),
-  // Characters that are never ever allowed in a hostname.
-  // Note that any invalid chars are also handled, but these
-  // are the ones that are *expected* to be seen, so we fast-path
-  // them.
-  nonHostChars = ["%", "/", "?", ";", "#"].concat(autoEscape),
-  hostEndingChars = ["/", "?", "#"],
   hostnameMaxLen = 255,
   hostnamePartPattern = /^[+a-z0-9A-Z_-]{0,63}$/,
   hostnamePartStart = /^([+a-z0-9A-Z_-]{0,63})(.*)$/,
@@ -217,47 +211,62 @@ Url.prototype.parse = function (url, parseQueryString, slashesDenoteHost) {
     // http://a@b@c/ => user:a@b host:c
     // http://a@b?@c => user:a host:c path:/?@c
 
-    // v0.12 TODO(isaacs): This is not quite how Chrome does things.
-    // Review our test case against browsers more comprehensively.
-
-    // find the first instance of any hostEndingChars
     var hostEnd = -1;
-    for (var i = 0; i < hostEndingChars.length; i++) {
-      var hec = rest.indexOf(hostEndingChars[i]);
-      if (hec !== -1 && (hostEnd === -1 || hec < hostEnd)) hostEnd = hec;
+    var atSign = -1;
+    var nonHost = -1;
+    for (var i = 0; i < rest.length; ++i) {
+      switch (rest.charCodeAt(i)) {
+        case 9: // '\t'
+        case 10: // '\n'
+        case 13: // '\r'
+          // WHATWG URL removes tabs, newlines, and carriage returns. Let's do that too.
+          rest = rest.slice(0, i) + rest.slice(i + 1);
+          i -= 1;
+          break;
+        case 32: // ' '
+        case 34: // '"'
+        case 37: // '%'
+        case 39: // "'"
+        case 59: // ';'
+        case 60: // '<'
+        case 62: // '>'
+        case 92: // '\\'
+        case 94: // '^'
+        case 96: // '`'
+        case 123: // '{'
+        case 124: // '|'
+        case 125: // '}'
+          // Characters that are never ever allowed in a hostname from RFC 2396
+          if (nonHost === -1) nonHost = i;
+          break;
+        case 35: // '#'
+        case 47: // '/'
+        case 63: // '?'
+          // Find the first instance of any host-ending characters
+          if (nonHost === -1) nonHost = i;
+          hostEnd = i;
+          break;
+        case 64: // '@'
+          // At this point, either we have an explicit point where the
+          // auth portion cannot go past, or the last @ char is the decider.
+          atSign = i;
+          nonHost = -1;
+          break;
+      }
+      if (hostEnd !== -1) break;
     }
-
-    // at this point, either we have an explicit point where the
-    // auth portion cannot go past, or the last @ char is the decider.
-    var auth, atSign;
-    if (hostEnd === -1) {
-      // atSign can be anywhere.
-      atSign = rest.lastIndexOf("@");
-    } else {
-      // atSign must be in auth portion.
-      // http://a@b/c@d => host:b auth:a path:/c@d
-      atSign = rest.lastIndexOf("@", hostEnd);
-    }
-
-    // Now we have a portion which is definitely the auth.
-    // Pull that off.
+    var start = 0;
     if (atSign !== -1) {
-      auth = rest.slice(0, atSign);
-      rest = rest.slice(atSign + 1);
-      this.auth = decodeURIComponent(auth);
+      this.auth = decodeURIComponent(rest.slice(0, atSign));
+      start = atSign + 1;
     }
-
-    // the host is the remaining to the left of the first non-host char
-    hostEnd = -1;
-    for (var i = 0; i < nonHostChars.length; i++) {
-      var hec = rest.indexOf(nonHostChars[i]);
-      if (hec !== -1 && (hostEnd === -1 || hec < hostEnd)) hostEnd = hec;
+    if (nonHost === -1) {
+      this.host = rest.slice(start);
+      rest = "";
+    } else {
+      this.host = rest.slice(start, nonHost);
+      rest = rest.slice(nonHost);
     }
-    // if we still have not hit it, then the entire thing is a host.
-    if (hostEnd === -1) hostEnd = rest.length;
-
-    this.host = rest.slice(0, hostEnd);
-    rest = rest.slice(hostEnd);
 
     // pull out port.
     this.parseHost();

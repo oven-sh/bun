@@ -1316,8 +1316,8 @@ pub struct H2FrameParser {
     /// Drained into Connection::close_stream on the next rewrite_read batch.
     pending_engine_stream_closes: JsCell<Vec<u32>>,
     dispatch_depth: Cell<u32>,
-    /// Engine signalled RST_STREAM sits right after this stream's opening HEADERS in the same read
-    /// (see on_rst_after_headers). request() drops the response for it; on_stream_reset clears it.
+    /// Stream id whose RST_STREAM is the next buffered frame (Sink::on_rst_after_headers);
+    /// request()/write_stream drop the response for it, on_stream_reset clears it.
     rst_after_headers: Cell<u32>,
     max_rejected_streams: Cell<u32>,
     max_session_invalid_frames: Cell<u32>,
@@ -6192,10 +6192,6 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     }
 
     fn on_rst_after_headers(&self, stream_id: u32) {
-        // The peer's RST_STREAM for this id is the very next frame: remember it so request()
-        // (called from the handler that on_headers_complete is about to fire) short-circuits
-        // without HPACK-encoding or writing. Not reflected in the legacy stream state, which
-        // on_stream_end reads to decide whether the stream is fully closed.
         self.rst_after_headers.set(stream_id);
     }
 
@@ -8781,9 +8777,7 @@ impl H2FrameParser {
             return Ok(JSValue::js_number(-1.0));
         }
 
-        // Server response on a stream the peer already reset: skip HPACK + write (writeStream
-        // already guards DATA via can_send_data()). rst_after_headers covers a handler that fired
-        // before its own pipelined RST_STREAM was parsed.
+        // The peer already reset this stream: drop the response instead of encoding it.
         if this.is_server.get()
             && (this.rst_after_headers.get() == stream_id
                 || this
@@ -9946,8 +9940,8 @@ impl H2FrameParser {
                             .set(max_session_invalid_frames.to_uint64_no_truncate() as u32);
                     }
                 }
-                // node's updateOptionsBuffer: streamResetBurst / streamResetRate only take effect
-                // when both are numbers (either one alone is a no-op) and are floored to 1.
+                // node applies the pair only when both are numbers, floored to 1
+                // (updateOptionsBuffer in lib/internal/http2/util.js).
                 if let Some(reset_burst) = settings_js.get(global_object, "streamResetBurst")?
                     && let Some(reset_rate) = settings_js.get(global_object, "streamResetRate")?
                     && reset_burst.is_number()

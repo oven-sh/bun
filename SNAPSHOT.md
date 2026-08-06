@@ -81,6 +81,8 @@ First-writer attribution of dirtied *cell* pages over one turn (`BUN_IMAGE_TRAP=
 
 Time to interactive prompt (pty): normal boot ~505 ms / 0.52 s CPU. Restored from the sidecar/cache image ~100–110 ms; restored from the **single-file executable ~45 ms** warm (`tstamp.ts`: `[image] restored` line at ~36 ms incl. the ASLR re-exec and ~370 region `mmap`s; ~720 ms on a cold file cache). The mapping loop is not worth replacing with `mach_vm_remap` at these numbers.
 
+First-ever launch of a new/updated binary on macOS pays a one-time signature assessment roughly proportional to file size (~2.3 ms/MB measured: a fresh copy of the 600 MB single-file `cli` reaches the prompt in ~1.4 s the first time, ~45 ms every time after; `codesign --verify` on it takes 3.9 s). A plain 359 MB `cli` pays ~0.8 s of that anyway, so the raw-embedded image adds ~0.55 s once per install/update and saves ~460 ms on every later launch; the zstd-embedded variant (+28 MB, one 0.2 s inflate) avoids most of the one-time cost if that matters for distribution.
+
 ## Interaction latency
 
 Keystroke → echo at the prompt (`keylat.ts`, pty): normal boot p50 ~4.6 ms; restored p50 ~3.4 ms. Only the very first keystroke after restore is slower (~14.7 vs ~8 ms: first re-link of the input path after code was dropped at snapshot); from the second key on the restored process is at or below normal.

@@ -1716,7 +1716,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 if let Some(app) = self.app {
                     self.deinit_running.set(true);
                     // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                    bun_opaque::opaque_deref_mut(app).close_idle_connections(true);
+                    let _closed = bun_opaque::opaque_deref_mut(app).close_idle_connections(true);
                     self.deinit_running.set(false);
                 }
             }

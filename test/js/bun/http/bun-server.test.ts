@@ -774,7 +774,7 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
           busy.c.write("GET /slow HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
           await inflight.promise;
 
-          server.closeIdleConnections();
+          const closedFirst = server.closeIdleConnections();
           // Idle connection closes; the busy one is spared.
           while (!idle.closed) await new Promise(r => setImmediate(r));
           const busyClosedBySweep = busy.closed;
@@ -788,14 +788,17 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
           const fresh = await dial();
           fresh.c.write("GET /fast HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
           while (countOks(fresh) < 1) await new Promise(r => setImmediate(r));
+          // Both surviving connections are idle keep-alive now; a second
+          // sweep closes them both and reports the count.
+          const closedSecond = server.closeIdleConnections();
+          while (!busy.closed || !fresh.closed) await new Promise(r => setImmediate(r));
           console.log(JSON.stringify({
-            idleClosed: idle.closed,
+            closedFirst,
             busyClosedBySweep,
-            busyServedAfterSweep: countOks(busy) === 2 && !busy.closed,
+            busyServedAfterSweep: countOks(busy) === 2,
             freshServed: countOks(fresh) === 1,
+            closedSecond,
           }));
-          busy.c.destroy();
-          fresh.c.destroy();
           server.stop(true);
         `,
       ],
@@ -806,7 +809,13 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
       stderr: "",
-      out: { idleClosed: true, busyClosedBySweep: false, busyServedAfterSweep: true, freshServed: true },
+      out: {
+        closedFirst: 1,
+        busyClosedBySweep: false,
+        busyServedAfterSweep: true,
+        freshServed: true,
+        closedSecond: 2,
+      },
       exitCode: 0,
     });
   });

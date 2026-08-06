@@ -399,10 +399,12 @@ public:
 
     /** Closes all connections connected to this server which are not sending a request or waiting for a response. Does not close the listen socket.
      * With closeWhenIdle set, connections that are busy right now are marked to close as soon as their in-flight work completes (graceful shutdown);
-     * upgraded WebSockets and CONNECT/Upgrade tunnels never become idle, so they are left alone either way. */
-    TemplatedApp &&closeIdle(bool closeWhenIdle = false) {
+     * upgraded WebSockets and CONNECT/Upgrade tunnels never become idle, so they are left alone either way.
+     * Returns the number of connections closed. */
+    size_t closeIdle(bool closeWhenIdle = false) {
         auto *group = httpContext->getSocketGroup();
         struct us_socket_t *s = group->head_sockets;
+        size_t closed = 0;
         while (s) {
             /* The HTTP group only holds HTTP sockets (an upgraded WebSocket is
              * adopted into its own group), so the ext block is an HttpResponseData. */
@@ -410,12 +412,13 @@ public:
             struct us_socket_t *next = s->next;
             if (data->isIdle) {
                 us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+                closed++;
             } else if (closeWhenIdle) {
                 data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
             }
             s = next;
         }
-        return std::move(*this);
+        return closed;
     }
 
     template <typename UserData>

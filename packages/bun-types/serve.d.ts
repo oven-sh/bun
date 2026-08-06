@@ -928,8 +928,10 @@ declare module "bun" {
      *
      * In-flight requests and open WebSockets are untouched, and the server
      * keeps accepting new connections.
+     *
+     * @returns The number of connections that were closed.
      */
-    closeIdleConnections(): void;
+    closeIdleConnections(): number;
 
     /**
      * Update the `fetch` and `error` handlers without restarting the server.

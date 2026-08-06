@@ -387,17 +387,17 @@ extern "C"
     }
   }
 
-  void uws_app_close_idle(int ssl, uws_app_t *app, int close_when_idle)
+  size_t uws_app_close_idle(int ssl, uws_app_t *app, int close_when_idle)
   {
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->closeIdle(close_when_idle != 0);
+      return uwsApp->closeIdle(close_when_idle != 0);
     }
     else
     {
       uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->closeIdle(close_when_idle != 0);
+      return uwsApp->closeIdle(close_when_idle != 0);
     }
   }
 

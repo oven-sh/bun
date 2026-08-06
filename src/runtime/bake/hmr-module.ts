@@ -313,8 +313,12 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     } catch (e) {
       mod.state = State.Stale;
       mod.cjs.exports = {};
+      mod.exports = null;
       throw e;
     }
+    // Discard the cached ESM view so `getEsmExports` re-converts the fresh
+    // `cjs.exports` on reload (mirrors `mod.cjs = null` in the ESM branch).
+    mod.exports = null;
     mod.state = State.Loaded;
   } else {
     // ESM
@@ -413,8 +417,12 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     } catch (e) {
       mod.state = State.Stale;
       mod.cjs.exports = {};
+      mod.exports = null;
       throw e;
     }
+    // Discard the cached ESM view so `getEsmExports` re-converts the fresh
+    // `cjs.exports` on reload (mirrors `mod.cjs = null` in the ESM branch).
+    mod.exports = null;
     mod.state = State.Loaded;
     return mod;
   } else {
@@ -750,13 +758,21 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     }
   }
 
+  // Mark every module stale before reloading any of them, so that a module
+  // re-evaluated first pulls in fresh copies of co-updated dependencies
+  // instead of their previous evaluation.
+  const selfAccepts = new Map<HMRModule, HotAcceptFunction | null>();
+  for (const mod of toReload) {
+    mod.state = State.Stale;
+    selfAccepts.set(mod, mod.selfAccept);
+    mod.selfAccept = null;
+    mod.depAccepts = null;
+  }
+
   // Reload all modules
   const promises: Promise<HMRModule>[] = [];
   for (const mod of toReload) {
-    mod.state = State.Stale;
-    const selfAccept = mod.selfAccept;
-    mod.selfAccept = null;
-    mod.depAccepts = null;
+    const selfAccept = selfAccepts.get(mod)!;
 
     const modOrPromise = loadModuleAsync(mod.id, false, null);
     if (modOrPromise === mod) {

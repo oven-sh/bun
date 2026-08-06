@@ -565,3 +565,86 @@ devTest("html routes reject requests whose host header does not match the dev se
     expect(normal.status).toBe(200);
   },
 });
+
+// Non-JS loaders (toml, json, ...) and CommonJS files are represented as CJS
+// modules in the HMR runtime. Reloading one must invalidate the cached ESM
+// view of its exports, or importers keep reading the first evaluation.
+devTest("server route sees updates to an imported toml file", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import config from "../deep.toml";
+      export default function (req, meta) {
+        return new Response("value: " + config.d);
+      }
+    `,
+    "deep.toml": "d = 1\n",
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("value: 1");
+    await dev.write("deep.toml", "d = 4\n", { dedent: false });
+    await dev.fetch("/").equals("value: 4");
+    // Editing the importer picks up the current value, not the initial one.
+    await dev.patch("routes/index.ts", { find: "value", replace: "v" });
+    await dev.fetch("/").equals("v: 4");
+    await dev.write("deep.toml", "d = 9\n", { dedent: false });
+    await dev.fetch("/").equals("v: 9");
+  },
+});
+devTest("server route sees updates to an imported toml file after a parse error", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import config from "../deep.toml";
+      export default function (req, meta) {
+        return new Response("value: " + config.d);
+      }
+    `,
+    "deep.toml": "d = 1\n",
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("value: 1");
+    await dev.write("deep.toml", "d = \n", {
+      dedent: false,
+      errors: ["deep.toml:1:5: error: Missing value after '='; values must be on the same line"],
+    });
+    await dev.write("deep.toml", "d = 2\n", { dedent: false });
+    await dev.fetch("/").equals("value: 2");
+  },
+});
+devTest("server route sees updates to an imported commonjs file", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import db from "../db.cjs";
+      export default function (req, meta) {
+        return new Response("value: " + db.abc);
+      }
+    `,
+    "db.cjs": `module.exports = { abc: "123" };`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("value: 123");
+    await dev.write("db.cjs", `module.exports = { abc: "456" };`);
+    await dev.fetch("/").equals("value: 456");
+  },
+});
+devTest("client sees updates to an imported toml file", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import config from "./data.toml";
+      console.log("value: " + config.d);
+      import.meta.hot.accept();
+    `,
+    "data.toml": "d = 1\n",
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("value: 1");
+    await dev.write("data.toml", "d = 2\n", { dedent: false });
+    await c.expectMessage("value: 2");
+  },
+});

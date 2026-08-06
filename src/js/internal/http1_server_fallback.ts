@@ -235,6 +235,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
 function connectionListenerHTTP1(server, socket, options) {
   const http = require("node:http");
   const { HTTPParser, prepareError, calculateLenientFlags, continueExpression } = require("node:_http_common");
+  const { ConnResetException } = require("internal/shared");
   const { kHandle: kHttp1ResponseHandle, http1ServerPipeline } = require("internal/http");
   // Populated by node:_http_server, which the require("node:http") above loads.
   const {
@@ -474,8 +475,19 @@ function connectionListenerHTTP1(server, socket, options) {
   socket.on("drain", onHttp1SocketDrain);
   socket.once("close", () => {
     connections.delete(socket);
-    // Like the native socket's close path: abort responses (and requests)
-    // still queued behind the in-flight one so they emit 'close'.
+    // Like the native socket's close path (Node's socketOnClose ->
+    // abortIncoming): abort the in-flight request, then the responses (and
+    // requests) still queued behind it, so they all emit 'close'. The
+    // in-flight response's own 'close' comes from onServerResponseClose,
+    // installed by assignSocket.
+    const inflightReq = socket._httpMessage?.req;
+    if (inflightReq && !inflightReq.destroyed) {
+      if (inflightReq.listenerCount("error") > 0) {
+        inflightReq.destroy(new ConnResetException("aborted"));
+      } else {
+        inflightReq.destroy();
+      }
+    }
     abortQueuedPipelinedResponses(socket);
     try {
       parser.close();

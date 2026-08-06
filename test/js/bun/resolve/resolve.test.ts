@@ -1101,3 +1101,142 @@ it.skipIf(isWindows)("reports a resolution error for an absolute specifier of th
   expect(stdout).toBe("ResolveMessage ERR_MODULE_NOT_FOUND\n");
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/36968
+describe.concurrent("dot specifiers resolve to the directory index, not a sibling file", () => {
+  const conflictFixture = {
+    "lib.ts": `export const fromSibling = "sibling";`,
+    "lib/index.ts": `export const fromIndex = "index";`,
+  };
+
+  it.each([".", "./", "./."])("import %j from lib/run.ts ignores sibling lib.ts", async (specifier: string) => {
+    using dir = tempDir("resolve-dot-dir", {
+      ...conflictFixture,
+      "lib/run.ts": `import { fromIndex } from ${JSON.stringify(specifier)}; console.log(fromIndex);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "lib/run.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("index\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it('require(".") ignores sibling lib.cjs', async () => {
+    using dir = tempDir("resolve-dot-dir-cjs", {
+      "lib.cjs": `module.exports = { which: "sibling" };`,
+      "lib/index.cjs": `module.exports = { which: "index" };`,
+      "lib/run.cjs": `console.log(require(".").which);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "lib/run.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("index\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.each(["..", "./.."])("import %j ignores a sibling of the parent directory", async (specifier: string) => {
+    using dir = tempDir("resolve-dotdot-dir", {
+      ...conflictFixture,
+      "lib/sub/run.ts": `import { fromIndex } from ${JSON.stringify(specifier)}; console.log(fromIndex);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "lib/sub/run.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("index\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it('"." resolves via package.json main when there is no index', async () => {
+    using dir = tempDir("resolve-dot-pkg-main", {
+      "lib.ts": `export const fromSibling = "sibling";`,
+      "lib/package.json": JSON.stringify({ name: "lib", main: "./entry.ts" }),
+      "lib/entry.ts": `export const fromMain = "main";`,
+      "lib/run.ts": `import { fromMain } from "."; console.log(fromMain);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "lib/run.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("main\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it('"../lib" (no dot segment) still prefers the sibling file over the directory', async () => {
+    using dir = tempDir("resolve-trailing-dot-file", {
+      ...conflictFixture,
+      "lib/run.ts": `import { fromSibling } from "../lib"; console.log(fromSibling);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "lib/run.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("sibling\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it('"." marked external via an absolute --external path stays external', async () => {
+    using dir = tempDir("resolve-dot-external", {
+      ...conflictFixture,
+      "lib/run.ts": `import { fromIndex } from "."; console.log(fromIndex);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "lib/run.ts", "--external", join(String(dir), "lib")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain('from "."');
+    expect(exitCode).toBe(0);
+  });
+
+  it('absolute specifier containing ".." and ending in "/." resolves the directory index', async () => {
+    using dir = tempDir("resolve-abs-dot-dir", conflictFixture);
+    const specifier = `${String(dir)}/sub/../lib/.`;
+    writeFileSync(
+      join(String(dir), "lib", "run.ts"),
+      `import { fromIndex } from ${JSON.stringify(specifier)}; console.log(fromIndex);`,
+    );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "lib/run.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("index\n");
+    expect(exitCode).toBe(0);
+  });
+});

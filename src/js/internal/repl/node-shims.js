@@ -19,8 +19,6 @@ const {
 
 // ---- internal/util ----------------------------------------------------
 
-const { kEmptyObject } = require("internal/shared");
-
 // Node's real implementation reconstructs the regex in an internal realm so a
 // tampered `RegExp.prototype[Symbol.replace]` can't observe it. Bun has no
 // internal realm; the load-time-captured intrinsics close the `[Symbol.*]`
@@ -110,16 +108,6 @@ function isEnabled() {
 function has() {
   return true;
 }
-
-// ---- internal/streams/utils ----------------------------------------------
-
-function isWritable(stream) {
-  return typeof stream?.write === "function";
-}
-
-// ---- internal/events/abort_listener ----------------------------------------------
-
-const { addAbortListener } = require("internal/abort_listener");
 
 // ---- internal/bootstrap/realm ----------------------------------------------
 
@@ -271,10 +259,6 @@ function makeContextifyScript(
   });
 }
 
-function runScriptInThisContext(script, displayErrors, _breakOnFirstLine) {
-  return script.runInThisContext({ displayErrors });
-}
-
 // ---- internal/modules/cjs/loader (constructible Module shim) ----------------
 
 class CJSModuleShim {
@@ -419,8 +403,6 @@ export default {
   decorateErrorStack,
   deprecate: util.deprecate,
   isError,
-  kEmptyObject,
-  promisify: util.promisify,
   // internal/util/colors
   shouldColorize,
   // internal/util/debuglog
@@ -434,10 +416,6 @@ export default {
   // internal/process/permission (consumed as a namespace: permission.isEnabled())
   isEnabled,
   has,
-  // internal/streams/utils
-  isWritable,
-  // internal/events/abort_listener
-  addAbortListener,
   // internal/bootstrap/realm
   BuiltinModule,
   // internal/modules/esm/get_format
@@ -452,5 +430,4 @@ export default {
   makeRequireFunction,
   // internal/vm
   makeContextifyScript,
-  runScriptInThisContext,
 };

@@ -2141,11 +2141,8 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
 }
 
 export default {
-  parseDefinitelySqliteUrl,
   parseOptions,
   SQLHelper,
-  buildDefinedColumnsAndQuery,
-  normalizeSSLMode,
   SQLResultArray,
   SQLArrayParameter,
   getHelperCommandFromDetect,

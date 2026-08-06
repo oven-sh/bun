@@ -142,7 +142,7 @@ struct Stringifier {
 impl Stringifier {
     fn stringify_root(&mut self, global: &JSGlobalObject, root: JSValue) -> StringifyResult<()> {
         self.mark_visiting(global, root)?;
-        self.stringify_table_body(global, root)?;
+        self.stringify_table_body(global, root, false)?;
         self.visiting.remove(&root);
         Ok(())
     }
@@ -191,14 +191,17 @@ impl Stringifier {
     /// Emits the body of one table: `key = value` lines first, then
     /// `[sub.table]` and `[[array.of.tables]]` sections (a keyval after a
     /// header would belong to that header, so the order is forced).
+    /// `own_header` defers `[path]`: a sub-section reached first implies it.
     fn stringify_table_body(
         &mut self,
         global: &JSGlobalObject,
         table: JSValue,
+        own_header: bool,
     ) -> StringifyResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
         }
+        let mut header_pending = own_header;
 
         let iter_options = jsc::JSPropertyIteratorOptions {
             skip_empty_name: false,
@@ -215,6 +218,10 @@ impl Stringifier {
                 return Err(self.err_null_value(global, &prop_name));
             }
             if let Layout::Keyval = self.layout_of(global, value)? {
+                if header_pending {
+                    header_pending = false;
+                    self.append_header(false);
+                }
                 self.append_key_segment(&prop_name);
                 self.builder.append_latin1(b" = ");
                 self.stringify_inline_value(global, value)?;
@@ -232,14 +239,15 @@ impl Stringifier {
             match self.layout_of(global, value)? {
                 Layout::Keyval | Layout::Skip => {}
                 Layout::Table => {
+                    header_pending = false;
                     self.mark_visiting(global, value)?;
                     self.path.push(prop_name);
-                    self.append_header(false);
-                    self.stringify_table_body(global, value)?;
+                    self.stringify_table_body(global, value, true)?;
                     self.path.pop();
                     self.visiting.remove(&value);
                 }
                 Layout::ArrayOfTables => {
+                    header_pending = false;
                     self.mark_visiting(global, value)?;
                     self.path.push(prop_name);
                     let mut items = value.array_iterator(global)?;
@@ -255,13 +263,18 @@ impl Stringifier {
                         }
                         self.mark_visiting(global, item)?;
                         self.append_header(true);
-                        self.stringify_table_body(global, item)?;
+                        self.stringify_table_body(global, item, false)?;
                         self.visiting.remove(&item);
                     }
                     self.path.pop();
                     self.visiting.remove(&value);
                 }
             }
+        }
+
+        // An empty table is materialized only by its header.
+        if header_pending {
+            self.append_header(false);
         }
 
         Ok(())

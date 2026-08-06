@@ -124,10 +124,6 @@ pub enum MigratePnpmLockfileError {
     PnpmLockfileMissingDependencyVersion,
     #[error("PnpmLockfileInvalidDependency")]
     PnpmLockfileInvalidDependency,
-    #[error("PnpmLockfileInvalidOverride")]
-    PnpmLockfileInvalidOverride,
-    #[error("PnpmLockfileInvalidPatchedDependency")]
-    PnpmLockfileInvalidPatchedDependency,
     #[error("PnpmLockfileMissingCatalogEntry")]
     PnpmLockfileMissingCatalogEntry,
     #[error("PnpmLockfileUnresolvableDependency")]

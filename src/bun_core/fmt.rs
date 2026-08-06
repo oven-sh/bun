@@ -3471,8 +3471,7 @@ const fn truncated_hash32_bytes(int: u64) -> [u8; 8] {
     ]
 }
 
-/// Zero-validation `&[u8] -> impl Display` adapter for [`Raw`]; use at terse
-/// call sites (`bun_fmt::s(name)`).
+/// Zero-validation `&[u8] -> impl Display` adapter; wraps the bytes in [`Raw`].
 #[inline(always)]
 pub const fn s(bytes: &[u8]) -> Raw<'_> {
     Raw(bytes)

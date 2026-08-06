@@ -275,7 +275,10 @@ mod advanced {
     const HEADER_LENGTH: usize = size_of::<IPCMessageType>() + size_of::<u32>();
     // HEADER_LENGTH is a 5-byte compile-time constant; narrowing to u32 is provably safe.
     const HEADER_LENGTH_U32: u32 = HEADER_LENGTH as u32;
-    const VERSION: u32 = 1;
+    // v2 added `SerializedMessageWithBuffers`. The peer's advertised version is
+    // debug-logged, never consulted, so mixed-version pairs only break when a
+    // Buffer-bearing message actually crosses to a v1 peer.
+    const VERSION: u32 = 2;
 
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq)]

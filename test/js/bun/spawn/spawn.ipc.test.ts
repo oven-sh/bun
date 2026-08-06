@@ -230,3 +230,33 @@ it("child with unusable NODE_CHANNEL_FD tears down IPC without crashing", async 
   expect(stdout).toBe("err ERR_IPC_CHANNEL_CLOSED\nok\n");
   expect(exitCode).toBe(0);
 });
+
+it.skipIf(isWindows)("advanced serialization advertises wire format version 2", async () => {
+  // The version packet is the first frame on the channel:
+  // [type=Version(1), u32 LE version]. Read it raw off fd 3 before the
+  // child's own channel machinery starts consuming the socket.
+  await using child = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const fs = require("fs");
+      const buf = Buffer.alloc(5);
+      let n = 0;
+      while (n < 5) {
+        try {
+          n += fs.readSync(3, buf, n, 5 - n);
+        } catch (e) {
+          if (e.code !== "EAGAIN") throw e;
+        }
+      }
+      console.log(JSON.stringify([...buf]));`,
+    ],
+    env: bunEnv,
+    stdio: ["ignore", "pipe", "inherit"],
+    serialization: "advanced",
+    ipc() {},
+  });
+  const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+  expect(JSON.parse(stdout.trim())).toEqual([1, 2, 0, 0, 0]);
+  expect(exitCode).toBe(0);
+});

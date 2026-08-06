@@ -1,12 +1,8 @@
 #include "config.h"
 #include "BunWebLocksRegistry.h"
 
-#include "BunClientData.h"
-#include "InternalModuleRegistry.h"
+#include "JSWebLocks.h"
 #include "ZigGlobalObject.h"
-#include <JavaScriptCore/CallData.h>
-#include <JavaScriptCore/JSCJSValue.h>
-#include <JavaScriptCore/JSObject.h>
 #include <wtf/Locker.h>
 #include <wtf/NeverDestroyed.h>
 
@@ -20,39 +16,12 @@ BunWebLocksRegistry& BunWebLocksRegistry::singleton()
     return registry.get();
 }
 
-uint64_t BunWebLocksRegistry::enqueue(ScriptExecutionContextIdentifier contextId, const String& name, bool exclusive, bool steal, bool ifAvailable)
+bool BunWebLocksRegistry::isGrantableLocked(const String& name, bool exclusive) const
 {
-    s_hasBeenUsed.store(true, std::memory_order_release);
-    uint64_t id = m_nextId.fetch_add(1, std::memory_order_relaxed);
-    PendingRequest request { id, contextId, name.isolatedCopy(), exclusive, steal, ifAvailable };
-    Locker locker { m_lock };
-    // Steal requests are processed ahead of every queued request.
-    if (steal)
-        m_pending.insert(0, WTF::move(request));
-    else
-        m_pending.append(WTF::move(request));
-    return id;
-}
-
-void BunWebLocksRegistry::release(ScriptExecutionContextIdentifier contextId, uint64_t id, const String& name)
-{
-    Locker locker { m_lock };
     auto it = m_held.find(name);
     if (it == m_held.end())
-        return;
-    it->value.removeAllMatching([&](auto& lock) {
-        return lock.id == id && lock.contextId == contextId;
-    });
-    if (it->value.isEmpty())
-        m_held.remove(it);
-}
-
-bool BunWebLocksRegistry::isGrantableLocked(const PendingRequest& request) const
-{
-    auto it = m_held.find(request.name);
-    if (it == m_held.end())
         return true;
-    if (request.exclusive)
+    if (exclusive)
         return false;
     for (auto& held : it->value) {
         if (held.exclusive)
@@ -61,182 +30,218 @@ bool BunWebLocksRegistry::isGrantableLocked(const PendingRequest& request) const
     return true;
 }
 
-void BunWebLocksRegistry::commitGrantLocked(size_t pendingIndex, Vector<Event>& events)
+void BunWebLocksRegistry::markDirtyLocked(const String& name)
 {
-    PendingRequest request = WTF::move(m_pending[pendingIndex]);
-    m_pending.removeAt(pendingIndex);
-    m_held.ensure(request.name, [] { return Vector<HeldLock>(); }).iterator->value.append(HeldLock { request.id, request.contextId, request.exclusive });
-    events.append(Event { GrantedEvent, request.id });
+    if (!m_dirtyNames.contains(name))
+        m_dirtyNames.append(name.isolatedCopy());
 }
 
-// One pass of the Web Locks grant algorithm (https://w3c.github.io/web-locks/#algorithms),
-// mirroring Node's LockManager::ProcessQueue: requests are scanned in queue
-// order, a request must wait behind an earlier incompatible request for the
-// same name, and only requests belonging to `self` produce a decision here.
-bool BunWebLocksRegistry::takeDecisionLocked(ScriptExecutionContextIdentifier self, Vector<Event>& events)
+// Pop the longest grantable prefix of the name's queue: grants stop at the
+// first request the current holders are incompatible with, and everything
+// behind it keeps waiting, which is the Web Locks grant order.
+void BunWebLocksRegistry::commitDecisionsForNameLocked(const String& name, EventsByContext& eventsByContext)
 {
-    HashMap<String, size_t> firstSeenForName;
-    for (size_t i = 0; i < m_pending.size(); i++) {
-        auto& request = m_pending[i];
-        auto firstSeen = firstSeenForName.ensure(request.name, [&] { return i; });
-        bool hasEarlier = firstSeen.iterator->value != i;
-        bool mustWait = hasEarlier && (request.exclusive || m_pending[firstSeen.iterator->value].exclusive);
+    auto it = m_pending.find(name);
+    if (it == m_pending.end())
+        return;
+    auto& queue = it->value;
 
-        if (request.contextId != self)
-            continue;
-
-        if (request.steal) {
-            // Steal bypasses the granting rules: every current holder loses
-            // its lock. Holders on this thread get their Stolen event before
-            // the grant below; holders on other threads are notified on
-            // their own thread via m_stolenToDeliver.
-            auto victims = m_held.take(request.name);
-            for (auto& victim : victims) {
-                if (victim.contextId == self)
-                    events.append(Event { StolenEvent, victim.id });
-                else
-                    m_stolenToDeliver.ensure(victim.contextId, [] { return Vector<uint64_t>(); }).iterator->value.append(victim.id);
-            }
-            commitGrantLocked(i, events);
-            return true;
-        }
-
-        if (mustWait || !isGrantableLocked(request)) {
-            if (request.ifAvailable) {
-                Event event { MissEvent, request.id };
-                m_pending.removeAt(i);
-                events.append(event);
-                return true;
-            }
-            continue;
-        }
-
-        commitGrantLocked(i, events);
-        return true;
+    size_t granted = 0;
+    while (granted < queue.size()) {
+        auto& front = queue[granted];
+        if (!isGrantableLocked(name, front.exclusive))
+            break;
+        m_held.ensure(name, [] { return Vector<HeldLock>(); }).iterator->value.append(HeldLock { front.id, front.contextId, front.exclusive });
+        eventsByContext.ensure(front.contextId, [] { return Vector<Event>(); }).iterator->value.append(Event { GrantedEvent, front.id });
+        granted++;
     }
-    return false;
-}
-
-// Contexts that could make progress right now: anything with an undelivered
-// steal notification, or a pending request that is currently decidable
-// (grantable, or an ifAvailable request that would miss).
-Vector<ScriptExecutionContextIdentifier> BunWebLocksRegistry::computeWakeTargetsLocked()
-{
-    HashSet<ScriptExecutionContextIdentifier> targets;
-    for (auto& contextId : m_stolenToDeliver.keys())
-        targets.add(contextId);
-
-    HashMap<String, size_t> firstSeenForName;
-    for (size_t i = 0; i < m_pending.size(); i++) {
-        auto& request = m_pending[i];
-        auto firstSeen = firstSeenForName.ensure(request.name, [&] { return i; });
-        bool hasEarlier = firstSeen.iterator->value != i;
-        bool mustWait = hasEarlier && (request.exclusive || m_pending[firstSeen.iterator->value].exclusive);
-        bool decidable = request.steal || ((mustWait || !isGrantableLocked(request)) ? request.ifAvailable : true);
-        if (decidable)
-            targets.add(request.contextId);
-    }
-
-    Vector<ScriptExecutionContextIdentifier> result;
-    result.reserveInitialCapacity(targets.size());
-    for (auto& contextId : targets)
-        result.append(contextId);
-    return result;
+    if (granted)
+        queue.removeAt(0, granted);
+    if (queue.isEmpty())
+        m_pending.remove(it);
 }
 
 void BunWebLocksRegistry::purgeContextLocked(ScriptExecutionContextIdentifier contextId)
 {
-    m_pending.removeAllMatching([&](auto& request) { return request.contextId == contextId; });
-    m_held.removeIf([&](auto& entry) {
-        entry.value.removeAllMatching([&](auto& lock) { return lock.contextId == contextId; });
+    m_pending.removeIf([&](auto& entry) {
+        bool removedAny = entry.value.removeAllMatching([&](auto& request) { return request.contextId == contextId; }) > 0;
+        if (removedAny)
+            markDirtyLocked(entry.key);
         return entry.value.isEmpty();
     });
-    m_stolenToDeliver.remove(contextId);
-}
-
-void BunWebLocksRegistry::wakeContexts(Vector<ScriptExecutionContextIdentifier>&& initial)
-{
-    Vector<ScriptExecutionContextIdentifier> queue = WTF::move(initial);
-    HashSet<ScriptExecutionContextIdentifier> attempted;
-    while (!queue.isEmpty()) {
-        auto contextId = queue.takeLast();
-        if (!attempted.add(contextId).isNewEntry)
-            continue;
-        bool posted = ScriptExecutionContext::postTaskTo(contextId, [](ScriptExecutionContext& context) {
-            BunWebLocksRegistry::singleton().drain(context.jsGlobalObject());
-        });
-        if (posted)
-            continue;
-        // The context is gone (or terminating): nothing will ever process its
-        // entries, so drop them now and wake whoever that unblocks.
-        Vector<ScriptExecutionContextIdentifier> next;
-        {
-            Locker locker { m_lock };
-            purgeContextLocked(contextId);
-            next = computeWakeTargetsLocked();
-        }
-        for (auto& id : next) {
-            if (!attempted.contains(id))
-                queue.append(id);
-        }
-    }
+    m_held.removeIf([&](auto& entry) {
+        bool removedAny = entry.value.removeAllMatching([&](auto& lock) { return lock.contextId == contextId; }) > 0;
+        if (removedAny)
+            markDirtyLocked(entry.key);
+        return entry.value.isEmpty();
+    });
 }
 
 bool BunWebLocksRegistry::dispatchEventsToJS(Zig::GlobalObject* globalObject, const Vector<Event>& events)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto* moduleObject = globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::InternalLocks).getObject();
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!moduleObject) [[unlikely]]
-        return false;
-    JSC::JSValue handler = moduleObject->get(globalObject, WebCore::clientData(vm)->builtinNames().onNativeEventPublicName());
-    RETURN_IF_EXCEPTION(scope, false);
-
     for (auto& event : events) {
-        JSC::MarkedArgumentBuffer args;
-        args.append(JSC::jsNumber(event.type));
-        args.append(JSC::jsNumber(static_cast<double>(event.id)));
-        ASSERT(!args.hasOverflowed());
-        JSC::call(globalObject, handler, args, "BunWebLocksRegistry event handler"_s);
+        bool ok = Bun::dispatchWebLockEvent(globalObject, event.type, event.id);
         RETURN_IF_EXCEPTION(scope, false);
+        if (!ok)
+            return false;
     }
     return true;
 }
 
-void BunWebLocksRegistry::drain(JSC::JSGlobalObject* lexicalGlobalObject)
+// Posts each context's events to its own thread and dispatches this thread's
+// events synchronously. Returns false if dispatching left an exception
+// pending and processing should stop.
+bool BunWebLocksRegistry::deliverEvents(Zig::GlobalObject* selfGlobalObject, ScriptExecutionContextIdentifier self, EventsByContext&& eventsByContext)
 {
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto* context = globalObject->scriptExecutionContext();
-    if (!context)
-        return;
-    ASSERT(context->isContextThread());
-    auto self = context->identifier();
+    Vector<Event> selfEvents = self ? eventsByContext.take(self) : Vector<Event>();
 
-    // Dispatch one decision at a time with the lock released: the JS side
-    // runs user callbacks synchronously and may re-enter enqueue/release.
-    while (true) {
-        Vector<Event> events;
-        {
+    for (auto& entry : eventsByContext) {
+        bool posted = ScriptExecutionContext::postTaskTo(entry.key, [events = WTF::move(entry.value)](ScriptExecutionContext& target) {
+            dispatchEventsToJS(defaultGlobalObject(target.jsGlobalObject()), events);
+        });
+        if (!posted) {
+            // The context is gone (or terminating): nothing will ever process
+            // its entries, so drop them; that marks the affected names dirty
+            // and the caller's loop picks up whatever it unblocks.
             Locker locker { m_lock };
-            auto stolen = m_stolenToDeliver.take(self);
-            for (auto id : stolen)
-                events.append(Event { StolenEvent, id });
-            takeDecisionLocked(self, events);
+            purgeContextLocked(entry.key);
         }
-        if (events.isEmpty())
-            break;
-        if (!dispatchEventsToJS(globalObject, events))
-            break;
     }
 
-    Vector<ScriptExecutionContextIdentifier> targets;
+    if (!selfEvents.isEmpty())
+        return dispatchEventsToJS(selfGlobalObject, selfEvents);
+    return true;
+}
+
+void BunWebLocksRegistry::processQueue(Zig::GlobalObject* selfGlobalObject)
+{
+    // Re-entrant calls (a synchronous user callback releasing or requesting
+    // inside a grant dispatch) fall through to the outermost loop instead of
+    // recursing: a long backlog of synchronously-completing requests would
+    // otherwise nest one native frame chain per grant and overflow the stack.
+    static thread_local bool processingQueue = false;
+    if (processingQueue)
+        return;
+    processingQueue = true;
+
+    ScriptExecutionContextIdentifier self = 0;
+    if (selfGlobalObject) {
+        auto* context = selfGlobalObject->scriptExecutionContext();
+        if (!context)
+            selfGlobalObject = nullptr;
+        else {
+            ASSERT(context->isContextThread());
+            self = context->identifier();
+        }
+    }
+
+    if (selfGlobalObject) {
+        auto& vm = JSC::getVM(selfGlobalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        while (true) {
+            EventsByContext eventsByContext;
+            {
+                Locker locker { m_lock };
+                if (m_dirtyNames.isEmpty())
+                    break;
+                String name = m_dirtyNames.takeLast();
+                commitDecisionsForNameLocked(name, eventsByContext);
+            }
+            if (eventsByContext.isEmpty())
+                continue;
+            bool ok = deliverEvents(selfGlobalObject, self, WTF::move(eventsByContext));
+            bool hasException = !!scope.exception();
+            if (!ok || hasException)
+                break;
+        }
+    } else {
+        // No JS runs on this path (context teardown): events can only target
+        // other contexts and are posted to them.
+        while (true) {
+            EventsByContext eventsByContext;
+            {
+                Locker locker { m_lock };
+                if (m_dirtyNames.isEmpty())
+                    break;
+                String name = m_dirtyNames.takeLast();
+                commitDecisionsForNameLocked(name, eventsByContext);
+            }
+            if (eventsByContext.isEmpty())
+                continue;
+            deliverEvents(nullptr, 0, WTF::move(eventsByContext));
+        }
+    }
+
+    processingQueue = false;
+}
+
+uint64_t BunWebLocksRegistry::request(Zig::GlobalObject* globalObject, const String& name, bool exclusive, bool steal, bool ifAvailable, int32_t& immediateEvent)
+{
+    s_hasBeenUsed.store(true, std::memory_order_release);
+    auto self = globalObject->scriptExecutionContext()->identifier();
+
+    uint64_t id;
+    immediateEvent = NoEvent;
+    EventsByContext eventsByContext;
+    String ownedName = name.isolatedCopy();
     {
         Locker locker { m_lock };
-        targets = computeWakeTargetsLocked();
+        id = m_nextId++;
+
+        if (steal) {
+            // Steal bypasses the queue and the granting rules: every current
+            // holder loses its lock. Victim events are appended before the
+            // caller dispatches the grant, so their promises reject before
+            // the stealing callback runs, like Node.
+            auto victims = m_held.take(ownedName);
+            for (auto& victim : victims)
+                eventsByContext.ensure(victim.contextId, [] { return Vector<Event>(); }).iterator->value.append(Event { StolenEvent, victim.id });
+            m_held.add(ownedName, Vector<HeldLock> {}).iterator->value.append(HeldLock { id, self, exclusive });
+            immediateEvent = GrantedEvent;
+        } else if (!m_pending.contains(ownedName) && isGrantableLocked(ownedName, exclusive)) {
+            m_held.ensure(ownedName, [] { return Vector<HeldLock>(); }).iterator->value.append(HeldLock { id, self, exclusive });
+            immediateEvent = GrantedEvent;
+        } else if (ifAvailable) {
+            // Not grantable right now (or queued behind someone): the
+            // callback runs with null instead of waiting.
+            immediateEvent = MissEvent;
+        } else {
+            m_pending.ensure(ownedName, [] { return Vector<PendingRequest>(); }).iterator->value.append(PendingRequest { id, self, exclusive });
+        }
     }
-    wakeContexts(WTF::move(targets));
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool ok = deliverEvents(globalObject, self, WTF::move(eventsByContext));
+    RETURN_IF_EXCEPTION(scope, id);
+    if (ok)
+        processQueue(globalObject);
+    RETURN_IF_EXCEPTION(scope, id);
+    return id;
+}
+
+void BunWebLocksRegistry::release(Zig::GlobalObject* globalObject, uint64_t id, const String& name)
+{
+    auto self = globalObject->scriptExecutionContext()->identifier();
+    {
+        Locker locker { m_lock };
+        auto it = m_held.find(name);
+        if (it != m_held.end()) {
+            bool removedAny = it->value.removeAllMatching([&](auto& lock) {
+                return lock.id == id && lock.contextId == self;
+            }) > 0;
+            if (removedAny)
+                markDirtyLocked(name);
+            if (it->value.isEmpty())
+                m_held.remove(it);
+        }
+    }
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    processQueue(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 void BunWebLocksRegistry::contextDestroyed(ScriptExecutionContextIdentifier contextId)
@@ -244,70 +249,11 @@ void BunWebLocksRegistry::contextDestroyed(ScriptExecutionContextIdentifier cont
     if (!s_hasBeenUsed.load(std::memory_order_acquire))
         return;
     auto& registry = singleton();
-    Vector<ScriptExecutionContextIdentifier> targets;
     {
         Locker locker { registry.m_lock };
         registry.purgeContextLocked(contextId);
-        targets = registry.computeWakeTargetsLocked();
     }
-    registry.wakeContexts(WTF::move(targets));
+    registry.processQueue(nullptr);
 }
 
 } // namespace WebCore
-
-namespace Bun {
-
-using namespace JSC;
-using namespace WebCore;
-
-// enqueue(name: string, exclusive: boolean, steal: boolean, ifAvailable: boolean) -> request id
-JSC_DEFINE_HOST_FUNCTION(jsWebLocksEnqueueRequest, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* context = defaultGlobalObject(globalObject)->scriptExecutionContext();
-    if (!context) [[unlikely]]
-        return JSValue::encode(jsNumber(0));
-
-    String name = callFrame->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    bool exclusive = callFrame->argument(1).toBoolean(globalObject);
-    bool steal = callFrame->argument(2).toBoolean(globalObject);
-    bool ifAvailable = callFrame->argument(3).toBoolean(globalObject);
-
-    uint64_t id = BunWebLocksRegistry::singleton().enqueue(context->identifier(), name, exclusive, steal, ifAvailable);
-    return JSValue::encode(jsNumber(static_cast<double>(id)));
-}
-
-// drain() — deliver pending events for this thread synchronously
-JSC_DEFINE_HOST_FUNCTION(jsWebLocksDrain, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    BunWebLocksRegistry::singleton().drain(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsUndefined());
-}
-
-// release(id: number, name: string)
-JSC_DEFINE_HOST_FUNCTION(jsWebLocksRelease, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* context = defaultGlobalObject(globalObject)->scriptExecutionContext();
-    if (!context) [[unlikely]]
-        return JSValue::encode(jsUndefined());
-
-    uint64_t id = static_cast<uint64_t>(callFrame->argument(0).toNumber(globalObject));
-    RETURN_IF_EXCEPTION(scope, {});
-    String name = callFrame->argument(1).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    auto& registry = BunWebLocksRegistry::singleton();
-    registry.release(context->identifier(), id, name);
-    registry.drain(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsUndefined());
-}
-
-} // namespace Bun

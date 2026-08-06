@@ -38,6 +38,7 @@ class JSNextTickQueue;
 class Process;
 class SecureContextCache;
 class GCProfilerObserver;
+class WebLocksClient;
 } // namespace Bun
 
 namespace v8 {
@@ -609,6 +610,8 @@ public:
     V(public, LazyClassStructure, m_JSMIMEParamsClassStructure)                                              \
     V(public, LazyClassStructure, m_JSMIMETypeClassStructure)                                                \
     V(public, LazyClassStructure, m_JSNodePerformanceHooksHistogramClassStructure)                           \
+    V(public, LazyClassStructure, m_JSWebLockClassStructure)                                                 \
+    V(public, LazyClassStructure, m_JSWebLockManagerClassStructure)                                          \
                                                                                                              \
     V(public, LazyClassStructure, m_JSConnectionsListClassStructure)                                         \
     V(public, LazyClassStructure, m_JSHTTPParserClassStructure)                                              \
@@ -676,6 +679,7 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_bunObject)                                             \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_cryptoObject)                                          \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_navigatorObject)                                       \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_webLockManagerObject)                                  \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_performanceObject)                                     \
     V(public, LazyPropertyOfGlobalObject<Bun::Process>, m_processObject)                                     \
     V(public, LazyPropertyOfGlobalObject<CustomGetterSetter>, m_lazyStackCustomGetterSetter)                 \
@@ -736,6 +740,7 @@ public:
     }
 
     JSObject* navigatorObject();
+    JSObject* webLockManagerObject() { return m_webLockManagerObject.get(this); }
     JSFunction* nativeMicrotaskTrampoline() const { return m_nativeMicrotaskTrampoline.getInitializedOnMainThread(this); }
 
     String agentClusterID() const;
@@ -806,6 +811,11 @@ public:
     // config digest. WeakGCMap self-registers with the heap, so no
     // visitChildren wiring needed (and it must NOT keep its values alive).
     std::unique_ptr<Bun::SecureContextCache> m_secureContextCache;
+
+    // Web Locks request records for this thread (JSWebLocks.h). JSC::Strong
+    // members root their values, so no visitChildren wiring needed; destroyed
+    // with the global on its own thread while the VM is still alive.
+    std::unique_ptr<Bun::WebLocksClient> m_webLocksClient;
 
     // Backs node:v8's GCProfiler. Lazily created on first start(); its
     // destructor detaches from the heap so a worker that exits mid-profile

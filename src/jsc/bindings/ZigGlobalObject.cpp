@@ -114,6 +114,7 @@
 #include "JSFFICString.h"
 #include "webcore/JSMIMEParams.h"
 #include "webcore/JSMIMEType.h"
+#include "webcore/JSWebLocks.h"
 #include "JSMessageChannel.h"
 #include "JSMessageEvent.h"
 #include "JSMessagePort.h"
@@ -1743,14 +1744,7 @@ JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetHardwareConcurrency, (JSC::JSGlobal
 // like Node.js (lib/internal/navigator.js).
 JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetLocks, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
 {
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* locksModule = globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::Field::InternalLocks).getObject();
-    RETURN_IF_EXCEPTION(scope, {});
-    if (!locksModule) [[unlikely]]
-        return JSValue::encode(JSC::jsUndefined());
-    RELEASE_AND_RETURN(scope, JSValue::encode(locksModule->get(globalObject, WebCore::clientData(vm)->builtinNames().locksPublicName())));
+    return JSValue::encode(defaultGlobalObject(lexicalGlobalObject)->webLockManagerObject());
 }
 
 JSC_DECLARE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins);
@@ -2113,6 +2107,22 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSMIMETypeClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             WebCore::setupJSMIMETypeClassStructure(init);
+        });
+
+    m_JSWebLockClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            WebCore::setupJSWebLockClassStructure(init);
+        });
+
+    m_JSWebLockManagerClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            WebCore::setupJSWebLockManagerClassStructure(init);
+        });
+
+    m_webLockManagerObject.initLater(
+        [](const Initializer<JSObject>& init) {
+            auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(init.owner);
+            init.set(WebCore::JSWebLockManager::create(init.vm, globalObject->m_JSWebLockManagerClassStructure.get(globalObject)));
         });
 
     m_JSConnectionsListClassStructure.initLater(

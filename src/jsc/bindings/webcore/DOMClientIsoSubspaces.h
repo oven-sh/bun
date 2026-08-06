@@ -71,6 +71,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForInternalFieldObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMIMEType;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMIMEParams;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSWebLock;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForV8GlobalInternals;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForHandleScopeBuffer;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFunctionTemplate;

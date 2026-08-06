@@ -1,13 +1,16 @@
 // Process-global Web Locks registry (navigator.locks / worker_threads.locks),
-// shared across the main thread and every Worker, matching Node's process-wide
-// LockManager (src/node_locks.cc).
+// shared across the main thread and every Worker like Node's LockManager
+// (src/node_locks.cc). All lock state is plain data behind one WTF::Lock;
+// promises and user callbacks stay in each thread's WebLocksClient
+// (JSWebLocks.h). Decisions are committed under the lock at mutation time and
+// the resulting granted/miss/stolen events are delivered through
+// Bun::dispatchWebLockEvent on each owning context's thread (synchronously
+// for the mutating context, via a posted task for the rest).
 //
-// The registry holds plain data only (no JS values): lock/request bookkeeping
-// lives here under one lock, while promises and user callbacks stay in each
-// thread's internal/locks.ts module. Decisions for a context are only ever
-// made on that context's own thread ("drain"); other threads are nudged with
-// a posted task when state they care about changes. Grant/miss/steal outcomes
-// reach JS through internal/locks.ts's exported onNativeEvent(type, id).
+// Grantability is purely per-name, so each name keeps its own FIFO of waiting
+// requests and processing a release pops the longest grantable prefix: a
+// blocked request blocks everything queued behind it for that name, which is
+// exactly the Web Locks grant order (https://w3c.github.io/web-locks/).
 
 #pragma once
 
@@ -15,7 +18,6 @@
 
 #include "ScriptExecutionContext.h"
 #include <wtf/HashMap.h>
-#include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Vector.h>
@@ -32,7 +34,9 @@ class BunWebLocksRegistry {
 public:
     static BunWebLocksRegistry& singleton();
 
-    // Event types delivered to internal/locks.ts onNativeEvent(type, id).
+    // Event types delivered to Bun::dispatchWebLockEvent. NoEvent is only
+    // used as request()'s "parked in the queue" immediate result.
+    static constexpr int32_t NoEvent = -1;
     static constexpr int32_t GrantedEvent = 0;
     static constexpr int32_t MissEvent = 1;
     static constexpr int32_t StolenEvent = 2;
@@ -41,13 +45,15 @@ public:
     // Fast no-op unless the registry has ever been used.
     static void contextDestroyed(ScriptExecutionContextIdentifier);
 
-    uint64_t enqueue(ScriptExecutionContextIdentifier, const String& name, bool exclusive, bool steal, bool ifAvailable);
-    void release(ScriptExecutionContextIdentifier, uint64_t id, const String& name);
+    // Decide a new request in one critical section. `immediateEvent` receives
+    // this request's own outcome (GrantedEvent for an immediate grant or a
+    // steal, MissEvent for an ifAvailable miss, NoEvent when it parked in the
+    // queue) for the caller to dispatch after it has registered the returned
+    // id; steal victims are notified on their own threads.
+    uint64_t request(Zig::GlobalObject*, const String& name, bool exclusive, bool steal, bool ifAvailable, int32_t& immediateEvent);
 
-    // Deliver pending steal notifications and grant/miss decisions for the
-    // context owning `globalObject`, synchronously, then wake any other
-    // context that can now make progress. Must run on that context's thread.
-    void drain(JSC::JSGlobalObject*);
+    // Release a held lock, then grant whatever that unblocks.
+    void release(Zig::GlobalObject*, uint64_t id, const String& name);
 
 private:
     friend class WTF::NeverDestroyed<BunWebLocksRegistry>;
@@ -56,10 +62,7 @@ private:
     struct PendingRequest {
         uint64_t id;
         ScriptExecutionContextIdentifier contextId;
-        String name;
         bool exclusive;
-        bool steal;
-        bool ifAvailable;
     };
 
     struct HeldLock {
@@ -73,30 +76,24 @@ private:
         uint64_t id;
     };
 
-    bool dispatchEventsToJS(Zig::GlobalObject*, const Vector<Event>&);
-    bool isGrantableLocked(const PendingRequest&) const WTF_REQUIRES_LOCK(m_lock);
-    void commitGrantLocked(size_t pendingIndex, Vector<Event>& events) WTF_REQUIRES_LOCK(m_lock);
-    bool takeDecisionLocked(ScriptExecutionContextIdentifier, Vector<Event>& events) WTF_REQUIRES_LOCK(m_lock);
-    Vector<ScriptExecutionContextIdentifier> computeWakeTargetsLocked() WTF_REQUIRES_LOCK(m_lock);
+    using EventsByContext = HashMap<ScriptExecutionContextIdentifier, Vector<Event>>;
+
+    bool isGrantableLocked(const String& name, bool exclusive) const WTF_REQUIRES_LOCK(m_lock);
+    void commitDecisionsForNameLocked(const String& name, EventsByContext&) WTF_REQUIRES_LOCK(m_lock);
+    void markDirtyLocked(const String& name) WTF_REQUIRES_LOCK(m_lock);
     void purgeContextLocked(ScriptExecutionContextIdentifier) WTF_REQUIRES_LOCK(m_lock);
-    void wakeContexts(Vector<ScriptExecutionContextIdentifier>&&);
+    bool deliverEvents(Zig::GlobalObject* selfGlobalObject, ScriptExecutionContextIdentifier self, EventsByContext&&);
+    void processQueue(Zig::GlobalObject* selfGlobalObject);
+    static bool dispatchEventsToJS(Zig::GlobalObject*, const Vector<Event>&);
 
     static std::atomic<bool> s_hasBeenUsed;
 
     WTF::Lock m_lock;
-    std::atomic<uint64_t> m_nextId { 1 };
-    Vector<PendingRequest> m_pending WTF_GUARDED_BY_LOCK(m_lock);
+    uint64_t m_nextId WTF_GUARDED_BY_LOCK(m_lock) { 1 };
+    HashMap<String, Vector<PendingRequest>> m_pending WTF_GUARDED_BY_LOCK(m_lock);
     HashMap<String, Vector<HeldLock>> m_held WTF_GUARDED_BY_LOCK(m_lock);
-    // Stolen lock ids not yet delivered to their owner's thread.
-    HashMap<ScriptExecutionContextIdentifier, Vector<uint64_t>> m_stolenToDeliver WTF_GUARDED_BY_LOCK(m_lock);
+    // Names whose held set changed and whose queue should be re-examined.
+    Vector<String> m_dirtyNames WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 } // namespace WebCore
-
-namespace Bun {
-
-JSC_DECLARE_HOST_FUNCTION(jsWebLocksEnqueueRequest);
-JSC_DECLARE_HOST_FUNCTION(jsWebLocksDrain);
-JSC_DECLARE_HOST_FUNCTION(jsWebLocksRelease);
-
-} // namespace Bun

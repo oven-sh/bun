@@ -9,7 +9,11 @@ import * as workerThreads from "node:worker_threads";
 import { Worker, locks as workerThreadsLocks } from "node:worker_threads";
 
 function nextMessage(worker: InstanceType<typeof Worker>): Promise<any> {
-  return new Promise(resolve => worker.once("message", resolve));
+  return new Promise((resolve, reject) => {
+    worker.once("message", resolve);
+    worker.once("error", reject);
+    worker.once("exit", code => reject(new Error(`worker exited with code ${code} before posting a message`)));
+  });
 }
 
 describe("API surface", () => {
@@ -225,6 +229,24 @@ describe("basic behavior", () => {
     holderReleased.resolve();
     expect(await queued).toBe("plain-value");
     await holder;
+  });
+
+  test("a long queue of synchronous callbacks drains without exhausting the stack", async () => {
+    const holderReleased = Promise.withResolvers<void>();
+    const holder = navigator.locks.request("sync-drain", () => holderReleased.promise);
+    let ran = 0;
+    const waiters: Promise<unknown>[] = [];
+    for (let i = 0; i < 5000; i++) {
+      waiters.push(
+        navigator.locks.request("sync-drain", () => {
+          ran++;
+        }),
+      );
+    }
+    holderReleased.resolve();
+    await Promise.all(waiters);
+    await holder;
+    expect(ran).toBe(5000);
   });
 
   test("thenable (non-promise) return releases the lock immediately", async () => {
@@ -509,6 +531,10 @@ describe("worker threads", () => {
           workerResult.resolve(message);
           worker.terminate();
         }
+      });
+      worker.once("error", error => {
+        requesting.reject(error);
+        workerResult.reject(error);
       });
       await requesting.promise;
       // the worker's request is already enqueued; record that the grant may

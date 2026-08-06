@@ -79,6 +79,7 @@ const {
   8: _markAsUncloneable,
   9: _setEntryEvaluatedHook,
   10: _isNodeWorker,
+  11: _locks,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
@@ -91,6 +92,7 @@ const {
   (value: unknown) => void,
   (hook: () => void) => void,
   boolean,
+  unknown,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -1369,7 +1371,7 @@ export default {
   markAsUncloneable,
   isMarkedAsUntransferable,
   // Shared with navigator.locks: the same process-wide LockManager, like Node.
-  locks: require("internal/locks").locks,
+  locks: _locks,
   moveMessagePortToContext,
   postMessageToThread: messaging.postMessageToThread,
   receiveMessageOnPort,

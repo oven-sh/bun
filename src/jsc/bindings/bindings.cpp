@@ -108,6 +108,7 @@
 #include "JavaScriptCore/TemporalPlainYearMonth.h"
 #include "JavaScriptCore/TemporalZonedDateTime.h"
 #include "JavaScriptCore/TimeZoneICUBridge.h"
+#include "Temporal.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JSFetchHeaders.h"
@@ -5909,6 +5910,51 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double Bun__gregorianDateTimeToMSInZone(JSC::
     if (!r)
         return std::numeric_limits<double>::quiet_NaN();
     return static_cast<double>(r->epochMilliseconds());
+}
+
+// Classifies a JSValue as one of the Temporal object types, or 0 for
+// everything else. Discriminants: 1 Instant, 2 PlainDateTime, 3 PlainDate,
+// 4 PlainTime, 5 ZonedDateTime, 6 PlainYearMonth, 7 PlainMonthDay,
+// 8 Duration.
+extern "C" [[ZIG_EXPORT(nothrow)]] uint8_t Bun__JSValue__temporalObjectType(JSC::EncodedJSValue encodedValue)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (!value.isCell())
+        return 0;
+    JSC::JSCell* cell = value.asCell();
+    // Every Temporal class is a plain ObjectType cell; anything else
+    // (JSFinalObject, arrays, dates, functions, …) short-circuits here.
+    if (cell->type() != JSC::ObjectType)
+        return 0;
+    if (cell->inherits<JSC::TemporalInstant>())
+        return 1;
+    if (cell->inherits<JSC::TemporalPlainDateTime>())
+        return 2;
+    if (cell->inherits<JSC::TemporalPlainDate>())
+        return 3;
+    if (cell->inherits<JSC::TemporalPlainTime>())
+        return 4;
+    if (cell->inherits<JSC::TemporalZonedDateTime>())
+        return 5;
+    if (cell->inherits<JSC::TemporalPlainYearMonth>())
+        return 6;
+    if (cell->inherits<JSC::TemporalPlainMonthDay>())
+        return 7;
+    if (cell->inherits<JSC::TemporalDuration>())
+        return 8;
+    return 0;
+}
+
+// Default-options `toString()` text for a Temporal object, for inspection
+// (see Bun::temporalDisplayString in Temporal.cpp). `temporalType` is a
+// non-zero result of the classifier above for `encodedValue`.
+extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__Temporal__toDisplayString(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, uint8_t temporalType, BunString* out)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    WTF::String string = Bun::temporalDisplayString(globalObject, JSC::JSValue::decode(encodedValue).asCell(), temporalType);
+    RETURN_IF_EXCEPTION(scope, );
+    *out = Bun::toStringRef(string);
 }
 
 extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNumber(JSC::JSGlobalObject* globalObject, double unixTimestamp)

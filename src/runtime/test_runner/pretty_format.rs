@@ -394,6 +394,7 @@ pub enum Tag {
     Promise,
 
     JSON,
+    Temporal,
     NativeCode,
     ArrayBuffer,
 
@@ -523,10 +524,18 @@ impl Tag {
             JSType::WeakSet | JSType::Set => Tag::Set,
             JSType::JSDate => Tag::JSON,
             JSType::JSPromise => Tag::Promise,
-            JSType::Object
-            | JSType::FinalObject
-            | JSType::ModuleNamespaceObject
-            | JSType::GlobalObject => Tag::Object,
+            // Temporal cells are plain `ObjectType`; only ClassInfo can tell
+            // them apart from other host objects.
+            JSType::Object => {
+                if bun_jsc::cpp::Bun__JSValue__temporalObjectType(value) != 0 {
+                    Tag::Temporal
+                } else {
+                    Tag::Object
+                }
+            }
+            JSType::FinalObject | JSType::ModuleNamespaceObject | JSType::GlobalObject => {
+                Tag::Object
+            }
 
             JSType::ArrayBuffer
             | JSType::Int8Array
@@ -1038,6 +1047,41 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 }
 
 impl<'a> Formatter<'a> {
+    /// `Temporal.PlainDate 2020-01-02` — the same atomic token console.log
+    /// prints (label uncolored, default-options `toString()` text in Date's
+    /// magenta), so expect diffs and snapshots show the value.
+    #[inline(never)]
+    fn print_temporal<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer_: &mut W,
+        value: JSValue,
+    ) -> JsResult<()> {
+        let mut writer = WrappedWriter::new(writer_);
+        let temporal_type = bun_jsc::cpp::Bun__JSValue__temporalObjectType(value);
+        let label = bun_jsc::temporal_class_label(temporal_type);
+        let mut str = bun_core::OwnedString::new(bun_core::String::empty());
+        unsafe {
+            bun_jsc::cpp::Bun__Temporal__toDisplayString(
+                self.global_this,
+                value,
+                temporal_type,
+                &mut *str,
+            )?;
+        }
+        self.add_for_new_line(label.len() + 1 + str.length());
+        writer.print(format_args!(
+            "{} {}{}{}",
+            label,
+            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><magenta>"),
+            &*str,
+            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
+        ));
+        if writer.failed {
+            self.failed = true;
+        }
+        Ok(())
+    }
+
     pub(crate) fn print_as<W: bun_io::Write, const FORMAT: Tag, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         writer_: &mut W,
@@ -1851,6 +1895,12 @@ impl<'a> Formatter<'a> {
 
                     writer.print(format_args!("{}", str));
                 }
+                Tag::Temporal => {
+                    // Hoisted to `#[inline(never)]` so this arm's locals don't
+                    // grow every recursive `print_as` frame (dead const-generic
+                    // arms aren't DCE'd in debug builds).
+                    self.print_temporal::<W, ENABLE_ANSI_COLORS>(writer.ctx, value)?;
+                }
                 Tag::Event => {
                     let event_type_value: JSValue = 'brk: {
                         let value_: JSValue = match value.get(self.global_this, "type")? {
@@ -2577,6 +2627,8 @@ impl<'a> Formatter<'a> {
             Tag::JSON => {
                 self.print_as::<W, { Tag::JSON }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
+            Tag::Temporal => self
+                .print_as::<W, { Tag::Temporal }, ENABLE_ANSI_COLORS>(writer, value, result.cell),
             Tag::NativeCode => self
                 .print_as::<W, { Tag::NativeCode }, ENABLE_ANSI_COLORS>(writer, value, result.cell),
             Tag::JSX => {
@@ -2653,6 +2705,7 @@ impl bun_jsc::ConsoleFormatter for Formatter<'_> {
             Ft::Private => Tag::Private,
             Ft::Promise => Tag::Promise,
             Ft::JSON => Tag::JSON,
+            Ft::Temporal => Tag::Temporal,
             Ft::NativeCode => Tag::NativeCode,
             Ft::JSX => Tag::JSX,
             Ft::Event => Tag::Event,

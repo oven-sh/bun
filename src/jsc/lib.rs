@@ -233,6 +233,7 @@ pub use self::console_object::Formatter;
 /// Request.rs / S3Client.rs). Same enum; the split is naming drift only.
 pub use self::console_object::formatter::Tag as FormatTag;
 pub use self::console_object::formatter::Tag as FormatAs;
+pub use self::console_object::formatter::temporal_class_label;
 pub use self::js_array_iterator::JSArrayIterator;
 pub use self::js_promise::JSPromise;
 /// `JSInternalPromise` was removed upstream; the module loader uses `JSPromise`

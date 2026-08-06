@@ -75,3 +75,17 @@ exports[`it will create a snapshot file if it doesn't exist 7`] = `
   "j": Any<RegExp>,
 }
 `;
+
+exports[`Temporal values serialize as their default toString in snapshots 1`] = `Temporal.PlainDate 2020-01-02`;
+
+exports[`Temporal values serialize as their default toString in snapshots 2`] = `
+{
+  "dateTime": Temporal.PlainDateTime 1901-02-03T04:05:06.007008009,
+  "duration": Temporal.Duration PT1H30M,
+  "instant": Temporal.Instant 1973-07-22T23:57:25.566778899Z,
+  "monthDay": Temporal.PlainMonthDay 01-15,
+  "time": Temporal.PlainTime 10:20:23,
+  "yearMonth": Temporal.PlainYearMonth 2020-01,
+  "zoned": Temporal.ZonedDateTime 2020-01-01T00:00:00-10:00[Pacific/Honolulu],
+}
+`;

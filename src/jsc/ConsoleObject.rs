@@ -1925,6 +1925,7 @@ pub mod formatter {
 
         JSON,
         ToJSON,
+        Temporal,
         NativeCode,
 
         JSX,
@@ -1935,6 +1936,22 @@ pub mod formatter {
 
         Proxy,
         RevokedProxy,
+    }
+
+    /// Class label (the `@@toStringTag` spelling) for a non-zero Temporal type
+    /// discriminant from `Bun__JSValue__temporalObjectType`.
+    pub fn temporal_class_label(temporal_type: u8) -> &'static str {
+        match temporal_type {
+            1 => "Temporal.Instant",
+            2 => "Temporal.PlainDateTime",
+            3 => "Temporal.PlainDate",
+            4 => "Temporal.PlainTime",
+            5 => "Temporal.ZonedDateTime",
+            6 => "Temporal.PlainYearMonth",
+            7 => "Temporal.PlainMonthDay",
+            8 => "Temporal.Duration",
+            _ => unreachable!("not a Temporal type discriminant"),
+        }
     }
 
     impl Tag {
@@ -1996,6 +2013,7 @@ pub mod formatter {
         Promise,
         JSON,
         ToJSON,
+        Temporal,
         NativeCode,
         JSX,
         Event,
@@ -2042,6 +2060,7 @@ pub mod formatter {
                 TagPayload::Promise => Tag::Promise,
                 TagPayload::JSON => Tag::JSON,
                 TagPayload::ToJSON => Tag::ToJSON,
+                TagPayload::Temporal => Tag::Temporal,
                 TagPayload::NativeCode => Tag::NativeCode,
                 TagPayload::JSX => Tag::JSX,
                 TagPayload::Event => Tag::Event,
@@ -2087,6 +2106,7 @@ pub mod formatter {
                 Tag::Promise => TagPayload::Promise,
                 Tag::JSON => TagPayload::JSON,
                 Tag::ToJSON => TagPayload::ToJSON,
+                Tag::Temporal => TagPayload::Temporal,
                 Tag::NativeCode => TagPayload::NativeCode,
                 Tag::JSX => TagPayload::JSX,
                 Tag::Event => TagPayload::Event,
@@ -2305,12 +2325,21 @@ pub mod formatter {
                 T::JSDate => TagPayload::JSON,
                 T::JSPromise => TagPayload::Promise,
 
+                // Temporal cells are plain `ObjectType`; only ClassInfo can
+                // tell them apart from other host objects.
+                T::Object => {
+                    if crate::cpp::Bun__JSValue__temporalObjectType(value) != 0 {
+                        TagPayload::Temporal
+                    } else {
+                        TagPayload::Object
+                    }
+                }
+
                 T::WrapForValidIterator
                 | T::RegExpStringIterator
                 | T::JSArrayIterator
                 | T::Iterator
                 | T::IteratorHelper
-                | T::Object
                 | T::FinalObject
                 | T::ModuleNamespaceObject => TagPayload::Object,
 
@@ -3415,6 +3444,7 @@ pub mod formatter {
                 Tag::Set => self.print_set::<ENABLE_ANSI_COLORS>(writer_, value),
                 Tag::ToJSON => self.print_to_json::<ENABLE_ANSI_COLORS>(writer_, value),
                 Tag::JSON => self.print_json::<ENABLE_ANSI_COLORS>(writer_, value, js_type),
+                Tag::Temporal => self.print_temporal::<ENABLE_ANSI_COLORS>(writer_, value),
                 Tag::Event => self.print_event::<ENABLE_ANSI_COLORS>(
                     writer_,
                     value,
@@ -4301,6 +4331,46 @@ pub mod formatter {
             }
 
             writer.print(format_args!("{str}"));
+            if writer.failed {
+                self.failed = true;
+            }
+            Ok(())
+        }
+
+        /// `Temporal.PlainDate 2020-01-02` — the class label uncolored, the
+        /// default-options `toString()` text in Date's magenta. A single
+        /// atomic token like `Date`: own properties and subclass names are
+        /// ignored.
+        #[inline(never)]
+        fn print_temporal<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> JsResult<()> {
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: false,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
+            let temporal_type = crate::cpp::Bun__JSValue__temporalObjectType(value);
+            let label = temporal_class_label(temporal_type);
+            let mut str = OwnedString::new(BunString::empty());
+            unsafe {
+                crate::cpp::Bun__Temporal__toDisplayString(
+                    self.global_this,
+                    value,
+                    temporal_type,
+                    &mut *str,
+                )?;
+            }
+            writer.add_for_new_line(label.len() + 1 + str.length());
+            writer.print(format_args!(
+                "{} {}{}{}",
+                label,
+                pfmt!("<r><magenta>", C),
+                &*str,
+                pfmt!("<r>", C)
+            ));
             if writer.failed {
                 self.failed = true;
             }

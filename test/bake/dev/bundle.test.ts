@@ -1142,3 +1142,41 @@ devTest("css list updates after a failure recovered over hot updates", {
     await c.style(".b").color.expect.toBe("green");
   },
 });
+// A failed js file keeps its import edges, and its css imports are chunk
+// roots; the css trace must keep walking through it or the route's css list
+// drops stylesheets that only it reaches.
+devTest("stylesheets imported through a failed js file stay active", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["main.css"],
+      scripts: ["index.ts"],
+      body: "hello",
+    }),
+    "index.ts": `import.meta.hot.accept();\nimport "./comp.ts";\n`,
+    "comp.ts": `import "./comp.css";\nexport const x = 1;\n`,
+    "comp.css": `.comp { color: red; }\n`,
+    "main.css": `.base { color: red; }\n`,
+    "b.css": `.b { color: green; }\n`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".comp").color.expect.toBe("red");
+
+    // One batch: parse error in comp.ts plus an edge adjustment, so the
+    // route's css list retraces while comp.ts is failed.
+    {
+      await using _batch = await dev.batchChanges({ errors: null });
+      await dev.write("comp.ts", `import "./comp.css";\nexport const x = ;\n`, { dedent: false });
+      await dev.write("index.ts", `import.meta.hot.accept();\nimport "./comp.ts";\nimport "./b.css";\n`, {
+        dedent: false,
+      });
+    }
+    await c.style(".comp").color.expect.toBe("red");
+    await c.style(".b").color.expect.toBe("green");
+
+    // Recovery keeps both stylesheets.
+    await dev.write("comp.ts", `import "./comp.css";\nexport const x = 1;\n`, { dedent: false });
+    await c.style(".comp").color.expect.toBe("red");
+    await c.style(".b").color.expect.toBe("green");
+  },
+});

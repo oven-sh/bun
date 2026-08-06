@@ -1238,23 +1238,29 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         self.dev_incremental_result().failures_added.push(fail);
                         return Ok(());
                     }
-                    // A failed entry contributes only its css slot (the id is
-                    // the path hash, so the stylesheet keeps its place); its
-                    // imports may be css children only a root may reach.
-                    if goal == TraceImportGoal::FindCss {
-                        if let Some(id) = css_root_id {
+                    // A failed css chunk entry contributes its slot (the id
+                    // is the path hash, so the stylesheet keeps its place)
+                    // and stops: its imports may be css children only a root
+                    // may reach. A failed js file's css imports are roots, so
+                    // it keeps tracing below.
+                    if let Some(id) = css_root_id {
+                        if goal == TraceImportGoal::FindCss {
                             self.current_css_files.push(id);
                         }
+                        return Ok(());
                     }
-                    return Ok(());
-                }
-                debug_assert!(!is_css_child, "only CSS roots should be found by tracing");
-                if let Some(id) = css_root_id {
-                    if goal == TraceImportGoal::FindCss {
-                        self.current_css_files.push(id);
+                    if is_css_child {
+                        return Ok(());
                     }
-                    // CSS can't import JS; trace is done.
-                    return Ok(());
+                } else {
+                    debug_assert!(!is_css_child, "only CSS roots should be found by tracing");
+                    if let Some(id) = css_root_id {
+                        if goal == TraceImportGoal::FindCss {
+                            self.current_css_files.push(id);
+                        }
+                        // CSS can't import JS; trace is done.
+                        return Ok(());
+                    }
                 }
 
                 if goal == TraceImportGoal::FindClientModules {

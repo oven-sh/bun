@@ -1974,22 +1974,26 @@ fn parse_build_command_options(
     }
 
     if let Some(env) = args.option(b"--env") {
-        if let Some(asterisk) = strings::index_of_char(env, b'*') {
-            if asterisk == 0 {
-                ctx.bundler_options.env_behavior = options::EnvBehavior::LoadAll;
-            } else {
-                ctx.bundler_options.env_behavior = options::EnvBehavior::Prefix;
-                ctx.bundler_options.env_prefix = Box::<[u8]>::from(&env[..asterisk as usize]);
-            }
-        } else if env == b"inline" || env == b"1" {
+        if env == b"inline" {
             ctx.bundler_options.env_behavior = options::EnvBehavior::LoadAll;
-        } else if env == b"disable" || env == b"0" {
+        } else if env == b"disable" {
             ctx.bundler_options.env_behavior = options::EnvBehavior::LoadAllWithoutInlining;
         } else {
-            bun_core::pretty_errorln!(
-                "<r><red>error<r>: Expected 'env' to be 'inline', 'disable', or a prefix with a '*' character"
-            );
-            Global::crash();
+            match options::EnvBehavior::parse_str(env) {
+                Ok((options::EnvBehavior::Prefix, Some(prefix))) => {
+                    ctx.bundler_options.env_behavior = options::EnvBehavior::Prefix;
+                    ctx.bundler_options.env_prefix = Box::<[u8]>::from(prefix);
+                }
+                Ok(_) => unreachable!(),
+                Err(msg) => {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: Invalid --env \"{}\": {}",
+                        BStr::new(env),
+                        msg
+                    );
+                    Global::crash();
+                }
+            }
         }
     }
 

@@ -61,28 +61,24 @@ impl DotEnvBehavior {
     pub const LoadAll: Self = Self::load_all;
     pub const LoadAllWithoutInlining: Self = Self::load_all_without_inlining;
 
-    /// String-branch classifier shared by bunfig (serve.env) and
-    /// JSBundler (Bun.build env). Only the *string* arm is common to
-    /// both specs — the surrounding null/bool/number dispatch and the error
-    /// reporting intentionally diverge per call site, so they stay inline there.
-    ///
-    /// Returns `Ok((behavior, prefix))` where `prefix` is `Some(&s[..idx])` only for
-    /// `DotEnvBehavior::prefix`; `Err(())` means the string is none of
-    /// `"inline"` / `"disable"` / contains-`*`, and the caller emits its own
-    /// site-specific diagnostic.
-    pub fn parse_str(s: &[u8]) -> Result<(Self, Option<&[u8]>), ()> {
+    pub fn parse_str(s: &[u8]) -> Result<(Self, Option<&[u8]>), &'static str> {
         if s == b"inline" {
-            Ok((Self::load_all, None))
-        } else if s == b"disable" {
-            Ok((Self::disable, None))
-        } else if let Some(asterisk) = s.iter().position(|&b| b == b'*') {
-            if asterisk > 0 {
-                Ok((Self::prefix, Some(&s[..asterisk])))
-            } else {
-                Ok((Self::load_all, None))
-            }
-        } else {
-            Err(())
+            return Ok((Self::load_all, None));
+        }
+        if s == b"disable" {
+            return Ok((Self::disable, None));
+        }
+        match s.iter().filter(|&&b| b == b'*').count() {
+            0 => Err("must be \"inline\", \"disable\", or a prefix pattern like \"PUBLIC_*\""),
+            1 if s == b"*" => Err(
+                "pattern \"*\" has no prefix; use \"inline\" to inline every environment variable",
+            ),
+            1 if *s.last().unwrap() == b'*' => Ok((Self::prefix, Some(&s[..s.len() - 1]))),
+            1 if s[0] == b'*' => Err(
+                "pattern must end with '*' (e.g. \"PUBLIC_*\"); a leading '*' would inline every variable including secrets",
+            ),
+            1 => Err("pattern must end with '*' (e.g. \"PUBLIC_*\")"),
+            _ => Err("pattern may contain only one '*'"),
         }
     }
 }

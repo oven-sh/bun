@@ -1248,7 +1248,18 @@ impl ServerConfig {
                     )));
                 }
 
-                args.address = Address::Unix(bun_core::ZBox::from_bytes(unix_str.slice()));
+                let slice = unix_str.slice();
+                // The kernel reads a filesystem sun_path as a NUL-terminated
+                // string, so an interior NUL would silently truncate the path.
+                // Abstract names (leading NUL, Linux) are length-delimited and
+                // may contain NUL bytes.
+                if slice.first().is_some_and(|&b| b != 0) && slice.contains(&0) {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "\"unix\" must not contain null bytes"
+                    )));
+                }
+
+                args.address = Address::Unix(bun_core::ZBox::from_bytes(slice));
             }
         }
         if global.has_exception() {

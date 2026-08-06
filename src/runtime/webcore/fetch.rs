@@ -803,7 +803,21 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if !obj.is_empty() {
                 if let Some(socket_path) = obj.get(global_this, "unix")? {
                     if socket_path.is_string() && socket_path.get_length(ctx)? > 0 {
-                        break 'extract_unix_socket_path socket_path.to_slice_clone(global_this)?;
+                        let path_slice = socket_path.to_slice_clone(global_this)?;
+                        {
+                            let bytes = path_slice.slice();
+                            // The kernel reads a filesystem sun_path as a
+                            // NUL-terminated string, so an interior NUL would
+                            // silently truncate the path. Abstract names
+                            // (leading NUL, Linux) are length-delimited and may
+                            // contain NUL bytes.
+                            if bytes.first().is_some_and(|&b| b != 0) && bytes.contains(&0) {
+                                return Err(global_this.throw_invalid_arguments(format_args!(
+                                    "\"unix\" must not contain null bytes"
+                                )));
+                            }
+                        }
+                        break 'extract_unix_socket_path path_slice;
                     }
                 }
 

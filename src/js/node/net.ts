@@ -50,7 +50,7 @@ const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
 const MathMin = Math.min;
 
-const { UV_ECANCELED, UV_ENOBUFS, UV_ETIMEDOUT } = process.binding("uv");
+const { UV_ECANCELED, UV_EINVAL, UV_ENOBUFS, UV_ETIMEDOUT } = process.binding("uv");
 const isWindows = process.platform === "win32";
 
 const getDefaultAutoSelectFamily = $rust("node_net_binding.rs", "getDefaultAutoSelectFamily");
@@ -3136,6 +3136,11 @@ function internalConnect(self, options, address, port, addressType, localAddress
         detail: { host: address, port },
       });
     }
+  } else if (address.includes("\0") && address.charCodeAt(0) !== 0) {
+    // Match libuv (uv_pipe_connect2): a non-abstract path with an interior NUL
+    // would be silently truncated at the NUL by the kernel and connect a
+    // different socket.
+    err = UV_EINVAL;
   } else {
     const req: any = {};
     req.address = address;
@@ -3837,6 +3842,16 @@ Server.prototype[kRealListen] = function (
   // (hardcoded below); the stream layer implements allowHalfOpen=false
   // semantics itself, so the server option is consumed in JS only.
   if (path) {
+    if (path.includes("\0") && path.charCodeAt(0) !== 0) {
+      // Match libuv (uv_pipe_bind2): a non-abstract path with an interior NUL
+      // would be silently truncated at the NUL by the kernel and bind a
+      // different socket. formatListenError rewrites this into Node's
+      // "listen EINVAL: invalid argument <path>".
+      const err: any = new Error();
+      err.code = "EINVAL";
+      err.errno = UV_EINVAL;
+      throw err;
+    }
     this._handle = Bun.listen({
       unix: path,
       tls,

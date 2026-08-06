@@ -1300,6 +1300,20 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
         return LIBUS_SOCKET_ERROR;
     }
 
+    // The kernel reads a filesystem sun_path as a NUL-terminated string, so an
+    // interior NUL would silently truncate the path and bind/connect a
+    // different socket. Abstract names (leading NUL, Linux) are
+    // length-delimited and may contain NUL bytes.
+    if (path[0] != '\0' && memchr(path, '\0', path_len) != NULL) {
+        #if defined(_WIN32)
+            // simulate EINVAL
+            SetLastError(ERROR_INVALID_PARAMETER);
+        #else
+            errno = EINVAL;
+        #endif
+        return LIBUS_SOCKET_ERROR;
+    }
+
     *addrlen = sizeof(struct sockaddr_un);
 
     #if defined(__linux__)

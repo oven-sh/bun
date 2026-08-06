@@ -415,7 +415,7 @@ struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned cha
  * deliver data the caller asked to defer. */
 static void us_internal_rearm_writable(struct us_socket_t *s) {
     us_poll_change(&s->p, s->group->loop,
-                   LIBUS_SOCKET_WRITABLE | (s->flags.is_paused ? 0 : LIBUS_SOCKET_READABLE));
+                   LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
 }
 
 int us_socket_write2(struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
@@ -457,6 +457,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->flags.adopted = 0;
     s->flags.last_write_failed = 0;
     s->unclassified_send_failures = 0;
+    s->read_eof = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */
@@ -859,11 +860,12 @@ void us_socket_resume(struct us_socket_t *s) {
     // closed cannot be resumed
     if (us_socket_is_closed(s)) return;
 
+    int readable = s->read_eof ? 0 : LIBUS_SOCKET_READABLE;
     if (us_socket_is_shut_down(s)) {
         // we already sent FIN so we resume only readable side we are read-only
-        us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE);
+        us_poll_change(&s->p, s->group->loop, readable);
         return;
     }
     // we are readable and writable so we resume everything
-    us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    us_poll_change(&s->p, s->group->loop, readable | LIBUS_SOCKET_WRITABLE);
 }

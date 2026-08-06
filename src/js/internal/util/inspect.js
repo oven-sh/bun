@@ -182,11 +182,9 @@ const {
   isTypedArray,
 } = require("node:util/types");
 
-// Temporal objects are recognized and formatted natively (by ClassInfo and
-// internal slots) so inspection never calls user-observable methods.
-// getTemporalType returns 0 for non-Temporal values, otherwise an index into
-// kTemporalLabels; getTemporalDisplayString returns the default-options
-// `toString()` text.
+// getTemporalType(value) is 0 for non-Temporal values, otherwise an index into
+// kTemporalLabels; getTemporalDisplayString is the value's default-options
+// toString() text, computed without calling user-observable methods.
 const getTemporalType = $newCppFunction("Temporal.cpp", "jsFunctionTemporalObjectType", 1);
 const getTemporalDisplayString = $newCppFunction("Temporal.cpp", "jsFunctionTemporalToDisplayString", 1);
 const kTemporalLabels = [
@@ -1653,9 +1651,8 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       }
     } else if ((temporalType = getTemporalType(value)) !== 0) {
       const label = kTemporalLabels[temporalType];
-      // JSC's Temporal constructors are named `PlainDate`, not the
-      // `Temporal.PlainDate` V8 uses; map direct instances onto the label so
-      // the prefix comes out the same as Node's.
+      // JSC names the constructors `PlainDate` where V8 uses `Temporal.PlainDate`;
+      // map direct instances onto the label so the prefix matches Node's output.
       const effectiveConstructor = constructor !== null && `Temporal.${constructor}` === label ? label : constructor;
       const prefix = getPrefix(effectiveConstructor, tag, label);
       base = `${prefix}${getTemporalDisplayString(value)}`;

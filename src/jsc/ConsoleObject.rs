@@ -1938,8 +1938,7 @@ pub mod formatter {
         RevokedProxy,
     }
 
-    /// Class label (the `@@toStringTag` spelling) for a non-zero Temporal type
-    /// discriminant from `Bun__JSValue__temporalObjectType`.
+    /// Label for a non-zero `Bun__JSValue__temporalObjectType` discriminant.
     pub fn temporal_class_label(temporal_type: u8) -> &'static str {
         match temporal_type {
             1 => "Temporal.Instant",
@@ -2325,8 +2324,7 @@ pub mod formatter {
                 T::JSDate => TagPayload::JSON,
                 T::JSPromise => TagPayload::Promise,
 
-                // Temporal cells are plain `ObjectType`; only ClassInfo can
-                // tell them apart from other host objects.
+                // Temporal cells are plain `ObjectType`; only ClassInfo tells them apart.
                 T::Object => {
                     if crate::cpp::Bun__JSValue__temporalObjectType(value) != 0 {
                         TagPayload::Temporal
@@ -4337,10 +4335,8 @@ pub mod formatter {
             Ok(())
         }
 
-        /// `Temporal.PlainDate 2020-01-02` — the class label uncolored, the
-        /// default-options `toString()` text in Date's magenta. A single
-        /// atomic token like `Date`: own properties and subclass names are
-        /// ignored.
+        /// `Temporal.PlainDate 2020-01-02` — label uncolored, `toString()` text
+        /// in Date's magenta; own properties and subclasses ignored like `Date`.
         #[inline(never)]
         fn print_temporal<const C: bool>(
             &mut self,

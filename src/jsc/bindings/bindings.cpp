@@ -5912,18 +5912,16 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double Bun__gregorianDateTimeToMSInZone(JSC::
     return static_cast<double>(r->epochMilliseconds());
 }
 
-// Classifies a JSValue as one of the Temporal object types, or 0 for
-// everything else. Discriminants: 1 Instant, 2 PlainDateTime, 3 PlainDate,
-// 4 PlainTime, 5 ZonedDateTime, 6 PlainYearMonth, 7 PlainMonthDay,
-// 8 Duration.
+// Temporal type discriminant of a JSValue: 0 not Temporal, 1 Instant,
+// 2 PlainDateTime, 3 PlainDate, 4 PlainTime, 5 ZonedDateTime,
+// 6 PlainYearMonth, 7 PlainMonthDay, 8 Duration.
 extern "C" [[ZIG_EXPORT(nothrow)]] uint8_t Bun__JSValue__temporalObjectType(JSC::EncodedJSValue encodedValue)
 {
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
     if (!value.isCell())
         return 0;
     JSC::JSCell* cell = value.asCell();
-    // Every Temporal class is a plain ObjectType cell; anything else
-    // (JSFinalObject, arrays, dates, functions, …) short-circuits here.
+    // Every Temporal class is a plain ObjectType cell; anything else short-circuits.
     if (cell->type() != JSC::ObjectType)
         return 0;
     if (cell->inherits<JSC::TemporalInstant>())
@@ -5945,9 +5943,8 @@ extern "C" [[ZIG_EXPORT(nothrow)]] uint8_t Bun__JSValue__temporalObjectType(JSC:
     return 0;
 }
 
-// Default-options `toString()` text for a Temporal object, for inspection
-// (see Bun::temporalDisplayString in Temporal.cpp). `temporalType` is a
-// non-zero result of the classifier above for `encodedValue`.
+// Default-options `toString()` text for a Temporal object (see
+// Bun::temporalDisplayString); `temporalType` is a non-zero classifier result.
 extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__Temporal__toDisplayString(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, uint8_t temporalType, BunString* out)
 {
     auto& vm = JSC::getVM(globalObject);

@@ -1,9 +1,6 @@
-// Shared formatting for Temporal values in console.log/Bun.inspect
-// (ConsoleObject.rs), the test runner's pretty-format (pretty_format.rs), and
-// util.inspect (internal/util/inspect.js, via the host functions at the
-// bottom). The text matches each type's spec `toString()` with default
-// options, built from internal slots so tampered prototypes can't change or
-// observe inspection.
+// Temporal value formatting shared by console.log/Bun.inspect, the test
+// runner's pretty-format, and util.inspect: each type's default-options spec
+// toString() text, built from internal slots, never from user-reachable code.
 
 #include "root.h"
 #include "Temporal.h"
@@ -28,9 +25,8 @@
 namespace Bun {
 
 // https://tc39.es/proposal-temporal/#sec-temporal-temporalzoneddatetimetostring
-// with precision/showOffset/showTimeZone/showCalendar all ~auto~, mirroring
-// `temporalZonedDateTimeToString` (file-static in
-// TemporalZonedDateTimePrototype.cpp, so it cannot be called directly).
+// with every option ~auto~; JSC's own implementation is file-static in
+// TemporalZonedDateTimePrototype.cpp, so the recipe is replicated here.
 static WTF::String zonedDateTimeDisplayString(JSC::JSGlobalObject* globalObject, JSC::TemporalZonedDateTime* zonedDateTime)
 {
     auto& vm = JSC::getVM(globalObject);

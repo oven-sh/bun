@@ -524,8 +524,7 @@ impl Tag {
             JSType::WeakSet | JSType::Set => Tag::Set,
             JSType::JSDate => Tag::JSON,
             JSType::JSPromise => Tag::Promise,
-            // Temporal cells are plain `ObjectType`; only ClassInfo can tell
-            // them apart from other host objects.
+            // Temporal cells are plain `ObjectType`; only ClassInfo tells them apart.
             JSType::Object => {
                 if bun_jsc::cpp::Bun__JSValue__temporalObjectType(value) != 0 {
                     Tag::Temporal
@@ -1047,9 +1046,8 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 }
 
 impl<'a> Formatter<'a> {
-    /// `Temporal.PlainDate 2020-01-02` — the same atomic token console.log
-    /// prints (label uncolored, default-options `toString()` text in Date's
-    /// magenta), so expect diffs and snapshots show the value.
+    /// `Temporal.PlainDate 2020-01-02`, the token console.log prints. Kept
+    /// `#[inline(never)]` so its locals stay out of recursive `print_as` frames.
     #[inline(never)]
     fn print_temporal<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
@@ -1896,9 +1894,6 @@ impl<'a> Formatter<'a> {
                     writer.print(format_args!("{}", str));
                 }
                 Tag::Temporal => {
-                    // Hoisted to `#[inline(never)]` so this arm's locals don't
-                    // grow every recursive `print_as` frame (dead const-generic
-                    // arms aren't DCE'd in debug builds).
                     self.print_temporal::<W, ENABLE_ANSI_COLORS>(writer.ctx, value)?;
                 }
                 Tag::Event => {

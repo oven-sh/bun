@@ -511,7 +511,7 @@ impl Watcher {
         loader: Loader,
         parent_hash: HashType,
         package_json: Option<&'static PackageJSON>,
-    ) -> sys::Result<()> {
+    ) -> sys::Result<FdOwnership> {
         #[cfg(windows)]
         {
             // on windows we can only watch items that are in the directory tree of the top level dir
@@ -521,7 +521,7 @@ impl Watcher {
                     "File {} is not in the project directory and will not be watched\n",
                     bstr::BStr::new(file_path)
                 );
-                return Ok(());
+                return Ok(FdOwnership::Caller);
             }
         }
 
@@ -574,7 +574,7 @@ impl Watcher {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index,
         });
-        Ok(())
+        Ok(FdOwnership::Watcher)
     }
 
     fn append_directory_assume_capacity<const CLONE_FILE_PATH: bool>(
@@ -672,7 +672,7 @@ impl Watcher {
         loader: Loader,
         dir_fd: Fd,
         package_json: Option<&'static PackageJSON>,
-    ) -> sys::Result<()> {
+    ) -> sys::Result<FdOwnership> {
         // RAII guard: `lock_guard()` holds the
         // mutex by `BackRef`, not a borrow of `self`, so the `&mut self` calls
         // below are fine and every return path unlocks.
@@ -740,7 +740,10 @@ impl Watcher {
             Err(err) => {
                 return Err(err.with_path(file_path));
             }
-            Ok(()) => {}
+            // Not appended (e.g. outside the project root on Windows); the
+            // caller keeps the descriptor.
+            Ok(FdOwnership::Caller) => return Ok(FdOwnership::Caller),
+            Ok(FdOwnership::Watcher) => {}
         }
 
         if true {
@@ -761,7 +764,7 @@ impl Watcher {
             );
         }
 
-        Ok(())
+        Ok(FdOwnership::Watcher)
     }
 
     #[inline]
@@ -899,7 +902,7 @@ impl Watcher {
             package_json,
         );
         self.mutex.unlock();
-        r.map(|()| FdOwnership::Watcher)
+        r
     }
 
     pub fn index_of(&self, hash: HashType) -> Option<u32> {
@@ -1067,8 +1070,10 @@ pub enum FdOwnership {
     /// The watchlist stored the descriptor; `flush_evictions`/shutdown will
     /// close it. The caller must not use or close it afterwards.
     Watcher,
-    /// The file was already watched with a valid stored descriptor; the
-    /// caller still owns `fd` and must close it (or keep using it).
+    /// The watchlist did not take the descriptor: the file was already
+    /// watched with a valid stored one, or the path is not watchable (e.g.
+    /// outside the project root on Windows). The caller still owns `fd` and
+    /// must close it (or keep using it).
     Caller,
 }
 

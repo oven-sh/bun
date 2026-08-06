@@ -1219,13 +1219,17 @@ pub trait BaseWindowsPipeWriter: Sized {
         }
     }
 
+    /// Also the single point where this writer records itself as the owner a
+    /// VM teardown stops its pipe/tty through: every way a source is installed
+    /// (`start`, `start_with_pipe`, `set_pipe`, `start_sync`, `start_with_file`)
+    /// funnels through here.
     fn set_parent(&mut self, parent: *mut Self::Parent) {
         self.set_parent_ptr(parent);
         if !self.is_done() {
             // raw self-ptr first to dodge the immutable-then-mutable conflict
             let self_ptr = core::ptr::from_mut(self).cast::<c_void>();
-            if let Some(pipe) = self.source_mut().as_mut() {
-                pipe.set_data(self_ptr);
+            if let Some(source) = self.source_mut().as_mut() {
+                source.set_owner(self_ptr, Self::stop_for_vm_teardown);
             }
         }
     }
@@ -1249,7 +1253,7 @@ pub trait BaseWindowsPipeWriter: Sized {
     fn start_sync(&mut self, fd: Fd, _pollable: bool) -> sys::Result<()> {
         debug_assert!(self.source().is_none());
         let mut source = Source::SyncFile(Source::open_file(fd));
-        source.set_owner(core::ptr::from_mut(self).cast::<c_void>(), Self::stop_for_vm_teardown);
+        source.set_data(core::ptr::from_mut(self).cast::<c_void>());
         *self.source_mut() = Some(source);
         let p = self.parent_ptr();
         self.set_parent(p);
@@ -1259,7 +1263,7 @@ pub trait BaseWindowsPipeWriter: Sized {
     fn start_with_file(&mut self, fd: Fd) -> sys::Result<()> {
         debug_assert!(self.source().is_none());
         let mut source = Source::File(Source::open_file(fd));
-        source.set_owner(core::ptr::from_mut(self).cast::<c_void>(), Self::stop_for_vm_teardown);
+        source.set_data(core::ptr::from_mut(self).cast::<c_void>());
         *self.source_mut() = Some(source);
         let p = self.parent_ptr();
         self.set_parent(p);
@@ -1284,7 +1288,7 @@ pub trait BaseWindowsPipeWriter: Sized {
         // TODO: take ownership of the fd for pipe/tty sources via a MovableFd
         // overload.
         let _ = matches!(source, Source::Pipe(_) | Source::Tty(_));
-        source.set_owner(core::ptr::from_mut(self).cast::<c_void>(), Self::stop_for_vm_teardown);
+        source.set_data(core::ptr::from_mut(self).cast::<c_void>());
         *self.source_mut() = Some(source);
         let p = self.parent_ptr();
         self.set_parent(p);

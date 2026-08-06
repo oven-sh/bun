@@ -1388,7 +1388,9 @@ impl<'a> Resolver<'a> {
 
         // A path with a null byte cannot exist on the filesystem. Continuing
         // anyways would cause assertion failures.
-        if strings::index_of_char(import_path, 0).is_some() {
+        if strings::index_of_char(import_path, 0).is_some()
+            || strings::index_of_char(source_dir_normalized, 0).is_some()
+        {
             let _ = self.flush_debug_logs(FlushMode::Fail);
             self.extension_order = original_order;
             return ResultUnion::NotFound;
@@ -4054,6 +4056,13 @@ impl<'a> Resolver<'a> {
         // so return it here instead of walking the cache with an empty key.
         // https://github.com/oven-sh/bun/issues/30429
         if input_path.is_empty() {
+            return Ok(None);
+        }
+
+        // A path with an interior null byte cannot name a real directory.
+        // The open(2) below reads a C string, so it would open the path's
+        // prefix and cache the wrong directory's entries under the full key.
+        if strings::index_of_char(input_path, 0).is_some() {
             return Ok(None);
         }
 

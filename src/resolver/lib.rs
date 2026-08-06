@@ -1052,6 +1052,12 @@ pub mod fs {
 
         /// `open(path, O_DIRECTORY)`.
         pub(crate) fn open_dir(&self, unsafe_dir_string: &[u8]) -> crate::CrateResult<Fd> {
+            // A path with an interior NUL cannot name a real directory; the
+            // C-string open would act on the path's prefix and read the wrong
+            // directory. Report it as nonexistent instead.
+            if strings::index_of_char(unsafe_dir_string, 0).is_some() {
+                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
+            }
             #[cfg(windows)]
             {
                 // NtCreateFile with FILE_DIRECTORY_FILE/FILE_LIST_DIRECTORY so

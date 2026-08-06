@@ -30,6 +30,28 @@ pub mod js_bundler {
 
     type OwnedString = MutableString;
 
+    /// Output-path options end up in C-string syscalls (mkdir/open), which
+    /// stop at the first NUL and write to the path's prefix while the build
+    /// reports the full string. Reject interior NULs at config parse.
+    fn check_path_null_bytes(
+        global_this: &JSGlobalObject,
+        name: &str,
+        slice: &[u8],
+    ) -> JsResult<()> {
+        if bun_core::strings::index_of_char(slice, 0).is_some() {
+            return Err(global_this
+                .err(
+                    jsc::ErrCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "The property '{name}' must be a string without null bytes. Received {}",
+                        bun_core::fmt::quote(slice)
+                    ),
+                )
+                .throw());
+        }
+        Ok(())
+    }
+
     /// `options::JSX::Runtime` → `api::JsxRuntime` (only the reverse `From`
     /// exists upstream).
     fn jsx_runtime_to_api(r: options::JSX::Runtime) -> api::JsxRuntime {
@@ -400,6 +422,7 @@ pub mod js_bundler {
 
             if let Some(outfile) = object.get_own(global_this, &BunString::static_str("outfile"))? {
                 let slice = outfile.to_slice(global_this)?;
+                check_path_null_bytes(global_this, "compile.outfile", slice.slice())?;
                 this.outfile.append_slice_exact(slice.slice())?;
             }
 
@@ -631,6 +654,7 @@ pub mod js_bundler {
 
             let mut has_out_dir = false;
             if let Some(slice) = config.get_optional_slice(global_this, b"outdir")? {
+                check_path_null_bytes(global_this, "outdir", slice.slice())?;
                 this.outdir.append_slice_exact(slice.slice())?;
                 has_out_dir = true;
                 drop(slice);
@@ -858,6 +882,7 @@ pub mod js_bundler {
             {
                 let path: ZigStringSlice = 'brk: {
                     if let Some(slice) = config.get_optional_slice(global_this, b"root")? {
+                        check_path_null_bytes(global_this, "root", slice.slice())?;
                         break 'brk slice;
                     }
 
@@ -1149,18 +1174,21 @@ pub mod js_bundler {
                     // metafile: "path/to/meta.json" - shorthand for { json: "..." }
                     this.metafile = true;
                     let slice = metafile_value.to_slice(global_this)?;
+                    check_path_null_bytes(global_this, "metafile", slice.slice())?;
                     this.metafile_json_path.append_slice_exact(slice.slice())?;
                     drop(slice);
                 } else if metafile_value.is_object() {
                     // metafile: { json?: string, markdown?: string }
                     this.metafile = true;
                     if let Some(slice) = metafile_value.get_optional_slice(global_this, b"json")? {
+                        check_path_null_bytes(global_this, "metafile.json", slice.slice())?;
                         this.metafile_json_path.append_slice_exact(slice.slice())?;
                         drop(slice);
                     }
                     if let Some(slice) =
                         metafile_value.get_optional_slice(global_this, b"markdown")?
                     {
+                        check_path_null_bytes(global_this, "metafile.markdown", slice.slice())?;
                         this.metafile_markdown_path
                             .append_slice_exact(slice.slice())?;
                         drop(slice);

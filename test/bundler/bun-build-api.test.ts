@@ -1,6 +1,6 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
+import { mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -178,6 +178,43 @@ describe("Bun.build", () => {
         sourcemap: "invalid",
       } as any),
     ).toThrow();
+  });
+
+  test("output paths with interior null bytes throw and write nothing", () => {
+    using dir = tempDir("bun-build-nul-path", {
+      "e.mjs": "export default 1;",
+    });
+    const entry = join(String(dir), "e.mjs");
+    expect(() =>
+      Bun.build({
+        entrypoints: [entry],
+        outdir: join(String(dir), "out\0-REQUESTED"),
+      }),
+    ).toThrow("The property 'outdir' must be a string without null bytes");
+    expect(() =>
+      Bun.build({
+        entrypoints: [entry],
+        outdir: join(String(dir), "out"),
+        root: String(dir) + "\0zz",
+      }),
+    ).toThrow("The property 'root' must be a string without null bytes");
+    expect(() =>
+      Bun.build({
+        entrypoints: [entry],
+        compile: {
+          outfile: join(String(dir), "app\0zz"),
+        },
+      } as any),
+    ).toThrow("The property 'compile.outfile' must be a string without null bytes");
+    expect(() =>
+      Bun.build({
+        entrypoints: [entry],
+        outdir: join(String(dir), "out"),
+        metafile: join(String(dir), "meta\0.json"),
+      } as any),
+    ).toThrow("The property 'metafile' must be a string without null bytes");
+    // the truncated "out" directory must not have been created
+    expect(readdirSync(String(dir)).sort()).toEqual(["e.mjs"]);
   });
 
   test("returns errors properly", async () => {

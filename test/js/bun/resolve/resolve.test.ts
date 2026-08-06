@@ -2,6 +2,7 @@ import { pathToFileURL } from "bun";
 import { describe, expect, it } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import { createRequire } from "node:module";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -1100,4 +1101,22 @@ it.skipIf(isWindows)("reports a resolution error for an absolute specifier of th
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("ResolveMessage ERR_MODULE_NOT_FOUND\n");
   expect(exitCode).toBe(0);
+});
+
+it("does not resolve through a parent directory containing an interior null byte", () => {
+  using dir = tempDir("resolver-nul-parent", {
+    "sub/m.cjs": "module.exports = 1;",
+  });
+  const sub = join(String(dir), "sub");
+  expect(Bun.resolveSync("./m.cjs", sub)).toBe(join(sub, "m.cjs"));
+  expect(() => Bun.resolveSync("./m.cjs", sub + "\0zz")).toThrow("Cannot find module");
+
+  const req = createRequire(join(String(dir), "x.js"));
+  expect(req.resolve("./m.cjs", { paths: [sub] })).toBe(join(sub, "m.cjs"));
+  try {
+    req.resolve("./m.cjs", { paths: [sub + "\0zz"] });
+    expect.unreachable();
+  } catch (e: any) {
+    expect(e.code).toBe("MODULE_NOT_FOUND");
+  }
 });

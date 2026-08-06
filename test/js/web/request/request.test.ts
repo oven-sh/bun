@@ -175,3 +175,188 @@ describe("RequestInit signal presence", () => {
     });
   });
 });
+
+// The fetch spec copies a Request `input`'s internal state ("Set request to
+// input's request") without consulting JS-visible getters, even when the input
+// is a subclass instance or carries shadowing own properties. Node behaves the
+// same. Only the `init` argument has dictionary (getter) semantics.
+describe("new Request(request) copies internal state without calling getters", () => {
+  test("own-property getters on the input are never called", () => {
+    let getterHits = 0;
+    const input = new Request("http://localhost/original", {
+      method: "PUT",
+      headers: { "x-real": "1" },
+    });
+    for (const name of ["url", "method", "headers", "body", "signal", "redirect", "cache", "mode"]) {
+      Object.defineProperty(input, name, {
+        get() {
+          getterHits++;
+          return undefined;
+        },
+      });
+    }
+
+    const copy = new Request(input);
+    expect({
+      url: copy.url,
+      method: copy.method,
+      headers: [...copy.headers],
+      redirect: copy.redirect,
+      getterHits,
+    }).toEqual({
+      url: "http://localhost/original",
+      method: "PUT",
+      headers: [["x-real", "1"]],
+      redirect: "follow",
+      getterHits: 0,
+    });
+  });
+
+  test("subclass getter overrides on the input are ignored", () => {
+    let getterHits = 0;
+    class MyRequest extends Request {
+      get url() {
+        getterHits++;
+        return "http://localhost/from-getter";
+      }
+      get method() {
+        getterHits++;
+        return "DELETE";
+      }
+      get headers() {
+        getterHits++;
+        return new Headers({ "x-from-getter": "1" });
+      }
+    }
+
+    const copy = new Request(new MyRequest("http://localhost/original", { headers: { "x-real": "1" } }));
+    expect({
+      url: copy.url,
+      method: copy.method,
+      headers: [...copy.headers],
+      getterHits,
+    }).toEqual({
+      url: "http://localhost/original",
+      method: "GET",
+      headers: [["x-real", "1"]],
+      getterHits: 0,
+    });
+  });
+
+  test("init members win; everything else comes from the input's internal state", () => {
+    class MyRequest extends Request {
+      get url() {
+        return "http://localhost/from-getter";
+      }
+      get headers() {
+        return new Headers({ "x-from-getter": "1" });
+      }
+      get redirect() {
+        return "error";
+      }
+    }
+
+    const input = new MyRequest("http://localhost/original", { headers: { "x-real": "1" } });
+    const copy = new Request(input, { method: "POST" });
+    expect({
+      url: copy.url,
+      method: copy.method,
+      headers: [...copy.headers],
+      redirect: copy.redirect,
+    }).toEqual({
+      url: "http://localhost/original",
+      method: "POST",
+      headers: [["x-real", "1"]],
+      redirect: "follow",
+    });
+  });
+
+  test("body comes from the input's internal state, not the body getter", async () => {
+    const make = () => {
+      const input = new Request("http://localhost/original", { method: "POST", body: "real-body" });
+      Object.defineProperty(input, "body", {
+        get() {
+          return "getter-body";
+        },
+      });
+      return input;
+    };
+    expect(await new Request(make()).text()).toBe("real-body");
+    expect(await new Request(make(), {}).text()).toBe("real-body");
+  });
+
+  test("the input's signal carries over even when its signal getter is shadowed", () => {
+    const ctl = new AbortController();
+    const input = new Request("http://localhost/", { signal: ctl.signal });
+    Object.defineProperty(input, "signal", {
+      get() {
+        return undefined;
+      },
+    });
+    const copy = new Request(input, {});
+    ctl.abort();
+    expect(copy.signal.aborted).toBe(true);
+  });
+
+  test("throws TypeError when the input's body is already used", async () => {
+    const input = new Request("http://localhost/", { method: "POST", body: "x" });
+    await input.text();
+    expect(() => new Request(input)).toThrow(TypeError);
+    for (const init of [undefined, {}, { body: null }] as const) {
+      expect(() => new Request(input, init)).toThrow(
+        "Cannot construct a Request with a Request object that has already been used.",
+      );
+    }
+
+    // an init-provided body replaces the input's, so the used input body is
+    // never read and nothing throws
+    const replaced = new Request(input, { body: "fresh" });
+    expect(await replaced.text()).toBe("fresh");
+  });
+
+  test("throws TypeError when the input's body stream is locked", () => {
+    const input = new Request("http://localhost/", {
+      method: "POST",
+      body: new ReadableStream({
+        start(c) {
+          c.enqueue(new Uint8Array([97]));
+          c.close();
+        },
+      }),
+    });
+    input.body!.getReader();
+    expect(() => new Request(input)).toThrow(
+      "Cannot construct a Request with a Request object that has already been used.",
+    );
+  });
+
+  test("an unlocked stream-body input still copies fine", async () => {
+    const input = new Request("http://localhost/", {
+      method: "POST",
+      body: new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("st"));
+          c.close();
+        },
+      }),
+    });
+    expect(await new Request(input).text()).toBe("st");
+  });
+
+  test("a Request passed as init (second argument) keeps dictionary getter semantics", () => {
+    let getterHits = 0;
+    const asInit = new Request("http://localhost/original", { method: "PUT" });
+    Object.defineProperty(asInit, "method", {
+      get() {
+        getterHits++;
+        return "PATCH";
+      },
+    });
+    const built = new Request("http://localhost/base", asInit);
+    expect({ url: built.url, method: built.method, getterHits }).toEqual({
+      url: "http://localhost/base",
+      method: "PATCH",
+      getterHits: 1,
+    });
+  });
+});

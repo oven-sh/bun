@@ -1121,15 +1121,47 @@ impl Request {
         let values_to_try = &values_to_try_[0..((!is_first_argument_a_url) as usize
             + (arguments.len() > 1 && arguments[1].is_object()) as usize)];
 
-        for &value in values_to_try {
+        for (value_index, &value) in values_to_try.iter().enumerate() {
             let value_type = value.js_type();
+            // The last entry carries the constructor's first argument (the
+            // `input` in `new Request(input, init?)`) whenever that argument
+            // was an object rather than a URL; any other entry carries `init`
+            // (dictionary) semantics.
+            let is_input_argument =
+                !is_first_argument_a_url && value_index == values_to_try.len() - 1;
             let explicit_check = values_to_try.len() == 2
                 && value_type == bun_jsc::JSType::FinalObject
                 && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
             if value_type == bun_jsc::JSType::DOMWrapper {
-                if let Some(request) = value.as_direct::<Request>() {
-                    // SAFETY: as_direct returns a live *mut Request payload (m_ctx)
+                // A Request `input` is copied from internal state without
+                // consulting JS-visible getters (fetch spec: "Set request to
+                // input's request"), so subclass instances and inputs with
+                // shadowing own properties must take this path too; their
+                // transitioned structures make `as_direct` reject them. A
+                // Request used as `init` keeps dictionary semantics: only a
+                // pristine one may skip the getters.
+                let request_ptr = if is_input_argument {
+                    value.as_::<Request>()
+                } else {
+                    value.as_direct::<Request>()
+                };
+                if let Some(request) = request_ptr {
+                    // SAFETY: the cast returns a live *mut Request payload (m_ctx)
                     let request = unsafe { &*request };
+                    // Fetch spec Request(input): when `init` contributed no
+                    // body, a Request input whose body is disturbed or locked
+                    // is unusable and the constructor throws.
+                    if is_input_argument
+                        && (!fields.contains(Fields::Body)
+                            || matches!(req.body_value(), BodyValue::Null))
+                        && request.body_stream_check(global_this, |s, g| {
+                            s.is_disturbed(g) || s.is_locked(g)
+                        })
+                    {
+                        bail!(Err(global_this.throw_type_error(format_args!(
+                            "Cannot construct a Request with a Request object that has already been used."
+                        ))));
+                    }
                     if values_to_try.len() == 1 {
                         match Request::clone_into(
                             request,
@@ -1193,6 +1225,29 @@ impl Request {
                                 fields.insert(Fields::Body);
                             }
                         }
+                    }
+
+                    if is_input_argument {
+                        // The input's remaining members also come from
+                        // internal state; marking every field consumed keeps
+                        // the dictionary fallbacks below from running JS
+                        // getters against the input.
+                        if !fields.contains(Fields::Url) {
+                            let url = request.url.get();
+                            if !url.is_empty() {
+                                req.url.set(url.dupe_ref());
+                                fields.insert(Fields::Url);
+                            }
+                        }
+                        if !fields.contains(Fields::Signal) {
+                            if let Some(signal) = request.signal.get() {
+                                // `AbortSignalRef::clone` is a C++ `ref()`.
+                                req.signal.set(Some(signal.clone()));
+                            }
+                            fields.insert(Fields::Signal);
+                        }
+                        fields.insert(Fields::Headers);
+                        fields.insert(Fields::Body);
                     }
                 }
 

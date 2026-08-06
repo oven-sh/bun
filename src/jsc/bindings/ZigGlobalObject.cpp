@@ -3632,6 +3632,8 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
 
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(keyZ.toWTFString(), referrerZ.toWTFString())) {
+            keyZ.deref();
+            referrerZ.deref();
             return Identifier::fromString(globalObject->vm(), resolvedString.value());
         }
     } else {

@@ -197,7 +197,7 @@ plugin({
 });
 
 // This is to test that it works when imported from a separate file
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
 import "../../third_party/svelte";
 import "./module-plugins";
@@ -722,3 +722,66 @@ it.concurrent("a no-op onResolve that returns args.path unchanged is transparent
   expect(stdout.trim() || stderr).toBe("entry ran:dep");
   expect(exitCode).toBe(0);
 });
+
+it.concurrent(
+  "moduleLoaderResolve releases the specifier StringImpl on a virtual-module hit",
+  async () => {
+    // GlobalObject::moduleLoaderResolve acquires keyZ/referrerZ via
+    // Bun::toStringRef (+1 ref each) and must deref them on every exit. The
+    // virtual-module early return used to skip the deref. With a file:// key the
+    // resolver allocates a fresh fileSystemPath() StringImpl on every call, so
+    // each import that resolves to a registered virtual module leaked one copy
+    // of the path string.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const pad = Buffer.alloc(128 * 1024, "x").toString();
+          const urlKey = (process.platform === "win32" ? "file:///C:/v" : "file:///v") + pad;
+          // The virtual-module map is consulted with the raw specifier in
+          // moduleLoaderImportModule and with fileSystemPath() in
+          // moduleLoaderResolve, so both forms must be registered for the
+          // resolve-time lookup to hit the early return this test exercises.
+          const pathKey = Bun.fileURLToPath(urlKey);
+          Bun.plugin({
+            name: "virtual-resolve-leak",
+            setup(build) {
+              build.module(urlKey, () => ({ exports: { ok: true }, loader: "object" }));
+              build.module(pathKey, () => ({ exports: { ok: true }, loader: "object" }));
+            },
+          });
+          const first = await import(urlKey);
+          if (!first.ok) throw new Error("virtual module did not load");
+          Bun.gc(true);
+          const before = process.memoryUsage.rss();
+          for (let i = 0; i < 200; i++) await import(urlKey);
+          Bun.gc(true);
+          const after = process.memoryUsage.rss();
+          console.log(JSON.stringify({ deltaMB: (after - before) / 1024 / 1024 }));
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        // ASAN's allocator quarantine retains freed allocations (default 256 MB),
+        // which would make the fixed build's RSS look the same as the leaking
+        // one. Disable it for this measurement subprocess only.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { deltaMB } = JSON.parse(stdout.trim()) as { deltaMB: number };
+    // Unfixed: ~27 MB on release / ~32 MB on debug+ASAN (one 128 KB StringImpl
+    // leaked per import). Fixed: low-single-digit MB on release; ~4-10 MB of
+    // ambient growth on debug+ASAN even with quarantine disabled.
+    expect(deltaMB).toBeLessThan(isASAN || isDebug ? 20 : 12);
+    expect(exitCode).toBe(0);
+  },
+  // WTF::URL parsing + fileSystemPath() over ~25 MB of URL bytes is ~25 s under
+  // debug+ASAN; the workload cannot be shrunk without losing separation from
+  // the ambient RSS noise. Same allowance as test/js/bun/glob/leak.test.ts.
+  60_000,
+);

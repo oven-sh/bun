@@ -58,6 +58,11 @@ public:
     // as stolen).
     bool release(Zig::GlobalObject*, uint64_t id, const String& name);
 
+    // Grant whatever became grantable since the last pass. The caller must
+    // have registered every id it owns before calling this: events for this
+    // thread dispatch synchronously.
+    void processQueue(Zig::GlobalObject* selfGlobalObject);
+
 private:
     friend class WTF::NeverDestroyed<BunWebLocksRegistry>;
     BunWebLocksRegistry() = default;
@@ -86,7 +91,6 @@ private:
     void markDirtyLocked(const String& name) WTF_REQUIRES_LOCK(m_lock);
     void purgeContextLocked(ScriptExecutionContextIdentifier) WTF_REQUIRES_LOCK(m_lock);
     bool deliverEvents(Zig::GlobalObject* selfGlobalObject, ScriptExecutionContextIdentifier self, EventsByContext&&);
-    void processQueue(Zig::GlobalObject* selfGlobalObject);
     static bool dispatchEventsToJS(Zig::GlobalObject*, const Vector<Event>&);
 
     static std::atomic<bool> s_hasBeenUsed;

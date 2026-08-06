@@ -212,12 +212,13 @@ uint64_t BunWebLocksRegistry::request(Zig::GlobalObject* globalObject, const Str
         }
     }
 
+    // Only steal-victim events can exist here; their ids predate this call
+    // and are registered. The caller runs processQueue() once it has
+    // registered the new id: a grant for it may already be pending if another
+    // thread released the name while this critical section was in flight.
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    bool ok = deliverEvents(globalObject, self, WTF::move(eventsByContext));
-    RETURN_IF_EXCEPTION(scope, id);
-    if (ok)
-        processQueue(globalObject);
+    deliverEvents(globalObject, self, WTF::move(eventsByContext));
     RETURN_IF_EXCEPTION(scope, id);
     return id;
 }

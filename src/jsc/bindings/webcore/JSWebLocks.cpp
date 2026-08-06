@@ -256,13 +256,8 @@ static JSObject* dcChannel(Zig::GlobalObject* globalObject, WebLocksClient::DCCh
         client.dcChannelsInitialized = true;
         JSValue dcModuleValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::NodeDiagnosticsChannel);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        if (scope.exception() || !dcModuleValue || !dcModuleValue.isObject()) [[unlikely]] {
-            // Keeps a termination exception pending (e.g. this worker is
-            // being terminated mid-require); the caller's next exception
-            // check propagates it.
-            (void)scope.tryClearException();
+        if (!dcModuleValue || !dcModuleValue.isObject()) [[unlikely]]
             return nullptr;
-        }
         auto* dcModule = asObject(dcModuleValue);
         JSValue channelFunction = dcModule->get(globalObject, Identifier::fromString(vm, "channel"_s));
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -834,6 +829,11 @@ static JSValue webLockManagerRequestImpl(Zig::GlobalObject* globalObject, ThrowS
         dispatchWebLockEvent(globalObject, immediateEvent, id);
         RETURN_IF_EXCEPTION(scope, {});
     }
+    // Now that the id is registered, grant anything that became grantable
+    // while the registry critical section was in flight (possibly this very
+    // request, if another thread released the name in that window).
+    BunWebLocksRegistry::singleton().processQueue(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     return promise;
 }
 

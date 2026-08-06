@@ -493,12 +493,15 @@ describe("query", () => {
         `,
         { eval: true },
       );
-      const { snapshot, threadId } = await nextMessage(worker);
-      expect(snapshot.held).toEqual([
-        { name: "query-worker-held", mode: "exclusive", clientId: `node-${process.pid}-${threadId}` },
-      ]);
-      expect(snapshot.held.find((l: any) => l.name === "query-main-held")).toBeUndefined();
-      await worker.terminate();
+      try {
+        const { snapshot, threadId } = await nextMessage(worker);
+        expect(snapshot.held).toEqual([
+          { name: "query-worker-held", mode: "exclusive", clientId: `node-${process.pid}-${threadId}` },
+        ]);
+        expect(snapshot.held.find((l: any) => l.name === "query-main-held")).toBeUndefined();
+      } finally {
+        await worker.terminate();
+      }
     });
     const mainSnapshot = await navigator.locks.query();
     expect(mainSnapshot.held.find((l: any) => l.name === "query-worker-held")).toBeUndefined();
@@ -536,10 +539,15 @@ describe("worker threads", () => {
         requesting.reject(error);
         workerResult.reject(error);
       });
-      await requesting.promise;
-      // the worker's request is already enqueued; record that the grant may
-      // only happen after this point
-      Atomics.store(flag, 0, 1);
+      try {
+        await requesting.promise;
+        // the worker's request is already enqueued; record that the grant may
+        // only happen after this point
+        Atomics.store(flag, 0, 1);
+      } catch (error) {
+        await worker.terminate();
+        throw error;
+      }
     });
     const result = await workerResult.promise;
     expect(result).toEqual({ mode: "exclusive", flagAtGrant: 1 });
@@ -557,12 +565,16 @@ describe("worker threads", () => {
       `,
       { eval: true },
     );
-    expect(await nextMessage(worker)).toBe("held");
-    // the worker's event loop is now empty aside from the never-settling lock
-    // callback, so the worker exits and its lock must be cleaned up
-    await navigator.locks.request("worker-exit-held", lock => {
-      expect(lock!.name).toBe("worker-exit-held");
-    });
+    try {
+      expect(await nextMessage(worker)).toBe("held");
+      // the worker's event loop is now empty aside from the never-settling
+      // lock callback, so the worker exits and its lock must be cleaned up
+      await navigator.locks.request("worker-exit-held", lock => {
+        expect(lock!.name).toBe("worker-exit-held");
+      });
+    } finally {
+      await worker.terminate();
+    }
   });
 
   test("terminating a worker with a held lock releases it", async () => {
@@ -578,10 +590,14 @@ describe("worker threads", () => {
       `,
       { eval: true },
     );
-    expect(await nextMessage(worker)).toBe("held");
-    const waiter = navigator.locks.request("worker-terminate-held", lock => lock!.name);
-    await worker.terminate();
-    expect(await waiter).toBe("worker-terminate-held");
+    try {
+      expect(await nextMessage(worker)).toBe("held");
+      const waiter = navigator.locks.request("worker-terminate-held", lock => lock!.name);
+      await worker.terminate();
+      expect(await waiter).toBe("worker-terminate-held");
+    } finally {
+      await worker.terminate();
+    }
   });
 
   test("terminating a worker with a pending request cleans it up", async () => {
@@ -597,9 +613,12 @@ describe("worker threads", () => {
         `,
         { eval: true },
       );
-      const message = await nextMessage(worker);
-      expect(message).toEqual({ requesting: true });
-      await worker.terminate();
+      try {
+        const message = await nextMessage(worker);
+        expect(message).toEqual({ requesting: true });
+      } finally {
+        await worker.terminate();
+      }
     });
     await navigator.locks.request("worker-terminate-pending", lock => {
       expect(lock!.name).toBe("worker-terminate-pending");
@@ -624,19 +643,22 @@ describe("worker threads", () => {
       `,
       { eval: true, workerData: sab },
     );
-    // Busy-wait for the steal to commit, then settle the stolen holder's
-    // callback immediately: its release usually runs before the stolen
-    // notification task is processed, and the outcome must be AbortError in
-    // either order.
-    const deadline = Date.now() + 15_000;
-    while (Atomics.load(flag, 0) === 0 && Date.now() < deadline) {}
-    expect(Atomics.load(flag, 0)).toBe(1);
-    release.resolve("finished-anyway");
-    await expect(holder).rejects.toMatchObject({
-      name: "AbortError",
-      message: "The operation was aborted",
-    });
-    await worker.terminate();
+    try {
+      // Busy-wait for the steal to commit, then settle the stolen holder's
+      // callback immediately: its release usually runs before the stolen
+      // notification task is processed, and the outcome must be AbortError in
+      // either order.
+      const deadline = Date.now() + 15_000;
+      while (Atomics.load(flag, 0) === 0 && Date.now() < deadline) {}
+      expect(Atomics.load(flag, 0)).toBe(1);
+      release.resolve("finished-anyway");
+      await expect(holder).rejects.toMatchObject({
+        name: "AbortError",
+        message: "The operation was aborted",
+      });
+    } finally {
+      await worker.terminate();
+    }
   });
 
   test("worker can steal a lock held by the main thread", async () => {
@@ -653,10 +675,13 @@ describe("worker threads", () => {
       `,
       { eval: true },
     );
-    expect(await nextMessage(worker)).toBe("worker-stole:xthread-steal");
-    expect(await stolen.promise).toBe("AbortError");
-    await mainLock;
-    await worker.terminate();
+    try {
+      expect(await nextMessage(worker)).toBe("worker-stole:xthread-steal");
+      expect(await stolen.promise).toBe("AbortError");
+      await mainLock;
+    } finally {
+      await worker.terminate();
+    }
   });
 });
 

@@ -721,8 +721,6 @@ impl Listener {
                 "hostname pattern must not contain null bytes"
             )));
         }
-        // `server_name_z` must outlive the remove_server_name/add_server_name
-        // calls below.
         let server_name_z = bun_core::ZBox::from_bytes(server_name_bytes);
         let server_name = server_name_z.as_zstr().as_cstr();
 

@@ -1910,6 +1910,7 @@ fn parse_data_loader<'a>(
             }]);
         }
 
+        let contains_datetime = expr_contains_toml_datetime(&expr);
         if let Some(obj) = expr.data.e_object_mut() {
             let properties: &mut [bun_ast::G::Property] = obj.properties.slice_mut();
             if !properties.is_empty() {
@@ -1967,18 +1968,29 @@ fn parse_data_loader<'a>(
                     *visited.value_ptr = count as u32;
 
                     symbols[count] = bun_ast::Symbol {
-                        original_name: match bun_core::MutableString::ensure_valid_identifier(name)
-                        {
-                            // The identifier lives in the
-                            // per-parse arena. Arena-copy the
-                            // owned `Box<[u8]>` so it is freed
-                            // with the arena instead of leaking
-                            // (PORTING.md §Forbidden patterns
-                            // bars `heap::alloc` for `&'static`).
-                            // SAFETY: ARENA — `arena` outlives
-                            // the returned `ParseResult.ast`.
-                            Ok(boxed) => bun_ast::StoreStr::new(arena.alloc_slice_copy(&boxed)),
-                            Err(_) => return None,
+                        original_name: {
+                            let valid = match bun_core::MutableString::ensure_valid_identifier(name)
+                            {
+                                Ok(boxed) => boxed,
+                                Err(_) => return None,
+                            };
+                            // Date/time values print as `globalThis.Temporal.*`
+                            // calls and no renamer runs on this path, so a var
+                            // named `globalThis` would capture them. The named
+                            // export keeps the original alias.
+                            if contains_datetime && &*valid == b"globalThis" {
+                                bun_ast::StoreStr::new(b"globalThis_")
+                            } else {
+                                // The identifier lives in the
+                                // per-parse arena. Arena-copy the
+                                // owned `Box<[u8]>` so it is freed
+                                // with the arena instead of leaking
+                                // (PORTING.md §Forbidden patterns
+                                // bars `heap::alloc` for `&'static`).
+                                // SAFETY: ARENA — `arena` outlives
+                                // the returned `ParseResult.ast`.
+                                bun_ast::StoreStr::new(arena.alloc_slice_copy(&valid))
+                            }
                         },
                         ..Default::default()
                     };
@@ -2072,6 +2084,20 @@ fn parse_data_loader<'a>(
         empty: false,
         source_contents_backing: source_backing,
     });
+}
+
+/// Whether any value in a data-format AST is a TOML date/time literal.
+fn expr_contains_toml_datetime(expr: &bun_ast::Expr) -> bool {
+    match expr.data {
+        bun_ast::ExprData::EString(str) => str.toml_datetime.is_some(),
+        bun_ast::ExprData::EArray(arr) => arr.items.slice().iter().any(expr_contains_toml_datetime),
+        bun_ast::ExprData::EObject(obj) => obj
+            .properties
+            .slice()
+            .iter()
+            .any(|prop| prop.value.as_ref().is_some_and(expr_contains_toml_datetime)),
+        _ => false,
+    }
 }
 
 #[cold]

@@ -87,18 +87,22 @@ describe("bundler", async () => {
       });
       // The transform path (--no-bundle) has no renamer, and a top-level TOML
       // key named Temporal becomes a module-scope var; the printed reference
-      // goes through globalThis so that var cannot capture it.
+      // goes through globalThis so that var cannot capture it. A key named
+      // globalThis in turn gets its var mangled (the named export keeps the
+      // original alias).
       itBundled("bun/loader-toml-datetime-no-bundle-temporal-key", {
         target,
         bundling: false,
         entryPoints: ["/config.toml"],
         files: {
-          "/config.toml": `Temporal = "x"\nd = 1979-05-27`,
+          "/config.toml": `Temporal = "x"\nglobalThis = "y"\nd = 1979-05-27`,
         },
         run: true,
         onAfterBundle(api) {
           const code = api.readFile("/out.js");
           expect(code).toContain('globalThis.Temporal.PlainDate.from("1979-05-27")');
+          expect(code).toContain('globalThis_ = "y"');
+          expect(code).toContain("globalThis_ as globalThis");
         },
       });
       // TOML date/time values bundle as Temporal construction calls; the

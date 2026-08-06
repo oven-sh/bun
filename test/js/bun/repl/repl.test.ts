@@ -1811,7 +1811,7 @@ describe.concurrent("node:repl completion", () => {
       await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const m = stdout.match(/COMPLETIONS=(\[.*\])/);
-      expect({ matched: m !== null, stderr }).toEqual({ matched: true, stderr: expect.not.stringContaining("error") });
+      expect({ matched: m !== null, stderr }).toEqual({ matched: true, stderr: "" });
       const completions = JSON.parse(m![1]);
       expect(completions).toContain("node:test");
       expect(completions).toContain("node:fs");

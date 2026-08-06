@@ -160,7 +160,6 @@ cfg_jsc! {
 cfg_jsc! {
     pub mod timers {
         #[path = "FakeTimers.rs"] pub mod fake_timers;
-        pub use fake_timers::FakeTimers;
     }
 }
 
@@ -169,7 +168,7 @@ pub mod expect {
     // Re-export the umbrella surface so every matcher can `use super::*`.
     pub use super::expect_core::*;
     pub use super::expect_core::mock;
-    pub use super::diff_format::DiffFormatter;
+    pub(crate) use super::diff_format::DiffFormatter;
 
     /// `Expect.js.*GetCached` / `*SetCached` accessors (generate-classes.ts
     /// `cache: true` slots from jest.classes.ts). Exposed as a
@@ -184,7 +183,7 @@ pub mod expect {
     /// which Rust does not allow for associated fns. Thin shim keeps those
     /// modules unmodified.
     #[inline]
-    pub fn get_signature(
+    pub(crate) fn get_signature(
         matcher_name: &'static str,
         args: &'static str,
         not: bool,
@@ -202,7 +201,7 @@ pub mod expect {
     // traits / aliases here that forward to the now-landed inherents — no
     // local FFI re-decls, no semantic divergence.
 
-    use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
+    use bun_jsc::{JSGlobalObject, JSValue, JsResult};
     use bun_jsc::console_object::Formatter;
     use bun_jsc::console_object::formatter::ZigFormatter;
 
@@ -372,27 +371,12 @@ pub mod expect {
     #[derive(Copy, Clone, PartialEq, Eq)]
     pub enum BigIntCompare { LessThan, Equal, GreaterThan, Undefined }
 
-    /// Two-argument `throw_*` adapters — matcher modules call
-    /// `global.throw2(FMT, format_args!(FMT, ..))`.
-    /// Rust's `Arguments<'_>` already encloses the format string,
-    /// so the leading `&str` is redundant; these shims drop it and forward to
-    /// the bun_jsc inherents.
-    pub trait JSGlobalObjectTestExt {
-        fn throw2(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
-    }
-    impl JSGlobalObjectTestExt for JSGlobalObject {
-        #[inline]
-        fn throw2(&self, _fmt: &str, args: core::fmt::Arguments<'_>) -> JsError {
-            self.throw(args)
-        }
-    }
-
     /// `super::make_formatter(global_this)`
     /// is the universal matcher pattern; `Formatter` has no `Default` (it
     /// borrows `global_this`), so provide the constructor every matcher
     /// expected.
     #[inline]
-    pub fn make_formatter(global: &JSGlobalObject) -> Formatter<'_> {
+    pub(crate) fn make_formatter(global: &JSGlobalObject) -> Formatter<'_> {
         let mut f = Formatter::new(global);
         f.quote_strings = true;
         f
@@ -457,7 +441,7 @@ pub mod expect {
         /// `toBeLessThan` / `toBeLessThanOrEqual`. The four matchers
         /// differ only in `name`, the `>`/`>=`/`<`/`<=` operator, and which
         /// `BigIntCompare` arms count as a pass — all of which `rel` encodes.
-        pub(super) fn numeric_ordering_matcher(
+        fn numeric_ordering_matcher(
             &self,
             global: &JSGlobalObject,
             frame: &bun_jsc::CallFrame,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir, tls } from "harness";
 import { join } from "path";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
@@ -258,4 +258,200 @@ describe.skipIf(!isDebug)(
       timeout,
     );
   },
+);
+
+// Regression: NewSocket::on_open was the only socket dispatch missing the
+// shutdown guard. It resolves the Bun.connect() promise (entering JS, where
+// the worker's termination trap fires and leaves the TerminationException
+// pending) and then calls the JS `open` handler, which trips
+// Interpreter::executeCallImpl's scope.assertNoException() and SIGABRTs the
+// whole process. Hits from Bun.connect, net.connect, and tls.connect alike
+// (they share on_open). Release WebKit compiles that ASSERT out, so this is
+// debug-only; the exception-scope verifier makes it fire on the first hit.
+test.skipIf(!isDebug)(
+  "terminate() while a worker's Bun.connect() open is firing does not trip assertNoException()",
+  async () => {
+    // Each round keeps LANES loopback connects in flight per worker and
+    // terminates once the worker reports steady state, so terminate() lands
+    // while on_open is hot. Debug+ASAN makes each round ~5s, so the pass
+    // time is ~60s; the unpatched build aborts in the first few rounds.
+    const ROUNDS = 12;
+    const WORKERS = 4;
+    const LANES = 32;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const net = require("node:net");
+        const srv = net.createServer((c) => { c.on("error", () => {}); c.end(); });
+        await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+        const port = srv.address().port;
+        const src =
+          "const { parentPort, workerData: d } = require('node:worker_threads');" +
+          "let opens = 0;" +
+          "function lane() {" +
+          "  Bun.connect({ hostname: '127.0.0.1', port: d.port, socket: {" +
+          "    open(s) { if (++opens === ${LANES}) parentPort.postMessage('hot'); s.end(); }," +
+          "    data() {}, close() { setImmediate(lane); }," +
+          "    connectError() { setImmediate(lane); }, error() {} } })" +
+          "    .catch(() => setImmediate(lane));" +
+          "}" +
+          "for (let i = 0; i < ${LANES}; i++) lane();";
+        function ready(w) {
+          return new Promise((res, rej) => {
+            w.once("message", res);
+            w.once("error", rej);
+            w.once("exit", (c) => rej(new Error("worker exited " + c + " before ready")));
+          });
+        }
+        for (let r = 0; r < ${ROUNDS}; r++) {
+          const ws = [];
+          for (let i = 0; i < ${WORKERS}; i++) {
+            const w = new Worker(src, { eval: true, workerData: { port } });
+            ws.push(w);
+          }
+          await Promise.all(ws.map(ready));
+          for (const w of ws) w.on("error", () => {});
+          await Bun.sleep(r % 3);
+          await Promise.all(ws.map((w) => w.terminate()));
+        }
+        srv.close();
+        console.log("PASS");
+      `,
+      ],
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  120_000,
+);
+
+// Regression: terminate() during a synchronous require() of a deep CJS graph.
+// finishRequireWithError (and JSCommonJSModule::load's error branch) did
+// tryClearException() then requireMap()->remove() with the sticky
+// TerminationException still pending, so JSMap::remove bailed and
+// ASSERT(wasRemoved) SIGABRTed the process. Release builds compile the assert
+// out and leave the throwing module cached for a dying VM, so debug-only.
+test.skipIf(!isDebug)(
+  "terminate() while a worker is inside require() does not trip ASSERT(wasRemoved)",
+  async () => {
+    // Build the CJS graph in the outer test so cleanup is guaranteed even when
+    // the subprocess SIGABRTs (the fail-before behavior) or is SIGKILLed by
+    // the outer timeout; process.on('exit') inside the subprocess would not
+    // run on either path.
+    const N = 200;
+    const files: Record<string, string> = {
+      "w.mjs":
+        `postMessage('ready');\n` +
+        `while (true) {\n` +
+        `  for (const k of Object.keys(require.cache)) delete require.cache[k];\n` +
+        `  require('./c0.cjs');\n` +
+        `}\n`,
+    };
+    for (let i = 0; i < N; i++) {
+      const a = (i + 1) % N;
+      const b = (i * 13 + 5) % N;
+      files[`c${i}.cjs`] = `require('./c${a}.cjs');\nrequire('./c${b}.cjs');\nexports.id = ${i};\n`;
+    }
+    using dir = tempDir("cjsreq", files);
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        // Three lanes, each terminates its worker at a sweep of offsets so at
+        // least one lands mid-require. The worker spends ~all its time inside
+        // require(), so the unpatched build aborts within the first few
+        // iterations.
+        async function lane(offset) {
+          for (let i = 0; i < 25; i++) {
+            const w = new Worker("./w.mjs");
+            await new Promise((res, rej) => {
+              w.onmessage = () => res();
+              w.onerror = (e) => rej(e.error ?? e);
+            });
+            w.onerror = () => {};
+            await Bun.sleep(offset + (i % 10) * 5);
+            await w.terminate();
+          }
+        }
+        await Promise.all([lane(0), lane(20), lane(60)]);
+        console.log("PASS");
+      `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  120_000,
+);
+
+// Regression: Bun__handleUncaughtException probed process._fatalException (a
+// JS get(), where the worker's termination trap fires) and then called
+// wrapped.emit("uncaughtException") with the sticky TerminationException
+// still pending after tryClearException(), tripping
+// Interpreter::executeCallImpl's scope.assertNoException(). The sibling
+// rejectionHandled / unhandledRejection emit paths share the guard.
+test.skipIf(!isDebug)(
+  "terminate() while a worker is emitting process 'uncaughtException' does not trip assertNoException()",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src =
+          "const { parentPort } = require('node:worker_threads');" +
+          "let first = true;" +
+          "process.on('uncaughtException', () => { if (first) { first = false; parentPort.postMessage('hot'); } });" +
+          "setInterval(() => { for (let i = 0; i < 50; i++) setTimeout(() => { throw new Error('e'); }, 0); }, 1);";
+        function ready(w) {
+          return new Promise((res, rej) => {
+            w.once("message", res);
+            w.once("error", rej);
+            w.once("exit", (c) => rej(new Error("worker exited " + c + " before ready")));
+          });
+        }
+        for (let r = 0; r < 15; r++) {
+          const ws = [];
+          for (let i = 0; i < 6; i++) {
+            const w = new Worker(src, { eval: true });
+            ws.push(w);
+          }
+          await Promise.all(ws.map(ready));
+          for (const w of ws) w.on("error", () => {});
+          await Bun.sleep((r * 37) % 250);
+          await Promise.all(ws.map((w) => w.terminate()));
+        }
+        console.log("PASS");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  120_000,
 );

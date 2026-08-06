@@ -63,7 +63,7 @@ bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 // the caller's `&mut TranspilerJob` (which is stored inside
 // `vm.transpiler_store`). Only the `source_mappings` leaf field is touched,
 // under its own internal lock.
-pub(crate) fn dump_source(vm: NonNull<VirtualMachine>, specifier: &[u8], printer: &BufferPrinter) {
+fn dump_source(vm: NonNull<VirtualMachine>, specifier: &[u8], printer: &BufferPrinter) {
     dump_source_string(vm, specifier, printer.ctx.get_written());
 }
 
@@ -78,7 +78,7 @@ pub(crate) fn dump_source_string(vm: NonNull<VirtualMachine>, specifier: &[u8], 
 // safe code (replaces the prior split `Mutex` + `RacyCell` pair).
 static BUN_DEBUG_HOLDER: Guarded<Option<Dir>> = Guarded::new(None);
 
-pub(crate) fn dump_source_string_failiable(
+fn dump_source_string_failiable(
     vm: NonNull<VirtualMachine>,
     specifier: &[u8],
     written: &[u8],
@@ -199,10 +199,10 @@ pub fn set_break_point_on_first_line() -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct RuntimeTranspilerStore {
-    pub generation_number: AtomicU32,
-    pub store: TranspilerJobStore,
+    pub(crate) generation_number: AtomicU32,
+    pub(crate) store: TranspilerJobStore,
     pub enabled: bool,
-    pub queue: Queue,
+    pub(crate) queue: Queue,
 }
 
 pub type Queue = UnboundedQueue<TranspilerJob>;
@@ -223,7 +223,7 @@ impl Taskable for RuntimeTranspilerStore {
 }
 
 impl RuntimeTranspilerStore {
-    pub fn init() -> RuntimeTranspilerStore {
+    pub(crate) fn init() -> RuntimeTranspilerStore {
         // The HiveArrayFallback uses the global mimalloc
         // (PORTING.md §Allocators).
         Self::default()
@@ -369,28 +369,28 @@ pub struct TranspilerJob {
     pub path: bun_paths::fs::Path<'static>,
     /// RAII: `Drop` derefs the WTF refcount — torn down by
     /// `HiveArray::put` → `drop_in_place` (not in `reset_for_pool`).
-    pub non_threadsafe_input_specifier: OwnedString,
-    pub non_threadsafe_referrer: OwnedString,
-    pub loader: Loader,
-    pub promise: StrongOptional,
+    pub(crate) non_threadsafe_input_specifier: OwnedString,
+    pub(crate) non_threadsafe_referrer: OwnedString,
+    pub(crate) loader: Loader,
+    pub(crate) promise: StrongOptional,
     // Note: struct is stored in a HiveArray and crosses to a worker thread;
     // raw pointers/BackRefs are used (BACKREF — VM owns the
     // store and outlives every job).
-    pub vm: *mut VirtualMachine,
+    pub(crate) vm: *mut VirtualMachine,
     pub global_this: BackRef<JSGlobalObject>,
-    pub fetcher: Fetcher,
-    pub poll_ref: KeepAlive,
-    pub generation_number: u32,
-    pub log: bun_ast::Log,
-    pub parse_error: Option<crate::CrateError>,
+    pub(crate) fetcher: Fetcher,
+    pub(crate) poll_ref: KeepAlive,
+    pub(crate) generation_number: u32,
+    pub(crate) log: bun_ast::Log,
+    pub(crate) parse_error: Option<crate::CrateError>,
     /// RAII-owned: holds +1 on `source_code`/`source_url`/`specifier`/
     /// `bytecode_origin_path` until `run_from_js_thread` `take()`s and
     /// `into_ffi()`s to C++. Dropped (via `HiveArray::put` → `drop_in_place`)
     /// on any path that skips `run_from_js_thread` derefs them.
-    pub resolved_source: OwnedResolvedSource,
-    pub work_task: WorkPoolTask,
+    pub(crate) resolved_source: OwnedResolvedSource,
+    pub(crate) work_task: WorkPoolTask,
     /// INTRUSIVE — `UnboundedQueue<TranspilerJob>` link.
-    pub next: unbounded_queue::Link<TranspilerJob>,
+    pub(crate) next: unbounded_queue::Link<TranspilerJob>,
 }
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<TranspilerJob>`.
@@ -484,7 +484,7 @@ impl TranspilerJob {
         // replacement a second time).
     }
 
-    pub(crate) fn dispatch_to_main_thread(&mut self) {
+    fn dispatch_to_main_thread(&mut self) {
         let vm = self.vm;
         // SAFETY: vm outlives the job (BACKREF — VM owns the store).
         let transpiler_store: *mut RuntimeTranspilerStore =
@@ -498,7 +498,7 @@ impl TranspilerJob {
             .enqueue_task_concurrent(ConcurrentTask::create_from(transpiler_store));
     }
 
-    pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {
+    fn run_from_js_thread(&mut self) -> JsResult<()> {
         let vm = self.vm;
         let promise = self.promise.swap();
         // Copy the BackRef out (it is `Copy`) so the borrow of `*self` ends
@@ -554,7 +554,7 @@ impl TranspilerJob {
         )
     }
 
-    pub(crate) fn schedule(&mut self) {
+    fn schedule(&mut self) {
         // Note: the KeepAlive takes an
         // `EventLoopCtx` vtable; resolve it via the `get_vm_ctx` hook (registered by
         // `bun_runtime::init`).
@@ -562,7 +562,7 @@ impl TranspilerJob {
         WorkPool::schedule(&raw mut self.work_task);
     }
 
-    pub(crate) unsafe fn run_from_worker_thread(work_task: *mut WorkPoolTask) {
+    unsafe fn run_from_worker_thread(work_task: *mut WorkPoolTask) {
         // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
         // slot — safe-fn coerces) for the `work_task` field initialised in
         // `transpile`; the WorkPool calls back with exactly that field, so
@@ -571,7 +571,7 @@ impl TranspilerJob {
         this.run();
     }
 
-    pub(crate) fn run(&mut self) {
+    fn run(&mut self) {
         // Stack-local per call, bulk-freed on return. An earlier version hoisted
         // this to a per-worker-thread leaked `Box<MimallocArena>` (and a second
         // one inside a leaked `ASTMemoryAllocator`) and only `reset()` it at
@@ -710,7 +710,6 @@ impl TranspilerJob {
         // as the `Transpiler<'_>` cast above.
         transpiler.linker.resolver = ptr::addr_of_mut!(transpiler.resolver).cast();
 
-        let mut fd: Option<Fd> = None;
         let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);
 
@@ -719,24 +718,12 @@ impl TranspilerJob {
         // leaked in `enable_hot_module_reloading`, so the `ParentRef` invariant
         // holds for this transpile job's duration). Raw `(*vm)` field
         // projection avoids forming `&VirtualMachine` per the `vm` note.
-        let import_watcher: Option<bun_ptr::ParentRef<ImportWatcher>> =
+        let import_watcher: Option<bun_ptr::ParentRef<ImportWatcher, bun_ptr::Mut>> =
             unsafe { bun_ptr::ParentRef::from_nullable_mut((*vm).bun_watcher.cast()) };
         if let Some(iw) = import_watcher {
-            // The watchlist *is* mutated cross-thread (the watcher thread's
-            // `flush_evictions` closes fds and `swap_remove`s), so snapshot
-            // under the watcher mutex — see
-            // `ImportWatcher::snapshot_fd_and_package_json` doc for the EBADF
-            // race this closes.
-            (fd, package_json) = iw.snapshot_fd_and_package_json(hash);
-            // On Linux, `addFileByPathSlow` inserts watchlist entries with
-            // `fd = invalid_fd` (only kqueue needs the descriptor). Treat
-            // invalid as "no cached fd" so `readFileWithAllocator` opens the
-            // file instead of calling `seekTo` on a bogus handle. The snapshot
-            // helper already filtered `!is_valid()`; additionally reject
-            // stdio-tagged fds here.
-            if fd.is_some_and(|f| f.stdio_tag().is_some()) {
-                fd = None;
-            }
+            // Never read through the watchlist's stored fd; see
+            // `ImportWatcher::snapshot_package_json`.
+            package_json = iw.snapshot_package_json(hash);
         }
 
         // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
@@ -769,15 +756,13 @@ impl TranspilerJob {
         // only, so skipping `Drop` is sound.
         let mut fallback_source = core::mem::MaybeUninit::<bun_ast::Source>::uninit();
 
-        // Usually, we want to close the input file automatically.
-        //
-        // If we're re-using the file descriptor from the fs watcher
-        // Do not close it because that will break the kqueue-based watcher
+        // Close the input file automatically unless the watcher adopts the
+        // descriptor after the parse (`add_file` below).
         //
         // Note: stored in a `Cell` so the scopeguard closure can capture
         // `&Cell<bool>` and the post-parse writes are visible to it without
         // raw-pointer laundering (which the unused-assignment lint can't see).
-        let should_close_input_file_fd = Cell::new(fd.is_none());
+        let should_close_input_file_fd = Cell::new(true);
 
         let mut input_file_fd: Fd = Fd::INVALID;
 
@@ -798,7 +783,7 @@ impl TranspilerJob {
             path,
             loader,
             dirname_fd: Fd::INVALID,
-            file_descriptor: fd,
+            file_descriptor: None,
             // SAFETY: `input_file_fd` is a stack local declared above and
             // outlives `parse_options`; `addr_of_mut!` avoids forming an
             // intermediate `&mut` so the close-guard's later borrow stays sound.
@@ -808,6 +793,7 @@ impl TranspilerJob {
             jsx: transpiler.options.jsx.clone(),
             emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
             experimental_decorators: transpiler.options.experimental_decorators,
+            use_define_for_class_fields: transpiler.options.use_define_for_class_fields,
             virtual_source: None,
             replace_exports: Default::default(),
             dont_bundle_twice: true,
@@ -887,12 +873,11 @@ impl TranspilerJob {
                     && bun_paths::is_absolute(path.text)
                     && !strings::contains(path.text, b"node_modules")
                 {
-                    should_close_input_file_fd.set(false);
                     if let Some(iw) = import_watcher {
                         // SAFETY: BACKREF — process-lifetime watcher; no other
                         // `&ImportWatcher` is live here, and `add_file` is
                         // thread-safe via watcher mutex.
-                        let _ = unsafe { iw.assume_mut() }.add_file::<true>(
+                        let added = unsafe { iw.assume_mut() }.add_file::<true>(
                             input_file_fd,
                             path.text,
                             hash,
@@ -900,6 +885,9 @@ impl TranspilerJob {
                             Fd::INVALID,
                             package_json,
                         );
+                        if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
+                            should_close_input_file_fd.set(false);
+                        }
                     }
                 }
             }
@@ -913,12 +901,11 @@ impl TranspilerJob {
                 && bun_paths::is_absolute(path.text)
                 && !strings::contains(path.text, b"node_modules")
             {
-                should_close_input_file_fd.set(false);
                 if let Some(iw) = import_watcher {
                     // SAFETY: BACKREF — process-lifetime watcher; no other
                     // `&ImportWatcher` is live here, and `add_file` is
                     // thread-safe via watcher mutex.
-                    let _ = unsafe { iw.assume_mut() }.add_file::<true>(
+                    let added = unsafe { iw.assume_mut() }.add_file::<true>(
                         input_file_fd,
                         path.text,
                         hash,
@@ -926,6 +913,9 @@ impl TranspilerJob {
                         Fd::INVALID,
                         package_json,
                     );
+                    if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
+                        should_close_input_file_fd.set(false);
+                    }
                 }
             }
         }

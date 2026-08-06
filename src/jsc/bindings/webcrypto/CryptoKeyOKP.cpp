@@ -119,14 +119,14 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importRaw(CryptoAlgorithmIdentifier identifie
     return create(identifier, namedCurve, usages & CryptoKeyUsageSign ? CryptoKeyType::Private : CryptoKeyType::Public, WTF::move(keyData), extractable, usages);
 }
 
-RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwkInternal(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, JsonWebKey&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool onlyPublic)
+RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, JsonWebKey&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
 {
     if (!isPlatformSupportedCurve(namedCurve))
         return nullptr;
 
     switch (namedCurve) {
     case NamedCurve::Ed25519:
-        if (!keyData.d.isEmpty() && !onlyPublic) {
+        if (!keyData.d.isEmpty()) {
             if (usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageVerify | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey | CryptoKeyUsageKemMask))
                 return nullptr;
         } else {
@@ -158,14 +158,11 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwkInternal(CryptoAlgorithmIdentifier i
         break;
     }
 
-    if (!onlyPublic) {
-        if (!keyData.d.isNull()) {
-            // FIXME: Validate keyData.x is paired with keyData.d
-            auto d = base64URLDecode(keyData.d);
-            if (!d)
-                return nullptr;
-            return create(identifier, namedCurve, CryptoKeyType::Private, WTF::move(*d), extractable, usages);
-        }
+    if (!keyData.d.isNull()) {
+        auto d = base64URLDecode(keyData.d);
+        if (!d)
+            return nullptr;
+        return create(identifier, namedCurve, CryptoKeyType::Private, WTF::move(*d), extractable, usages);
     }
 
     if (keyData.x.isNull())
@@ -175,15 +172,6 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwkInternal(CryptoAlgorithmIdentifier i
     if (!x)
         return nullptr;
     return create(identifier, namedCurve, CryptoKeyType::Public, WTF::move(*x), extractable, usages);
-}
-
-RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPublicJwk(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, JsonWebKey&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
-{
-    return importJwkInternal(identifier, namedCurve, WTF::move(keyData), extractable, usages, true);
-}
-RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, JsonWebKey&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
-{
-    return importJwkInternal(identifier, namedCurve, WTF::move(keyData), extractable, usages, false);
 }
 
 ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportRaw() const
@@ -228,19 +216,6 @@ ExceptionOr<JsonWebKey> CryptoKeyOKP::exportJwk() const
     }
 
     return result;
-}
-
-String CryptoKeyOKP::namedCurveString() const
-{
-    switch (m_curve) {
-    case NamedCurve::X25519:
-        return X25519;
-    case NamedCurve::Ed25519:
-        return Ed25519;
-    }
-
-    ASSERT_NOT_REACHED();
-    return emptyString();
 }
 
 bool CryptoKeyOKP::isValidOKPAlgorithm(CryptoAlgorithmIdentifier algorithm)

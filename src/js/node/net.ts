@@ -120,8 +120,10 @@ const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBuf
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
-const owner_symbol = Symbol("owner_symbol");
+const { owner_symbol } = require("internal/async_hooks").symbols;
 
+// Write-only by design: the onconnection write is a GC edge keeping the
+// native Listener reachable via accepted socket handles (see a93d2fa48e).
 const kServerSocket = Symbol("kServerSocket");
 const kBytesWritten = Symbol("kBytesWritten");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
@@ -141,7 +143,6 @@ const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
-const kpendingRead = Symbol("kpendingRead");
 const kupgraded = Symbol("kupgraded");
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
 const ksocket = Symbol("ksocket");
@@ -1556,7 +1557,6 @@ function Socket(options?) {
   });
   this._parent = null;
   this._parentWrap = null;
-  this[kpendingRead] = undefined;
   this[kupgraded] = null;
 
   this[kSetNoDelay] = Boolean(noDelay);
@@ -3187,12 +3187,12 @@ function internalConnectMultiple(context, canceled?) {
 
   if (localPort) {
     if (addressType === 4) {
-      localAddress = DEFAULT_IPV4_ADDR;
+      localAddress = "0.0.0.0";
       // TODO:
       // err = self._handle.bind(localAddress, localPort);
     } else {
       // addressType === 6
-      localAddress = DEFAULT_IPV6_ADDR;
+      localAddress = "::";
       // TODO:
       // err = self._handle.bind6(localAddress, localPort, flags);
     }
@@ -4089,6 +4089,8 @@ function initSocketHandle(self) {
   const handle = self._handle;
   if (handle) {
     handle[owner_symbol] = self;
+    // A fresh handle (e.g. an autoSelectFamily retry) inherits a prior unref().
+    if (self[kUserUnrefed]) handle.unref?.();
   }
 }
 

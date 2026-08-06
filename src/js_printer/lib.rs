@@ -51,8 +51,6 @@ use bun_ast::ImportRecordFlags;
 
 use bun_sourcemap as SourceMap;
 
-pub use bun_options_types::schema::api::CssInJsBehavior;
-
 // ──────────────────────────────────────────────────────────────────────────
 // renamer — defined in `renamer.rs`. The five former leak sites
 // have been replaced with `bumpalo::Bump`-backed allocation (PORTING.md §Forbidden);
@@ -75,24 +73,26 @@ pub mod analyze_transpiled_module {
     use bun_collections::HashMap;
     use bun_core::slice_as_bytes;
 
+    /// Every record kind carries one trailing bitcast-`FetchParameters` slot
+    /// after its `StringID` payload.
     #[repr(u8)]
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum RecordKind {
-        /// module_name, import_name, local_name
+        /// module_name, import_name, local_name, fetch_parameters
         ImportInfoSingle,
-        /// module_name, import_name, local_name
+        /// module_name, import_name, local_name, fetch_parameters
         ImportInfoSingleTypeScript,
-        /// module_name, import_name = '*', local_name
+        /// module_name, import_name = '*', local_name, fetch_parameters
         ImportInfoNamespace,
-        /// export_name, import_name, module_name
+        /// export_name, import_name, module_name, fetch_parameters
         ExportInfoIndirect,
-        /// export_name, local_name, padding (for local => indirect conversion)
+        /// export_name, local_name, padding, fetch_parameters (for local => indirect conversion)
         ExportInfoLocal,
-        /// export_name, module_name
+        /// export_name, module_name, fetch_parameters
         ExportInfoNamespace,
-        /// module_name
+        /// module_name, fetch_parameters
         ExportInfoStar,
-        /// module_name, import_name = '*', local_name
+        /// module_name, import_name = '*', local_name, fetch_parameters
         ///
         /// `import defer * as ns from "mod"` — same payload as
         /// `ImportInfoNamespace` but the resulting `ImportEntry` carries
@@ -100,16 +100,16 @@ pub mod analyze_transpiled_module {
         ImportInfoNamespaceDefer,
     }
     impl RecordKind {
-        pub fn len(self) -> usize {
+        pub(crate) fn len(self) -> usize {
             match self {
-                Self::ImportInfoSingle => 3,
-                Self::ImportInfoSingleTypeScript => 3,
-                Self::ImportInfoNamespace => 3,
-                Self::ImportInfoNamespaceDefer => 3,
-                Self::ExportInfoIndirect => 3,
-                Self::ExportInfoLocal => 3,
-                Self::ExportInfoNamespace => 2,
-                Self::ExportInfoStar => 1,
+                Self::ImportInfoSingle => 4,
+                Self::ImportInfoSingleTypeScript => 4,
+                Self::ImportInfoNamespace => 4,
+                Self::ImportInfoNamespaceDefer => 4,
+                Self::ExportInfoIndirect => 4,
+                Self::ExportInfoLocal => 4,
+                Self::ExportInfoNamespace => 3,
+                Self::ExportInfoStar => 2,
             }
         }
     }
@@ -124,7 +124,7 @@ pub mod analyze_transpiled_module {
     }
     impl Flags {
         #[inline]
-        pub fn to_byte(self) -> u8 {
+        pub(crate) fn to_byte(self) -> u8 {
             (self.contains_import_meta as u8)
                 | ((self.is_typescript as u8) << 1)
                 | ((self.has_tla as u8) << 2)
@@ -143,7 +143,7 @@ pub mod analyze_transpiled_module {
     // SAFETY: `#[repr(transparent)]` over `u32` (Pod).
     unsafe impl bytemuck::Pod for StringID {}
     impl StringID {
-        pub const STAR_DEFAULT: Self = Self(u32::MAX);
+        pub(crate) const STAR_DEFAULT: Self = Self(u32::MAX);
         pub const STAR_NAMESPACE: Self = Self(u32::MAX - 1);
     }
 
@@ -162,8 +162,19 @@ pub mod analyze_transpiled_module {
         pub const Webassembly: Self = Self(u32::MAX - 2);
         pub const Json: Self = Self(u32::MAX - 3);
         #[inline]
-        pub fn host_defined(value: StringID) -> Self {
+        pub(crate) fn host_defined(value: StringID) -> Self {
             Self(value.0)
+        }
+        /// JSC `ScriptFetchParameters::Type` value. `None` maps to `JavaScript`
+        /// (NodesAnalyzeModule's no-attribute default).
+        #[inline]
+        pub fn to_script_fetch_parameters_type(self) -> u8 {
+            match self {
+                Self::None | Self::Javascript => 1,
+                Self::Webassembly => 2,
+                Self::Json => 3,
+                _ => 4,
+            }
         }
     }
 
@@ -194,7 +205,7 @@ pub mod analyze_transpiled_module {
         pub flags: Flags,
     }
     impl<'a> ModuleInfoDeserialized<'a> {
-        pub fn serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+        pub(crate) fn serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
             w.write_all(
                 &u32::try_from(self.record_kinds.len())
                     .unwrap()
@@ -234,16 +245,15 @@ pub mod analyze_transpiled_module {
     }
 
     /// Insertion-ordered list of requested modules. Dedup key is
-    /// `(specifier, phase)` to match JSC's `ModuleAnalyzer::appendRequestedModule`,
-    /// which appends one entry per unique pair — so the same specifier can be
-    /// requested at both Evaluation and Defer phase.
+    /// `(specifier, ScriptFetchParameters::Type, phase)` per JSC's
+    /// `ModuleAnalyzer::appendRequestedModule` (WebKit 90b2ecf79ae3).
     // PERF: three allocations + a side HashMap; revisit with a real IndexMap.
     #[derive(Default)]
     struct RequestedModules {
         keys: Vec<StringID>,
         values: Vec<FetchParameters>,
         phases: Vec<ModulePhase>,
-        index: HashMap<(StringID, ModulePhase), usize>,
+        index: HashMap<(StringID, u8, ModulePhase), usize>,
     }
     impl RequestedModules {
         fn keys(&self) -> &[StringID] {
@@ -255,17 +265,18 @@ pub mod analyze_transpiled_module {
         fn phases(&self) -> &[ModulePhase] {
             &self.phases
         }
-        /// Returns `true` if `(key, phase)` was already present.
+        /// Returns `true` if `(key, type-of-value, phase)` was already present.
         fn insert_if_absent(
             &mut self,
             key: StringID,
             value: FetchParameters,
             phase: ModulePhase,
         ) -> bool {
-            if self.index.contains_key(&(key, phase)) {
+            let type_key = value.to_script_fetch_parameters_type();
+            if self.index.contains_key(&(key, type_key, phase)) {
                 return true;
             }
-            self.index.insert((key, phase), self.keys.len());
+            self.index.insert((key, type_key, phase), self.keys.len());
             self.keys.push(key);
             self.values.push(value);
             self.phases.push(phase);
@@ -283,8 +294,15 @@ pub mod analyze_transpiled_module {
             }
             if touched {
                 self.index.clear();
-                for (i, (&k, &p)) in self.keys.iter().zip(self.phases.iter()).enumerate() {
-                    self.index.insert((k, p), i);
+                for (i, ((&k, &v), &p)) in self
+                    .keys
+                    .iter()
+                    .zip(self.values.iter())
+                    .zip(self.phases.iter())
+                    .enumerate()
+                {
+                    self.index
+                        .insert((k, v.to_script_fetch_parameters_type(), p), i);
                 }
             }
         }
@@ -351,6 +369,7 @@ pub mod analyze_transpiled_module {
             module_name: StringID,
             import_name: StringID,
             local_name: StringID,
+            fetch_parameters: FetchParameters,
             only_used_as_type: bool,
         ) {
             self.add_record(
@@ -359,56 +378,107 @@ pub mod analyze_transpiled_module {
                 } else {
                     RecordKind::ImportInfoSingle
                 },
-                &[module_name, import_name, local_name],
+                &[
+                    module_name,
+                    import_name,
+                    local_name,
+                    StringID(fetch_parameters.0),
+                ],
             );
         }
-        pub fn add_import_info_namespace(&mut self, module_name: StringID, local_name: StringID) {
-            self.add_record(
-                RecordKind::ImportInfoNamespace,
-                &[module_name, StringID::STAR_NAMESPACE, local_name],
-            );
-        }
-        pub fn add_import_info_namespace_defer(
+        pub fn add_import_info_namespace(
             &mut self,
             module_name: StringID,
             local_name: StringID,
+            fetch_parameters: FetchParameters,
+        ) {
+            self.add_record(
+                RecordKind::ImportInfoNamespace,
+                &[
+                    module_name,
+                    StringID::STAR_NAMESPACE,
+                    local_name,
+                    StringID(fetch_parameters.0),
+                ],
+            );
+        }
+        pub(crate) fn add_import_info_namespace_defer(
+            &mut self,
+            module_name: StringID,
+            local_name: StringID,
+            fetch_parameters: FetchParameters,
         ) {
             self.add_record(
                 RecordKind::ImportInfoNamespaceDefer,
-                &[module_name, StringID::STAR_NAMESPACE, local_name],
+                &[
+                    module_name,
+                    StringID::STAR_NAMESPACE,
+                    local_name,
+                    StringID(fetch_parameters.0),
+                ],
             );
         }
-        pub fn add_export_info_indirect(
+        pub(crate) fn add_export_info_indirect(
             &mut self,
             export_name: StringID,
             import_name: StringID,
             module_name: StringID,
+            fetch_parameters: FetchParameters,
         ) {
             if self.has_or_add_exported_name(export_name) {
                 return;
             } // a syntax error will be emitted later in this case
             self.add_record(
                 RecordKind::ExportInfoIndirect,
-                &[export_name, import_name, module_name],
+                &[
+                    export_name,
+                    import_name,
+                    module_name,
+                    StringID(fetch_parameters.0),
+                ],
             );
         }
-        pub fn add_export_info_local(&mut self, export_name: StringID, local_name: StringID) {
+        pub(crate) fn add_export_info_local(
+            &mut self,
+            export_name: StringID,
+            local_name: StringID,
+        ) {
             if self.has_or_add_exported_name(export_name) {
                 return;
             } // a syntax error will be emitted later in this case
             self.add_record(
                 RecordKind::ExportInfoLocal,
-                &[export_name, local_name, StringID(u32::MAX)],
+                &[
+                    export_name,
+                    local_name,
+                    StringID(u32::MAX),
+                    StringID(FetchParameters::None.0),
+                ],
             );
         }
-        pub fn add_export_info_namespace(&mut self, export_name: StringID, module_name: StringID) {
+        pub(crate) fn add_export_info_namespace(
+            &mut self,
+            export_name: StringID,
+            module_name: StringID,
+            fetch_parameters: FetchParameters,
+        ) {
             if self.has_or_add_exported_name(export_name) {
                 return;
             } // a syntax error will be emitted later in this case
-            self.add_record(RecordKind::ExportInfoNamespace, &[export_name, module_name]);
+            self.add_record(
+                RecordKind::ExportInfoNamespace,
+                &[export_name, module_name, StringID(fetch_parameters.0)],
+            );
         }
-        pub fn add_export_info_star(&mut self, module_name: StringID) {
-            self.add_record(RecordKind::ExportInfoStar, &[module_name]);
+        pub(crate) fn add_export_info_star(
+            &mut self,
+            module_name: StringID,
+            fetch_parameters: FetchParameters,
+        ) {
+            self.add_record(
+                RecordKind::ExportInfoStar,
+                &[module_name, StringID(fetch_parameters.0)],
+            );
         }
 
         fn has_or_add_exported_name(&mut self, name: StringID) -> bool {
@@ -441,7 +511,8 @@ pub mod analyze_transpiled_module {
             import_record_path: StringID,
             fetch_parameters: FetchParameters,
         ) {
-            // jsc only records the attributes of the first import with the given import_record_path. so only put if not exists.
+            // JSC dedupes by (specifier, ScriptFetchParameters::Type) per phase;
+            // insert_if_absent mirrors that.
             self.requested_modules.insert_if_absent(
                 import_record_path,
                 fetch_parameters,
@@ -449,7 +520,7 @@ pub mod analyze_transpiled_module {
             );
         }
 
-        pub fn request_module_with_phase(
+        pub(crate) fn request_module_with_phase(
             &mut self,
             import_record_path: StringID,
             fetch_parameters: FetchParameters,
@@ -480,6 +551,7 @@ pub mod analyze_transpiled_module {
             struct LocalImport {
                 module_name: StringID,
                 import_name: StringID,
+                fetch_parameters: StringID,
                 record_kinds_idx: usize,
                 is_namespace: bool,
             }
@@ -496,6 +568,7 @@ pub mod analyze_transpiled_module {
                             LocalImport {
                                 module_name: self.buffer[i],
                                 import_name: self.buffer[i + 1],
+                                fetch_parameters: self.buffer[i + 3],
                                 record_kinds_idx: idx,
                                 is_namespace: false,
                             },
@@ -506,6 +579,7 @@ pub mod analyze_transpiled_module {
                             LocalImport {
                                 module_name: self.buffer[i],
                                 import_name: StringID::STAR_NAMESPACE,
+                                fetch_parameters: self.buffer[i + 3],
                                 record_kinds_idx: idx,
                                 is_namespace: true,
                             },
@@ -531,6 +605,7 @@ pub mod analyze_transpiled_module {
                             *k = RecordKind::ExportInfoIndirect;
                             self.buffer[i + 1] = ip.import_name;
                             self.buffer[i + 2] = ip.module_name;
+                            self.buffer[i + 3] = ip.fetch_parameters;
                             // In TypeScript, the re-exported import may target a type-only
                             // export that was elided. Convert the import to SingleTypeScript
                             // so JSC tolerates it being NotFound during linking.
@@ -571,7 +646,7 @@ const ASCII_ONLY_ALWAYS_ON_UNLESS_MINIFYING: bool = true;
 // single monomorphization instead of one per (ascii_only × quote_char × …) combo —
 // see the comment on `write_pre_quoted_string`.
 #[inline]
-pub fn can_print_without_escape(c: i32, ascii_only: bool) -> bool {
+pub(crate) fn can_print_without_escape(c: i32, ascii_only: bool) -> bool {
     if c <= LAST_ASCII as i32 {
         c >= FIRST_ASCII as i32
             && c != i32::from(b'\\')
@@ -591,7 +666,7 @@ pub fn can_print_without_escape(c: i32, ascii_only: bool) -> bool {
 const INDENTATION_SPACE_BUF: [u8; 128] = [b' '; 128];
 const INDENTATION_TAB_BUF: [u8; 128] = [b'\t'; 128];
 
-pub fn best_quote_char_for_string<T>(str: &[T], allow_backtick: bool) -> u8
+pub(crate) fn best_quote_char_for_string<T>(str: &[T], allow_backtick: bool) -> u8
 where
     T: Copy + Into<u32>,
 {
@@ -813,7 +888,7 @@ where
         }
         match c {
             0x07 => {
-                writer.write_all(b"\\x07")?;
+                writer.write_all(if json { b"\\u0007" } else { b"\\x07" })?;
                 i += 1;
             }
             0x08 => {
@@ -838,7 +913,7 @@ where
             }
             // \v
             0x0B => {
-                writer.write_all(b"\\v")?;
+                writer.write_all(if json { b"\\u000B" } else { b"\\v" })?;
                 i += 1;
             }
             // "\\"
@@ -949,8 +1024,8 @@ pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
 // real bun_js_parser::{runtime, Ast::*} surface.
 // ───────────────────────────────────────────────────────────────────────────
 pub struct SourceMapHandler<'a> {
-    pub ctx: NonNull<()>,
-    pub callback: fn(*mut (), SourceMap::Chunk, &bun_ast::Source) -> crate::Result<()>,
+    pub(crate) ctx: NonNull<()>,
+    pub(crate) callback: fn(*mut (), SourceMap::Chunk, &bun_ast::Source) -> crate::Result<()>,
     _marker: core::marker::PhantomData<&'a mut ()>,
 }
 
@@ -966,7 +1041,7 @@ pub trait OnSourceMapChunk {
 }
 
 impl<'a> SourceMapHandler<'a> {
-    pub fn on_source_map_chunk(
+    pub(crate) fn on_source_map_chunk(
         &self,
         chunk: SourceMap::Chunk,
         source: &bun_ast::Source,
@@ -1010,7 +1085,6 @@ pub struct Options<'a> {
     pub indent: Indentation,
     // allocator dropped — global mimalloc (this is an AST crate but Options.allocator is the global default)
     pub source_map_handler: Option<SourceMapHandler<'a>>,
-    pub css_import_behavior: CssInJsBehavior,
     pub target: bun_ast::Target,
 
     pub runtime_transpiler_cache: Option<RuntimeTranspilerCacheRef>,
@@ -1059,7 +1133,7 @@ pub struct Options<'a> {
 }
 
 impl<'a> Options<'a> {
-    pub fn require_or_import_meta_for_source(
+    pub(crate) fn require_or_import_meta_for_source(
         &self,
         id: u32,
         was_unwrapped_require: bool,
@@ -1087,7 +1161,6 @@ impl<'a> Default for Options<'a> {
             hmr_ref: Ref::NONE,
             indent: Indentation::default(),
             source_map_handler: None,
-            css_import_behavior: CssInJsBehavior::Facade,
             target: bun_ast::Target::Browser,
             runtime_transpiler_cache: None,
             module_info: None,
@@ -1154,8 +1227,8 @@ pub struct RequireOrImportMeta {
 // keeps alive for the print pass; `callback` is POD.
 #[derive(Clone, Copy)]
 pub struct RequireOrImportMetaCallback {
-    pub ctx: Option<NonNull<()>>,
-    pub callback: fn(*mut (), u32, bool) -> RequireOrImportMeta,
+    pub(crate) ctx: Option<NonNull<()>>,
+    pub(crate) callback: fn(*mut (), u32, bool) -> RequireOrImportMeta,
 }
 
 impl Default for RequireOrImportMetaCallback {
@@ -1181,7 +1254,7 @@ pub trait RequireOrImportMetaSource {
 }
 
 impl RequireOrImportMetaCallback {
-    pub fn call(&self, id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta {
+    pub(crate) fn call(&self, id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta {
         (self.callback)(self.ctx.unwrap().as_ptr(), id, was_unwrapped_require)
     }
 
@@ -1208,6 +1281,17 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
     use js_ast::ExprData;
     match &expr.data {
         ExprData::EIdentifier(_) | ExprData::EDot(_) | ExprData::EIndex(_) => true,
+        // Visit-pass rewrites that print as an identifier or property access.
+        ExprData::EImportIdentifier(_)
+        | ExprData::ECommonjsExportIdentifier(_)
+        | ExprData::ESpecial(_)
+        | ExprData::ERequireCallTarget
+        | ExprData::ERequireResolveCallTarget
+        | ExprData::ERequireMain
+        | ExprData::EImportMeta(_)
+        | ExprData::EImportMetaMain(_)
+        | ExprData::EUndefined(_) => true,
+        ExprData::EInlinedEnum(e) => is_identifier_or_numeric_constant_or_property_access(&e.value),
         ExprData::ENumber(e) => e.value().is_infinite() || e.value().is_nan(),
         _ => false,
     }
@@ -1236,27 +1320,27 @@ pub enum ExprFlag {
     IsFollowedByOf,
 }
 
-pub type ExprFlagSet = enumset::EnumSet<ExprFlag>;
+pub(crate) type ExprFlagSet = enumset::EnumSet<ExprFlag>;
 
 impl ExprFlag {
     #[inline]
-    pub fn none() -> ExprFlagSet {
+    pub(crate) fn none() -> ExprFlagSet {
         ExprFlagSet::empty()
     }
     #[inline]
-    pub fn forbid_call() -> ExprFlagSet {
+    pub(crate) fn forbid_call() -> ExprFlagSet {
         ExprFlag::ForbidCall.into()
     }
     #[inline]
-    pub fn has_non_optional_chain_parent() -> ExprFlagSet {
+    pub(crate) fn has_non_optional_chain_parent() -> ExprFlagSet {
         ExprFlag::HasNonOptionalChainParent.into()
     }
     #[inline]
-    pub fn expr_result_is_unused() -> ExprFlagSet {
+    pub(crate) fn expr_result_is_unused() -> ExprFlagSet {
         ExprFlag::ExprResultIsUnused.into()
     }
     #[inline]
-    pub fn is_followed_by_of() -> ExprFlagSet {
+    pub(crate) fn is_followed_by_of() -> ExprFlagSet {
         ExprFlag::IsFollowedByOf.into()
     }
 }
@@ -1273,7 +1357,7 @@ enum ClauseItemAs {
 // Printer (NewPrinter) — the impl body is the bulk of this crate and touches
 // nearly every bun_js_parser AST node type.
 // ───────────────────────────────────────────────────────────────────────────
-pub mod __gated_printer {
+pub(crate) mod __gated_printer {
     use super::*;
     use bun_ast::ImportRecordTag;
     use bun_ptr::BackRef;
@@ -1297,11 +1381,7 @@ pub mod __gated_printer {
     }
     /// `EnumSet<T>` field-style mutation helper.
     #[inline(always)]
-    pub(crate) fn set_flag<T: enumset::EnumSetType>(
-        set: &mut enumset::EnumSet<T>,
-        flag: T,
-        on: bool,
-    ) {
+    fn set_flag<T: enumset::EnumSetType>(set: &mut enumset::EnumSet<T>, flag: T, on: bool) {
         if on {
             set.insert(flag);
         } else {
@@ -1311,7 +1391,7 @@ pub mod __gated_printer {
 
     pub(crate) use bun_core::strings::encode_wtf8_rune as encode_wtf8_rune_t;
     /// `fn NewPrinter(...) type` → generic struct.
-    pub struct Printer<
+    pub(crate) struct Printer<
         'a,
         W,
         const ASCII_ONLY: bool,
@@ -1319,62 +1399,62 @@ pub mod __gated_printer {
         const IS_JSON: bool,
         const GENERATE_SOURCE_MAP: bool,
     > {
-        pub import_records: &'a [ImportRecord],
+        pub(crate) import_records: &'a [ImportRecord],
 
-        pub needs_semicolon: bool,
-        pub stmt_start: i32,
-        pub options: Options<'a>,
-        pub export_default_start: i32,
-        pub arrow_expr_start: i32,
-        pub for_of_init_start: i32,
-        pub prev_op: Op::Code,
-        pub prev_op_end: i32,
-        pub prev_num_end: i32,
-        pub prev_reg_exp_end: i32,
-        pub call_target: Option<ExprData>,
-        pub writer: W,
+        pub(crate) needs_semicolon: bool,
+        pub(crate) stmt_start: i32,
+        pub(crate) options: Options<'a>,
+        pub(crate) export_default_start: i32,
+        pub(crate) arrow_expr_start: i32,
+        pub(crate) for_of_init_start: i32,
+        pub(crate) prev_op: Op::Code,
+        pub(crate) prev_op_end: i32,
+        pub(crate) prev_num_end: i32,
+        pub(crate) prev_reg_exp_end: i32,
+        pub(crate) call_target: Option<ExprData>,
+        pub(crate) writer: W,
 
-        pub renamer: rename::Renamer<'a, 'a>,
-        pub prev_stmt_tag: StmtTag,
-        pub source_map_builder: SourceMap::chunk::Builder,
+        pub(crate) renamer: rename::Renamer<'a, 'a>,
+        pub(crate) prev_stmt_tag: StmtTag,
+        pub(crate) source_map_builder: SourceMap::chunk::Builder,
 
-        pub temporary_bindings: Vec<B::Property>,
+        pub(crate) temporary_bindings: Vec<B::Property>,
 
-        pub binary_expression_stack: Vec<BinaryExpressionVisitor<'a>>,
+        pub(crate) binary_expression_stack: Vec<BinaryExpressionVisitor<'a>>,
 
-        pub stack_check: bun_core::StackCheck,
-        pub stack_overflowed: bool,
+        pub(crate) stack_check: bun_core::StackCheck,
+        pub(crate) stack_overflowed: bool,
 
-        pub was_lazy_export: bool,
+        pub(crate) was_lazy_export: bool,
         // Always carried; gated at call sites with MAY_HAVE_MODULE_INFO.
-        pub module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
+        pub(crate) module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
 
         /// Arena for transient allocations during printing (rope flattening,
         /// UTF-16→UTF-8 transcoding).
-        pub bump: &'a bun_alloc::Arena,
+        pub(crate) bump: &'a bun_alloc::Arena,
     }
 
     /// The handling of binary expressions is convoluted because we're using
     /// iteration on the heap instead of recursion on the call stack to avoid
     /// stack overflow for deeply-nested ASTs. See the comments for the similar
     /// code in the JavaScript parser for details.
-    pub struct BinaryExpressionVisitor<'ast> {
+    pub(crate) struct BinaryExpressionVisitor<'ast> {
         // Inputs
         // A StoreRef so the
         // visitor stack can outlive the by-value `Expr` argument to `print_expr`.
-        pub e: js_ast::StoreRef<E::Binary>,
+        pub(crate) e: js_ast::StoreRef<E::Binary>,
         _phantom: core::marker::PhantomData<&'ast ()>,
-        pub level: Level,
-        pub flags: ExprFlagSet,
+        pub(crate) level: Level,
+        pub(crate) flags: ExprFlagSet,
 
         // Input for visiting the left child
-        pub left_level: Level,
-        pub left_flags: ExprFlagSet,
+        pub(crate) left_level: Level,
+        pub(crate) left_flags: ExprFlagSet,
 
         // "Local variables" passed from "checkAndPrepare" to "visitRightAndFinish"
-        pub entry: &'static OpInfo,
-        pub wrap: bool,
-        pub right_level: Level,
+        pub(crate) entry: &'static OpInfo,
+        pub(crate) wrap: bool,
+        pub(crate) right_level: Level,
     }
 
     // No `Default` impl: every construction
@@ -1395,7 +1475,7 @@ pub mod __gated_printer {
     where
         W: WriterTrait,
     {
-        pub const MAY_HAVE_MODULE_INFO: bool = IS_BUN_PLATFORM;
+        pub(crate) const MAY_HAVE_MODULE_INFO: bool = IS_BUN_PLATFORM;
 
         /// When Printer is used as a io.Writer, this represents it's error type, aka nothing.
         // Inherent associated types are unstable; callers can name
@@ -1578,20 +1658,20 @@ pub mod __gated_printer {
         }
 
         /// Polymorphic print: bytes or single char.
-        pub fn print(&mut self, str: impl PrintArg) {
+        pub(crate) fn print(&mut self, str: impl PrintArg) {
             str.print_into(&mut self.writer);
         }
 
         #[inline]
-        pub fn unindent(&mut self) {
+        pub(crate) fn unindent(&mut self) {
             self.options.indent.count = self.options.indent.count.saturating_sub(1);
         }
         #[inline]
-        pub fn indent(&mut self) {
+        pub(crate) fn indent(&mut self) {
             self.options.indent.count += 1;
         }
 
-        pub fn print_indent(&mut self) {
+        pub(crate) fn print_indent(&mut self) {
             if self.options.indent.count == 0 || self.options.minify_whitespace {
                 return;
             }
@@ -1610,7 +1690,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn mangled_prop_name(&mut self, ref_: Ref) -> &'a [u8] {
+        pub(crate) fn mangled_prop_name(&mut self, ref_: Ref) -> &'a [u8] {
             let ref_ = self.symbols().follow(ref_);
             // TODO: we don't support that
             if let Some(mangled_props) = self.options.mangled_props {
@@ -1622,26 +1702,26 @@ pub mod __gated_printer {
         }
 
         #[inline]
-        pub fn print_space(&mut self) {
+        pub(crate) fn print_space(&mut self) {
             if !self.options.minify_whitespace {
                 self.print(b" ");
             }
         }
         #[inline]
-        pub fn print_newline(&mut self) {
+        pub(crate) fn print_newline(&mut self) {
             if !self.options.minify_whitespace {
                 self.print(b"\n");
             }
         }
         #[inline]
-        pub fn print_semicolon_after_statement(&mut self) {
+        pub(crate) fn print_semicolon_after_statement(&mut self) {
             if !self.options.minify_whitespace {
                 self.print(b";\n");
             } else {
                 self.needs_semicolon = true;
             }
         }
-        pub fn print_semicolon_if_needed(&mut self) {
+        pub(crate) fn print_semicolon_if_needed(&mut self) {
             if self.needs_semicolon {
                 self.print(b";");
                 self.needs_semicolon = false;
@@ -1771,7 +1851,7 @@ pub mod __gated_printer {
         }
 
         #[inline]
-        pub fn print_space_before_identifier(&mut self) {
+        pub(crate) fn print_space_before_identifier(&mut self) {
             // `writer.written()` starts at -1, so `>= 0` means "at least one byte has
             // been written". Using `> 0` here would skip the space when exactly one
             // byte precedes a keyword (e.g. `x instanceof y` minified to `xinstanceof y`).
@@ -1784,20 +1864,20 @@ pub mod __gated_printer {
         }
 
         #[inline]
-        pub fn maybe_print_space(&mut self) {
+        pub(crate) fn maybe_print_space(&mut self) {
             match self.writer.prev_char() {
                 0 | b' ' | b'\n' => {}
                 _ => self.print(b" "),
             }
         }
 
-        pub fn print_dot_then_prefix(&mut self) -> Level {
+        pub(crate) fn print_dot_then_prefix(&mut self) -> Level {
             self.print(b".then(() => ");
             Level::Comma
         }
 
         #[inline]
-        pub fn print_undefined(&mut self, loc: bun_ast::Loc, level: Level) {
+        pub(crate) fn print_undefined(&mut self, loc: bun_ast::Loc, level: Level) {
             if self.options.minify_syntax {
                 if level.gte(Level::Prefix) {
                     self.add_source_mapping(loc);
@@ -1814,7 +1894,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_body(&mut self, stmt: Stmt) {
+        pub(crate) fn print_body(&mut self, stmt: Stmt) {
             match &stmt.data {
                 StmtData::SBlock(block) => {
                     self.print_space();
@@ -1830,14 +1910,14 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_block_body(&mut self, stmts: &[Stmt]) {
+        pub(crate) fn print_block_body(&mut self, stmts: &[Stmt]) {
             for stmt in stmts {
                 self.print_semicolon_if_needed();
                 self.print_stmt(*stmt).expect("unreachable");
             }
         }
 
-        pub fn print_block(
+        pub(crate) fn print_block(
             &mut self,
             loc: bun_ast::Loc,
             stmts: &[Stmt],
@@ -1861,7 +1941,7 @@ pub mod __gated_printer {
             self.needs_semicolon = false;
         }
 
-        pub fn print_decls(
+        pub(crate) fn print_decls(
             &mut self,
             keyword: &'static [u8],
             decls_: &[G::Decl],
@@ -2044,7 +2124,7 @@ pub mod __gated_printer {
         }
 
         #[inline]
-        pub fn add_source_mapping(&mut self, location: bun_ast::Loc) {
+        pub(crate) fn add_source_mapping(&mut self, location: bun_ast::Loc) {
             if !GENERATE_SOURCE_MAP {
                 return;
             }
@@ -2053,7 +2133,7 @@ pub mod __gated_printer {
         }
 
         #[inline]
-        pub fn add_source_mapping_for_name(
+        pub(crate) fn add_source_mapping_for_name(
             &mut self,
             location: bun_ast::Loc,
             _name: &[u8],
@@ -2066,13 +2146,13 @@ pub mod __gated_printer {
             self.add_source_mapping(location);
         }
 
-        pub fn print_symbol(&mut self, ref_: Ref) {
+        pub(crate) fn print_symbol(&mut self, ref_: Ref) {
             debug_assert!(!ref_.is_empty()); // Invalid Symbol
             let name = self.name_for_symbol(ref_);
             self.print_identifier(name);
         }
 
-        pub fn print_clause_alias(&mut self, alias: &[u8]) {
+        pub(crate) fn print_clause_alias(&mut self, alias: &[u8]) {
             if !strings::contains_non_bmp_code_point_or_is_invalid_identifier(alias) {
                 self.print_space_before_identifier();
                 self.print_identifier(alias);
@@ -2081,7 +2161,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_fn_args(
+        pub(crate) fn print_fn_args(
             &mut self,
             open_paren_loc: Option<bun_ast::Loc>,
             args: &[G::Arg],
@@ -2121,7 +2201,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_func(&mut self, func: &G::Fn) {
+        pub(crate) fn print_func(&mut self, func: &G::Fn) {
             self.print_fn_args(
                 Some(func.open_parens_loc),
                 slice_of(func.args),
@@ -2132,7 +2212,7 @@ pub mod __gated_printer {
             self.print_block(func.body.loc, slice_of(func.body.stmts), None);
         }
 
-        pub fn print_class(&mut self, class: &G::Class) {
+        pub(crate) fn print_class(&mut self, class: &G::Class) {
             if let Some(extends) = &class.extends {
                 self.print(b" extends");
                 self.print_space();
@@ -2177,7 +2257,7 @@ pub mod __gated_printer {
             self.print(b"}");
         }
 
-        pub fn best_quote_char_for_e_string(str: &E::String, allow_backtick: bool) -> u8 {
+        pub(crate) fn best_quote_char_for_e_string(str: &E::String, allow_backtick: bool) -> u8 {
             if IS_JSON {
                 return b'"';
             }
@@ -2188,7 +2268,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_whitespacer(&mut self, spacer: Whitespacer) {
+        pub(crate) fn print_whitespacer(&mut self, spacer: Whitespacer) {
             if self.options.minify_whitespace {
                 self.print(spacer.minify);
             } else {
@@ -2196,7 +2276,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_non_negative_float(&mut self, float: f64) {
+        pub(crate) fn print_non_negative_float(&mut self, float: f64) {
             // Is this actually an integer?
             // @setRuntimeSafety(false) / @setFloatMode(.optimized) have no Rust equivalent.
             let floored = float.floor();
@@ -2222,7 +2302,7 @@ pub mod __gated_printer {
             let _ = self.fmt(format_args!("{}", float));
         }
 
-        pub fn print_string_characters_utf8(&mut self, text: &[u8], quote: u8) {
+        pub(crate) fn print_string_characters_utf8(&mut self, text: &[u8], quote: u8) {
             debug_assert!(matches!(quote, b'\'' | b'"' | b'`'));
             let mut writer = self.writer.std_writer();
             let _ = write_pre_quoted_string_inner::<_, { Encoding::Utf8 }>(
@@ -2234,7 +2314,7 @@ pub mod __gated_printer {
             );
         }
 
-        pub fn print_string_characters_utf16(&mut self, text: &[u16], quote: u8) {
+        pub(crate) fn print_string_characters_utf16(&mut self, text: &[u16], quote: u8) {
             debug_assert!(matches!(quote, b'\'' | b'"' | b'`'));
             let slice: &[u8] = bytemuck::cast_slice(text);
             let mut writer = self.writer.std_writer();
@@ -2247,7 +2327,7 @@ pub mod __gated_printer {
             );
         }
 
-        pub fn is_unbound_eval_identifier(&self, value: Expr) -> bool {
+        pub(crate) fn is_unbound_eval_identifier(&self, value: Expr) -> bool {
             match &value.data {
                 ExprData::EIdentifier(ident) => {
                     if ident.ref_.is_source_contents_slice() {
@@ -2288,19 +2368,19 @@ pub mod __gated_printer {
         // hot `.text` so it lands in `.text.unlikely` even without PGO.
         #[cold]
         #[inline(never)]
-        pub fn print_require_error(&mut self, text: &[u8]) {
+        pub(crate) fn print_require_error(&mut self, text: &[u8]) {
             self.print(b"(()=>{throw new Error(\"Cannot require module \"+");
             self.print_string_literal_utf8(text, false);
             self.print(b");})()");
         }
 
         #[inline]
-        pub fn import_record(&self, import_record_index: usize) -> &'a ImportRecord {
+        pub(crate) fn import_record(&self, import_record_index: usize) -> &'a ImportRecord {
             // detached from `&self` so callers can interleave `&mut self` printing.
             &self.import_records[import_record_index]
         }
 
-        pub fn is_unbound_identifier(&self, expr: &Expr) -> bool {
+        pub(crate) fn is_unbound_identifier(&self, expr: &Expr) -> bool {
             let ExprData::EIdentifier(id) = &expr.data else {
                 return false;
             };
@@ -2311,7 +2391,7 @@ pub mod __gated_printer {
             symbol.kind == js_ast::symbol::Kind::Unbound
         }
 
-        pub fn print_require_or_import_expr(
+        pub(crate) fn print_require_or_import_expr(
             &mut self,
             import_record_index: u32,
             was_unwrapped_require: bool,
@@ -2488,9 +2568,10 @@ pub mod __gated_printer {
 
                 if self.options.inline_require_and_import_errors {
                     if record.path.is_disabled
-                        && record
-                            .flags
-                            .contains(ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                        && record.flags.contains(
+                            ImportRecordFlags::HANDLES_IMPORT_ERRORS
+                                | ImportRecordFlags::WAS_UNRESOLVED,
+                        )
                     {
                         self.print_require_error(record.path.text);
                         if wrap {
@@ -2593,20 +2674,24 @@ pub mod __gated_printer {
         }
 
         #[inline]
-        pub fn print_pure(&mut self) {
+        pub(crate) fn print_pure(&mut self) {
             if self.options.print_dce_annotations {
                 self.print_whitespacer(ws!(b"/* @__PURE__ */ "));
             }
         }
 
-        pub fn print_string_literal_e_string(&mut self, str: &E::String, allow_backtick: bool) {
+        pub(crate) fn print_string_literal_e_string(
+            &mut self,
+            str: &E::String,
+            allow_backtick: bool,
+        ) {
             let quote = Self::best_quote_char_for_e_string(str, allow_backtick);
             self.print(quote);
             self.print_string_characters_e_string(str, quote);
             self.print(quote);
         }
 
-        pub fn print_string_literal_utf8(&mut self, str: &[u8], allow_backtick: bool) {
+        pub(crate) fn print_string_literal_utf8(&mut self, str: &[u8], allow_backtick: bool) {
             // WTF-8 = UTF-8 plus surrogate code points (U+D800..U+DFFF as
             // `ED A0 80`..`ED BF BF`), so validate UTF-8 shape minus the
             // surrogate exclusion.
@@ -2714,7 +2799,7 @@ pub mod __gated_printer {
         }
 
         #[inline]
-        pub fn can_print_identifier_utf16(&self, name: &[u16]) -> bool {
+        pub(crate) fn can_print_identifier_utf16(&self, name: &[u16]) -> bool {
             if ASCII_ONLY || ASCII_ONLY_ALWAYS_ON_UNLESS_MINIFYING {
                 lexer::is_latin1_identifier_u16(name)
             } else {
@@ -2772,14 +2857,14 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn check_stack_overflow(&self) -> crate::Result<()> {
+        pub(crate) fn check_stack_overflow(&self) -> crate::Result<()> {
             if self.stack_overflowed {
                 return Err(crate::Error::StackOverflow);
             }
             Ok(())
         }
 
-        pub fn print_expr(&mut self, expr: Expr, level: Level, in_flags: ExprFlagSet) {
+        pub(crate) fn print_expr(&mut self, expr: Expr, level: Level, in_flags: ExprFlagSet) {
             if !self.stack_check.is_safe_to_recurse() {
                 self.stack_overflowed = true;
                 return;
@@ -3872,10 +3957,10 @@ pub mod __gated_printer {
                             {
                                 self.add_source_mapping(expr.loc);
 
-                                if import_record
-                                    .flags
-                                    .contains(ImportRecordFlags::HANDLES_IMPORT_ERRORS)
-                                {
+                                if import_record.flags.contains(
+                                    ImportRecordFlags::HANDLES_IMPORT_ERRORS
+                                        | ImportRecordFlags::WAS_UNRESOLVED,
+                                ) {
                                     self.print_require_error(import_record.path.text);
                                 } else {
                                     self.print_disabled_import();
@@ -4101,7 +4186,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_space_before_operator(&mut self, next: Op::Code) {
+        pub(crate) fn print_space_before_operator(&mut self, next: Op::Code) {
             if self.prev_op_end == self.writer.written() {
                 let prev = self.prev_op;
                 // "+ + y" => "+ +y"
@@ -4131,12 +4216,12 @@ pub mod __gated_printer {
         }
 
         #[inline]
-        pub fn print_dot_then_suffix(&mut self) {
+        pub(crate) fn print_dot_then_suffix(&mut self) {
             self.print(b")");
         }
 
         // This assumes the string has already been quoted.
-        pub fn print_string_characters_e_string(&mut self, str: &E::String, c: u8) {
+        pub(crate) fn print_string_characters_e_string(&mut self, str: &E::String, c: u8) {
             if !str.is_utf8() {
                 self.print_string_characters_utf16(str.slice16(), c);
             } else {
@@ -4144,7 +4229,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_namespace_alias(
+        pub(crate) fn print_namespace_alias(
             &mut self,
             _import_record: &ImportRecord,
             namespace: &G::NamespaceAlias,
@@ -4170,7 +4255,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_reg_exp_literal(&mut self, e: &E::RegExp) {
+        pub(crate) fn print_reg_exp_literal(&mut self, e: &E::RegExp) {
             let n = self.writer.written();
 
             // Avoid forming a single-line comment
@@ -4221,14 +4306,14 @@ pub mod __gated_printer {
         /// Whether a number used as a non-computed property name must be printed as a
         /// computed property instead, because `print_number` would render it as
         /// something that is not a valid property name (e.g. "-1", "1/0", "1 / 0").
-        pub fn number_property_key_must_be_computed(&self, value: f64) -> bool {
+        pub(crate) fn number_property_key_must_be_computed(&self, value: f64) -> bool {
             value.is_sign_negative()
                 || (value == f64::INFINITY
                     && (self.options.minify_syntax || !self.options.has_run_symbol_renamer))
         }
 
         /// `E::ObjectJSON` (JSON-only): always printed in JSON shape.
-        pub fn print_object_json(&mut self, e: &E::ObjectJSON) {
+        pub(crate) fn print_object_json(&mut self, e: &E::ObjectJSON) {
             if !self.stack_check.is_safe_to_recurse() {
                 self.stack_overflowed = true;
                 return;
@@ -4271,7 +4356,7 @@ pub mod __gated_printer {
         }
 
         /// `E::ArrayJSON` (JSON-only).
-        pub fn print_array_json(&mut self, e: &E::ArrayJSON) {
+        pub(crate) fn print_array_json(&mut self, e: &E::ArrayJSON) {
             if !self.stack_check.is_safe_to_recurse() {
                 self.stack_overflowed = true;
                 return;
@@ -4320,7 +4405,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_property(&mut self, item_in: &G::Property) {
+        pub(crate) fn print_property(&mut self, item_in: &G::Property) {
             // `G::Property` isn't `Copy`, so take a borrow and shallow-copy the
             // mutable bits we may rewrite (key + flags).
             let mut item = G::Property {
@@ -4622,14 +4707,14 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_initializer(&mut self, initial: Expr) {
+        pub(crate) fn print_initializer(&mut self, initial: Expr) {
             self.print_space();
             self.print(b"=");
             self.print_space();
             self.print_expr(initial, Level::Comma, ExprFlag::none());
         }
 
-        pub fn print_binding(&mut self, binding: Binding, tlm: TopLevelAndIsExport) {
+        pub(crate) fn print_binding(&mut self, binding: Binding, tlm: TopLevelAndIsExport) {
             if !self.stack_check.is_safe_to_recurse() {
                 self.stack_overflowed = true;
                 return;
@@ -4848,7 +4933,10 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn maybe_print_default_binding_value<P: HasDefaultValue>(&mut self, property: &P) {
+        pub(crate) fn maybe_print_default_binding_value<P: HasDefaultValue>(
+            &mut self,
+            property: &P,
+        ) {
             if let Some(default) = property.default_value() {
                 self.print_space();
                 self.print(b"=");
@@ -4857,7 +4945,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_stmt(&mut self, stmt: Stmt) -> crate::Result<()> {
+        pub(crate) fn print_stmt(&mut self, stmt: Stmt) -> crate::Result<()> {
             if !self.stack_check.is_safe_to_recurse() {
                 self.stack_overflowed = true;
                 return Ok(());
@@ -5101,9 +5189,16 @@ pub mod __gated_printer {
                             );
                             if let Some(alias) = &s.alias {
                                 let alias_id = mi.str(alias.original_name.slice());
-                                mi.add_export_info_namespace(alias_id, irp_id);
+                                mi.add_export_info_namespace(
+                                    alias_id,
+                                    irp_id,
+                                    analyze_transpiled_module::FetchParameters::None,
+                                );
                             } else {
-                                mi.add_export_info_star(irp_id);
+                                mi.add_export_info_star(
+                                    irp_id,
+                                    analyze_transpiled_module::FetchParameters::None,
+                                );
                             }
                         }
                     }
@@ -5281,7 +5376,12 @@ pub mod __gated_printer {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let alias_id = mi.str(item.alias.slice());
                             let name_id = mi.str(name);
-                            mi.add_export_info_indirect(alias_id, name_id, irp_id);
+                            mi.add_export_info_indirect(
+                                alias_id,
+                                name_id,
+                                irp_id,
+                                analyze_transpiled_module::FetchParameters::None,
+                            );
                         }
                     }
                 }
@@ -5778,10 +5878,10 @@ pub mod __gated_printer {
                         // so we re-borrow it between `name_for_symbol` calls instead of holding
                         // a single long-lived `mi` across the whole block. `irp_id` is Copy.
                         let import_record_path = &record.path.text;
-                        let irp_id = {
+                        use analyze_transpiled_module::FetchParameters as FP;
+                        let (irp_id, fetch_parameters) = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let irp_id = mi.str(import_record_path);
-                            use analyze_transpiled_module::FetchParameters as FP;
                             let fetch_parameters: FP = if IS_BUN_PLATFORM {
                                 if let Some(loader) = record.loader {
                                     use bun_ast::Loader;
@@ -5821,7 +5921,7 @@ pub mod __gated_printer {
                                 analyze_transpiled_module::ModulePhase::Evaluation
                             };
                             mi.request_module_with_phase(irp_id, fetch_parameters, phase);
-                            irp_id
+                            (irp_id, fetch_parameters)
                         };
 
                         if let Some(name) = &s.default_name {
@@ -5829,7 +5929,13 @@ pub mod __gated_printer {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let local_name_id = mi.str(local_name);
                             let default_id = mi.str(b"default");
-                            mi.add_import_info_single(irp_id, default_id, local_name_id, false);
+                            mi.add_import_info_single(
+                                irp_id,
+                                default_id,
+                                local_name_id,
+                                fetch_parameters,
+                                false,
+                            );
                         }
 
                         for item in slice_of(s.items).iter() {
@@ -5837,7 +5943,13 @@ pub mod __gated_printer {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let local_name_id = mi.str(local_name);
                             let alias_id = mi.str(item.alias.slice());
-                            mi.add_import_info_single(irp_id, alias_id, local_name_id, false);
+                            mi.add_import_info_single(
+                                irp_id,
+                                alias_id,
+                                local_name_id,
+                                fetch_parameters,
+                                false,
+                            );
                         }
 
                         if record
@@ -5848,9 +5960,17 @@ pub mod __gated_printer {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let local_name_id = mi.str(local_name);
                             if phase_defer {
-                                mi.add_import_info_namespace_defer(irp_id, local_name_id);
+                                mi.add_import_info_namespace_defer(
+                                    irp_id,
+                                    local_name_id,
+                                    fetch_parameters,
+                                );
                             } else {
-                                mi.add_import_info_namespace(irp_id, local_name_id);
+                                mi.add_import_info_namespace(
+                                    irp_id,
+                                    local_name_id,
+                                    fetch_parameters,
+                                );
                             }
                         }
                     }
@@ -5936,7 +6056,7 @@ pub mod __gated_printer {
             Ok(())
         }
 
-        pub fn print_import_record_path(&mut self, import_record: &ImportRecord) {
+        pub(crate) fn print_import_record_path(&mut self, import_record: &ImportRecord) {
             if IS_JSON {
                 unreachable!();
             }
@@ -5964,7 +6084,7 @@ pub mod __gated_printer {
             self.print_whitespacer(ws!(b"(() => ({}))"));
         }
 
-        pub fn print_for_loop_init(&mut self, init_st: Stmt, extra_flags: ExprFlagSet) {
+        pub(crate) fn print_for_loop_init(&mut self, init_st: Stmt, extra_flags: ExprFlagSet) {
             match &init_st.data {
                 StmtData::SExpr(s) => {
                     self.print_expr(
@@ -6014,7 +6134,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_if(&mut self, s: &S::If, loc: bun_ast::Loc) {
+        pub(crate) fn print_if(&mut self, s: &S::If, loc: bun_ast::Loc) {
             // `else if` chains recurse here directly without passing through
             // `print_stmt`, so they need their own guard.
             if !self.stack_check.is_safe_to_recurse() {
@@ -6101,7 +6221,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn wrap_to_avoid_ambiguous_else(s_: &StmtData) -> bool {
+        pub(crate) fn wrap_to_avoid_ambiguous_else(s_: &StmtData) -> bool {
             let mut s = s_;
             loop {
                 match s {
@@ -6123,7 +6243,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn try_to_get_imported_enum_value(
+        pub(crate) fn try_to_get_imported_enum_value(
             &self,
             target: Expr,
             name: &[u8],
@@ -6143,7 +6263,7 @@ pub mod __gated_printer {
             None
         }
 
-        pub fn print_inlined_enum(
+        pub(crate) fn print_inlined_enum(
             &mut self,
             inlined: js_ast::InlinedEnumValueDecoded,
             comment: &[u8],
@@ -6176,7 +6296,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_decl_stmt(
+        pub(crate) fn print_decl_stmt(
             &mut self,
             is_export: bool,
             keyword: &'static [u8],
@@ -6194,7 +6314,7 @@ pub mod __gated_printer {
             self.print_semicolon_after_statement();
         }
 
-        pub fn print_identifier(&mut self, identifier: &[u8]) {
+        pub(crate) fn print_identifier(&mut self, identifier: &[u8]) {
             if ASCII_ONLY {
                 self.print_identifier_ascii_only(identifier);
             } else {
@@ -6241,7 +6361,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_identifier_utf16(&mut self, name: &[u16]) -> crate::Result<()> {
+        pub(crate) fn print_identifier_utf16(&mut self, name: &[u16]) -> crate::Result<()> {
             let n = name.len();
             let mut i: usize = 0;
 
@@ -6282,7 +6402,7 @@ pub mod __gated_printer {
             Ok(())
         }
 
-        pub fn print_number(&mut self, value: f64, level: Level) {
+        pub(crate) fn print_number(&mut self, value: f64, level: Level) {
             let abs_value = value.abs();
             if value.is_nan() {
                 self.print_space_before_identifier();
@@ -6338,7 +6458,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_indented_comment(&mut self, _text: &[u8]) {
+        pub(crate) fn print_indented_comment(&mut self, _text: &[u8]) {
             let mut text = _text;
             if text.starts_with(b"/*") {
                 // Re-indent multi-line comments
@@ -6366,7 +6486,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn init(
+        pub(crate) fn init(
             writer: W,
             bump: &'a bun_alloc::Arena,
             import_records: &'a [ImportRecord],
@@ -6407,7 +6527,7 @@ pub mod __gated_printer {
             printer
         }
 
-        pub fn print_dev_server_module(
+        pub(crate) fn print_dev_server_module(
             &mut self,
             source: &bun_ast::Source,
             ast: &js_ast::Ast,
@@ -6693,9 +6813,9 @@ impl<'a, W: WriterTrait + ?Sized> Write for StdWriterAdapter<'a, W> {
 
 pub struct Writer<C: WriterContext> {
     pub ctx: C,
-    pub written: i32,
-    pub err: Option<crate::Error>,
-    pub orig_err: Option<crate::Error>,
+    pub(crate) written: i32,
+    pub(crate) err: Option<crate::Error>,
+    pub(crate) orig_err: Option<crate::Error>,
 }
 
 impl<C: WriterContext> Writer<C> {
@@ -6708,14 +6828,14 @@ impl<C: WriterContext> Writer<C> {
         }
     }
 
-    pub fn take_buffer(&mut self) -> MutableString {
+    pub(crate) fn take_buffer(&mut self) -> MutableString {
         self.ctx.take_buffer()
     }
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         self.ctx.slice()
     }
 
-    pub fn get_error(&self) -> crate::Result<()> {
+    pub(crate) fn get_error(&self) -> crate::Result<()> {
         if let Some(e) = self.orig_err {
             return Err(e);
         }
@@ -6726,19 +6846,19 @@ impl<C: WriterContext> Writer<C> {
     }
 
     #[inline]
-    pub fn prev_char(&self) -> u8 {
+    pub(crate) fn prev_char(&self) -> u8 {
         self.ctx.get_last_byte()
     }
     #[inline]
-    pub fn prev_prev_char(&self) -> u8 {
+    pub(crate) fn prev_prev_char(&self) -> u8 {
         self.ctx.get_last_last_byte()
     }
 
-    pub fn reserve(&mut self, count: u64) -> crate::Result<*mut u8> {
+    pub(crate) fn reserve(&mut self, count: u64) -> crate::Result<*mut u8> {
         self.ctx.reserve_next(count)
     }
 
-    pub fn advance(&mut self, count: u64) {
+    pub(crate) fn advance(&mut self, count: u64) {
         self.ctx.advance_by(count);
         // PERF: output never approaches 2 GiB; the checked add of
         // a u64→i32 here was a measurable branch in the per-token print path.
@@ -6748,7 +6868,7 @@ impl<C: WriterContext> Writer<C> {
     }
 
     #[inline]
-    pub fn print_byte(&mut self, b: u8) {
+    pub(crate) fn print_byte(&mut self, b: u8) {
         match self.ctx.write_byte(b) {
             Ok(n) => {
                 self.written = self.written.wrapping_add(n as i32);
@@ -6764,7 +6884,7 @@ impl<C: WriterContext> Writer<C> {
     }
 
     #[inline]
-    pub fn print_slice(&mut self, s: &[u8]) {
+    pub(crate) fn print_slice(&mut self, s: &[u8]) {
         match self.ctx.write_all(s) {
             Ok(n) => {
                 self.written = self.written.wrapping_add(n as i32);
@@ -6786,7 +6906,7 @@ impl<C: WriterContext> Writer<C> {
     pub fn flush(&mut self) -> crate::Result<()> {
         self.ctx.flush()
     }
-    pub fn done(&mut self) -> crate::Result<()> {
+    pub(crate) fn done(&mut self) -> crate::Result<()> {
         self.ctx.done()
     }
 }
@@ -6896,14 +7016,14 @@ pub struct BufferWriter {
     /// self-borrowing slice in a field, so store the length and
     /// reslice on read (`written()` / `written_without_trailing_zero()`). Avoids the O(n)
     /// `to_vec().into_boxed_slice()` copy the previous port did on every `done()`.
-    pub written_len: usize,
+    pub(crate) written_len: usize,
     // `done()` appends a NUL terminator when `append_null_byte` is true.
     pub append_null_byte: bool,
     pub append_newline: bool,
 }
 
 impl BufferWriter {
-    pub fn take_buffer(&mut self) -> MutableString {
+    pub(crate) fn take_buffer(&mut self) -> MutableString {
         core::mem::replace(&mut self.buffer, MutableString::init_empty())
     }
 
@@ -6930,7 +7050,7 @@ impl BufferWriter {
     /// front avoids the repeated grow+`memmove` the `Vec` doubling would
     /// otherwise do as the printer appends token-by-token. (`MutableString::init`
     /// is a no-op when `capacity == 0`.)
-    pub fn with_capacity(capacity: usize) -> BufferWriter {
+    pub(crate) fn with_capacity(capacity: usize) -> BufferWriter {
         BufferWriter {
             buffer: MutableString::init(capacity).unwrap_or_else(|_| MutableString::init_empty()),
             written_len: 0,
@@ -6940,19 +7060,19 @@ impl BufferWriter {
     }
 
     #[inline]
-    pub fn write_byte(&mut self, byte: u8) -> crate::Result<usize> {
+    pub(crate) fn write_byte(&mut self, byte: u8) -> crate::Result<usize> {
         self.buffer.append_char(byte)?;
         Ok(1)
     }
 
     #[inline]
-    pub fn write_all(&mut self, bytes: &[u8]) -> crate::Result<usize> {
+    pub(crate) fn write_all(&mut self, bytes: &[u8]) -> crate::Result<usize> {
         self.buffer.append(bytes)?;
         Ok(bytes.len())
     }
 
     #[inline]
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         self.buffer.list.as_slice()
     }
 
@@ -6960,25 +7080,25 @@ impl BufferWriter {
     /// derived lazily from the tail of `buffer` here (a rare query site) rather
     /// than maintained after every `write_byte`/`write_all` (the hot path).
     #[inline]
-    pub fn get_last_byte(&self) -> u8 {
+    pub(crate) fn get_last_byte(&self) -> u8 {
         let list = &self.buffer.list;
         let len = list.len();
         if len >= 1 { list[len - 1] } else { 0 }
     }
     #[inline]
-    pub fn get_last_last_byte(&self) -> u8 {
+    pub(crate) fn get_last_last_byte(&self) -> u8 {
         let list = &self.buffer.list;
         let len = list.len();
         if len >= 2 { list[len - 2] } else { 0 }
     }
 
-    pub fn reserve_next(&mut self, count: u64) -> crate::Result<*mut u8> {
+    pub(crate) fn reserve_next(&mut self, count: u64) -> crate::Result<*mut u8> {
         let n = usize::try_from(count).expect("int cast");
         // SAFETY: caller treats as write-only; advance_by() commits via commit_spare.
         Ok(unsafe { bun_core::vec::reserve_spare_bytes(&mut self.buffer.list, n) }.as_mut_ptr())
     }
 
-    pub fn advance_by(&mut self, count: u64) {
+    pub(crate) fn advance_by(&mut self, count: u64) {
         let count_usize = usize::try_from(count).expect("int cast");
         // SAFETY: reserve_next reserved and the caller initialized [len..len+count).
         unsafe { bun_core::vec::commit_spare(&mut self.buffer.list, count_usize) };
@@ -6997,7 +7117,7 @@ impl BufferWriter {
         written
     }
 
-    pub fn done(&mut self) -> crate::Result<()> {
+    pub(crate) fn done(&mut self) -> crate::Result<()> {
         if self.append_newline {
             self.append_newline = false;
             self.buffer.append_char(b'\n')?;
@@ -7017,7 +7137,7 @@ impl BufferWriter {
         Ok(())
     }
 
-    pub fn flush(&mut self) -> crate::Result<()> {
+    pub(crate) fn flush(&mut self) -> crate::Result<()> {
         Ok(())
     }
 }
@@ -7092,10 +7212,10 @@ pub enum GenerateSourceMap {
 impl GenerateSourceMap {
     /// Const-fn helpers so a `bool` const-generic can pick the variant inside a
     /// `{ ... }` const argument (`generic_const_exprs` rejects raw `if`).
-    pub const fn lazy_if(generate: bool) -> Self {
+    pub(crate) const fn lazy_if(generate: bool) -> Self {
         if generate { Self::Lazy } else { Self::Disable }
     }
-    pub const fn eager_if(generate: bool) -> Self {
+    pub(crate) const fn eager_if(generate: bool) -> Self {
         if generate { Self::Eager } else { Self::Disable }
     }
 }
@@ -7118,7 +7238,7 @@ use js_ast::Ast;
 // viral `where` clauses, and the body only does runtime branches anyway. The
 // `IS_BUN_PLATFORM` axis stays const so `prepend_count` is still a compile-time
 // constant in the monomorphized callers.
-pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
+pub(crate) fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
     generate_source_map: GenerateSourceMap,
     opts: &mut Options,
     source: &bun_ast::Source,
@@ -7530,7 +7650,7 @@ pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
 }
 
 /// The real one
-pub fn print_with_writer_and_platform<
+pub(crate) fn print_with_writer_and_platform<
     'a,
     W: WriterTrait,
     const IS_BUN_PLATFORM: bool,

@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { exists } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, runBunInstall, stderrForInstall } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, runBunInstall } from "harness";
 import { join } from "path";
 
 var registry = new VerdaccioRegistry();
@@ -222,7 +222,7 @@ describe("update", () => {
     });
 
     const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
-    return { out, err: stderrForInstall(err), exitCode };
+    return { out, err, exitCode };
   }
 
   // https://github.com/oven-sh/bun/issues/23739
@@ -279,8 +279,7 @@ describe("update", () => {
       stderr: "pipe",
       env: bunEnv,
     });
-    const [, errText, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
-    const err = stderrForInstall(errText);
+    const [, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
     expect(err).not.toContain("lockfile had changes");
     expect(err).not.toContain("error:");
     expect(exitCode).toBe(0);
@@ -376,6 +375,75 @@ describe("update", () => {
 
       expect(await file(join(packageDir, "package.json")).text()).toBe(rootBefore);
       expect(await file(join(packageDir, "packages", "pkg1", "package.json")).text()).toBe(pkg1Before);
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  for (const args of [[], ["-r"]] as const) {
+    test(`update without --latest from root moves catalogs within range (${args.join(" ") || "no args"})`, async () => {
+      // The lockfile pins no-deps@1.0.0 (as if 1.1.0 was published after install).
+      // `bun update` from the workspace root must re-resolve catalog references
+      // within range the same as a direct dependency would be.
+      const { packageDir } = await registry.createTestDir();
+      const url = registry.registryUrl();
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "catalog-update-from-root",
+            workspaces: {
+              packages: ["packages/*"],
+              catalog: { "no-deps": "^1.0.0" },
+            },
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "pkg1", "package.json"),
+          JSON.stringify({
+            name: "pkg1",
+            dependencies: { "no-deps": "catalog:" },
+          }),
+        ),
+        write(
+          join(packageDir, "bun.lock"),
+          JSON.stringify({
+            lockfileVersion: 1,
+            configVersion: 1,
+            workspaces: {
+              "": { name: "catalog-update-from-root" },
+              "packages/pkg1": { name: "pkg1", dependencies: { "no-deps": "catalog:" } },
+            },
+            catalog: { "no-deps": "^1.0.0" },
+            packages: {
+              "no-deps": [
+                "no-deps@1.0.0",
+                `${url}no-deps/-/no-deps-1.0.0.tgz`,
+                {},
+                "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
+              ],
+              "pkg1": ["pkg1@workspace:packages/pkg1"],
+            },
+          }),
+        ),
+      ]);
+
+      const { err, exitCode } = await runUpdate(packageDir, ...args);
+      expect(err).not.toContain("error:");
+
+      const root = await file(join(packageDir, "package.json")).json();
+      expect(root.workspaces.catalog).toEqual({ "no-deps": "^1.1.0" });
+
+      expect((await file(join(packageDir, "packages", "pkg1", "package.json")).json()).dependencies).toEqual({
+        "no-deps": "catalog:",
+      });
+      expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+        name: "no-deps",
+        version: "1.1.0",
+      });
+
+      const lock = await file(join(packageDir, "bun.lock")).text();
+      expect(lock).toContain("no-deps@1.1.0");
+      expect(lock).not.toContain("no-deps@1.0.0");
       expect(exitCode).toBe(0);
     });
   }
@@ -476,7 +544,7 @@ describe("errors", () => {
     });
 
     const out = await stdout.text();
-    const err = stderrForInstall(await stderr.text());
+    const err = await stderr.text();
 
     expect(err).toContain("no-deps@catalog: failed to resolve");
     expect(err).toContain("a-dep@catalog:aaaaaaaaaaaaaaaaa failed to resolve");
@@ -508,7 +576,7 @@ describe("errors", () => {
     });
 
     const out = await stdout.text();
-    const err = stderrForInstall(await stderr.text());
+    const err = await stderr.text();
 
     expect(err).toContain("no-deps@catalog: failed to resolve");
   });

@@ -1,7 +1,8 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { symlinkSync } from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "path";
 
 const cwd_root = tempDirWithFiles("testworkspace", {
@@ -661,4 +662,113 @@ describe("bun", () => {
     expect(stderr).toContain("skipping this workspace package");
     expect(exitCode).toBe(0);
   });
+});
+
+// #20319: on Windows, `bun --filter` / `bun run --parallel` spawn each script
+// as `bun exec "<script>"` with CREATE_NO_WINDOW, so the user's Ctrl+C never
+// reaches the scripts and cleanup is entirely on the parent. libuv's global
+// spawn Job is KILL_ON_CLOSE | SILENT_BREAKAWAY_OK, so membership only
+// propagates one hop: as soon as the tree contains a non-libuv spawner
+// (cmd.exe, a `.cmd` bin shim, node.exe), everything below it escapes and keeps
+// its port bound after the parent exits.
+//
+// Tree under test:
+//   test → bun parent → `bun exec` → cmd.exe → leaf bun (long-running).
+// The leaf writes its pid to a file; the test kills the parent and polls the
+// leaf. Without a recursive kill-on-close Job on the parent, the leaf survives.
+describe.skipIf(!isWindows).each([
+  { via: "--filter", argv: ["--filter", "*", "dev"] },
+  { via: "run --parallel", argv: ["run", "--parallel", "dev"] },
+])("windows: $via reaps the whole descendant tree when the parent exits (#20319)", ({ argv }) => {
+  test.concurrent(
+    "leaf dies",
+    async () => {
+      function isAlive(pid: number): boolean {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+      async function waitUntilDead(pid: number, timeoutMs: number): Promise<boolean> {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+          if (!isAlive(pid)) return true;
+          await sleep(25);
+        }
+        return !isAlive(pid);
+      }
+
+      using dir = tempDir("filter-win-cleanup", {
+        "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+        // .bat avoids cmd /c's quote-stripping around a quoted exe path + arg.
+        "packages/app/run.bat": `@"${bunExe()}" "%~dp0server.js"\r\n`,
+        "packages/app/server.js": `
+          require("fs").writeFileSync(process.env.PIDFILE, String(process.pid));
+          setInterval(() => {}, 1000);
+        `,
+        "packages/app/package.json": JSON.stringify({
+          name: "app",
+          scripts: { dev: "cmd /d /c run.bat" },
+        }),
+      });
+
+      const pidfile = join(String(dir), "leaf.pid");
+      // Unset NO_ORPHANS so the test exercises the unconditional Job rather
+      // than the opt-in env-var path CI may set globally.
+      const env: Record<string, string | undefined> = {
+        ...bunEnv,
+        PIDFILE: pidfile,
+        BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
+        NO_COLOR: "1",
+      };
+
+      const parent = Bun.spawn({
+        cmd: [bunExe(), ...argv],
+        env,
+        cwd: join(String(dir), "packages", "app"),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+
+      let leafPid = 0;
+      try {
+        const deadline = Date.now() + 15000;
+        while (leafPid === 0 && Date.now() < deadline) {
+          try {
+            const t = await Bun.file(pidfile).text();
+            if (t.length > 0) leafPid = Number(t.trim());
+          } catch {}
+          if (leafPid === 0) await sleep(25);
+        }
+        if (leafPid === 0) {
+          parent.kill("SIGKILL");
+          await parent.exited;
+          const stderr = await parent.stderr.text();
+          throw new Error(`leaf never wrote pidfile; stderr:\n${stderr}`);
+        }
+        expect(isAlive(leafPid)).toBe(true);
+
+        // TerminateProcess on the parent — same effect as the second Ctrl+C
+        // (default handler) or the first Ctrl+C's abort() path once the direct
+        // children have exited and the parent calls Global::exit().
+        parent.kill("SIGKILL");
+        await parent.exited;
+
+        const died = await waitUntilDead(leafPid, 10000);
+        expect(died).toBe(true);
+      } finally {
+        parent.kill("SIGKILL");
+        await parent.exited;
+        if (leafPid > 0 && isAlive(leafPid)) {
+          try {
+            process.kill(leafPid, "SIGKILL");
+          } catch {}
+          await waitUntilDead(leafPid, 2000);
+        }
+      }
+    },
+    30000,
+  );
 });

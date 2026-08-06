@@ -21,11 +21,7 @@
 #include "JSEventListener.h"
 
 #include "BunProcess.h"
-// #include "BeforeUnloadEvent.h"
-// #include "ContentSecurityPolicy.h"
 #include "EventNames.h"
-// #include "Frame.h"
-// #include "HTMLElement.h"
 #include "JSDOMConvertNullable.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMGlobalObject.h"
@@ -115,16 +111,6 @@ inline void JSEventListener::visitJSFunctionImpl(Visitor& visitor)
 void JSEventListener::visitJSFunction(AbstractSlotVisitor& visitor) { visitJSFunctionImpl(visitor); }
 void JSEventListener::visitJSFunction(SlotVisitor& visitor) { visitJSFunctionImpl(visitor); }
 
-// static void handleBeforeUnloadEventReturnValue(BeforeUnloadEvent& event, const String& returnValue)
-// {
-//     if (returnValue.isNull())
-//         return;
-
-//     event.preventDefault();
-//     if (event.returnValue().isEmpty())
-//         event.setReturnValue(returnValue);
-// }
-
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEmitUncaughtException, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto exception = callFrame->argument(0);
@@ -161,36 +147,6 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     JSDOMGlobalObject* globalObject = toJSDOMGlobalObject(scriptExecutionContext, m_isolatedWorld);
     if (!globalObject)
         return;
-
-    // if (scriptExecutionContext.isDocument()) {
-    //     JSDOMWindow* window = uncheckedDowncast<JSDOMWindow>(globalObject);
-    //     if (!window->wrapped().isCurrentlyDisplayedInFrame())
-    //         return;
-    //     if (wasCreatedFromMarkup()) {
-    //         Element* element = event.target()->isNode() && !downcast<Node>(*event.target()).isDocumentNode() ? dynamicDowncast<Element>(*event.target()) : nullptr;
-    //         if (!scriptExecutionContext.contentSecurityPolicy()->allowInlineEventHandlers(sourceURL().string(), sourcePosition().m_line, code(), element))
-    //             return;
-    //     }
-    //     // FIXME: Is this check needed for other contexts?
-    //     ScriptController& script = window->wrapped().frame()->script();
-    //     if (!script.canExecuteScripts(AboutToExecuteScript) || script.isPaused())
-    //         return;
-    // }
-
-    // RefPtr<Event> savedEvent;
-    // auto* jsFunctionWindow = dynamicDowncast<JSDOMWindow>(vm, jsFunction->globalObject(vm));
-    // if (jsFunctionWindow) {
-    //     savedEvent = jsFunctionWindow->currentEvent();
-
-    //     // window.event should not be set when the target is inside a shadow tree, as per the DOM specification.
-    //     if (!event.currentTargetIsInShadowTree())
-    //         jsFunctionWindow->setCurrentEvent(&event);
-    // }
-
-    // auto restoreCurrentEventOnExit = makeScopeExit([&] {
-    //     if (jsFunctionWindow)
-    //         jsFunctionWindow->setCurrentEvent(savedEvent.get());
-    // });
 
     JSGlobalObject* lexicalGlobalObject = jsFunction->globalObject();
 
@@ -241,13 +197,6 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     // InspectorInstrumentation::didCallFunction(&scriptExecutionContext);
 
     auto handleExceptionIfNeeded = [&](JSC::Exception* exception) -> bool {
-        // if (is<WorkerGlobalScope>(scriptExecutionContext)) {
-        //     auto* scriptController = downcast<WorkerGlobalScope>(scriptExecutionContext).script();
-        //     bool terminatorCausedException = (exception && vm.isTerminationException(exception));
-        //     if (terminatorCausedException || (scriptController && scriptController->isTerminatingExecution()))
-        //         scriptController->forbidExecution();
-        // }
-
         if (exception) {
             event.target()->uncaughtExceptionInEventHandler();
             reportException(lexicalGlobalObject, exception);
@@ -291,19 +240,6 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     }
 
     // Do return value handling for event handlers (https://html.spec.whatwg.org/#the-event-handler-processing-algorithm).
-
-    // if (event.type() == eventNames().beforeunloadEvent) {
-    //     // This is a OnBeforeUnloadEventHandler, and therefore the return value must be coerced into a String.
-    //     if (is<BeforeUnloadEvent>(event)) {
-    //         String resultStr = convert<IDLNullable<IDLDOMString>>(*lexicalGlobalObject, retval);
-    //         if (scope.exception()) [[unlikely]] {
-    //             if (handleExceptionIfNeeded(scope.exception()))
-    //                 return;
-    //         }
-    //         handleBeforeUnloadEventReturnValue(downcast<BeforeUnloadEvent>(event), resultStr);
-    //     }
-    //     return;
-    // }
 
     if (retval.isFalse())
         event.preventDefault();

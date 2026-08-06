@@ -1,7 +1,9 @@
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { isWindows } from "harness";
+import * as dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
+import { once } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as util from "node:util";
@@ -181,6 +183,49 @@ test("dns.resolveCaa (caa.socketify.dev)", () => {
     }
   });
   return promise;
+});
+
+test.skipIf(isWindows)("dns.Resolver#resolveCaa keeps a numeric CAA tag reachable by index", async () => {
+  const socket = dgram.createSocket("udp4");
+  try {
+    socket.on("message", (query, rinfo) => {
+      let off = 12;
+      while (off < query.length && query[off] !== 0) off += query[off] + 1;
+      off += 1 + 2 + 2;
+      const question = query.subarray(12, off);
+      const header = Buffer.alloc(12);
+      header[0] = query[0];
+      header[1] = query[1];
+      header[2] = 0x81;
+      header[3] = 0x80;
+      header[5] = 1;
+      header[7] = 1;
+      const tag = Buffer.from("128");
+      const value = Buffer.from("issue.example");
+      const rdata = Buffer.concat([Buffer.from([0x00, tag.length]), tag, value]);
+      const answer = Buffer.concat([
+        Buffer.from([0xc0, 0x0c, 0x01, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c]),
+        Buffer.from([rdata.length >> 8, rdata.length & 0xff]),
+        rdata,
+      ]);
+      socket.send(Buffer.concat([header, question, answer]), rinfo.port, rinfo.address);
+    });
+    socket.bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    const { port } = socket.address();
+
+    const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
+    resolver.setServers(["127.0.0.1:" + port]);
+    const { promise, resolve, reject } = Promise.withResolvers();
+    resolver.resolveCaa("caa.example.test", (err, records) => (err ? reject(err) : resolve(records)));
+    const records = await promise;
+    expect(records.length).toBe(1);
+    expect(records[0].critical).toBe(0);
+    expect(records[0][128]).toBe("issue.example");
+    expect(Object.keys(records[0])).toEqual(["128", "critical"]);
+  } finally {
+    socket.close();
+  }
 });
 
 test("dns.resolveMx (bun.sh)", () => {
@@ -432,6 +477,28 @@ describe("test invalid arguments", () => {
         done(e);
       }
     });
+  });
+
+  // https://github.com/oven-sh/bun/issues/36892
+  describe.each([
+    ["dns.resolve", hostname => dns.resolve(hostname, undefined, () => {})],
+    ["Resolver#resolve", hostname => new dns.Resolver().resolve(hostname, undefined, () => {})],
+  ])("%s", (_, fn) => {
+    it("with undefined rrtype throws ERR_INVALID_ARG_TYPE", () => {
+      expect(() => fn("localhost")).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: expect.stringContaining('The "rrtype" argument must be of type string'),
+        }),
+      );
+    });
+  });
+
+  it("dns.promises.resolve with undefined rrtype does not throw", async () => {
+    // Node's promises API treats undefined rrtype as "A"
+    const promise = dns_promises.resolve("localhost", undefined);
+    expect(promise).toBeInstanceOf(Promise);
+    await promise.catch(() => {}); // result depends on the environment's resolver
   });
 
   it("dns.lookupService", async () => {

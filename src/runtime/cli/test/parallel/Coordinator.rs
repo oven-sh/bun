@@ -16,7 +16,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ptr::Interned;
 
 use super::frame::{self, Frame};
-use super::worker::{PipeRole, Worker, WorkerPipe};
+use super::worker::{Worker, WorkerPipe};
 use crate::test_command::CommandLineReporter;
 
 // `Status` lives in `crate::api::bun::process`
@@ -25,44 +25,46 @@ use crate::api::bun::process::Process;
 use crate::api::bun::process::Status as SpawnStatus;
 
 pub struct Coordinator<'a> {
-    pub vm: &'a VirtualMachine,
+    pub(crate) vm: &'a VirtualMachine,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
-    pub event_loop_handle: bun_jsc::EventLoopHandle,
-    pub reporter: &'a mut CommandLineReporter,
-    pub files: Vec<Interned>,
-    pub cwd: &'a [u8],
+    pub(crate) event_loop_handle: bun_jsc::EventLoopHandle,
+    pub(crate) reporter: &'a mut CommandLineReporter,
+    pub(crate) files: Vec<Interned>,
+    /// `--timings`: recorded cost per `files` index; stealing then goes by remaining time and takes the victim's slowest file.
+    pub(crate) costs: Option<Vec<u64>>,
+    pub(crate) cwd: &'a [u8],
     // [:null]?[*:0]const u8 — null-sentinel-terminated slice of C strings;
     // backing storage has a null at [len] for execve-style consumers.
-    pub argv: Box<[bun_spawn::CStrPtr]>,
+    pub(crate) argv: Box<[bun_spawn::CStrPtr]>,
     /// One envp per worker slot — same base, with that slot's JEST_WORKER_ID
     /// and BUN_TEST_WORKER_ID appended.
-    pub envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
+    pub(crate) envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
 
-    pub workers: &'a mut [Worker],
-    pub junit_chunks: Vec<Option<Box<[u8]>>>,
-    pub junit_totals: super::aggregate::JunitTotals,
-    pub coverage_chunks: Vec<Box<[u8]>>,
+    pub(crate) workers: &'a mut [Worker],
+    pub(crate) junit_chunks: Vec<Option<Box<[u8]>>>,
+    pub(crate) junit_totals: super::aggregate::JunitTotals,
+    pub(crate) coverage_chunks: Vec<Box<[u8]>>,
     /// File index whose `path:` header was most recently written. Result lines
     /// from concurrent workers interleave; whenever the source file changes the
     /// header is re-emitted so every line has visible context. None at start.
-    pub last_header_idx: Option<u32>,
+    pub(crate) last_header_idx: Option<u32>,
     pub frame: Frame,
-    pub parallel_limit: u32,
-    pub scale_up_after_ms: i64,
-    pub bail: u32,
-    pub dots: bool,
-    pub files_done: u32,
-    pub spawned_count: u32,
-    pub live_workers: u32,
-    pub crashed_files: Vec<u32>,
-    pub aborted: Option<u32>,
-    pub bailed: bool,
-    pub last_printed_dot: bool,
+    pub(crate) parallel_limit: u32,
+    pub(crate) scale_up_after_ms: i64,
+    pub(crate) bail: u32,
+    pub(crate) dots: bool,
+    pub(crate) files_done: u32,
+    pub(crate) spawned_count: u32,
+    pub(crate) live_workers: u32,
+    pub(crate) crashed_files: Vec<u32>,
+    pub(crate) aborted: Option<u32>,
+    pub(crate) bailed: bool,
+    pub(crate) last_printed_dot: bool,
     /// Kill-on-close Job Object so the OS reaps workers if the coordinator dies
     /// without running its signal handler (e.g. SIGKILL / TerminateProcess).
     #[cfg(windows)]
-    pub windows_job: Option<*mut c_void>,
+    pub(crate) windows_job: Option<*mut c_void>,
 }
 
 impl<'a> Coordinator<'a> {
@@ -87,7 +89,7 @@ impl<'a> Coordinator<'a> {
         // regardless of what the loop body does. Iterate via raw pointers
         // instead.
         let mut victim: Option<*mut Worker> = None;
-        let mut most: u32 = 0;
+        let mut most: u64 = 0;
         let base: *mut Worker = self.workers.as_mut_ptr();
         let len = self.workers.len();
         for i in 0..len {
@@ -96,7 +98,11 @@ impl<'a> Coordinator<'a> {
             // SAFETY: `v = base.add(i)` with `i < len` is in-bounds for
             // `self.workers`; field read through *mut so no `&mut Worker` is
             // formed that could alias the caller's live `w`.
-            let n = unsafe { (*v).range.len() };
+            let r = unsafe { (*v).range };
+            let n: u64 = match &self.costs {
+                Some(c) => c[r.lo as usize..r.hi as usize].iter().sum(),
+                None => u64::from(r.len()),
+            };
             if n > most {
                 most = n;
                 victim = Some(v);
@@ -107,13 +113,16 @@ impl<'a> Coordinator<'a> {
 
     pub(crate) fn drive(&mut self) {
         let _ = self.spawn_worker();
+        self.run_pending_reaps();
         while !self.is_done() {
             if abort_handler::SHOULD_ABORT.load(Ordering::Acquire) {
                 self.abort_all();
                 return;
             }
             self.vm.event_loop_ref().tick();
+            self.run_pending_reaps();
             self.maybe_scale_up();
+            self.run_pending_reaps();
             if self.is_done() {
                 break;
             }
@@ -135,6 +144,7 @@ impl<'a> Coordinator<'a> {
             } else {
                 self.vm.event_loop_ref().auto_tick();
             }
+            self.run_pending_reaps();
         }
     }
 
@@ -208,8 +218,8 @@ impl<'a> Coordinator<'a> {
         // Built via from_mut so the stored `*const` carries write provenance:
         // WorkerPipe::on_read_chunk later mutates the Worker through cast_mut().
         let w_ptr = std::ptr::from_mut::<Worker>(w).cast_const();
-        w.out = WorkerPipe::new(PipeRole::Stdout, w_ptr);
-        w.err = WorkerPipe::new(PipeRole::Stderr, w_ptr);
+        w.out = WorkerPipe::new(w_ptr);
+        w.err = WorkerPipe::new(w_ptr);
         match w.start() {
             Ok(()) => {}
             Err(e) => {
@@ -280,7 +290,11 @@ impl<'a> Coordinator<'a> {
             // two `&mut Worker` are disjoint. find_steal_victim itself iterates
             // via raw pointers and never forms a `&mut Worker` for `w`'s slot.
             let v = unsafe { &mut *v_ptr };
-            if let Some(stolen) = v.range.steal_back_half() {
+            if self.costs.is_some() {
+                if let Some(idx) = v.range.pop_front() {
+                    return w.dispatch(idx, self.files[idx as usize].as_bytes());
+                }
+            } else if let Some(stolen) = v.range.steal_back_half() {
                 w.range = stolen;
                 if let Some(idx) = w.range.pop_front() {
                     return w.dispatch(idx, self.files[idx as usize].as_bytes());
@@ -317,6 +331,12 @@ impl<'a> Coordinator<'a> {
                     (*other).shutdown();
                 }
             }
+        }
+    }
+
+    fn record_timing(&mut self, file_idx: u32, dispatched_at: i64) {
+        if let Some(t) = self.reporter.timings.as_mut() {
+            t.record_since(self.files[file_idx as usize].as_bytes(), dispatched_at);
         }
     }
 
@@ -448,6 +468,7 @@ impl<'a> Coordinator<'a> {
                     summary.files += files;
                 }
                 self.reporter.jest.unhandled_errors_between_tests += unhandled;
+                self.record_timing(idx, w.dispatched_at);
 
                 w.inflight = None;
                 self.files_done += 1;
@@ -505,16 +526,37 @@ impl<'a> Coordinator<'a> {
     }
 
     pub(crate) fn try_reap(&mut self, w: &mut Worker) {
-        // SpawnStatus is not Copy (Err arm owns a path); take()
-        // instead of pattern-match-by-copy.
-        if w.exit_status.is_none() || !w.ipc.done {
+        if w.exit_status.is_none() || !w.ipc.done.get() {
             return;
         }
-        let status = w.exit_status.take().expect("checked above");
-        self.reap_worker(w, &status);
+        w.reap_pending = true;
     }
 
-    fn reap_worker(&mut self, w: &mut Worker, status: &SpawnStatus) {
+    fn run_pending_reaps(&mut self) {
+        let n = self.spawned_count as usize;
+        for i in 0..n {
+            // SAFETY: `i < spawned_count <= workers.len()`. `base` is re-derived
+            // each iteration: `reap_worker`'s slot walks (`as_mut_ptr` in the
+            // abort paths) retag the buffer, popping any earlier derivation.
+            let w: *mut Worker = unsafe { self.workers.as_mut_ptr().add(i) };
+            // SAFETY: `w` is a live slot; short place accesses only.
+            let status = unsafe {
+                if !core::mem::take(&mut (*w).reap_pending) {
+                    continue;
+                }
+                // SpawnStatus is not Copy (Err arm owns a path); take()
+                // instead of pattern-match-by-copy.
+                (*w).exit_status
+                    .take()
+                    .expect("reap_pending set only after exit_status")
+            };
+            self.reap_worker(i, &status);
+        }
+    }
+
+    fn reap_worker(&mut self, slot: usize, status: &SpawnStatus) {
+        // SAFETY: `slot < spawned_count <= workers.len()`; fresh root derivation, like each reborrow below.
+        let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
         // Decrement here (not in onProcessExit) so drive() keeps pumping until
         // the IPC pipe has been drained and this reap actually runs.
         self.live_workers -= 1;
@@ -536,15 +578,20 @@ impl<'a> Coordinator<'a> {
             if was_bailed && !panicked {
                 self.account_unfinished(idx, b"aborted: sibling worker panicked");
             } else {
+                self.record_timing(idx, w.dispatched_at);
                 self.account_crash(idx, status);
             }
             Output::flush();
+            // SAFETY: fresh root derivation — `account_crash` can reach `bail_out`, which retags the slots.
+            let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
             w.inflight = None;
             if panicked {
                 self.abort_on_worker_panic(idx, status);
             }
         }
 
+        // SAFETY: fresh derivation — `abort_on_worker_panic` above retags the slots.
+        let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
         if let Some(p) = w.process.take() {
             // SAFETY: `p` is the live `*mut Process` from `to_process`; sole owner now.
             unsafe {
@@ -555,11 +602,13 @@ impl<'a> Coordinator<'a> {
 
         let mut respawned = false;
         if !self.bailed && self.has_undispatched_files() {
+            // SAFETY: fresh derivation — `has_undispatched_files` read the slots.
+            let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
             w.ipc = Default::default();
             // from_mut: keep write provenance on the stored backref (see spawn_worker).
             let w_ptr = std::ptr::from_mut::<Worker>(w).cast_const();
-            w.out = WorkerPipe::new(PipeRole::Stdout, w_ptr);
-            w.err = WorkerPipe::new(PipeRole::Stderr, w_ptr);
+            w.out = WorkerPipe::new(w_ptr);
+            w.err = WorkerPipe::new(w_ptr);
             match w.start() {
                 Ok(()) => {
                     respawned = true;
@@ -577,9 +626,11 @@ impl<'a> Coordinator<'a> {
             // Explicit early release: `w` is a borrowed slot in self.workers, so
             // Drop won't fire until Coordinator teardown. Assigning defaults
             // drops the old values now (pipe FDs, capture buffer).
+            // SAFETY: fresh derivation — `abort_queued_files` may retag the slots.
+            let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
             w.ipc = Default::default();
-            w.out = WorkerPipe::new(PipeRole::Stdout, core::ptr::null());
-            w.err = WorkerPipe::new(PipeRole::Stderr, core::ptr::null());
+            w.out = WorkerPipe::new(core::ptr::null());
+            w.err = WorkerPipe::new(core::ptr::null());
             let _ = core::mem::take(&mut w.captured);
         }
     }
@@ -729,7 +780,7 @@ impl<'a> Coordinator<'a> {
                 return None;
             }
             let mut jeli: windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION = bun_core::ffi::zeroed();
-            jeli.BasicLimitInformation.LimitFlags = windows::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            jeli.BasicLimitInformation.LimitFlags = windows::JOB_LIMIT_FLAGS_KILL_TREE_ON_CLOSE;
             if windows::SetInformationJobObject(
                 job,
                 windows::JobObjectExtendedLimitInformation,
@@ -804,7 +855,7 @@ fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] 
 /// don't do non-signal-safe work in the handler. Linux PDEATHSIG and the
 /// Windows Job Object are the safety net for when the coordinator can't run
 /// this (SIGKILL).
-pub mod abort_handler {
+pub(crate) mod abort_handler {
     use super::*;
 
     pub(crate) static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);

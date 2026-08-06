@@ -221,6 +221,36 @@ describe.concurrent("bunshell ls", () => {
         .run();
     });
 
+    test("-a and -A: last one wins (separate args)", async () => {
+      using tempdir = tempDir("ls-aA-order", {
+        ".hidden": "",
+        "visible": "",
+      });
+      await TestBuilder.command`ls -a -A`
+        .setTempdir(String(tempdir))
+        .stdout(s => expect(sortedLsOutput(s)).toEqual([".hidden", "visible"]))
+        .run();
+      await TestBuilder.command`ls -A -a`
+        .setTempdir(String(tempdir))
+        .stdout(s => expect(sortedLsOutput(s)).toEqual([".", "..", ".hidden", "visible"]))
+        .run();
+    });
+
+    test("-a and -A: last one wins (combined arg)", async () => {
+      using tempdir = tempDir("ls-aA-combined", {
+        ".hidden": "",
+        "visible": "",
+      });
+      await TestBuilder.command`ls -aA`
+        .setTempdir(String(tempdir))
+        .stdout(s => expect(sortedLsOutput(s)).toEqual([".hidden", "visible"]))
+        .run();
+      await TestBuilder.command`ls -Aa`
+        .setTempdir(String(tempdir))
+        .stdout(s => expect(sortedLsOutput(s)).toEqual([".", "..", ".hidden", "visible"]))
+        .run();
+    });
+
     test("-d with multiple directories", async () => {
       await using tempdir = tempDir("ls-d-multi", {});
       await $`mkdir dir1 dir2`.quiet().throws(true).cwd(tempdir);

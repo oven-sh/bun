@@ -47,9 +47,9 @@ pub struct FileRoute {
 }
 
 pub struct InitOptions<'a> {
-    pub server: Option<AnyServer>,
-    pub status_code: u16, // default 200
-    pub headers: Option<&'a FetchHeaders>,
+    pub(crate) server: Option<AnyServer>,
+    pub(crate) status_code: u16, // default 200
+    pub(crate) headers: Option<&'a FetchHeaders>,
 }
 
 impl<'a> Default for InitOptions<'a> {
@@ -77,17 +77,17 @@ fn sp_slice<'a>(ptr: StringPointer, buf: &'a [u8]) -> &'a [u8] {
 impl FileRoute {
     /// Exposes the private `server` Cell to the route table (`AnyRoute::set_server`).
     #[inline]
-    pub fn set_server(&self, server: Option<AnyServer>) {
+    pub(crate) fn set_server(&self, server: Option<AnyServer>) {
         self.server.set(server);
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         size_of::<FileRoute>()
             + self.headers.memory_cost()
             + self.blob.reported_estimated_size.get()
     }
 
-    pub fn last_modified_date(&self) -> JsResult<Option<u64>> {
+    pub(crate) fn last_modified_date(&self) -> JsResult<Option<u64>> {
         if self.has_last_modified_header {
             if let Some(last_modified) = self.headers.get(b"last-modified") {
                 let mut string = BunString::borrow_utf8(last_modified);
@@ -115,7 +115,7 @@ impl FileRoute {
         Ok(None)
     }
 
-    pub fn init_from_blob(blob: Blob, opts: &InitOptions<'_>) -> *mut FileRoute {
+    pub(crate) fn init_from_blob(blob: Blob, opts: &InitOptions<'_>) -> *mut FileRoute {
         let headers = headers_from(opts.headers, &blob);
         bun_core::heap::into_raw(Box::new(FileRoute {
             ref_count: Cell::new(1),
@@ -279,7 +279,7 @@ impl FileRoute {
     // Forwards `this` to `Self::on` without dereferencing; not_unsafe_ptr_arg_deref
     // is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn on_head_request(this: *mut FileRoute, req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_head_request(this: *mut FileRoute, req: AnyRequest, resp: AnyResponse) {
         // SAFETY: forwarded with the same precondition.
         unsafe { Self::on(this, req, resp, Method::HEAD) };
     }
@@ -287,7 +287,7 @@ impl FileRoute {
     // Forwards `this` to `Self::on` without dereferencing; not_unsafe_ptr_arg_deref
     // is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn on_request(this: *mut FileRoute, req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_request(this: *mut FileRoute, req: AnyRequest, resp: AnyResponse) {
         let method = Method::find(req.method()).unwrap_or(Method::GET);
         // SAFETY: `this` is a live heap FileRoute — intrusive ref held by the
         // route table; only reached from the uWS route callback.
@@ -306,7 +306,7 @@ impl FileRoute {
     /// this call. The `ref_()` taken below keeps it alive until
     /// `on_response_complete`. All mutation through `this` goes via `Cell`, so
     /// the shared borrow is sound.
-    pub unsafe fn on(
+    pub(crate) unsafe fn on(
         this_ptr: *mut FileRoute,
         mut req: AnyRequest,
         resp: AnyResponse,

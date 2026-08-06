@@ -69,7 +69,6 @@ using WebCore::JSReadableStreamReaderBase;
 using WebCore::JSReadIntoRequest;
 using WebCore::JSReadRequest;
 using WebCore::JSReadStreamIntoSinkOperation;
-using WebCore::JSResumableSinkPumpOperation;
 using WebCore::JSStreamFromIterableContext;
 using WebCore::JSStreamPipeToOperation;
 using WebCore::JSStreamsRuntime;
@@ -132,8 +131,7 @@ bool canTransferArrayBuffer(JSC::ArrayBuffer&); // userJS: no — WebStreamsMisc
 // spec CanTransferArrayBuffer(O) — pure.
 // spec CloneAsUint8Array(O) — allocation-throws only.
 JSC::JSUint8Array* cloneAsUint8Array(JSC::JSGlobalObject*, JSC::JSArrayBufferView*); // userJS: no — WebStreamsMisc.cpp
-// spec StructuredClone(v): use the EXISTING WebCore::structuredCloneForStream
-// (src/jsc/bindings/webcore/StructuredClone.h). No streams-local duplicate is declared.
+// spec StructuredClone(v): no caller — every tee path passes cloneForBranch2 = false.
 // spec CanCopyDataBlockBytes(toBuffer, toIndex, fromBuffer, fromIndex, count) — pure.
 bool canCopyDataBlockBytes(JSC::ArrayBuffer& toBuffer, size_t toIndex, JSC::ArrayBuffer& fromBuffer, size_t fromIndex, size_t count); // userJS: no — WebStreamsMisc.cpp
 
@@ -223,6 +221,11 @@ void readableStreamReaderGenericRelease(JSC::JSGlobalObject*, JSReadableStreamRe
 JSC::JSPromise* readableStreamCancel(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue reason); // userJS: yes — ReadableStreamOperations.cpp
 void readableStreamClose(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes (read-request close-steps dispatch) — ReadableStreamOperations.cpp
 void readableStreamError(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue error); // userJS: yes (error-steps dispatch) — ReadableStreamOperations.cpp
+// Eagerly drop WriteBarriers on the stream that exist only to feed user source callbacks
+// (pull/cancel/close). Called once no more source callbacks will run: each controller's
+// ClearAlgorithms, the tail of readableStreamCancel, and the direct controller's
+// close/error. Idempotent.
+void readableStreamClearSourceBarriers(JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
 // Bun helper used by every consumer teardown: closes the stream iff its state still allows
 // it. Callers: BunStreamConsumers.cpp, BunStreamSource.cpp, JSDirectStreamController.cpp.
 void readableStreamCloseIfPossible(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — ReadableStreamOperations.cpp
@@ -236,10 +239,10 @@ bool readableStreamHasDefaultReader(JSReadableStream*); // userJS: no — Readab
 bool readableStreamHasBYOBReader(JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
 
 // Tee / from / pipe entry points.
-// Bun: `cloneForBranch2` is Bun's `shouldClone` (Response.clone passes true; the public
-// tee() passes false). ALSO runs materializeIfNeeded first.
-std::pair<JSReadableStream*, JSReadableStream*> readableStreamTee(JSC::JSGlobalObject*, JSReadableStream*, bool cloneForBranch2); // userJS: yes — ReadableStreamOperations.cpp
-std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSC::JSGlobalObject*, JSReadableStream*, bool cloneForBranch2); // userJS: yes — ReadableStreamOperations.cpp
+// Bun: the spec's `cloneForBranch2` is not implemented; both branches share each chunk by
+// reference (see WebStreamsExports.cpp). ALSO runs materializeIfNeeded first.
+std::pair<JSReadableStream*, JSReadableStream*> readableStreamTee(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — ReadableStreamOperations.cpp
+std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — ReadableStreamOperations.cpp
 std::pair<JSReadableStream*, JSReadableStream*> readableByteStreamTee(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — ReadableStreamOperations.cpp
 // spec ReadableStreamFromIterable(asyncIterable) — `ReadableStream.from`.
 JSReadableStream* readableStreamFromIterable(JSC::JSGlobalObject*, JSC::JSValue asyncIterable); // userJS: yes — ReadableStreamOperations.cpp
@@ -436,8 +439,10 @@ void writableStreamDefaultControllerWrite(JSC::JSGlobalObject*, JSWritableStream
 
 // TransformStreamOperations.cpp
 
-// The internal-creation parallel of createReadableStream.
-JSTransformStream* createTransformStream(JSC::JSGlobalObject*, TransformerKind, JSC::JSCell* algorithmContext, double writableHighWaterMark = 1, JSC::JSObject* writableSizeAlgorithm = nullptr, double readableHighWaterMark = 0, JSC::JSObject* readableSizeAlgorithm = nullptr); // userJS: yes — TransformStreamOperations.cpp
+// Initializes an already-allocated JSTransformStream SUBCLASS as a TransformStream with the
+// given native transformer kind (writable/readable HWM = 1/1, no size algorithms, trivial
+// start). The controller's algorithmContext is `stream` itself.
+void setUpNativeTransformStream(JSC::JSGlobalObject*, JSTransformStream*, TransformerKind); // userJS: yes — TransformStreamOperations.cpp
 void initializeTransformStream(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSPromise* startPromise, double writableHighWaterMark, JSC::JSObject* writableSizeAlgorithm, double readableHighWaterMark, JSC::JSObject* readableSizeAlgorithm); // userJS: yes — TransformStreamOperations.cpp
 void transformStreamError(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSValue error); // userJS: yes — TransformStreamOperations.cpp
 void transformStreamErrorWritableAndUnblockWrite(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSValue error); // userJS: yes — TransformStreamOperations.cpp
@@ -457,6 +462,30 @@ void transformStreamDefaultControllerClearAlgorithms(JSTransformStreamDefaultCon
 // A sanctioned takeAbruptCompletion catch site (catches the readable-side enqueue's abrupt
 // completion, errors the writable, then throws stream.[[readable]].[[storedError]]).
 void transformStreamDefaultControllerEnqueue(JSC::JSGlobalObject*, JSTransformStreamDefaultController*, JSC::JSValue chunk); // userJS: yes; throws — JSTransformStreamDefaultController.cpp
+void nativeTransformReleaseState(JSTransformStream*); // userJS: no — JSTransformStreamDefaultController.cpp
+
+// Rust-side single dispatch for the native-transform → native-JSSink byte write, routed
+// through SinkHandle::write (src/runtime/webcore/Sink.rs). Returns a negative number for
+// native ByteStream/FileReader sources under backpressure, but a pending JSPromise for the
+// JSController-sourced sinks that readStreamIntoSink attaches (HTTPResponseSink/FileSink).
+// Both mean "suspend" — nativeSinkWriteIsBackpressure below reads either shape.
+extern "C" JSC::EncodedJSValue Bun__NativeTransformSink__writeBytes(uint8_t sinkId, void* sinkPtr, JSC::JSGlobalObject*, const uint8_t* ptr, size_t len); // userJS: no — Sink.rs
+bool nativeSinkWriteIsBackpressure(JSC::VM&, JSC::JSValue wrote); // userJS: no — WebStreamsMisc.cpp
+
+// Brackets a native transform/flush arm so a re-entrant ClearAlgorithms (reached via a
+// reader.cancel() inside the arm's chunk coercion) defers nativeTransformReleaseState
+// until control unwinds back here.
+template<typename JSStream, typename Arm>
+JSC::JSPromise* runNativeArm(JSC::JSCell* context, Arm&& arm)
+{
+    auto* stream = uncheckedDowncast<JSStream>(context);
+    stream->m_nativeStateInUse = true;
+    JSC::JSPromise* result = arm(stream);
+    stream->m_nativeStateInUse = false;
+    if (stream->m_nativeStateReleasePending && !stream->m_asyncCodecInFlight) [[unlikely]]
+        nativeTransformReleaseState(stream);
+    return result;
+}
 void transformStreamDefaultControllerError(JSC::JSGlobalObject*, JSTransformStreamDefaultController*, JSC::JSValue error); // userJS: yes — JSTransformStreamDefaultController.cpp
 JSC::JSPromise* transformStreamDefaultControllerPerformTransform(JSC::JSGlobalObject*, JSTransformStreamDefaultController*, JSC::JSValue chunk); // userJS: yes (user transform) — JSTransformStreamDefaultController.cpp
 void transformStreamDefaultControllerTerminate(JSC::JSGlobalObject*, JSTransformStreamDefaultController*); // userJS: yes — JSTransformStreamDefaultController.cpp
@@ -474,6 +503,14 @@ JSC::JSPromise* textEncoderStreamFlush(JSC::JSGlobalObject*, JSTextEncoderStream
 
 JSC::JSPromise* textDecoderStreamTransform(JSC::JSGlobalObject*, JSTextDecoderStream*, JSTransformStreamDefaultController*, JSC::JSValue chunk); // userJS: yes — JSTextDecoderStream.cpp
 JSC::JSPromise* textDecoderStreamFlush(JSC::JSGlobalObject*, JSTextDecoderStream*, JSTransformStreamDefaultController*); // userJS: yes — JSTextDecoderStream.cpp
+
+// JSCompressionStreamShared.cpp — the TransformerKind::Compression / ::Decompression algorithm
+// ARMS. Same dispatch/bridge relationship as the TextEncoder/TextDecoder arms above.
+
+JSC::JSPromise* compressionStreamTransform(JSC::JSGlobalObject*, JSCompressionStream*, JSTransformStreamDefaultController*, JSC::JSValue chunk); // userJS: yes — JSCompressionStreamShared.cpp
+JSC::JSPromise* compressionStreamFlush(JSC::JSGlobalObject*, JSCompressionStream*, JSTransformStreamDefaultController*); // userJS: yes — JSCompressionStreamShared.cpp
+JSC::JSPromise* decompressionStreamTransform(JSC::JSGlobalObject*, JSDecompressionStream*, JSTransformStreamDefaultController*, JSC::JSValue chunk); // userJS: yes — JSCompressionStreamShared.cpp
+JSC::JSPromise* decompressionStreamFlush(JSC::JSGlobalObject*, JSDecompressionStream*, JSTransformStreamDefaultController*); // userJS: yes — JSCompressionStreamShared.cpp
 
 // CrossRealmTransform.cpp — transferable streams are NOT implemented. These signatures are
 // FROZEN, but the .cpp may be a stub whose entry points assert / throw; the per-class
@@ -531,14 +568,15 @@ JSC::JSValue assignToStream(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValu
 JSC::JSValue readDirectStream(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSObject* sinkController, JSC::JSObject* underlyingSource); // userJS: yes — BunStreamSource.cpp
 // The generic pump into a native JSSink controller.
 JSC::JSPromise* readStreamIntoSink(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSObject* sink); // userJS: yes — BunStreamSource.cpp
-// The ResumableSink protocol. Returns undefined (encoded).
-JSC::JSValue assignStreamIntoResumableSink(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSObject* resumableSink); // userJS: yes — BunStreamSource.cpp
 
 // JSDirectStreamController.cpp — direct-stream materialization + the direct controller.
 
 // Installs a JSDirectStreamController of the given flavor on the stream, nulls the stream's
 // m_directUnderlyingSource, and sets m_bunMode = Default.
 void setUpDirectStreamController(JSC::JSGlobalObject*, JSReadableStream*, DirectSinkKind, double highWaterMark); // userJS: yes — JSDirectStreamController.cpp
+// Drop the direct controller's retained user-source state once no further pull/close callbacks
+// can run (m_closed set, or the stream has left Readable). Idempotent.
+void directStreamControllerClearSource(JSDirectStreamController*); // userJS: no — JSDirectStreamController.cpp
 
 // BunStreamConsumers.cpp — Bun.readableStreamTo*, the buffered fast path, the direct
 // consumers, and the generic accumulators. These are the native entry points; their
@@ -625,7 +663,5 @@ JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject*, JS
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObject*, JSC::EncodedJSValue stream, JSC::EncodedJSValue contentType); // userJS: yes
-// Caller: ResumableSink.rs; returns encoded undefined.
-JSC::EncodedJSValue Bun__assignStreamIntoResumableSink(JSC::JSGlobalObject*, JSC::EncodedJSValue stream, JSC::EncodedJSValue sink); // userJS: yes
 
 } // extern "C"

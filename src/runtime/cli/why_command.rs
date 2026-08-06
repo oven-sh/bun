@@ -157,7 +157,7 @@ impl<'a> Default for GlobPattern<'a> {
 
 impl<'a> GlobPattern<'a> {
     fn init(pattern: &'a [u8]) -> GlobPattern<'a> {
-        if let Some(at_pos) = pattern.iter().position(|&b| b == b'@') {
+        if let Some(at_pos) = strings::index_of_char_usize(pattern, b'@') {
             if at_pos > 0 && at_pos < pattern.len() - 1 {
                 let pkg_pattern = &pattern[0..at_pos];
                 let version_pattern = &pattern[at_pos + 1..];
@@ -176,7 +176,7 @@ impl<'a> GlobPattern<'a> {
     }
 
     fn init_for_name(pattern: &'a [u8]) -> GlobPattern<'a> {
-        if !pattern.contains(&b'*') {
+        if !strings::contains_char(pattern, b'*') {
             return GlobPattern {
                 pattern_type: PatternType::Exact,
                 ..Default::default()
@@ -185,7 +185,7 @@ impl<'a> GlobPattern<'a> {
 
         if pattern.len() >= 3 && pattern[0] == b'*' && pattern[pattern.len() - 1] == b'*' {
             let substring = &pattern[1..pattern.len() - 1];
-            if !substring.is_empty() && !substring.contains(&b'*') {
+            if !substring.is_empty() && !strings::contains_char(substring, b'*') {
                 return GlobPattern {
                     pattern_type: PatternType::Contains,
                     substring,
@@ -194,7 +194,7 @@ impl<'a> GlobPattern<'a> {
             }
         }
 
-        if let Some(wildcard_pos) = pattern.iter().position(|&b| b == b'*') {
+        if let Some(wildcard_pos) = strings::index_of_char_usize(pattern, b'*') {
             if wildcard_pos == pattern.len() - 1 {
                 return GlobPattern {
                     pattern_type: PatternType::Prefix,
@@ -211,7 +211,7 @@ impl<'a> GlobPattern<'a> {
                 };
             }
 
-            if pattern[wildcard_pos + 1..].contains(&b'*') {
+            if strings::contains_char(&pattern[wildcard_pos + 1..], b'*') {
                 return GlobPattern {
                     pattern_type: PatternType::Invalid,
                     ..Default::default()
@@ -267,7 +267,7 @@ impl<'a> GlobPattern<'a> {
 }
 
 impl WhyCommand {
-    pub(crate) fn print_usage() {
+    fn print_usage() {
         bun_core::prettyln!(
             concat!("<r><b>bun why<r> <d>v", "{}", "<r>"),
             Global::package_json_version_with_sha
@@ -329,7 +329,7 @@ impl WhyCommand {
         Self::exec_with_manager(ctx, pm, positionals[1], pm.options.top_only)
     }
 
-    pub(crate) fn exec_with_manager(
+    fn exec_with_manager(
         ctx: command::Context,
         pm: &mut PackageManager,
         package_pattern: &[u8],
@@ -563,7 +563,7 @@ fn print_package_with_type(prefix: &[u8], package: &DependentInfo) {
     }
 }
 
-pub struct TreeContext<'a> {
+pub(crate) struct TreeContext<'a> {
     all_dependents: &'a HashMap<PackageID, Vec<DependentInfo>>,
     path_tracker: HashMap<PackageID, usize>,
 }

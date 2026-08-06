@@ -1,13 +1,10 @@
-// GENERATED: re-run peechy (src/api/schema.peechy) with .rs output
-// PORT STATUS: skipped — generated file (see PORTING.md §Don't translate)
-//
-// Minimal hand-stubbed `api` namespace so Context.rs / BundleEnums.rs
-// struct fields type-check. Full body arrives when peechy emits .rs.
+//! Option/config structs shared by the CLI, bunfig, bundler and runtime
+//! (`TransformOptions`, `BunInstall`, …) plus the wire types for the
+//! `Bun.serve` development-mode error page (`FallbackMessageContainer`).
 
-/// Schema writer specialised to a
-/// `Vec<u8>` sink — the only instantiation reachable from Rust today
-/// (`js_parser::runtime::Base64FallbackMessage::fmt`). The full generic shape
-/// arrives with the peechy-generated body.
+/// Binary writer for the dev-mode error page payload
+/// (`js_parser::runtime::Base64FallbackMessage::fmt`), decoded by
+/// `src/fallback.ts` in the browser.
 pub struct Writer<'a> {
     writable: &'a mut Vec<u8>,
 }
@@ -18,16 +15,16 @@ impl<'a> Writer<'a> {
         Self { writable }
     }
     #[inline]
-    pub fn write(&mut self, bytes: &[u8]) {
+    pub(crate) fn write(&mut self, bytes: &[u8]) {
         self.writable.extend_from_slice(bytes);
     }
     #[inline]
-    pub fn write_byte(&mut self, byte: u8) {
+    pub(crate) fn write_byte(&mut self, byte: u8) {
         self.writable.push(byte);
     }
     /// Writes the int's native-endian raw bytes.
     #[inline]
-    pub fn write_int<I: Copy>(&mut self, int: I) {
+    pub(crate) fn write_int<I: Copy>(&mut self, int: I) {
         // SAFETY: `int` is a live stack local, so `&raw const int` is valid for reads of
         // `size_of::<I>()` initialized bytes; `u8` has align 1 so the cast pointer is always
         // aligned; the slice is consumed by `extend_from_slice` before `int` leaves scope.
@@ -37,21 +34,21 @@ impl<'a> Writer<'a> {
         self.writable.extend_from_slice(bytes);
     }
     #[inline]
-    pub fn write_field_id(&mut self, id: u8) {
+    pub(crate) fn write_field_id(&mut self, id: u8) {
         self.write_byte(id);
     }
     #[inline]
-    pub fn write_enum<E: Copy>(&mut self, val: E) {
+    pub(crate) fn write_enum<E: Copy>(&mut self, val: E) {
         self.write_int(val);
     }
     /// Length-prefixed byte slice.
     #[inline]
-    pub fn write_array_u8(&mut self, slice: &[u8]) {
+    pub(crate) fn write_array_u8(&mut self, slice: &[u8]) {
         self.write_int(u32::try_from(slice.len()).unwrap());
         self.write(slice);
     }
     #[inline]
-    pub fn end_message(&mut self) {
+    pub(crate) fn end_message(&mut self) {
         self.write_byte(0);
     }
 }
@@ -60,22 +57,6 @@ pub mod api {
     /// Canonical definition lives in bun_dotenv (lower tier).
     pub use bun_dotenv::DotEnvBehavior;
 
-    /// Open `enum(u8)` in the wire schema. Kept closed.
-    /// Variants PascalCased to match the only downstream writer
-    /// (`runtime/cli/Arguments.rs` → `api::ResolveMode::Lazy`).
-    #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-    pub enum ResolveMode {
-        #[default]
-        _none = 0,
-        Disable = 1,
-        Lazy = 2,
-        Dev = 3,
-        Bundle = 4,
-    }
-
-    /// Open `enum(u32)` in the wire schema. Kept closed.
-    /// PascalCased: `bun_ast::Kind::to_api` matches on `Err`/`Warn`/`Note`/`Debug`.
     #[repr(u32)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum MessageLevel {
@@ -88,7 +69,6 @@ pub mod api {
         Debug = 5,
     }
 
-    /// `enum(u8)` (closed; not a peechy `smol`).
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum UnhandledRejections {
@@ -119,15 +99,8 @@ pub mod api {
             __ComptimeStringMap_UNHANDLED_REJECTIONS_MAP(());
     }
 
-    /// peechy `message TransformOptions`. Full field set.
-    ///
-    /// Type map (matches the convention block below):
-    ///   `?T`                  → `Option<T>`
-    ///   `[]const u8`          → `Box<[u8]>`
-    ///   `?[]const u8`         → `Option<Box<[u8]>>`
-    ///   `[]const []const u8`  → `Vec<Box<[u8]>>`
-    ///   `?[:0]const u8`       → `Option<Box<[u8]>>`   (sentinel re-derived
-    ///                            at use-site)
+    /// The CLI/bunfig-populated option bag that `BundleOptions::from_api`
+    /// projects into bundler options.
     ///
     /// `Default` is all-zero: every Option `None`, every slice empty, every
     /// scalar `0`/`false`.
@@ -140,11 +113,9 @@ pub mod api {
         pub jsx: Option<Jsx>,
         /// tsconfig_override
         pub tsconfig_override: Option<Box<[u8]>>,
-        /// resolve
-        pub resolve: Option<ResolveMode>,
         /// origin
         pub origin: Option<Box<[u8]>>,
-        /// absolute_working_dir — sentinel dropped (see type-map note above).
+        /// absolute_working_dir
         pub absolute_working_dir: Option<Box<[u8]>>,
         /// define
         pub define: Option<StringMap>,
@@ -232,16 +203,6 @@ pub mod api {
         pub email: Box<[u8]>,
     }
 
-    impl NpmRegistry {
-        /// Plain field-wise clone. PERF: could pack all five strings into one
-        /// contiguous allocation and reslice, but Rust can't hand back five
-        /// `Box<[u8]>` views into one buffer without leaking.
-        #[inline]
-        pub fn dupe(&self) -> NpmRegistry {
-            self.clone()
-        }
-    }
-
     /// Per-scope npm registry overrides, keyed by scope name.
     #[derive(Default)]
     pub struct NpmRegistryMap {
@@ -295,8 +256,6 @@ pub mod api {
         pub production: Option<bool>,
         /// save_yarn_lockfile
         pub save_yarn_lockfile: Option<bool>,
-        /// native_bin_links
-        pub native_bin_links: Vec<Box<[u8]>>,
         /// disable_cache
         pub disable_cache: Option<bool>,
         /// disable_manifest_cache
@@ -324,11 +283,9 @@ pub mod api {
         pub minimum_release_age_excludes: Option<Vec<Box<[u8]>>>,
         pub public_hoist_pattern: Option<PnpmMatcher>,
         pub hoist_pattern: Option<PnpmMatcher>,
+        pub hoist: Option<bool>,
     }
 
-    /// Open `enum(u8)` in the wire schema. Generated body emits `_` open
-    /// variant; Rust side keeps it closed since callers exhaustively match
-    /// only the four named tags (see bundler/options.rs `SourceMapOption`).
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum SourceMapMode {
@@ -339,8 +296,6 @@ pub mod api {
         Linked,
     }
 
-    /// Open `enum(u8)` in the wire schema. Kept closed; `BundleEnums::Target::from`
-    /// guards the open tail with a `_ => Browser` arm.
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum Target {
@@ -354,21 +309,14 @@ pub mod api {
 
     impl Target {
         // PascalCase aliases — `runtime/cli/Arguments.rs` writes
-        // `api::Target::Bun` while the schema enum body keeps the peechy
-        // snake_case tags above.
+        // `api::Target::Bun` while the enum body keeps the snake_case tags
+        // that `bundle_enums.rs` matches on.
         pub const Browser: Self = Self::browser;
         pub const Node: Self = Self::node;
         pub const Bun: Self = Self::bun;
         pub const BunMacro: Self = Self::bun_macro;
     }
 
-    /// Alias: `runtime/cli/Arguments.rs` spells the schema type both ways.
-    pub type SourceMap = SourceMapMode;
-    /// Alias: `runtime/cli/Arguments.rs` spells the schema type both ways.
-    pub type Packages = PackagesMode;
-
-    /// Open `enum(u8)` in the wire schema, `_none = 254`. Kept closed;
-    /// `BundleEnums::Loader::from_api` guards the open tail with `_ => File`.
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum Loader {
@@ -430,23 +378,6 @@ pub mod api {
         }
     }
 
-    // ─── peechy batch 2: hand-expanded for downstream wfs ────────────────
-    // Jsx / JsxRuntime / StringMap / EnvConfig / LoadedEnvConfig /
-    // LoadedRouteConfig / RouteConfig / FrameworkEntryPoint{,Type,Map,Message} /
-    // PackagesMode / CssInJsBehavior / LoaderMap / LoadedFramework.
-    //
-    // String mapping (matches Context.rs convention — proc-lifetime borrows
-    // ported as owned heap):
-    //   `[]const u8`          → `Box<[u8]>`
-    //   `[]const []const u8`  → `Vec<Box<[u8]>>`  (or `Box<[Box<[u8]>]>` where
-    //                            downstream `.clone()` target requires it)
-    //
-    // Enum variant names are PascalCase (idiomatic Rust, matches downstream
-    // callers in bundler/options.rs + router/lib.rs); `_none` retained as the
-    // zero-tag default where the wire schema has it. Full peechy `.rs` emit
-    // will replace this block wholesale.
-
-    /// Open `enum(u8)` in the wire schema. Kept closed.
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum JsxRuntime {
@@ -489,88 +420,6 @@ pub mod api {
         pub loaders: Vec<Loader>,
     }
 
-    /// peechy `message` (all fields optional)
-    #[derive(Clone, Debug, Default)]
-    pub struct EnvConfig {
-        pub prefix: Option<Box<[u8]>>,
-        pub defaults: Option<StringMap>,
-    }
-
-    /// Fully-resolved env configuration ([`EnvConfig`] with defaults applied).
-    #[derive(Clone, Debug, Default)]
-    pub struct LoadedEnvConfig {
-        pub dotenv: DotEnvBehavior,
-        pub defaults: StringMap,
-        pub prefix: Box<[u8]>,
-    }
-
-    /// Open `enum(u8)` in the wire schema. Kept closed.
-    #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-    pub enum FrameworkEntryPointType {
-        #[default]
-        _none = 0,
-        Client = 1,
-        Server = 2,
-        Fallback = 3,
-    }
-
-    /// One resolved framework entry point (client/server/fallback) with its
-    /// path and env config.
-    #[derive(Clone, Debug, Default)]
-    pub struct FrameworkEntryPoint {
-        pub kind: FrameworkEntryPointType,
-        pub path: Box<[u8]>,
-        pub env: LoadedEnvConfig,
-    }
-
-    /// peechy `message` (all fields optional)
-    #[derive(Clone, Debug, Default)]
-    pub struct FrameworkEntryPointMap {
-        pub client: Option<FrameworkEntryPoint>,
-        pub server: Option<FrameworkEntryPoint>,
-        pub fallback: Option<FrameworkEntryPoint>,
-    }
-
-    /// peechy `message` (all fields optional)
-    #[derive(Clone, Debug, Default)]
-    pub struct FrameworkEntryPointMessage {
-        pub path: Option<Box<[u8]>>,
-        pub env: Option<EnvConfig>,
-    }
-
-    /// Fully-resolved router configuration (dir, extensions, static dir,
-    /// asset prefix).
-    #[derive(Clone, Debug, Default)]
-    pub struct LoadedRouteConfig {
-        pub dir: Box<[u8]>,
-        pub extensions: Box<[Box<[u8]>]>,
-        pub static_dir: Box<[u8]>,
-        pub asset_prefix: Box<[u8]>,
-    }
-
-    /// peechy `message` (array fields default empty,
-    /// scalar fields optional)
-    #[derive(Clone, Debug, Default)]
-    pub struct RouteConfig {
-        pub dir: Box<[Box<[u8]>]>,
-        pub extensions: Box<[Box<[u8]>]>,
-        pub static_dir: Option<Box<[u8]>>,
-        pub asset_prefix: Option<Box<[u8]>>,
-    }
-
-    /// Open `enum(u8)` in the wire schema. Kept closed.
-    #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-    pub enum CssInJsBehavior {
-        #[default]
-        _none = 0,
-        Facade = 1,
-        FacadeOnimportcss = 2,
-        AutoOnimportcss = 3,
-    }
-
-    /// Open `enum(u8)` in the wire schema (no `_none`). Kept closed.
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum PackagesMode {
@@ -580,8 +429,9 @@ pub mod api {
     }
 
     // ── Fallback error-page wire types ──────────────────────────────────────
+    // Encoded by `Writer` above; the layout must stay in sync with the decoder
+    // in `src/api/schema.js` (bundled into `src/fallback.ts`).
 
-    /// Open `enum(u8)` in the wire schema.
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum FallbackStep {
@@ -600,12 +450,12 @@ pub mod api {
     /// peechy `struct Router`.
     #[derive(Clone, Debug, Default)]
     pub struct Router {
-        pub routes: StringMap,
-        pub route: i32,
-        pub params: StringMap,
+        pub(crate) routes: StringMap,
+        pub(crate) route: i32,
+        pub(crate) params: StringMap,
     }
     impl Router {
-        pub fn encode(&self, w: &mut super::Writer<'_>) {
+        pub(crate) fn encode(&self, w: &mut super::Writer<'_>) {
             self.routes.encode(w);
             w.write_int(self.route);
             self.params.encode(w);
@@ -621,7 +471,7 @@ pub mod api {
         pub build: Log,
     }
     impl Problems {
-        pub fn encode(&self, w: &mut super::Writer<'_>) {
+        pub(crate) fn encode(&self, w: &mut super::Writer<'_>) {
             w.write_int(self.code);
             w.write_array_u8(&self.name);
             w.write_int(u32::try_from(self.exceptions.len()).unwrap());
@@ -642,7 +492,7 @@ pub mod api {
         // `stack: ?StackTrace` — omitted until StackTrace is ported.
     }
     impl JsException {
-        pub fn encode(&self, w: &mut super::Writer<'_>) {
+        pub(crate) fn encode(&self, w: &mut super::Writer<'_>) {
             if let Some(ref v) = self.name {
                 w.write_field_id(1);
                 w.write_array_u8(v);
@@ -664,7 +514,7 @@ pub mod api {
     }
 
     impl StringMap {
-        pub fn encode(&self, w: &mut super::Writer<'_>) {
+        pub(crate) fn encode(&self, w: &mut super::Writer<'_>) {
             w.write_int(u32::try_from(self.keys.len()).unwrap());
             for k in &self.keys {
                 w.write_array_u8(k);
@@ -684,7 +534,7 @@ pub mod api {
         // `msgs: []Message` — omitted until `Message` is ported.
     }
     impl Log {
-        pub fn encode(self, w: &mut super::Writer<'_>) {
+        pub(crate) fn encode(self, w: &mut super::Writer<'_>) {
             w.write_int(self.warnings);
             w.write_int(self.errors);
             w.write_int(0u32); // msgs.len

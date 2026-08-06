@@ -3,6 +3,8 @@
 
 use core::ffi::{c_char, c_int, c_uint, c_ulong, c_void};
 
+use bun_core::strings;
+
 #[repr(C)]
 pub struct lsquic_engine {
     _opaque: [u8; 0],
@@ -34,21 +36,13 @@ pub struct SSL_CTX {
     _opaque: [u8; 0],
 }
 
-pub const LSQ_HSK_FAIL: c_int = 0;
 pub const LSQ_HSK_OK: c_int = 1;
 pub const LSQ_HSK_RESUMED_OK: c_int = 2;
-pub const LSQ_HSK_RESUMED_FAIL: c_int = 3;
 
-pub const LSCONN_ST_HSK_IN_PROGRESS: c_int = 0;
-pub const LSCONN_ST_CONNECTED: c_int = 1;
 pub const LSCONN_ST_HSK_FAILURE: c_int = 2;
-pub const LSCONN_ST_GOING_AWAY: c_int = 3;
 pub const LSCONN_ST_TIMED_OUT: c_int = 4;
 pub const LSCONN_ST_RESET: c_int = 5;
-pub const LSCONN_ST_USER_ABORTED: c_int = 6;
 pub const LSCONN_ST_ERROR: c_int = 7;
-pub const LSCONN_ST_CLOSED: c_int = 8;
-pub const LSCONN_ST_PEER_GOING_AWAY: c_int = 9;
 pub const LSCONN_ST_VERNEG_FAILURE: c_int = 10;
 
 pub const LSQVER_I001: c_int = 5;
@@ -161,7 +155,7 @@ unsafe extern "C" {
     pub fn lsquic_conn_get_peer_ctx(c: *const lsquic_conn, local_sa: *const c_void) -> *mut c_void;
     pub fn lsquic_conn_set_ctx(c: *mut lsquic_conn, ctx: *mut c_void);
     pub fn lsquic_conn_close(c: *mut lsquic_conn);
-    pub fn lsquic_conn_going_away(c: *mut lsquic_conn);
+    fn lsquic_conn_going_away(c: *mut lsquic_conn);
     pub fn lsquic_conn_abort(c: *mut lsquic_conn);
     pub fn lsquic_conn_status(c: *mut lsquic_conn, errbuf: *mut c_char, bufsz: usize) -> c_int;
     pub fn lsquic_conn_make_stream(c: *mut lsquic_conn);
@@ -173,10 +167,10 @@ unsafe extern "C" {
         local: *mut *const sockaddr,
         peer: *mut *const sockaddr,
     ) -> c_int;
-    pub fn lsquic_conn_get_sni(c: *mut lsquic_conn) -> *const c_char;
-    pub fn lsquic_conn_want_datagram_write(c: *mut lsquic_conn, is_want: c_int) -> c_int;
-    pub fn lsquic_conn_crypto_cipher(c: *const lsquic_conn) -> *const c_char;
-    pub fn lsquic_conn_get_server_cert_chain(c: *mut lsquic_conn) -> *mut c_void;
+    fn lsquic_conn_get_sni(c: *mut lsquic_conn) -> *const c_char;
+    fn lsquic_conn_want_datagram_write(c: *mut lsquic_conn, is_want: c_int) -> c_int;
+    fn lsquic_conn_crypto_cipher(c: *const lsquic_conn) -> *const c_char;
+    fn lsquic_conn_get_server_cert_chain(c: *mut lsquic_conn) -> *mut c_void;
     pub fn lsquic_conn_get_ssl(c: *const lsquic_conn) -> *mut c_void;
     pub fn lsquic_ssl_to_conn(ssl: *const c_void) -> *mut lsquic_conn;
     pub fn lsquic_conn_abort_error(
@@ -193,10 +187,8 @@ unsafe extern "C" {
     ) -> c_int;
     pub fn us_nq_tp_size() -> usize;
 
-    pub fn lsquic_stream_id(s: *const lsquic_stream) -> u64;
+    fn lsquic_stream_id(s: *const lsquic_stream) -> u64;
     pub fn lsquic_stream_conn(s: *const lsquic_stream) -> *mut lsquic_conn;
-    pub fn lsquic_stream_get_ctx(s: *const lsquic_stream) -> *mut c_void;
-    pub fn lsquic_stream_set_ctx(s: *mut lsquic_stream, ctx: *mut c_void);
     pub fn lsquic_stream_read(s: *mut lsquic_stream, buf: *mut c_void, len: usize) -> isize;
     pub fn lsquic_stream_write(s: *mut lsquic_stream, buf: *const c_void, len: usize) -> isize;
     pub fn lsquic_stream_flush(s: *mut lsquic_stream) -> c_int;
@@ -204,7 +196,6 @@ unsafe extern "C" {
     pub fn lsquic_stream_close(s: *mut lsquic_stream) -> c_int;
     pub fn lsquic_stream_wantread(s: *mut lsquic_stream, is_want: c_int) -> c_int;
     pub fn lsquic_stream_wantwrite(s: *mut lsquic_stream, is_want: c_int) -> c_int;
-    pub fn lsquic_stream_is_pushed(s: *const lsquic_stream) -> c_int;
 
     pub fn us_nq_enable_logging(level: *const c_char);
     pub fn us_nq_vtable_size() -> usize;
@@ -234,48 +225,48 @@ unsafe extern "C" {
     ) -> c_int;
     pub fn lsquic_stream_get_hset(s: *mut lsquic_stream) -> *mut c_void;
 
-    pub fn us_nq_settings_set_idle_timeout(s: *mut lsquic_engine_settings, v: c_uint);
-    pub fn us_nq_settings_set_idle_timeout_ms(s: *mut lsquic_engine_settings, v: c_uint);
-    pub fn us_nq_settings_set_delayed_acks(s: *mut lsquic_engine_settings, v: c_int);
-    pub fn us_nq_settings_set_handshake_to(s: *mut lsquic_engine_settings, v: c_ulong);
-    pub fn us_nq_settings_set_ping_period(s: *mut lsquic_engine_settings, v: c_uint);
-    pub fn us_nq_settings_set_ping_period_us(s: *mut lsquic_engine_settings, v: u64);
-    pub fn lsquic_conn_pings_received(c: *const lsquic_conn) -> u64;
-    pub fn us_nq_settings_set_init_max_data(s: *mut lsquic_engine_settings, v: c_uint);
-    pub fn us_nq_settings_set_init_max_stream_data_bidi_local(
+    fn us_nq_settings_set_idle_timeout(s: *mut lsquic_engine_settings, v: c_uint);
+    fn us_nq_settings_set_idle_timeout_ms(s: *mut lsquic_engine_settings, v: c_uint);
+    fn us_nq_settings_set_delayed_acks(s: *mut lsquic_engine_settings, v: c_int);
+    fn us_nq_settings_set_handshake_to(s: *mut lsquic_engine_settings, v: c_ulong);
+    fn us_nq_settings_set_ping_period(s: *mut lsquic_engine_settings, v: c_uint);
+    fn us_nq_settings_set_ping_period_us(s: *mut lsquic_engine_settings, v: u64);
+    fn lsquic_conn_pings_received(c: *const lsquic_conn) -> u64;
+    fn us_nq_settings_set_init_max_data(s: *mut lsquic_engine_settings, v: c_uint);
+    fn us_nq_settings_set_init_max_stream_data_bidi_local(
         s: *mut lsquic_engine_settings,
         v: c_uint,
     );
-    pub fn us_nq_settings_set_init_max_stream_data_bidi_remote(
+    fn us_nq_settings_set_init_max_stream_data_bidi_remote(
         s: *mut lsquic_engine_settings,
         v: c_uint,
     );
-    pub fn us_nq_settings_set_init_max_stream_data_uni(s: *mut lsquic_engine_settings, v: c_uint);
-    pub fn us_nq_settings_set_init_max_streams_bidi(s: *mut lsquic_engine_settings, v: c_uint);
-    pub fn us_nq_settings_set_init_max_streams_uni(s: *mut lsquic_engine_settings, v: c_uint);
-    pub fn us_nq_settings_set_max_udp_payload_size_rx(s: *mut lsquic_engine_settings, v: u16);
-    pub fn us_nq_settings_set_datagrams(s: *mut lsquic_engine_settings, v: c_int);
-    pub fn us_nq_settings_set_h3_datagram(s: *mut lsquic_engine_settings, v: c_int);
-    pub fn us_nq_settings_set_send_prst(s: *mut lsquic_engine_settings, v: c_int);
-    pub fn us_nq_settings_set_honor_prst(s: *mut lsquic_engine_settings, v: c_int);
-    pub fn us_nq_settings_set_sreset_burst(s: *mut lsquic_engine_settings, v: c_uint);
-    pub fn us_nq_settings_set_sreset_rate(s: *mut lsquic_engine_settings, v: f64);
-    pub fn us_nq_settings_set_h3_connect_protocol(s: *mut lsquic_engine_settings, v: c_int);
+    fn us_nq_settings_set_init_max_stream_data_uni(s: *mut lsquic_engine_settings, v: c_uint);
+    fn us_nq_settings_set_init_max_streams_bidi(s: *mut lsquic_engine_settings, v: c_uint);
+    fn us_nq_settings_set_init_max_streams_uni(s: *mut lsquic_engine_settings, v: c_uint);
+    fn us_nq_settings_set_max_udp_payload_size_rx(s: *mut lsquic_engine_settings, v: u16);
+    fn us_nq_settings_set_datagrams(s: *mut lsquic_engine_settings, v: c_int);
+    fn us_nq_settings_set_h3_datagram(s: *mut lsquic_engine_settings, v: c_int);
+    fn us_nq_settings_set_send_prst(s: *mut lsquic_engine_settings, v: c_int);
+    fn us_nq_settings_set_honor_prst(s: *mut lsquic_engine_settings, v: c_int);
+    fn us_nq_settings_set_sreset_burst(s: *mut lsquic_engine_settings, v: c_uint);
+    fn us_nq_settings_set_sreset_rate(s: *mut lsquic_engine_settings, v: f64);
+    fn us_nq_settings_set_h3_connect_protocol(s: *mut lsquic_engine_settings, v: c_int);
     pub fn us_nq_settings_set_preferred_address(s: *mut lsquic_engine_settings, addr: *const u8);
     pub fn lsquic_engine_sreset_stats(e: *const lsquic_engine, sent: *mut u64, limited: *mut u64);
-    pub fn us_nq_settings_set_max_datagram_frame_size(s: *mut lsquic_engine_settings, v: u16);
-    pub fn us_nq_settings_set_max_h3_header_pairs(s: *mut lsquic_engine_settings, v: u16);
-    pub fn us_nq_settings_set_max_h3_header_bytes(s: *mut lsquic_engine_settings, v: c_uint);
-    pub fn us_nq_settings_set_allow_migration(s: *mut lsquic_engine_settings, v: c_int);
+    fn us_nq_settings_set_max_datagram_frame_size(s: *mut lsquic_engine_settings, v: u16);
+    fn us_nq_settings_set_max_h3_header_pairs(s: *mut lsquic_engine_settings, v: u16);
+    fn us_nq_settings_set_max_h3_header_bytes(s: *mut lsquic_engine_settings, v: c_uint);
+    fn us_nq_settings_set_allow_migration(s: *mut lsquic_engine_settings, v: c_int);
     pub fn us_nq_settings_set_origin_blob(
         s: *mut lsquic_engine_settings,
         blob: *const u8,
         len: usize,
     );
-    pub fn us_nq_settings_set_scid_len(s: *mut lsquic_engine_settings, v: c_uint);
-    pub fn us_nq_settings_set_silent_close(s: *mut lsquic_engine_settings, v: c_int);
-    pub fn us_nq_settings_set_cc_algo(s: *mut lsquic_engine_settings, v: c_uint);
-    pub fn us_nq_settings_set_delay_onclose(s: *mut lsquic_engine_settings, v: c_int);
+    fn us_nq_settings_set_scid_len(s: *mut lsquic_engine_settings, v: c_uint);
+    fn us_nq_settings_set_silent_close(s: *mut lsquic_engine_settings, v: c_int);
+    fn us_nq_settings_set_cc_algo(s: *mut lsquic_engine_settings, v: c_uint);
+    fn us_nq_settings_set_delay_onclose(s: *mut lsquic_engine_settings, v: c_int);
 }
 
 pub struct Settings {
@@ -827,7 +818,7 @@ impl HeaderSet {
         // SAFETY: the shim guarantees `p[..len]` is valid until free.
         let bytes = unsafe { core::slice::from_raw_parts(p.cast::<u8>(), len) };
         let bytes = bytes.strip_suffix(&[0u8][..]).unwrap_or(bytes);
-        bytes.split(|&b| b == 0).map(<[u8]>::to_vec).collect()
+        strings::split(bytes, b"\0").map(<[u8]>::to_vec).collect()
     }
 }
 
@@ -854,7 +845,7 @@ pub fn enable_logging(level: &core::ffi::CStr) {
 #[derive(Default)]
 pub struct ConnInfo {
     pub cwnd: u32,
-    pub pmtu: u32,
+    pub(crate) pmtu: u32,
     pub rtt: u32,
     pub rttvar: u32,
     pub rtt_min: u32,
@@ -864,9 +855,9 @@ pub struct ConnInfo {
     pub pkts_sent: u64,
     pub pkts_lost: u64,
     pub pkts_retx: u64,
-    pub bw_estimate: u64,
-    pub max_pacing_rate: u64,
-    pub pacing_rate: u64,
+    pub(crate) bw_estimate: u64,
+    pub(crate) max_pacing_rate: u64,
+    pub(crate) pacing_rate: u64,
 }
 
 impl Conn {
@@ -906,7 +897,7 @@ pub const MAX_CID_LEN: usize = 20;
 
 impl NqTransportParams {
     fn cid_str(buf: &[u8; 2 * MAX_CID_LEN + 1]) -> &str {
-        let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+        let nul = strings::index_of_char_usize(buf, 0).unwrap_or(buf.len());
         core::str::from_utf8(&buf[..nul]).unwrap_or("")
     }
     pub fn initial_scid_str(&self) -> &str {

@@ -139,11 +139,12 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
       },
       async url => {
         await using proc = spawnFetch(`
-          const baseline = process.memoryUsage().rss;
+          const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+          const baseline = rss();
           let peak = baseline;
           const t = setInterval(() => {
-            const rss = process.memoryUsage().rss;
-            if (rss > peak) peak = rss;
+            const cur = rss();
+            if (cur > peak) peak = cur;
           }, 50);
           const r = await fetch(${JSON.stringify(url)}, {
             protocol: "http2",
@@ -321,6 +322,51 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
           .then(r => r.text(), errcode)
           .catch(errcode);
         expect(String(result)).toMatch(/HTTP2|ProtocolError|ConnectionClosed/);
+      },
+    );
+  });
+
+  // 9. Zero-length response that still announces a body: HEADERS carries
+  //    content-length: 0 plus an SSE content-type, without END_STREAM, so the
+  //    stream stays open from the server's side while the response is already
+  //    complete at header time. Delivering that completion must detach the
+  //    stream first; the unfixed path freed the in-flight request while the
+  //    session still referenced it. Runs in a subprocess because the failure
+  //    mode is a crash.
+  test("content-length: 0 response without END_STREAM completes without touching the freed request", async () => {
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          // END_HEADERS only (0x4) — no END_STREAM.
+          socket.write(
+            frame(
+              1,
+              0x4,
+              id,
+              Buffer.concat([
+                hpackStatus200,
+                hpackLit("content-length", "0"),
+                hpackLit("content-type", "text/event-stream"),
+              ]),
+            ),
+          );
+        },
+      },
+      async url => {
+        await using proc = spawnFetch(`
+          const r = await fetch(${JSON.stringify(url)}, {
+            protocol: "http2",
+            signal: AbortSignal.timeout(8000),
+            tls: { rejectUnauthorized: false },
+          });
+          const body = await r.text();
+          console.log(JSON.stringify({ status: r.status, body }));
+        `);
+        const { stdout, stderr, exitCode } = await collect(proc);
+        // stderr first: on a crash it carries the panic/ASAN report.
+        expect(stderr).toBe("");
+        expect(stdout.trim()).toBe('{"status":200,"body":""}');
+        expect(exitCode).toBe(0);
       },
     );
   });

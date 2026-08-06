@@ -106,16 +106,6 @@ export const enums = {
   ],
 };
 
-// These identifiers have typedef but not present at runtime (converted with replacements)
-// If they are present in the bundle after runtime, we warn at the user.
-// TODO: implement this check.
-export const warnOnIdentifiersNotPresentAtRuntime = [
-  //
-  "OutOfMemoryError",
-  "notImplementedIssue",
-  "notImplementedIssueFn",
-];
-
 // These are passed to --define to the bundler
 const debug = process.argv[2] === "--debug=ON";
 export const define: Record<string, string> = {

@@ -52,7 +52,7 @@ impl<'a> Row<'a> {
         )
     }
 
-    pub(crate) fn decode_internal<Context: ReaderContext>(
+    fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
     ) -> Result<(), AnyMySQLError> {

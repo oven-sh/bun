@@ -1,6 +1,6 @@
 import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
-import { bunEnv, bunExe, isGlibcVersionAtLeast, isMacOS, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
@@ -199,8 +199,8 @@ describe("createReadStream", () => {
     });
   });
 
-  it("should emit readable on end", () => {
-    expect([join(import.meta.dir, "emit-readable-on-end.js")]).toRun();
+  it("should emit readable on end", async () => {
+    expect(await bunRun(join(import.meta.dir, "emit-readable-on-end.js"))).toSpawn();
   });
 });
 
@@ -386,6 +386,41 @@ it("Readable.fromWeb", async () => {
     chunks.push(chunk);
   }
   expect(Buffer.concat(chunks).toString()).toBe("Hello World!\n");
+});
+
+// fromWeb assigns stream.$bunNativePtr on the node Readable. When user code grafts
+// ReadableStream.prototype into the node stream prototype chain, that put used to
+// reach ReadableStream's private custom setter with the Readable as the receiver,
+// writing a JSValue through a type-confused pointer into the Readable's own
+// property storage (observable below as a clobbered Symbol(kCapture) slot).
+it("Readable.fromWeb with ReadableStream.prototype grafted into the prototype chain", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Readable } = require("node:stream");
+        const { EventEmitter } = require("node:events");
+        const snap = o => Object.fromEntries(Reflect.ownKeys(o).map(k => [String(k), Object.prototype.toString.call(o[k])]));
+        const before = snap(Readable.fromWeb(new Response("x").body));
+        Object.setPrototypeOf(EventEmitter.prototype, ReadableStream.prototype);
+        const stream = Readable.fromWeb(new Response("y").body);
+        const after = snap(stream);
+        for (const key in before) {
+          if (before[key] !== after[key]) throw new Error("clobbered own slot " + key + ": " + before[key] + " -> " + after[key]);
+        }
+        const chunks = [];
+        for await (const chunk of stream) chunks.push(chunk);
+        console.log("read:" + Buffer.concat(chunks).toString());
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("read:y\n");
+  expect(exitCode).toBe(0);
 });
 
 // An error from the underlying web stream must surface on the node Readable as an

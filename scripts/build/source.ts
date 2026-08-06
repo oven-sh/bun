@@ -679,14 +679,6 @@ export function depSourceDir(cfg: Config, name: string): string {
 }
 
 /**
- * Path to a dep's fetch stamp. Used by rust-only mode to depend on lolhtml's
- * source being on disk without resolving the full dep graph.
- */
-export function depSourceStamp(cfg: Config, name: string): string {
-  return resolve(depSourceDir(cfg, name), ".ref");
-}
-
-/**
  * Path to a dep's cmake build output. Separate from source so multiple
  * profiles (debug/release) don't clash.
  */

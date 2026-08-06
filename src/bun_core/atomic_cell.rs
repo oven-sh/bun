@@ -114,7 +114,8 @@ impl<T: Atom> AtomicCell<T> {
     /// Returns `Ok(previous)` if `f` produced a new value (and it was
     /// installed), `Err(current)` if `f` returned `None`.
     #[inline]
-    pub fn fetch_update(&self, mut f: impl FnMut(T) -> Option<T>) -> Result<T, T> {
+    #[cfg(test)]
+    pub(crate) fn fetch_update(&self, mut f: impl FnMut(T) -> Option<T>) -> Result<T, T> {
         let mut prev = self.load();
         while let Some(next) = f(prev) {
             match self.compare_exchange(prev, next) {
@@ -541,7 +542,7 @@ impl<T: ?Sized> ThreadCell<T> {
 
     /// Debug-panic if the cell is claimed by a different thread.
     #[inline]
-    pub fn assert_owner(&self) {
+    pub(crate) fn assert_owner(&self) {
         #[cfg(debug_assertions)]
         {
             let owner = self.owner.load(Ordering::Acquire);
@@ -572,18 +573,6 @@ impl<T: ?Sized> ThreadCell<T> {
     #[inline]
     pub fn get_unchecked(&self) -> *mut T {
         self.inner.get()
-    }
-
-    /// `&mut T` scoped to the closure (debug-asserts owner if claimed).
-    ///
-    /// # Safety
-    /// Caller guarantees no other live reference to the inner `T` for the
-    /// closure's duration (the same invariant `RacyCell` already imposed).
-    #[inline]
-    pub unsafe fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
-        self.assert_owner();
-        // SAFETY: caller contract above.
-        f(unsafe { &mut *self.inner.get() })
     }
 }
 

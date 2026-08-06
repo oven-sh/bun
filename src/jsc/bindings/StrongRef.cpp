@@ -48,9 +48,16 @@ static ALWAYS_INLINE StrongRootBlock* decodeStrongRefBlock(StrongRefImpl* ref)
     return reinterpret_cast<StrongRootBlock*>(slot - static_cast<uintptr_t>(decodeStrongRefIndex(ref)) * sizeof(StrongRootBlock::Slot) - StrongRootBlock::slotsOffset());
 }
 
+// The "Srb" marking constraint (BunClientData.cpp) scans the StrongRootBlock
+// list without synchronization; holding the owner VM's API lock is what
+// orders these mutations with that scan. Mirrors JSC::HandleSet's assertion.
+#define ASSERT_STRONG_REF_MUTATION_ALLOWED(vm) \
+    ASSERT_WITH_MESSAGE((vm).currentThreadIsHoldingAPILock(), "Bun::StrongRef handles may only be created, written, or destroyed while holding their VM's API lock")
+
 extern "C" StrongRefImpl* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
 {
     auto& vm = JSC::getVM(globalObject);
+    ASSERT_STRONG_REF_MUTATION_ALLOWED(vm);
     unsigned index;
     auto* block = StrongRootBlock::acquire(clientDataFast(vm), vm, index);
     block->set(vm, index, JSC::JSValue::decode(encodedValue));
@@ -59,7 +66,9 @@ extern "C" StrongRefImpl* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject,
 
 extern "C" void Bun__StrongRef__set(StrongRefImpl* _Nonnull ref, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
 {
-    decodeStrongRefBlock(ref)->write(JSC::getVM(globalObject), decodeStrongRefIndex(ref), JSC::JSValue::decode(encodedValue));
+    auto* block = decodeStrongRefBlock(ref);
+    ASSERT_STRONG_REF_MUTATION_ALLOWED(block->vm());
+    block->write(JSC::getVM(globalObject), decodeStrongRefIndex(ref), JSC::JSValue::decode(encodedValue));
 }
 
 // The Rust caller (Strong.rs Impl::destroy) skips this call once
@@ -71,6 +80,7 @@ extern "C" void Bun__StrongRef__delete(StrongRefImpl* _Nonnull ref)
 {
     auto* block = decodeStrongRefBlock(ref);
     auto& vm = block->vm();
+    ASSERT_STRONG_REF_MUTATION_ALLOWED(vm);
     auto* clientData = clientDataFast(vm);
     // This block just freed a slot, so the next acquire() should try it first
     // (covers the FIFO pattern where the oldest-armed block gets room while

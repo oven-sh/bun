@@ -6,6 +6,13 @@
 #include <JavaScriptCore/JSString.h>
 #include "ZigGlobalObject.h"
 
+#if ASSERT_ENABLED
+#include "StrongRef.h"
+#include <JavaScriptCore/Strong.h>
+#include <JavaScriptCore/StrongInlines.h>
+#include <wtf/Threading.h>
+#endif
+
 #if OS(WINDOWS)
 #include <JavaScriptCore/ExecutableAllocator.h>
 #include <JavaScriptCore/JSBigInt.h>
@@ -64,6 +71,43 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStartOfFixedExecutableMemoryPool,
 }
 #endif
 
+#if ASSERT_ENABLED
+// Test hook: mutates a strong handle owned by this VM from a spawned thread
+// without the API lock. The debug assertions in JSC::HandleSet and
+// Bun__StrongRef__* must abort before the mutation lands;
+// strong-handle-thread-guard.test.ts asserts on that crash.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionCrossThreadStrongHandleMutation,
+    (JSGlobalObject * globalObject, CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    WTF::String kind = callframe->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (kind == "strong"_s) {
+        // The #30185 shape: a by-value Strong capture destroyed off-thread.
+        JSC::Strong<JSC::JSObject> strong(vm, JSC::constructEmptyObject(globalObject));
+        Ref<Thread> thread = Thread::create("StrongHandleGuardTest"_s, [strong]() mutable {
+            strong.clear();
+        });
+        thread->waitForCompletion();
+        return JSValue::encode(jsUndefined());
+    }
+
+    if (kind == "strongRef"_s) {
+        auto* ref = Bun__StrongRef__new(globalObject, JSValue::encode(JSC::constructEmptyObject(globalObject)));
+        Ref<Thread> thread = Thread::create("StrongHandleGuardTest"_s, [ref]() {
+            Bun__StrongRef__delete(ref);
+        });
+        thread->waitForCompletion();
+        return JSValue::encode(jsUndefined());
+    }
+
+    throwTypeError(globalObject, scope, "Expected \"strong\" or \"strongRef\""_s);
+    return {};
+}
+#endif
+
 JSC::JSValue createJSCTestingHelpers(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -84,6 +128,13 @@ JSC::JSValue createJSCTestingHelpers(Zig::GlobalObject* globalObject)
     object->putDirectNativeFunction(
         vm, globalObject, JSC::Identifier::fromString(vm, "startOfFixedExecutableMemoryPool"_s), 0,
         jsFunctionStartOfFixedExecutableMemoryPool, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+#endif
+
+#if ASSERT_ENABLED
+    object->putDirectNativeFunction(
+        vm, globalObject, JSC::Identifier::fromString(vm, "crossThreadStrongHandleMutation"_s), 1,
+        jsFunctionCrossThreadStrongHandleMutation, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
 #endif
 

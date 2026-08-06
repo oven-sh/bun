@@ -262,6 +262,9 @@ impl CryptoHasher {
             }
             string_value.get_zig_string(global)?
         };
+        // Own the borrowed bytes: the argument coercions below can run user JS
+        // (a String-object toString()) and GC the string backing the view.
+        let algorithm = algorithm.to_slice_clone();
 
         // Node.BlobOrStringOrBuffer
         let Some(input_arg) = next_eat() else {
@@ -298,7 +301,7 @@ impl CryptoHasher {
             buffer.buffer = ArrayBuffer::from_typed_array(global, buffer.buffer.value);
         }
 
-        Self::hash_(global, algorithm, &input, output)
+        Self::hash_(global, ZigString::from_utf8(algorithm.slice()), &input, output)
     }
 
     fn throw_hmac_consumed(global: &JSGlobalObject) -> JsError {

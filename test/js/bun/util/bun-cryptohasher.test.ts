@@ -193,10 +193,11 @@ describe("HMAC", () => {
     // toString() after the key slice is captured lets user code free the
     // backing store, so HMAC::init sees recycled heap instead of the key.
     const source = /* js */ `
-      import { createHmac } from "node:crypto";
+      import { createHmac, createHash } from "node:crypto";
       const N = 1 << 20;
       const hmac = k => createHmac("sha256", k).update("payload").digest("hex");
-      const out = { second: [], first: [], gcKey: [], errorOrder: null };
+      const sha = createHash("sha256").update("payload").digest("hex");
+      const out = { second: [], first: [], gcKey: [], hashGc: [], errorOrder: null };
       for (let i = 0; i < 5; i++) {
         const key = new Uint8Array(N).fill(0x41);
         const orig = key.slice();
@@ -252,6 +253,27 @@ describe("HMAC", () => {
         const got = new Bun.CryptoHasher(alg, key).update("payload").digest("hex");
         out.gcKey.push({ calls, ok: got === hmac("secret-key") });
       }
+      // Static hash() has the same shape: the output-encoding coercion runs
+      // after the algorithm string was coerced, and GC pressure there must
+      // not invalidate the algorithm.
+      for (let i = 0; i < 3; i++) {
+        let calls = 0;
+        const alg = new String("sha256");
+        // Build a fresh, non-atomized string each call so nothing roots it.
+        alg.toString = () => {
+          calls++;
+          return ("sha256" + i).slice(0, 6);
+        };
+        const spray = [];
+        const enc = new String("hex");
+        enc.toString = () => {
+          Bun.gc(true);
+          for (let j = 0; j < 8; j++) spray.push(new Uint8Array(N).fill(0x5a));
+          return "hex";
+        };
+        const got = Bun.CryptoHasher.hash(alg, "payload", enc);
+        out.hashGc.push({ calls, ok: got === sha });
+      }
       // Error ordering: the key is coerced before the algorithm is validated,
       // so a throwing key toString() wins over an unsupported algorithm.
       {
@@ -290,6 +312,11 @@ describe("HMAC", () => {
         { calls: 1, detached: true, ok: true },
       ],
       gcKey: [
+        { calls: 1, ok: true },
+        { calls: 1, ok: true },
+        { calls: 1, ok: true },
+      ],
+      hashGc: [
         { calls: 1, ok: true },
         { calls: 1, ok: true },
         { calls: 1, ok: true },

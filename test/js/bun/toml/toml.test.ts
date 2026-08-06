@@ -549,7 +549,29 @@ describe("TOML.stringify", () => {
   });
 
   test("nested tables emit dotted headers", () => {
-    expect(TOML.stringify({ a: { b: { c: 1 } } })).toBe("[a]\n\n[a.b]\nc = 1\n");
+    expect(TOML.stringify({ a: { x: 1, b: { c: 2 } } })).toBe("[a]\nx = 1\n\n[a.b]\nc = 2\n");
+  });
+
+  test("super-tables with no keyvals of their own are implied, not written", () => {
+    // toml-rs, tomli_w, tomlkit, smol-toml and @iarna/toml all omit the
+    // pass-through headers; `[a.b]` alone implies `[a]`.
+    expect(TOML.stringify({ a: { b: { c: 1 } } })).toBe("[a.b]\nc = 1\n");
+    expect(TOML.stringify({ t: { arr: [{ q: 1 }] } })).toBe("[[t.arr]]\nq = 1\n");
+    expect(TOML.stringify({ x: 1, a: { b: { c: 1 } } })).toBe("x = 1\n\n[a.b]\nc = 1\n");
+    // Skipped (undefined/function/symbol) properties are not keyvals.
+    expect(TOML.stringify({ a: { u: undefined, b: { c: 1 } } })).toBe("[a.b]\nc = 1\n");
+    // A nested empty table still needs the one header that materializes it.
+    expect(TOML.stringify({ a: { b: {} } })).toBe("[a.b]\n");
+    expect(TOML.stringify({ a: { b: {}, c: {} } })).toBe("[a.b]\n\n[a.c]\n");
+    // An array-of-tables element header always appears (each one creates the
+    // element), even when the element body itself starts with a sub-table.
+    expect(TOML.stringify({ arr: [{ sub: { x: 1 } }] })).toBe("[[arr]]\n\n[arr.sub]\nx = 1\n");
+  });
+
+  test("pyproject/Cargo-shaped documents round-trip without gaining headers", () => {
+    const doc =
+      '[tool.poetry]\nname = "pkg"\n\n[tool.ruff.lint]\nselect = ["E"]\n\n[profile.release.package.foo]\nopt-level = 3\n';
+    expect(TOML.stringify(TOML.parse(doc))).toBe(doc);
   });
 
   test("round-trips through TOML.parse", () => {

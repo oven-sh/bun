@@ -82,6 +82,7 @@ fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         visiting: HashMap::default(),
         path: Vec::new(),
         wrote: false,
+        header_pending: false,
     };
 
     if let Err(err) = stringifier.stringify_root(global, unwrapped) {
@@ -137,6 +138,13 @@ struct Stringifier {
     path: Vec<BunString>,
     /// Whether any line has been written (controls blank lines before headers).
     wrote: bool,
+    /// A `[path]` header not yet written. Flushed before the first keyval of
+    /// the table's body, or after the body when it is empty (the header is
+    /// what materializes an empty table). A body that reaches a sub-section
+    /// first drops it instead: `[a.b]` alone implies `[a]`, and emitting
+    /// headers for such pass-through super-tables is valid but matches no
+    /// other TOML emitter.
+    header_pending: bool,
 }
 
 impl Stringifier {
@@ -215,6 +223,7 @@ impl Stringifier {
                 return Err(self.err_null_value(global, &prop_name));
             }
             if let Layout::Keyval = self.layout_of(global, value)? {
+                self.flush_pending_header();
                 self.append_key_segment(&prop_name);
                 self.builder.append_latin1(b" = ");
                 self.stringify_inline_value(global, value)?;
@@ -234,13 +243,22 @@ impl Stringifier {
                 Layout::Table => {
                     self.mark_visiting(global, value)?;
                     self.path.push(prop_name);
-                    self.append_header(false);
+                    // Overwriting `header_pending` is what drops the
+                    // enclosing table's unflushed header: only the innermost
+                    // table can have one pending, and a pass-2 child proves
+                    // the enclosing one is pass-through.
+                    self.header_pending = true;
                     self.stringify_table_body(global, value)?;
+                    // Still pending means the body was empty; only the header
+                    // materializes the table.
+                    self.flush_pending_header();
                     self.path.pop();
                     self.visiting.remove(&value);
                 }
                 Layout::ArrayOfTables => {
                     self.mark_visiting(global, value)?;
+                    // `[[t.arr]]` alone implies `[t]`.
+                    self.header_pending = false;
                     self.path.push(prop_name);
                     let mut items = value.array_iterator(global)?;
                     while let Some(item) = items.next()? {
@@ -363,6 +381,13 @@ impl Stringifier {
     }
 
     // ── output pieces ──────────────────────────────────────────────────────
+
+    fn flush_pending_header(&mut self) {
+        if self.header_pending {
+            self.header_pending = false;
+            self.append_header(false);
+        }
+    }
 
     /// `[a.b.c]` or `[[a.b.c]]` from `self.path`, preceded by a blank line
     /// when the document already has content.

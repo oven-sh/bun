@@ -4659,12 +4659,15 @@ pub(super) fn finalize_bundle(
     // A chunk that failed to print has no new content to send; leaving it
     // out keeps the previously applied stylesheet until recovery.
     let css_chunk_printed = |chunk: &bundler::chunk::Chunk| {
-        !chunk.compile_results_for_chunk.iter().any(|compile_result| {
-            matches!(
-                compile_result,
-                bundler::CompileResult::Css { result: Err(_), .. }
-            )
-        })
+        !chunk
+            .compile_results_for_chunk
+            .iter()
+            .any(|compile_result| {
+                matches!(
+                    compile_result,
+                    bundler::CompileResult::Css { result: Err(_), .. }
+                )
+            })
     };
     let printed_css_count = css_chunks.iter().filter(|c| css_chunk_printed(c)).count();
     if will_hear_hot_update {

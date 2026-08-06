@@ -4273,6 +4273,36 @@ refs:
         expect(YAML.stringify(obj, null, 2)).toBe("normal: value");
       });
 
+      // Unwrapping a String/Number wrapper re-enters JS via Symbol.toPrimitive,
+      // which can throw; debug builds abort if that exception is dropped, so
+      // this must run in a subprocess.
+      test("boxed primitive whose Symbol.toPrimitive throws propagates the error", async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const s = new String();
+             s[Symbol.toPrimitive] = () => String;
+             try { Bun.YAML.stringify(s); } catch (e) { console.log("string:", e.message); }
+             const n = new Number(1);
+             n[Symbol.toPrimitive] = () => Number;
+             try { Bun.YAML.stringify({ a: n }); } catch (e) { console.log("number:", e.message); }
+             try { Bun.YAML.stringify({ a: 1 }, null, s); } catch (e) { console.log("space:", e.message); }`,
+          ],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+        expect(stdout).toBe(
+          "string: Symbol.toPrimitive returned an object\n" +
+            "number: Symbol.toPrimitive returned an object\n" +
+            "space: Symbol.toPrimitive returned an object\n",
+        );
+        expect(exitCode).toBe(0);
+      });
+
       test("handles Intl objects", () => {
         const dateFormat = new Intl.DateTimeFormat("en-US");
         const numberFormat = new Intl.NumberFormat("en-US");

@@ -1028,6 +1028,10 @@ pub(crate) fn install_isolated_packages(
             let new_entry_parents: Vec<store::entry::Id> = vec![entry.entry_parent_id];
 
             let hoisted = 'hoisted: {
+                if !manager.options.hoist {
+                    break 'hoisted false;
+                }
+
                 if new_entry_dep_id == invalid_dependency_id {
                     break 'hoisted false;
                 }
@@ -1915,6 +1919,22 @@ pub(crate) fn install_isolated_packages(
 
         break 'is_new_bun_modules true;
     };
+
+    // Remove the fallback a previous install with hoisting on left behind.
+    // `delete_tree` succeeds on a missing tree, so any error here is real.
+    if !manager.options.hoist && !is_new_bun_modules {
+        use bun_sys::FdExt as _;
+        if let Err(err) =
+            Fd::cwd().delete_tree(paths::path_literal!("node_modules/.bun/node_modules"))
+        {
+            Output::err(
+                err,
+                "hoist is disabled, but the existing './node_modules/.bun/node_modules' could not be removed",
+                format_args!(""),
+            );
+            Global::exit(1);
+        }
+    }
 
     {
         // Conditionally initialized (only when progress is shown); definite-

@@ -844,6 +844,7 @@ declare module "bun" {
      *
      * @param input The JSONC string to parse
      * @returns A JavaScript value
+     * @throws {SyntaxError} If the input is not valid JSONC
      *
      * @example
      * ```js

@@ -2605,9 +2605,7 @@ describe("paths with embedded null bytes", () => {
   it("loadExtension() rejects them", () => {
     const db = new Database(":memory:");
     try {
-      expect(() => db.loadExtension("does-not-exist\0.so")).toThrow(
-        "The extension path must not contain null bytes",
-      );
+      expect(() => db.loadExtension("does-not-exist\0.so")).toThrow("The extension path must not contain null bytes");
     } finally {
       db.close();
     }

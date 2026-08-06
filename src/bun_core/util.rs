@@ -4363,6 +4363,40 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     RELOAD_IN_PROGRESS.store(true, AOrdering::Relaxed);
     RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.set(true));
 
+    // execve()'s de_thread makes a concurrent pthread_create on any other
+    // thread fail with EAGAIN; WTF::Thread::create abort()s on that and the
+    // SIGABRT can beat the exec. Park those threads so the exec completes.
+    #[cfg(unix)]
+    {
+        extern "C" fn park_during_reload(sig: core::ffi::c_int) {
+            if is_process_reload_in_progress_on_another_thread() {
+                // Block until the exec's de_thread SIGKILLs this thread.
+                loop {
+                    // SAFETY: pause is async-signal-safe.
+                    unsafe { libc::pause() };
+                }
+            }
+            // Reloading thread itself: let the signal terminate normally.
+            // SAFETY: sigaction/raise are async-signal-safe; zeroed = SIG_DFL.
+            unsafe {
+                let act: libc::sigaction = core::mem::zeroed();
+                libc::sigaction(sig, &raw const act, core::ptr::null_mut());
+                libc::raise(sig);
+            }
+        }
+        let mut act: libc::sigaction = crate::ffi::zeroed();
+        act.sa_sigaction = park_during_reload as *const () as usize;
+        act.sa_flags = libc::SA_RESTART;
+        // SAFETY: sa_mask is a valid out-pointer into a zeroed struct;
+        // sigaction takes a valid &act and a null oldact.
+        unsafe {
+            libc::sigemptyset(&raw mut act.sa_mask);
+            for sig in [libc::SIGABRT, libc::SIGTRAP, libc::SIGILL] {
+                libc::sigaction(sig, &raw const act, core::ptr::null_mut());
+            }
+        }
+    }
+
     if clear_terminal {
         crate::output::flush();
         crate::output::disable_buffering();

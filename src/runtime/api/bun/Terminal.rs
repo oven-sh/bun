@@ -170,6 +170,18 @@ pub struct Terminal {
 
     /// State flags
     flags: Cell<Flags>,
+
+    /// The streaming writer has accepted bytes it hasn't flushed to the fd
+    /// yet. Set by `write()` from `has_pending_data()`; cleared when
+    /// `on_write` observes `Drained` so POSIX can fire the `drain` callback
+    /// (Windows fires it from `on_writable`). Also gates the post-EOF
+    /// downgrade in `maybe_downgrade_after_eof`.
+    writer_has_buffered: Cell<bool>,
+
+    /// This PTY's own raw-mode state (mode + saved termios), so one terminal
+    /// going raw never makes another terminal's setRawMode a no-op.
+    #[cfg(unix)]
+    tty_state: Cell<bun_core::tty::State>,
 }
 
 bitflags::bitflags! {
@@ -472,6 +484,9 @@ impl Terminal {
             reader: JsCell::new(IOReader::init::<Terminal>()),
             this_value: JsCell::new(JsRef::empty()),
             flags: Cell::new(Flags::empty()),
+            writer_has_buffered: Cell::new(false),
+            #[cfg(unix)]
+            tty_state: Cell::new(bun_core::tty::State::new()),
         }));
         // SAFETY: just allocated, non-null, exclusively owned here. R-2: `&`
         // (not `&mut`) — every method below takes `&self`; field writes go
@@ -1522,8 +1537,34 @@ impl Terminal {
             return Ok(JSValue::js_number(0.0));
         }
 
-        // Write using the streaming writer
-        let write_result = self.writer.with_mut(|w| w.write(bytes));
+        // Suppress drain firing from the synchronous on_write calls that
+        // StreamingWriter::write() makes while we still hold the `with_mut`
+        // borrow; it is restored from `has_pending_data()` immediately after.
+        let had_buffered = self.writer_has_buffered.replace(false);
+        let (write_result, has_pending) = self.writer.with_mut(|w| {
+            let r = w.write(bytes);
+            (r, w.has_pending_data())
+        });
+        self.writer_has_buffered.set(has_pending);
+        if has_pending {
+            // Keep the wrapper rooted for the pending drain dispatch; a write
+            // after PTY EOF finds it already downgraded.
+            self.this_value.with_mut(|v| v.upgrade(global_object));
+        }
+        // A second write() can drain what an earlier one buffered; on_write saw
+        // the cleared flag, so fire drain here (outside `with_mut`).
+        #[cfg(unix)]
+        if had_buffered && !has_pending {
+            self.on_writer_ready();
+        }
+        #[cfg(not(unix))]
+        let _ = had_buffered;
+
+        // StreamingWriter::write() buffers any bytes it couldn't flush
+        // synchronously, so the full input has been accepted on every non-error
+        // return. The per-arm counts are sync-flushed bytes (and on a buffered
+        // writer can even exceed `input_len` when prior data drains), so
+        // returning them would make callers re-send an already-queued tail.
         match write_result {
             bun_io::WriteResult::Done(amt) => Ok(JSValue::js_number(
                 i32::try_from(amt).expect("int cast") as f64,
@@ -1660,7 +1701,8 @@ impl Terminal {
         #[cfg(unix)]
         {
             // Use the existing TTY mode function
-            let tty_result = bun_core::tty::set_mode(
+            let mut state = self.tty_state.get();
+            let tty_result = state.set_mode(
                 self.master_fd.get().native(),
                 if enabled {
                     bun_core::tty::Mode::Raw
@@ -1668,6 +1710,7 @@ impl Terminal {
                     bun_core::tty::Mode::Normal
                 },
             );
+            self.tty_state.set(state);
             if tty_result != 0 {
                 return Err(global_object.throw(format_args!("Failed to set raw mode")));
             }
@@ -1752,7 +1795,7 @@ impl Terminal {
 
         // Close writer (closes write_fd). R-2: `with_mut` borrow is held across
         // the synchronous `on_writer_close` parent callback, but that callback
-        // touches only `flags`/`ref_count` (separate `Cell`s), never `writer`.
+        // touches only sibling `Cell`/`JsCell` fields, never `writer`.
         self.writer.with_mut(|w| w.close());
         self.write_fd.set(Fd::INVALID);
 
@@ -1798,6 +1841,8 @@ impl Terminal {
         bun_output::scoped_log!(Terminal, "onWriterClose");
         if !self.flags.get().contains(Flags::WRITER_DONE) {
             self.update_flags(|f| f.insert(Flags::WRITER_DONE));
+            // Must run before the deref below, which may free `self`.
+            self.maybe_downgrade_after_eof();
             // Release writer's ref
             self.deref_();
         }
@@ -1806,18 +1851,18 @@ impl Terminal {
     fn on_writer_ready(&self) {
         bun_output::scoped_log!(Terminal, "onWriterReady");
         // Call drain callback
-        let Some(this_jsvalue) = self.this_value.get().try_get() else {
-            return;
-        };
-        if let Some(callback) = js::gc::get(js::GcValue::Drain, this_jsvalue) {
-            let global_this = self.global();
-            global_this.bun_vm().event_loop_mut().run_callback(
-                callback,
-                global_this,
-                this_jsvalue,
-                &[this_jsvalue],
-            );
+        if let Some(this_jsvalue) = self.this_value.get().try_get() {
+            if let Some(callback) = js::gc::get(js::GcValue::Drain, this_jsvalue) {
+                let global_this = self.global();
+                global_this.bun_vm().event_loop_mut().run_callback(
+                    callback,
+                    global_this,
+                    this_jsvalue,
+                    &[this_jsvalue],
+                );
+            }
         }
+        self.maybe_downgrade_after_eof();
     }
 
     fn on_writer_error(&self, err: &sys::Error) {
@@ -1830,9 +1875,20 @@ impl Terminal {
     }
 
     fn on_write(&self, amount: usize, status: WriteStatus) {
-        let _ = status;
         bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
-        let _ = self;
+        let _ = amount;
+        // POSIX: `PosixStreamingWriter` never dispatches `on_ready`; detect the
+        // buffered→drained transition here instead. Windows fires the drain
+        // callback from `on_writable`, so only record the drained state (a
+        // stale flag would block `maybe_downgrade_after_eof` forever).
+        #[cfg(unix)]
+        if status == WriteStatus::Drained && self.writer_has_buffered.replace(false) {
+            self.on_writer_ready();
+        }
+        #[cfg(not(unix))]
+        if matches!(status, WriteStatus::Drained | WriteStatus::EndOfFile) {
+            self.writer_has_buffered.set(false);
+        }
     }
 
     // IOReader callbacks
@@ -1859,7 +1915,7 @@ impl Terminal {
             f.insert(Flags::READER_DONE);
             f.remove(Flags::CONNECTED);
         });
-        // EOF from master - downgrade to weak ref to allow GC
+        // EOF from master - downgrade to weak ref to allow GC.
         // Skip JS interactions if already finalized (happens when close() is called during finalize)
         if !self.flags.get().contains(Flags::FINALIZED) {
             if self.this_value.get().is_empty() {
@@ -1876,11 +1932,33 @@ impl Terminal {
                     exit_code,
                 );
             } else {
-                self.this_value.with_mut(|v| v.downgrade());
+                // Upstream #36962: only downgrade once no buffered data awaits
+                // a drain dispatch (reader EOF + writer buffered → keep the
+                // wrapper rooted until the drain fires).
+                self.maybe_downgrade_after_eof();
                 self.call_exit_callback(exit_code, None);
             }
         }
         self.deref_();
+    }
+
+    /// Downgrade `this_value` once no further callback can fire: reader hit
+    /// EOF *and* the writer has no buffered data awaiting a `drain` dispatch.
+    /// The wrapper's cached callback slots are the only GC root of the
+    /// callbacks, so downgrading with a drain still pending lets GC collect
+    /// the wrapper before `on_writer_ready` dispatches through it.
+    ///
+    /// Reads only `Cell` fields, never `self.writer`: callers include
+    /// writer-parent callbacks that run while a writer borrow is live.
+    fn maybe_downgrade_after_eof(&self) {
+        let flags = self.flags.get();
+        if !flags.contains(Flags::READER_DONE) || flags.contains(Flags::FINALIZED) {
+            return;
+        }
+        if !flags.contains(Flags::WRITER_DONE) && self.writer_has_buffered.get() {
+            return;
+        }
+        self.this_value.with_mut(|v| v.downgrade());
     }
 
     /// Invoke the exit callback with PTY lifecycle status.

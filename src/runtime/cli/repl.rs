@@ -869,6 +869,10 @@ pub(super) struct Repl<'a> {
     // Windows: saved console mode for restoration
     #[cfg(windows)]
     original_windows_mode: Option<bun_sys::windows::DWORD>,
+
+    // POSIX: the REPL's own stdin raw-mode state
+    #[cfg(unix)]
+    tty_state: tty::State,
 }
 
 impl<'a> Repl<'a> {
@@ -895,6 +899,8 @@ impl<'a> Repl<'a> {
             last_error: ProtectedJSValue::adopt(JSValue::UNDEFINED),
             #[cfg(windows)]
             original_windows_mode: None,
+            #[cfg(unix)]
+            tty_state: tty::State::new(),
         }
     }
 
@@ -932,7 +938,7 @@ impl<'a> Repl<'a> {
         // Enable raw mode
         #[cfg(unix)]
         {
-            let _ = tty::set_mode(0, tty::Mode::Raw);
+            let _ = self.tty_state.set_mode(0, tty::Mode::Raw);
         }
         #[cfg(windows)]
         {
@@ -952,7 +958,7 @@ impl<'a> Repl<'a> {
     fn restore_terminal(&mut self) {
         #[cfg(unix)]
         {
-            let _ = tty::set_mode(0, tty::Mode::Normal);
+            let _ = self.tty_state.set_mode(0, tty::Mode::Normal);
         }
         #[cfg(windows)]
         {
@@ -977,7 +983,7 @@ impl<'a> Repl<'a> {
         #[cfg(unix)]
         {
             // Switch to normal terminal mode (has ISIG) so Ctrl+C generates SIGINT
-            let _ = tty::set_mode(0, tty::Mode::Normal);
+            let _ = self.tty_state.set_mode(0, tty::Mode::Normal);
 
             // Install SIGINT handler
             // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; we set
@@ -999,7 +1005,7 @@ impl<'a> Repl<'a> {
         #[cfg(unix)]
         {
             // Back to raw mode
-            let _ = tty::set_mode(0, tty::Mode::Raw);
+            let _ = self.tty_state.set_mode(0, tty::Mode::Raw);
 
             // Restore default SIGINT handling
             // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; SIG_DFL

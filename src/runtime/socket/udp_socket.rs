@@ -1575,6 +1575,11 @@ impl UDPSocket {
     ) -> JsResult<bool> {
         let _ = self;
         let str = bun_core::OwnedString::new(address_val.to_bun_string(global_this)?);
+        // Check the original string: the slice_z conversion below absorbs one
+        // trailing NUL, so "1.2.3.4\0" would otherwise pass as "1.2.3.4".
+        if str.to_utf8_without_ref().slice().contains(&0) {
+            return Ok(false);
+        }
         let address_slice: Vec<u8> = str.to_owned_slice_z().into_vec_with_nul();
         let bytes_len = address_slice.len() - 1; // exclude trailing NUL
 
@@ -2269,6 +2274,14 @@ pub(crate) fn js_dgram_bind_fd(global: &JSGlobalObject, frame: &CallFrame) -> Js
     {
         let fd = dgram_owned_fd_arg(global, frame.argument(0))?;
         let address = bun_core::OwnedString::new(frame.argument(1).to_bun_string(global)?);
+        // Check the original string: the slice_z conversion absorbs one
+        // trailing NUL, so "1.2.3.4\0" would otherwise pass as "1.2.3.4".
+        if address.to_utf8_without_ref().slice().contains(&0) {
+            return Err(global.throw_value(
+                bun_sys::Error::from_code_int(SystemErrno::EINVAL as c_int, bun_sys::Tag::bind2)
+                    .to_js(global),
+            ));
+        }
         let address_z = address.to_owned_slice_z();
         let port_num = frame.argument(2).coerce_to_i32(global)?;
         let port: u16 = if (0..=0xffff).contains(&port_num) {

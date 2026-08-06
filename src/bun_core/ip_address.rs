@@ -46,7 +46,9 @@ mod sys {
 
 pub fn is_ip_address(input: &[u8]) -> bool {
     let mut buf = [0u8; 512];
-    if input.len() >= buf.len() {
+    // An embedded NUL would truncate at the C parser below, classifying
+    // "127.0.0.1\0junk" as the IP "127.0.0.1". No IP literal contains a NUL.
+    if input.len() >= buf.len() || input.contains(&0) {
         return false;
     }
     buf[..input.len()].copy_from_slice(input);
@@ -57,7 +59,7 @@ pub fn is_ip_address(input: &[u8]) -> bool {
 /// A strict parse, never a `contains(':')` heuristic — that mis-bracketed Windows paths like `C:/Windows/Temp/…` as `unix://[C:/…]`.
 pub fn is_ipv6_address(input: &[u8]) -> bool {
     let mut buf = [0u8; 512];
-    if input.len() >= buf.len() {
+    if input.len() >= buf.len() || input.contains(&0) {
         return false;
     }
     buf[..input.len()].copy_from_slice(input);
@@ -68,7 +70,7 @@ pub fn is_ipv6_address(input: &[u8]) -> bool {
 /// Parses what the platform resolver treats as a numeric host: dotted-quad, IPv6 (an optional `%zone` is stripped, not validated), and the `inet_aton` shorthand `getaddrinfo` accepts but `is_ip_address` rejects (`127.1`, `2130706433`, `0x7f000001`, `0177.0.0.1`).
 pub fn to_ip_address(input: &[u8]) -> Option<IpAddr> {
     let mut buf = [0u8; 512];
-    if input.is_empty() || input.len() >= buf.len() {
+    if input.is_empty() || input.len() >= buf.len() || input.contains(&0) {
         return None;
     }
     // A `%zone` suffix belongs to a numeric v6 host; resolving the zone is the caller's business.

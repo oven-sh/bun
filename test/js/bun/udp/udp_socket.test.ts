@@ -688,3 +688,18 @@ test.concurrent("bind hostname is coerced exactly once", async () => {
   socket.close();
   expect({ calls, bound }).toEqual({ calls: 1, bound: "127.0.0.1" });
 });
+
+test.concurrent("send() rejects an address containing a NUL byte", async () => {
+  // parse_addr feeds ip_address::to_ip_address, whose C parser reads to the
+  // first NUL: "127.0.0.1\0evil" must not send to 127.0.0.1.
+  const receiver = await udpSocket({ socket: { data() {} } });
+  const sender = await udpSocket({});
+  try {
+    for (const address of ["127.0.0.1\0evil.example.invalid", "127.0.0.1\0"]) {
+      expect(() => sender.send("x", receiver.port, address)).toThrow("Invalid address");
+    }
+  } finally {
+    sender.close();
+    receiver.close();
+  }
+});

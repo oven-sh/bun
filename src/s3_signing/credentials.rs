@@ -391,6 +391,9 @@ impl S3Credentials {
                     host = &self.endpoint[..index];
                     extra_path = &self.endpoint[index..];
                 }
+                if host_has_invalid_port(host) {
+                    return Err(SignError::InvalidEndpoint);
+                }
                 // only the host part is needed here
                 break 'brk_host Box::<[u8]>::from(host);
             } else {
@@ -1435,4 +1438,22 @@ fn is_valid_host_component(value: &[u8]) -> bool {
         && value
             .iter()
             .all(|&c| c.is_ascii_alphanumeric() || c == b'-' || c == b'.' || c == b'_')
+}
+
+/// `host` is `hostname[:port]` or `[ipv6][:port]`. Returns `true` when a
+/// `:port` is present but does not parse as a u16; connecting with such a
+/// host silently targets the scheme default port (80/443) instead.
+fn host_has_invalid_port(host: &[u8]) -> bool {
+    let port: &[u8] = if host.first() == Some(&b'[') {
+        match strings::index_of(host, b"]:") {
+            Some(i) => &host[i + 2..],
+            None => return false,
+        }
+    } else {
+        match strings::index_of_char(host, b':') {
+            Some(i) => &host[i as usize + 1..],
+            None => return false,
+        }
+    };
+    !port.is_empty() && bun_core::fmt::parse_int::<u16>(port, 10).is_err()
 }

@@ -239,7 +239,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         &yaml_source,
         log,
         &yaml_arena,
-        bun_parsers::yaml::AliasCycles::Reject,
+        bun_parsers::yaml::CyclicAliases::Reject,
     ) {
         Ok(r) => r,
         Err(_) => return Err(MigratePnpmLockfileError::YamlParseError),
@@ -1793,7 +1793,7 @@ fn update_package_json_after_migration(
                 &yaml_source,
                 log,
                 &arena,
-                bun_parsers::yaml::AliasCycles::Reject,
+                bun_parsers::yaml::CyclicAliases::Reject,
             ) else {
                 break 'read_pnpm_workspace_yaml;
             };

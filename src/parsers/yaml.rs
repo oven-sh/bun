@@ -25,7 +25,7 @@ pub struct YAML;
 /// Whether an alias may refer to an anchored collection that encloses it
 /// (`&a [*a]`, `&a { key: *a }`, ...).
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum AliasCycles {
+pub enum CyclicAliases {
     /// The returned `Expr` graph may contain cycles: an `E::Array`/`E::Object`
     /// reachable from its own items/properties. Only for consumers that walk
     /// it with pointer-identity tracking (`Bun.YAML.parse`).
@@ -40,11 +40,11 @@ impl YAML {
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
-        alias_cycles: AliasCycles,
+        cyclic_aliases: CyclicAliases,
     ) -> Result<Expr, YamlParseError> {
         bun_core::analytics::Features::yaml_parse_inc();
 
-        let mut parser: Parser<Utf8> = Parser::init(bump, source.contents(), alias_cycles);
+        let mut parser: Parser<Utf8> = Parser::init(bump, source.contents(), cyclic_aliases);
 
         let stream = match parser.parse() {
             Ok(s) => s,
@@ -2127,7 +2127,7 @@ pub struct Parser<'i, Enc: Encoding> {
     /// Anchored collections enclosing the current position, innermost last.
     /// Pushed/popped only by `parse_collection`.
     pub(crate) open_collections: Vec<OpenCollection>,
-    pub(crate) alias_cycles: AliasCycles,
+    pub(crate) cyclic_aliases: CyclicAliases,
     /// An alias in this document resolved to an enclosing collection, so the
     /// graph has a cycle and `charge_alias_expansion` must watch for it.
     pub(crate) has_cyclic_alias: bool,
@@ -2154,7 +2154,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     pub(crate) fn init(
         bump: &'i bun_alloc::Arena,
         input: &'i [Enc::Unit],
-        alias_cycles: AliasCycles,
+        cyclic_aliases: CyclicAliases,
     ) -> Self {
         // [206] l-document-prefix ::= c-byte-order-mark? l-comment*
         let start = Pos::from(Enc::bom_len(input));
@@ -2176,7 +2176,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             explicit_document_start_line: None,
             anchors: StringHashMap::default(),
             open_collections: Vec::new(),
-            alias_cycles,
+            cyclic_aliases,
             has_cyclic_alias: false,
             tag_handles: StringHashMap::default(),
             whitespace_buf: Vec::new(),
@@ -3368,9 +3368,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         else {
             return Err(ParseError::UnresolvedAlias);
         };
-        match self.alias_cycles {
-            AliasCycles::Reject => Err(ParseError::CyclicAlias),
-            AliasCycles::Allow => {
+        match self.cyclic_aliases {
+            CyclicAliases::Reject => Err(ParseError::CyclicAlias),
+            CyclicAliases::Allow => {
                 self.has_cyclic_alias = true;
                 Ok(node)
             }

@@ -9,7 +9,7 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
     JsError, JsResult, MarkedArgumentBuffer, wtf,
 };
-use bun_parsers::yaml::{AliasCycles, YAML, YamlParseError};
+use bun_parsers::yaml::{CyclicAliases, YAML, YamlParseError};
 
 pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
     jsc::create_host_function_object(
@@ -1035,7 +1035,7 @@ pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult
         |arena, log, source| {
             // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
             // once by pointer identity, so a cyclic graph is fine here.
-            let root = match YAML::parse(source, log, arena, AliasCycles::Allow) {
+            let root = match YAML::parse(source, log, arena, CyclicAliases::Allow) {
                 Ok(root) => root,
                 Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
                 Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),

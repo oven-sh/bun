@@ -26,6 +26,7 @@ const helperSrc = `
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -73,6 +74,9 @@ int main(int argc, char **argv) {
     return 77; /* cannot install filter, skip */
   }
 
+  /* --probe: report that the filter installed, without exec'ing anything */
+  if (strcmp(argv[1], "--probe") == 0) return 0;
+
   execvp(argv[1], &argv[1]);
   perror("execvp");
   return 127;
@@ -105,11 +109,13 @@ describe.skipIf(!isLinux)("issue #30766 — bun startup survives seccomp blockin
 
   const helperBin = tryBuild();
 
-  // helperBin is resolved at collection time, so skipIf marks these as skipped
-  // (not silently passing) when cc or the seccomp headers are missing. The
-  // exit-77 check stays a runtime return: the kernel's refusal to install the
-  // filter is only observable by running the helper.
-  test.skipIf(helperBin == null)("--version exits 0 under a seccomp filter that SIGSYS-traps close_range", async () => {
+  // Both skip conditions are resolved at collection time so unavailable
+  // prerequisites record a skip, not a silent pass: helperBin is null when cc
+  // or the seccomp headers are missing, and --probe exits 77 when the kernel
+  // refuses to install the filter (nested sandboxes, locked-down runners).
+  const seccompAvailable = helperBin != null && spawnSync(helperBin, ["--probe"], { stdio: "pipe" }).status === 0;
+
+  test.skipIf(!seccompAvailable)("--version exits 0 under a seccomp filter that SIGSYS-traps close_range", async () => {
     await using proc = Bun.spawn({
       cmd: [helperBin!, bunExe(), "--version"],
       env: bunEnv,
@@ -117,11 +123,6 @@ describe.skipIf(!isLinux)("issue #30766 — bun startup survives seccomp blockin
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    if (exitCode === 77) {
-      console.warn("SKIP: kernel refused to install seccomp filter");
-      return;
-    }
 
     // Pre-fix: bun is killed by SIGSYS during `bun_initialize_process` before
     // reaching --version. Exit is 159 (128 + 31, SIGSYS) and stderr is empty
@@ -131,7 +132,7 @@ describe.skipIf(!isLinux)("issue #30766 — bun startup survives seccomp blockin
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(helperBin == null)("-e 'console.log(1)' runs under the same seccomp filter", async () => {
+  test.skipIf(!seccompAvailable)("-e 'console.log(1)' runs under the same seccomp filter", async () => {
     // A second callsite in bun_initialize_process is exercised the same way;
     // this also covers the fact that a trivial script path still runs (so the
     // probe isn't accidentally breaking later fd-cleanup paths).
@@ -142,11 +143,6 @@ describe.skipIf(!isLinux)("issue #30766 — bun startup survives seccomp blockin
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    if (exitCode === 77) {
-      console.warn("SKIP: kernel refused to install seccomp filter");
-      return;
-    }
 
     expect(stdout.trim()).toBe("3");
     expect(exitCode).toBe(0);

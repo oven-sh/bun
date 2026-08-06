@@ -105,14 +105,13 @@ describe.skipIf(!isLinux)("issue #30766 — bun startup survives seccomp blockin
 
   const helperBin = tryBuild();
 
-  test("--version exits 0 under a seccomp filter that SIGSYS-traps close_range", async () => {
-    if (helperBin == null) {
-      console.warn("SKIP: cc or seccomp headers not available on this host");
-      return;
-    }
-
+  // helperBin is resolved at collection time, so skipIf marks these as skipped
+  // (not silently passing) when cc or the seccomp headers are missing. The
+  // exit-77 check stays a runtime return: the kernel's refusal to install the
+  // filter is only observable by running the helper.
+  test.skipIf(helperBin == null)("--version exits 0 under a seccomp filter that SIGSYS-traps close_range", async () => {
     await using proc = Bun.spawn({
-      cmd: [helperBin, bunExe(), "--version"],
+      cmd: [helperBin!, bunExe(), "--version"],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -132,17 +131,12 @@ describe.skipIf(!isLinux)("issue #30766 — bun startup survives seccomp blockin
     expect(exitCode).toBe(0);
   });
 
-  test("-e 'console.log(1)' runs under the same seccomp filter", async () => {
+  test.skipIf(helperBin == null)("-e 'console.log(1)' runs under the same seccomp filter", async () => {
     // A second callsite in bun_initialize_process is exercised the same way;
     // this also covers the fact that a trivial script path still runs (so the
     // probe isn't accidentally breaking later fd-cleanup paths).
-    if (helperBin == null) {
-      console.warn("SKIP: cc or seccomp headers not available on this host");
-      return;
-    }
-
     await using proc = Bun.spawn({
-      cmd: [helperBin, bunExe(), "-e", "console.log(1+2)"],
+      cmd: [helperBin!, bunExe(), "-e", "console.log(1+2)"],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

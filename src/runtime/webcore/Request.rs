@@ -1123,23 +1123,18 @@ impl Request {
 
         for (value_index, &value) in values_to_try.iter().enumerate() {
             let value_type = value.js_type();
-            // The last entry carries the constructor's first argument (the
-            // `input` in `new Request(input, init?)`) whenever that argument
-            // was an object rather than a URL; any other entry carries `init`
-            // (dictionary) semantics.
+            // The last entry is the `input` argument when it was an object
+            // rather than a URL; other entries are `init` dictionaries.
             let is_input_argument =
                 !is_first_argument_a_url && value_index == values_to_try.len() - 1;
             let explicit_check = values_to_try.len() == 2
                 && value_type == bun_jsc::JSType::FinalObject
                 && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
             if value_type == bun_jsc::JSType::DOMWrapper {
-                // A Request `input` is copied from internal state without
-                // consulting JS-visible getters (fetch spec: "Set request to
-                // input's request"), so subclass instances and inputs with
-                // shadowing own properties must take this path too; their
-                // transitioned structures make `as_direct` reject them. A
-                // Request used as `init` keeps dictionary semantics: only a
-                // pristine one may skip the getters.
+                // Fetch spec: a Request `input` is copied from internal state,
+                // never via JS getters, so subclasses and shadowed instances
+                // (rejected by `as_direct`'s pristine-structure check) must
+                // match too. A Request `init` keeps dictionary semantics.
                 let request_ptr = if is_input_argument {
                     value.as_::<Request>()
                 } else {
@@ -1148,9 +1143,8 @@ impl Request {
                 if let Some(request) = request_ptr {
                     // SAFETY: the cast returns a live *mut Request payload (m_ctx)
                     let request = unsafe { &*request };
-                    // Fetch spec Request(input): when `init` contributed no
-                    // body, a Request input whose body is disturbed or locked
-                    // is unusable and the constructor throws.
+                    // Fetch spec: with no body from `init`, a
+                    // disturbed-or-locked input body is unusable.
                     if is_input_argument
                         && (!fields.contains(Fields::Body)
                             || matches!(req.body_value(), BodyValue::Null))
@@ -1228,10 +1222,8 @@ impl Request {
                     }
 
                     if is_input_argument {
-                        // The input's remaining members also come from
-                        // internal state; marking every field consumed keeps
-                        // the dictionary fallbacks below from running JS
-                        // getters against the input.
+                        // Mark every remaining field consumed so the dictionary
+                        // fallbacks below never run JS getters against the input.
                         if !fields.contains(Fields::Url) {
                             // A Bun.serve request materializes its URL lazily
                             // from the request context.

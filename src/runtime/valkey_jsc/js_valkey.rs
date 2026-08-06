@@ -1946,7 +1946,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
             p.update_poll_ref();
         });
 
-        let _ = this.client_mut().on_close(); // TODO: properly propagate exception upwards
+        if this.client_mut().on_close().is_err() && this.global_object.has_exception() {
+            this.global_object
+                .report_active_exception_as_unhandled(jsc::JsError::Thrown);
+        }
     }
 
     pub(crate) fn on_end(this: &JSValkeyClient, socket: SocketType<SSL>) {
@@ -1986,7 +1989,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.client_mut().socket = Self::socket(socket);
 
         let _guard = this.ref_scope();
-        let _ = this.client_mut().on_data(data); // TODO: properly propagate exception upwards
+        if this.client_mut().on_data(data).is_err() && this.global_object.has_exception() {
+            this.global_object
+                .report_active_exception_as_unhandled(jsc::JsError::Thrown);
+        }
         this.update_poll_ref();
     }
 

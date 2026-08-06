@@ -508,13 +508,31 @@ impl ValkeyClient {
 
         // Reject commands in the command queue
         while let Some(mut command_pair) = pending.read_item() {
-            command_pair.reject_command(global_this, jsvalue)?;
+            if command_pair.reject_command(global_this, jsvalue).is_err() {
+                Self::report_failed_settle(global_this)?;
+            }
         }
 
         // Reject commands in the offline queue
         while let Some(mut cmd) = entries.read_item() {
             // Note: `defer cmd.deinit(allocator)` — Entry should impl Drop.
-            cmd.promise.reject(global_this, Ok(jsvalue))?;
+            if cmd.promise.reject(global_this, Ok(jsvalue)).is_err() {
+                Self::report_failed_settle(global_this)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// A failed settle left an exception pending on the VM. Report it so the
+    /// drain can keep settling the remaining promises without entering the
+    /// next JSC call with a stale exception; stop only for termination.
+    fn report_failed_settle(global_this: &JSGlobalObject) -> JsTerminated<()> {
+        if global_this.has_exception() {
+            global_this.report_active_exception_as_unhandled(bun_jsc::JsError::Thrown);
+            if global_this.has_exception() {
+                // Only a termination exception survives the report.
+                return Err(bun_jsc::JsError::Terminated);
+            }
         }
         Ok(())
     }

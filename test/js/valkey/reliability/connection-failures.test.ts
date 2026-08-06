@@ -3,6 +3,31 @@ import { describe, expect, mock, test } from "bun:test";
 import net from "net";
 import { DEFAULT_REDIS_OPTIONS, DEFAULT_REDIS_URL, delay, isEnabled } from "../test-utils";
 
+// A connection failure settles every queued command promise in one native
+// callback. All of them must reject; none may stay pending. Needs no Redis
+// server, so this block is not gated on isEnabled.
+describe("Valkey: Connection Failures (no server)", () => {
+  test.concurrent("a connection dropped before the handshake rejects every queued command", async () => {
+    const server = net.createServer(socket => socket.destroy());
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as net.AddressInfo;
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, {
+      autoReconnect: false,
+      connectionTimeout: 1000,
+    });
+    try {
+      const settled = await Promise.allSettled(Array.from({ length: 32 }, (_, i) => client.get(`key-${i}`)));
+      expect(settled.map(result => result.status)).toEqual(Array(32).fill("rejected"));
+      for (const result of settled) {
+        expect((result as PromiseRejectedResult).reason).toBeInstanceOf(Error);
+      }
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+});
+
 /**
  * Test suite for connection failures, reconnection, and error handling
  * - Connection failures

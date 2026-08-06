@@ -18,9 +18,8 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         false,
         true,
         |_arena, log, source| {
-            // `parse_jsonc` treats an empty document as `{}` for lenient config-file
-            // callers (tsconfig, package.json); the public `Bun.JSONC.parse` matches
-            // `JSON.parse` / `Bun.JSON5.parse` and rejects it instead.
+            // `parse_jsonc` maps empty input to `{}` for tsconfig/package.json;
+            // the public API matches `JSON.parse` and rejects it.
             if source.contents.is_empty() {
                 return Err(
                     global.throw_value(global.create_syntax_error_instance(format_args!(
@@ -37,9 +36,7 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                     return Err(JsError::OutOfMemory);
                 }
                 Err(_) => {
-                    // `parse_jsonc` emits duplicate-key *warnings* before the fatal
-                    // error; pick the first error-kind entry so the thrown message
-                    // names the actual failure.
+                    // Skip duplicate-key warnings so the message names the fatal error.
                     let first_msg = log
                         .msgs
                         .iter()

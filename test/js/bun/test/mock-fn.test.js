@@ -803,6 +803,76 @@ describe("mock()", () => {
 
     expect(bar()()).toBe(true);
   });
+
+  describe("construct", () => {
+    test("new on a mock with no implementation returns a new object", () => {
+      const fn = jest.fn();
+      const instance = new fn(1, 2);
+      expect(typeof instance).toBe("object");
+      expect(instance).not.toBe(null);
+      expect(fn.mock.calls).toEqual([[1, 2]]);
+      expect(fn.mock.contexts[0]).toBe(instance);
+      expect(fn.mock.instances[0]).toBe(instance);
+      expect(fn.mock.results).toEqual([{ type: "return", value: undefined }]);
+    });
+
+    test("implementation runs with `this` set to the new instance", () => {
+      const fn = jest.fn(function (value) {
+        this.value = value;
+      });
+      const instance = new fn(42);
+      expect(instance.value).toBe(42);
+    });
+
+    test("object returned by the implementation replaces the instance", () => {
+      const obj = { a: 1 };
+      const fn = jest.fn(() => obj);
+      expect(new fn()).toBe(obj);
+    });
+
+    test("non-object return values are ignored under new", () => {
+      const fn = jest.fn();
+      fn.mockReturnValue(42);
+      const instance = new fn();
+      expect(typeof instance).toBe("object");
+      expect(fn()).toBe(42);
+    });
+
+    test("uses the prototype property of the constructor", () => {
+      const fn = jest.fn();
+      fn.prototype = { marker: true };
+      const instance = new fn();
+      expect(Object.getPrototypeOf(instance)).toBe(fn.prototype);
+      expect(instance.marker).toBe(true);
+    });
+
+    test("Reflect.construct uses newTarget's prototype", () => {
+      const fn = jest.fn();
+      function NewTarget() {}
+      NewTarget.prototype = { fromNewTarget: true };
+      const instance = Reflect.construct(fn, [], NewTarget);
+      expect(Object.getPrototypeOf(instance)).toBe(NewTarget.prototype);
+    });
+
+    test("throwing implementation propagates and records the result", () => {
+      const error = new Error("construct error");
+      const fn = jest.fn(() => {
+        throw error;
+      });
+      expect(() => new fn()).toThrow("construct error");
+      expect(fn.mock.results).toEqual([{ type: "throw", value: error }]);
+    });
+
+    if (isBun) {
+      test("constructing a spy on a missing property does not crash", () => {
+        const target = {};
+        const spy = spyOn(target, 9);
+        const instance = Reflect.construct(spy, []);
+        expect(typeof instance).toBe("object");
+        spy.mockRestore();
+      });
+    }
+  });
 });
 
 describe("resetAllMocks", () => {

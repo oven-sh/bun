@@ -3109,7 +3109,7 @@ fn transpile_source_code_inner(
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread
                     // VM; `printer.ctx.get_written()` borrows thread-local data.
                     let mut resolved_source = unsafe {
-                        (*jsc_vm).ref_counted_resolved_source::<false>(
+                        (*jsc_vm).ref_counted_resolved_source(
                             printer.ctx.get_written(),
                             input_specifier.dupe_ref(),
                             path.text,

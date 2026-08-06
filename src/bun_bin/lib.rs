@@ -45,15 +45,26 @@ use bun_core::Global;
 use bun_core::StackCheck;
 use bun_core::output;
 
+#[cfg(bun_track_alloc)]
+mod track_alloc;
+
 /// mimalloc as the process allocator.
-#[cfg(not(bun_asan))]
+#[cfg(all(not(bun_asan), not(bun_track_alloc)))]
 #[global_allocator]
 static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
 
 /// Under ASAN, use the system allocator so the interceptor sees every allocation.
-#[cfg(bun_asan)]
+#[cfg(all(bun_asan, not(bun_track_alloc)))]
 #[global_allocator]
 static ALLOC: std::alloc::System = std::alloc::System;
+
+#[cfg(all(not(bun_asan), bun_track_alloc))]
+#[global_allocator]
+static ALLOC: track_alloc::Tracked<bun_alloc::Mimalloc> = track_alloc::Tracked(bun_alloc::Mimalloc);
+
+#[cfg(all(bun_asan, bun_track_alloc))]
+#[global_allocator]
+static ALLOC: track_alloc::Tracked<std::alloc::System> = track_alloc::Tracked(std::alloc::System);
 
 /// ASAN runtime options override. Lives in the binary crate so it is a direct
 /// link input — the ASAN runtime weak-defines this symbol, and an rlib/archive

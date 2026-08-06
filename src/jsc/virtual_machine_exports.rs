@@ -318,3 +318,77 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(
         .store(limit, core::sync::atomic::Ordering::Relaxed);
     Ok(JSValue::js_number(prev as f64))
 }
+
+/// Testing-only: report the live entry count of per-VM caches that the
+/// `--hot` reload path can grow. Used by tests to assert that a reload loop
+/// does not accumulate entries in these tables.
+#[crate::host_fn(export = "Bun__hotReloadDiagnostics")]
+pub fn Bun__hotReloadDiagnostics(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    let vm = VirtualMachine::get().as_mut();
+    let obj = JSValue::create_empty_object(global, 5);
+    obj.put(
+        global,
+        b"refStrings",
+        JSValue::js_number(vm.ref_strings.len() as f64),
+    );
+    obj.put(
+        global,
+        b"sourceMappings",
+        JSValue::js_number(vm.saved_source_map_table.len() as f64),
+    );
+    obj.put(
+        global,
+        b"resolvedPathDups",
+        JSValue::js_number(vm.resolved_path_dups.len() as f64),
+    );
+    let watchlist_len = if vm.bun_watcher.is_null() {
+        0
+    } else {
+        // SAFETY: `bun_watcher` is the live `*mut ImportWatcher` on the JS
+        // thread; read-only snapshot of the watchlist length under its mutex.
+        unsafe {
+            match &*vm.bun_watcher {
+                crate::hot_reloader::ImportWatcher::Hot(w)
+                | crate::hot_reloader::ImportWatcher::Watch(w) => {
+                    let _g = w.mutex.lock_guard();
+                    w.watchlist.len()
+                }
+                crate::hot_reloader::ImportWatcher::None => 0,
+            }
+        }
+    };
+    obj.put(
+        global,
+        b"watchlistLen",
+        JSValue::js_number(watchlist_len as f64),
+    );
+    obj.put(
+        global,
+        b"hotReloadCounter",
+        JSValue::js_number(f64::from(vm.hot_reload_counter)),
+    );
+    #[cfg(bun_track_alloc)]
+    {
+        unsafe extern "C" {
+            fn Bun__trackedAllocHistogram(out: *mut i64, out_len: usize) -> usize;
+        }
+        let mut buf = [0i64; 64];
+        // SAFETY: buf.len() == 64 i64s; callee writes at most that many.
+        let n = unsafe { Bun__trackedAllocHistogram(buf.as_mut_ptr(), buf.len()) };
+        let arr = JSValue::create_empty_array(global, 0)?;
+        let mut total = 0i64;
+        for i in 0..n {
+            let bytes = buf[i * 2];
+            let count = buf[i * 2 + 1];
+            total += bytes;
+            let e = JSValue::create_empty_object(global, 3);
+            e.put(global, b"bucket", JSValue::js_number(i as f64));
+            e.put(global, b"bytes", JSValue::js_number(bytes as f64));
+            e.put(global, b"count", JSValue::js_number(count as f64));
+            arr.push(global, e)?;
+        }
+        obj.put(global, b"allocHistogram", arr);
+        obj.put(global, b"allocLiveBytes", JSValue::js_number(total as f64));
+    }
+    Ok(obj)
+}

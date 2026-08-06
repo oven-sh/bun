@@ -884,7 +884,17 @@ impl Watcher {
                 // On Linux, the file descriptor might be out of date.
                 if fd.is_valid() {
                     let fds = self.watchlist.items_fd_mut();
+                    let previous = fds[index as usize];
                     fds[index as usize] = fd;
+                    // st_nlink > 0: releasing the last reference to an unlinked
+                    // inode delivers a deferred IN_DELETE_SELF on this item's
+                    // still-registered watch (spurious reload in DEV:hot-9).
+                    if previous.is_valid()
+                        && previous != fd
+                        && matches!(bun_sys::fstat(previous), Ok(st) if st.st_nlink > 0)
+                    {
+                        let _ = bun_sys::close(previous);
+                    }
                 }
             }
             self.mutex.unlock();

@@ -385,6 +385,10 @@ pub struct DirEntry {
     pub dir: &'static [u8],
     pub fd: Fd,
     pub(crate) generation: Generation,
+    /// Set by `RealFS::bust_entries_cache`; forces the next locked directory
+    /// read to re-scan this slot in place (reusing the allocation and `fd`)
+    /// instead of orphaning it.
+    pub stale: bool,
     pub data: dir_entry::EntryMap,
 }
 
@@ -397,6 +401,7 @@ impl DirEntry {
             dir,
             data: dir_entry::EntryMap::default(),
             generation,
+            stale: false,
             fd: Fd::INVALID,
         }
     }

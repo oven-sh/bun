@@ -351,7 +351,6 @@ pub struct Bufs {
     // `MaybeUninit` and `assume_init_{ref,mut}` at the (linear write-then-read)
     // use sites in `dir_info_cached_maybe_log`.
     pub(crate) dir_entry_paths_to_resolve: [core::mem::MaybeUninit<DirEntryResolveQueueItem>; 256],
-    pub(crate) open_dirs: [FD; 256],
     pub(crate) resolve_without_remapping: PathBuffer,
     pub(crate) index: PathBuffer,
     pub(crate) dir_info_uncached_filename: PathBuffer,
@@ -416,13 +415,11 @@ fn bufs_storage_get() -> *mut Bufs {
 #[cold]
 fn bufs_storage_init() -> *mut Bufs {
     // SAFETY: every field of `Bufs` is a byte/integer array
-    // (`PathBuffer` = `[u8; N]`, `[FD; 256]` where `Fd` is a
-    // `#[repr(C)]` integer newtype, `[MaybeUninit<_>; 256]` which has
-    // no validity requirement, `()`), so EVERY bit-pattern — not just
-    // all-zero — is a valid `Bufs`. Each
-    // field is scratch (write-then-read within a single resolve call,
-    // including `open_dirs` which is bounded by `open_dir_count`), so
-    // there is no need to pay for zero-filling ~100 KiB on first use.
+    // (`PathBuffer` = `[u8; N]`, `[MaybeUninit<_>; 256]` which has no
+    // validity requirement, `()`), so EVERY bit-pattern — not just
+    // all-zero — is a valid `Bufs`. Each field is scratch
+    // (write-then-read within a single resolve call), so there is no
+    // need to pay for zero-filling ~100 KiB on first use.
     let p: *mut Bufs = Box::leak(unsafe { Box::<Bufs>::new_uninit().assume_init() });
     BUFS_PTR.with(|s| s.0.set(p));
     p
@@ -1665,7 +1662,11 @@ impl<'a> Resolver<'a> {
                     module_type_from_ext(name.ext).unwrap_or(options::ModuleType::Unknown);
             }
 
-            if let Some(entries) = dir.get_entries_ref(self.generation) {
+            // `.data` is freed and rewritten in place when another thread
+            // refreshes a stale/older-generation slot; hold `entries_mutex`
+            // across both the lookup and the `.data.get()` that follows.
+            let _entries_unlock = self.fs_ref().fs.entries_mutex.lock_guard();
+            if let Some(entries) = dir.get_entries_ref_locked(self.generation) {
                 if let Some(query) = entries.get(name.filename) {
                     // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
                     let symlink_path =
@@ -3409,8 +3410,10 @@ impl<'a> Resolver<'a> {
             core::ptr::null_mut();
         let mut needs_iter = true;
         let mut in_place: Option<*mut Fs::file_system::DirEntry> = None;
-        let open_dir = match bun_sys::open_dir_for_iteration(FD::cwd(), dir_path) {
-            Ok(d) => d,
+        // `File` closes the fresh handle on every exit unless `into_raw`
+        // below transfers it to `DirEntry.fd`.
+        let open_dir_owned = match bun_sys::open_dir_for_iteration(FD::cwd(), dir_path) {
+            Ok(d) => bun_sys::File::from_fd(d),
             Err(err) => {
                 // TODO: handle this error better
                 let _ = self.log_mut().add_error_fmt(
@@ -3421,10 +3424,11 @@ impl<'a> Resolver<'a> {
                 return Err(err.into());
             }
         };
+        let open_dir = open_dir_owned.fd();
 
         if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
             if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                if entries.generation >= self.generation {
+                if !entries.stale && entries.generation >= self.generation {
                     dir_entries_option = cached_entry;
                     needs_iter = false;
                 } else {
@@ -3477,8 +3481,15 @@ impl<'a> Resolver<'a> {
                 unsafe { &mut *existing }.data.clear();
             }
 
-            if self.store_fd {
-                new_entry.fd = open_dir;
+            // SAFETY: see block-wide note above.
+            let prev_fd = in_place
+                .map(|p| unsafe { (*p).fd })
+                .filter(|f| f.is_valid());
+            if let Some(prev) = prev_fd {
+                new_entry.fd = prev;
+            } else if self.store_fd {
+                // The entry takes over the handle's lifecycle.
+                new_entry.fd = open_dir_owned.into_raw();
             }
             // NOTE: see `dir_info_cached_maybe_log` — `DirEntry.data` holds a `NonNull`,
             // so a zeroed slot is UB; box `new_entry` directly for the fresh case.
@@ -3721,7 +3732,8 @@ impl<'a> Resolver<'a> {
                         return MatchStatus::NotFound;
                     }
                 };
-                let entries = match resolved_dir_info.get_entries_ref(self.generation) {
+                let entries_unlock = self.fs_ref().fs.entries_mutex.lock_guard();
+                let entries = match resolved_dir_info.get_entries_ref_locked(self.generation) {
                     Some(e) => e,
                     None => {
                         esm_resolution.status = Status::ModuleNotFound;
@@ -3783,8 +3795,12 @@ impl<'a> Resolver<'a> {
 
                     // Try to have a friendly error message if people forget the "/index.js" suffix
                     if ends_with_star {
+                        // `dir_info_cached` re-takes `entries_mutex` (non-recursive).
+                        drop(entries_unlock);
                         if let Ok(Some(dir_info_ref)) = self.dir_info_cached(abs_esm_path) {
-                            if let Some(dir_entries) = dir_info_ref.get_entries_ref(self.generation)
+                            let _entries_unlock = self.fs_ref().fs.entries_mutex.lock_guard();
+                            if let Some(dir_entries) =
+                                dir_info_ref.get_entries_ref_locked(self.generation)
                             {
                                 let index = b"index";
                                 let buf = bufs!(load_as_file);
@@ -4239,7 +4255,14 @@ impl<'a> Resolver<'a> {
                         // SAFETY: slot was written immediately above.
                         let slot = unsafe { queue[i].assume_init_mut() };
                         slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
-                        slot.fd = entries.fd;
+                        // An entry due for a re-scan (stale or outdated
+                        // generation) has its stored fd at EOF from the
+                        // previous iteration (`getdents64` resumes at the
+                        // descriptor offset); leave it INVALID so the re-scan
+                        // opens fresh. Seed it only for cache hits.
+                        if !entries.stale && entries.generation >= self.generation {
+                            slot.fd = entries.fd;
+                        }
                     }
                     Fs::file_system::real_fs::EntriesOption::Err(err) => {
                         debuglog!(
@@ -4276,7 +4299,10 @@ impl<'a> Resolver<'a> {
                             // SAFETY: slot was written immediately above.
                             let slot = unsafe { queue[i].assume_init_mut() };
                             slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
-                            slot.fd = entries.fd;
+                            // See the EOF note on the seed above.
+                            if !entries.stale && entries.generation >= self.generation {
+                                slot.fd = entries.fd;
+                            }
                         }
                         Fs::file_system::real_fs::EntriesOption::Err(err) => {
                             debuglog!(
@@ -4296,26 +4322,6 @@ impl<'a> Resolver<'a> {
 
         let mut queue_slice_len = i;
         debug_assert!(queue_slice_len > 0);
-        let open_dir_count = core::cell::Cell::new(0usize);
-
-        // When this function halts, any item not processed means it's not found.
-        // NOTE: capture only what the cleanup needs by-value (store_fd) / by-Cell
-        // (open_dir_count) so the guard doesn't pin `&mut self` across the loop
-        // body. `need_to_close_files()` is evaluated AT DROP TIME,
-        // not snapshotted up-front — the loop body calls
-        // `Fs.FileSystem.setMaxFd()` which can flip `needToCloseFiles()`
-        // mid-walk. Reach the RealFS via the `&'static` singleton accessor
-        // instead of capturing a raw `*mut RealFS` (the read is `&self`-only).
-        let close_dirs_store_fd = self.store_fd;
-        scopeguard::defer! {
-            let n = open_dir_count.get();
-            if n > 0 && (!close_dirs_store_fd || Fs::FileSystem::get().fs.need_to_close_files()) {
-                let open_dirs = &bufs!(open_dirs)[0..n];
-                for open_dir in open_dirs {
-                    open_dir.close();
-                }
-            }
-        }
 
         // We want to walk in a straight line from the topmost directory to the desired directory
         // For each directory we visit, we get the entries, but not traverse into child directories
@@ -4459,12 +4465,14 @@ impl<'a> Resolver<'a> {
 
             // `open_dir` is INVALID for a permission-denied ancestor treated as
             // an opaque directory; there is nothing to track or close then.
-            if !queue_top.fd.is_valid() && open_dir.is_valid() {
+            let open_dir_freshly_opened = !queue_top.fd.is_valid() && open_dir.is_valid();
+            if open_dir_freshly_opened {
                 Fs::FileSystem::set_max_fd(open_dir.native());
-                // these objects mostly just wrap the file descriptor, so it's fine to keep it.
-                bufs!(open_dirs)[open_dir_count.get()] = open_dir;
-                open_dir_count.set(open_dir_count.get() + 1);
             }
+            // A freshly opened handle closes (`File` drop) at the end of this
+            // iteration unless `take()` below transfers it to `DirEntry.fd`.
+            let mut open_dir_owned =
+                open_dir_freshly_opened.then(|| bun_sys::File::from_fd(open_dir));
 
             let dir_path: &'static [u8] = if !queue_top_safe_path.is_empty() {
                 // SAFETY: non-empty `safe_path` is always a dirname_store-backed
@@ -4522,7 +4530,7 @@ impl<'a> Resolver<'a> {
 
             if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
                 if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                    if entries.generation >= self.generation {
+                    if !entries.stale && entries.generation >= self.generation {
                         dir_entries_option = cached_entry;
                         needs_iter = false;
                     } else {
@@ -4584,7 +4592,25 @@ impl<'a> Resolver<'a> {
                     // NOTE: bun_collections::StringHashMap exposes `clear`, which drops all entries.
                     unsafe { &mut *existing }.data.clear();
                 }
-                new_entry.fd = if self.store_fd { open_dir } else { FD::INVALID };
+                // See `bust_entries_cache`: carry an existing handle forward
+                // instead of stranding it.
+                // SAFETY: see block-wide note above.
+                let prev_fd = in_place
+                    .map(|p| unsafe { (*p).fd })
+                    .filter(|f| f.is_valid());
+                new_entry.fd = if let Some(prev) = prev_fd {
+                    prev
+                } else if self.store_fd {
+                    match open_dir_owned.take() {
+                        // The entry takes over the fresh handle's lifecycle.
+                        Some(owned) => owned.into_raw(),
+                        // Not freshly opened: the cached handle seeded from
+                        // `queue_top.fd` (the slot already owns it) or INVALID.
+                        None => open_dir,
+                    }
+                } else {
+                    FD::INVALID
+                };
                 // NOTE: `DirEntry.data` is a `HashMap`
                 // (`NonNull` inside), so a zeroed slot is UB and `*ptr = new_entry` would drop it.
                 // Box `new_entry` directly for the fresh case; assign-into only for `in_place`.
@@ -5233,7 +5259,9 @@ impl<'a> Resolver<'a> {
         base[0..b"index".len()].copy_from_slice(b"index");
         base[b"index".len()..].copy_from_slice(ext);
 
-        if let Some(entries) = dir_info.get_entries_ref(self.generation) {
+        // SAFETY: see note at `rfs` above.
+        let _entries_unlock = unsafe { &*rfs }.entries_mutex.lock_guard();
+        if let Some(entries) = dir_info.get_entries_ref_locked(self.generation) {
             if let Some(lookup) = entries.get(&base[..]) {
                 // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
                 if unsafe { lookup.entry().kind(rfs, self.store_fd) }
@@ -5691,6 +5719,11 @@ impl<'a> Resolver<'a> {
                 Err(_) => dec_ret!(None),
             };
 
+        // Another thread can refresh this slot in place (frees `.data` buckets)
+        // under `entries_mutex`; hold it across every `entries!().get(..)` below.
+        // SAFETY: `rfs` points at the process-global RealFS singleton.
+        let _entries_unlock = unsafe { &*rfs }.entries_mutex.lock_guard();
+
         if let Fs::file_system::real_fs::EntriesOption::Err(err) = dir_entry.get() {
             match err.original_err {
                 crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
@@ -5896,11 +5929,19 @@ impl<'a> Resolver<'a> {
             ));
         }
 
+        // `watcher.watch` -> `add_directory` takes `Watcher.mutex`; the watcher
+        // thread's `dispatch_file_updates` holds that and then takes
+        // `entries_mutex` (via `bust_entries_cache`), so release ours first to
+        // avoid AB-BA. `.dir` is DirnameStore-interned, `.fd` is `Copy`.
+        let watch_dir = entries!().dir;
+        let watch_fd = entries!().fd;
+        drop(_entries_unlock);
+
         if FeatureFlags::WATCH_DIRECTORIES {
             // For existent directories which don't find a match
             // Start watching it automatically,
             if let Some(watcher) = self.watcher.as_ref() {
-                watcher.watch(entries!().dir, entries!().fd);
+                watcher.watch(watch_dir, watch_fd);
             }
         }
         dec_ret!(None);

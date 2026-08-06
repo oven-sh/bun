@@ -1,7 +1,18 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
-import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import {
+  copyFileSync,
+  cpSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
+import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -772,7 +783,262 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
     expect(reloadCounter).toBe(50);
     bundler.kill();
     await runner.exited;
-    // TODO: bun has a memory leak when --hot is used on very large files
+  },
+  longTimeout,
+);
+
+// /proc/<pid>/fd is Linux-only.
+it.skipIf(!isLinux)(
+  "does not leak file descriptors on each reload",
+  async () => {
+    using dir = tempDir("hot-fd-leak", {
+      "entry.ts": 'import { value } from "./sub/dep.ts";\nconsole.log("RELOAD", value, process.pid);\n',
+      "sub/dep.ts": "export const value = 0;\n",
+    });
+    const dirReal = realpathSync(String(dir));
+    const depPath = join(String(dir), "sub", "dep.ts");
+
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const stderrDrain = runner.stderr.text();
+
+    // Resolve once stdout prints `RELOAD <n>`; the module logs that line on
+    // every re-evaluation.
+    const seen = new Set<number>();
+    let pending: { n: number; resolve: () => void } | null = null;
+    let childPid = 0;
+    const pump = (async () => {
+      const decoder = new TextDecoder();
+      let buffered = "";
+      for await (const chunk of runner.stdout) {
+        buffered += decoder.decode(chunk, { stream: true });
+        let nl: number;
+        while ((nl = buffered.indexOf("\n")) !== -1) {
+          const line = buffered.slice(0, nl);
+          buffered = buffered.slice(nl + 1);
+          const match = /^RELOAD (\d+) (\d+)$/.exec(line);
+          if (!match) continue;
+          const n = Number(match[1]);
+          childPid ||= Number(match[2]);
+          seen.add(n);
+          if (pending?.n === n) {
+            pending.resolve();
+            pending = null;
+          }
+        }
+      }
+    })();
+    const waitForReload = (n: number) =>
+      new Promise<void>((resolve, reject) => {
+        if (seen.has(n)) return resolve();
+        pending = { n, resolve };
+        runner.exited.then(code => reject(new Error(`--hot exited early with code ${code}`)));
+      });
+
+    const countProjectFds = () => {
+      const counts: Record<string, number> = {};
+      for (const fd of readdirSync(`/proc/${childPid}/fd`)) {
+        let target: string;
+        try {
+          target = readlinkSync(`/proc/${childPid}/fd/${fd}`);
+        } catch {
+          continue;
+        }
+        if (target === dirReal || target.startsWith(dirReal + "/")) {
+          counts[target] = (counts[target] ?? 0) + 1;
+        }
+      }
+      return counts;
+    };
+
+    await waitForReload(0);
+    // Warm up: the resolver's `store_fd` flag is set after VM init, so the
+    // first reload is what caches a directory handle. A second warmup covers
+    // `dep.ts` reaching steady state in the watchlist (its fd is stored via
+    // `add_file` on the first edited-dep reload; seen empty in `before` on a
+    // fast aarch64/musl lane otherwise).
+    for (let i = 1; i <= 2; i++) {
+      const reloaded = waitForReload(i);
+      writeFileSync(depPath, `export const value = ${i};\n`);
+      await reloaded;
+    }
+    const before = countProjectFds();
+    // Guard against a vacuous pass (empty `before` would trivially equal `after`).
+    expect(before[join(dirReal, "sub")]).toBeGreaterThan(0);
+    expect(before[join(dirReal, "entry.ts")]).toBeGreaterThan(0);
+
+    const reloads = 20;
+    for (let i = 3; i <= reloads + 2; i++) {
+      const reloaded = waitForReload(i);
+      writeFileSync(depPath, `export const value = ${i};\n`);
+      await reloaded;
+    }
+    const after = countProjectFds();
+
+    runner.kill();
+    await Promise.allSettled([pump, stderrDrain, runner.exited]);
+
+    // Previously: every reload orphaned one open descriptor on the entrypoint
+    // and two O_DIRECTORY handles on the edited module's directory; long
+    // sessions eventually hit EMFILE. One handle's transient presence between
+    // samples is not a leak, so each target may differ by at most 1.
+    const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort();
+    const delta = Object.fromEntries(keys.map(k => [k, (after[k] ?? 0) - (before[k] ?? 0)]));
+    expect({ reloads, before, after, delta }).toEqual({
+      reloads,
+      before,
+      after,
+      delta: Object.fromEntries(keys.map(k => [k, Math.max(-1, Math.min(1, delta[k]))])),
+    });
+  },
+  timeout,
+);
+
+// https://github.com/oven-sh/bun/issues/11083
+it(
+  "does not leak native memory on each reload",
+  async () => {
+    // Pad the project directory so the orphaned `DirEntry.data` hashbrown
+    // table (previously leaked once per reload via `bust_entries_cache`) is
+    // non-trivial; without reuse each reload re-appends every name into the
+    // append-only EntryStore slab.
+    const pad: Record<string, string> = {};
+    for (let i = 0; i < 40; i++) pad[`pad${i}.txt`] = "";
+    using dir = tempDir("hot-mem-leak", {
+      "entry.ts": "throw new Error('replaced before first run')",
+      ...pad,
+    });
+    const entry = join(String(dir), "entry.ts");
+
+    // The `refStrings <= codeBlocks` invariant is only falsifiable once
+    // CodeCache's prune has evicted some `SourceProvider`s (at which point a
+    // leaked `ref_strings` entry survives the eviction while a balanced one
+    // drains). `CodeCacheMap::prune()` fires on >16 MB of accumulated source
+    // since the last prune, and `pruneSlowCase()` only evicts on the second
+    // call, so the test crosses ~32 MB of transpiled source: each entry body
+    // carries a large string literal that survives transpilation.
+    const reloads = isDebug ? 50 : 150;
+    const perReloadSourceBytes = Math.ceil((34 * 1024 * 1024) / reloads);
+    const sourcePad = Buffer.alloc(perReloadSourceBytes, "x").toString();
+    const samples: { i: number; rss: number; refStrings: number; codeBlocks: number }[] = [];
+
+    // Heavy probes (heapStats, the internal diagnostic) run only at the
+    // sample points; in between, the module body is the minimal
+    // `Bun.gc(true)` + a single print, so RSS measures the reload path
+    // itself rather than per-reload probe churn (which under ASAN quarantine
+    // otherwise swamps the signal).
+    const sampleAt = new Set([1, Math.floor(reloads / 2), reloads]);
+    const writeEntry = (i: number) => {
+      const probe = sampleAt.has(i)
+        ? [
+            "const { heapStats } = require('bun:jsc');",
+            "const s = heapStats();",
+            "let refStrings = -1;",
+            "try { refStrings = require('bun:internal-for-testing').hotReloadDiagnostics().refStrings; } catch {}",
+            "console.log(JSON.stringify({",
+            `  i: ${i},`,
+            "  rss: process.memoryUsage().rss,",
+            "  refStrings,",
+            "  codeBlocks: s.objectTypeCounts.UnlinkedModuleProgramCodeBlock || 0,",
+            "}));",
+          ]
+        : [`console.log(JSON.stringify({i: ${i}}));`];
+      writeHotFileAtomicSync(
+        entry,
+        [`var x${i} = ${i};`, `var big = "${sourcePad}";`, "Bun.gc(true);", ...probe].join("\n"),
+      );
+    };
+    writeEntry(0);
+
+    await using runner = spawn({
+      cmd: [bunExe(), "--expose-internals", "--hot", "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const stderrDrain = runner.stderr.text();
+
+    let i = 0;
+    let done = false;
+    const decoder = new TextDecoder();
+    let buffered = "";
+    for await (const chunk of runner.stdout) {
+      buffered += decoder.decode(chunk, { stream: true });
+      let nl: number;
+      while ((nl = buffered.indexOf("\n")) !== -1) {
+        const line = buffered.slice(0, nl);
+        buffered = buffered.slice(nl + 1);
+        if (!line.startsWith("{")) continue;
+        const snap = JSON.parse(line);
+        if (snap.i !== i) continue;
+        if (sampleAt.has(i)) samples.push(snap);
+        if (i >= reloads) {
+          done = true;
+          break;
+        }
+        i++;
+        writeEntry(i);
+      }
+      if (done) break;
+    }
+    runner.kill();
+    const stderr = await Promise.allSettled([stderrDrain, runner.exited]).then(([e]) =>
+      e.status === "fulfilled" ? e.value : "",
+    );
+    if (!done) {
+      throw new Error(`--hot loop ended early at i=${i} (exit ${runner.exitCode}); stderr:\n${stderr.slice(-2000)}`);
+    }
+
+    expect(samples.length).toBe(sampleAt.size);
+    const first = samples[0];
+    const last = samples[samples.length - 1];
+    expect(last.i).toBe(reloads);
+
+    const minRefStrings = Math.min(...samples.map(s => s.refStrings));
+    const maxRefOverCode = Math.max(...samples.map(s => s.refStrings - s.codeBlocks));
+    const bytesPerReload = ((last.rss - first.rss) / (last.i - first.i)) | 0;
+
+    // JSC's CodeCache pins one `SourceProvider` (via the `SourceCodeKey`)
+    // per unique source until its own prune policy evicts it (at 2000 entries
+    // / 16 MB / 10 s); that accumulation is bounded by design and we keep the
+    // cache so unchanged modules hit it on the next reload. The `ref_strings`
+    // map holds one entry per live `ExternalStringImpl`, which is owned by
+    // exactly that `SourceProvider` once the refcount balance is right: when
+    // CodeCache evicts, the provider is collected and the `ref_strings` entry
+    // is removed in the external-string finalizer. So `ref_strings` count must
+    // never exceed live `UnlinkedModuleProgramCodeBlock` count by more than a
+    // small constant. Without the balance the +1 from `create_external` is
+    // never released and `ref_strings` only grows past evictions.
+    // `codeCachePruned` guards the invariant from being vacuous: without an
+    // eviction both counters climb together and the difference is ~0 either
+    // way; `perReloadSourceBytes` is sized so the final sample is past the
+    // second prune.
+    // `--expose-internals` + bunEnv's BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING
+    // make the hook resolve; a -1 sample means the probe silently failed.
+    // (The resolver's per-reload `DirEntry` / `EntryStore` orphaning is
+    // covered by the fd-count test above: fixing it is what makes the
+    // directory handle reusable. RSS itself is too noisy across CI lanes to
+    // bound tightly; `bytesPerReload` is reported as context only.)
+    expect({
+      refStringDiagnosticAvailable: minRefStrings >= 0,
+      codeCachePruned: last.codeBlocks < reloads * 0.9,
+      refStringsNeverExceedCodeCache: maxRefOverCode <= 5,
+      // Carried for context on failure:
+      samples,
+      bytesPerReload,
+    }).toMatchObject({
+      refStringDiagnosticAvailable: true,
+      codeCachePruned: true,
+      refStringsNeverExceedCodeCache: true,
+    });
   },
   longTimeout,
 );

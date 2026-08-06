@@ -52,6 +52,22 @@ const shellParse = $newRustFunction("shell.rs", "TestingAPIs.shellParse", 2);
 
 export const sslCtxLiveCount = $newRustFunction("SecureContext.rs", "jsLiveCount", 0);
 
+export const hotReloadDiagnostics = $newRustFunction(
+  "virtual_machine_exports.rs",
+  "Bun__hotReloadDiagnostics",
+  0,
+) as () => {
+  refStrings: number;
+  sourceMappings: number;
+  resolvedPathDups: number;
+  watchlistLen: number;
+  hotReloadCounter: number;
+  /** Only present when built with `BUN_TRACK_ALLOC=1`. */
+  allocHistogram?: { bucket: number; bytes: number; count: number }[];
+  /** Only present when built with `BUN_TRACK_ALLOC=1`. */
+  allocLiveBytes?: number;
+};
+
 export const napiThreadsafeFunctionLiveCount = $newRustFunction("napi_body.rs", "jsThreadsafeFunctionLiveCount", 0);
 
 export const escapeRegExp = $newRustFunction("escapeRegExp.rs", "jsEscapeRegExp", 1);

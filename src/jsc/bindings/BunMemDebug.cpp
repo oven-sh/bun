@@ -307,12 +307,20 @@ static bool findEmbeddedImage(char* out, size_t cap)
     for (uint32_t i = 0; i < mh->ncmds; i++) { const struct load_command* c = (const struct load_command*)lc; if (c->cmd == LC_SEGMENT_64) { const struct segment_command_64* sc = (const struct segment_command_64*)c; uintptr_t lo = sc->vmaddr + slide; if (a >= lo && a < lo + sc->vmsize && (a - lo) < sc->filesize) { fileOff = (int64_t)(sc->fileoff + (a - lo)); break; } } lc += c->cmdsize; }
 #elif OS(LINUX)
     ssize_t r = readlink("/proc/self/exe", exe, sizeof exe - 1); if (r <= 0) return false; exe[r] = 0;
-    // ELF: elf::get_data() maps the appended payload from the file; its pointer is not inside a PT_LOAD. Ask the graph code for the file offset instead (TODO); unsupported for now.
-    (void)a; return false;
+    { // the appended payload is mapped by a PT_LOAD the ELF writer adds: pointer -> that segment's file offset
+        struct Ctx { uintptr_t a; int64_t off; } ctx { a, -1 };
+        dl_iterate_phdr([](struct dl_phdr_info* info, size_t, void* arg) -> int {
+            if (info->dlpi_name && *info->dlpi_name) return 0; // main executable only
+            Ctx* c = (Ctx*)arg;
+            for (int i = 0; i < info->dlpi_phnum; i++) { const ElfW(Phdr)& ph = info->dlpi_phdr[i]; if (ph.p_type != PT_LOAD) continue; uintptr_t lo = info->dlpi_addr + ph.p_vaddr; if (c->a >= lo && c->a < lo + ph.p_memsz && (c->a - lo) < ph.p_filesz) { c->off = (int64_t)(ph.p_offset + (c->a - lo)); return 1; } }
+            return 0;
+        }, &ctx);
+        fileOff = ctx.off;
+    }
 #else
     return false;
 #endif
-    if (fileOff < 0 || (fileOff & 16383)) { fprintf(stderr, "[image] embedded image is not page-aligned in the file (offset %lld); ignoring\n", (long long)fileOff); return false; }
+    if (fileOff < 0 || (fileOff & (getpagesize() - 1))) { fprintf(stderr, "[image] embedded image is not page-aligned in the file (offset %lld); ignoring\n", (long long)fileOff); return false; }
     snprintf(out, cap, "%s@%lld", exe, (long long)fileOff);
     return true;
 }

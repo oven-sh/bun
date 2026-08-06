@@ -1,3 +1,6 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE 1 // dl_iterate_phdr / dl_phdr_info (Linux)
+#endif
 #include "root.h"
 
 #include <JavaScriptCore/VM.h>

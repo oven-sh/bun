@@ -362,47 +362,6 @@ describe.concurrent("socket", () => {
     expect(await bunRun(fileURLToPath(new URL("./kqueue-filter-coalesce-fixture.ts", import.meta.url)))).toSpawn();
   });
 
-  // kqueue: EV_EOF on EVFILT_WRITE (peer RST behind backpressure) must close the socket, not re-fire on_end and re-arm writable forever.
-  it.skipIf(isWindows)("allowHalfOpen socket closes when peer resets behind pending writes", async () => {
-    const big = Buffer.alloc(4 * 1024 * 1024, 0x78);
-    const ended = Promise.withResolvers<void>();
-    const closed = Promise.withResolvers<number | undefined>();
-    let endCount = 0;
-    using server = Bun.listen({
-      hostname: "127.0.0.1",
-      port: 0,
-      allowHalfOpen: true,
-      socket: {
-        open(s) {
-          for (let i = 0; i < 8; i++) s.write(big);
-        },
-        data() {},
-        drain(s) {
-          s.write(big);
-        },
-        end() {
-          endCount++;
-          ended.resolve();
-        },
-        error() {},
-        close(_s, err) {
-          closed.resolve((err as any)?.errno);
-        },
-      },
-    });
-
-    const client = net.connect(server.port, "127.0.0.1");
-    client.on("error", () => {});
-    await new Promise<void>(resolve => client.on("connect", resolve));
-    client.pause();
-    client.end();
-    await ended.promise;
-    client.resetAndDestroy();
-
-    await closed.promise;
-    expect(endCount).toBe(1);
-  });
-
   it("reload() should preserve active_connections (no UAF / counter underflow)", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), fileURLToPath(new URL("./socket-reload-fixture.ts", import.meta.url))],

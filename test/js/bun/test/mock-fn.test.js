@@ -1117,9 +1117,7 @@ describe("spyOn", () => {
       // arrow functions have no prototype property at all, so the
       // missing-property check fires first (matching jest)
       const arrow = () => {};
-      expect(() => spyOn(arrow, "prototype")).toThrow(
-        "Property `prototype` does not exist in the provided object",
-      );
+      expect(() => spyOn(arrow, "prototype")).toThrow("Property `prototype` does not exist in the provided object");
       expect(Object.hasOwn(arrow, "prototype")).toBe(false);
     });
 

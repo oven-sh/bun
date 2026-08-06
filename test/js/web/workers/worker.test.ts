@@ -335,6 +335,125 @@ describe("web worker", () => {
       expect(err.error).toBe(null);
     });
   });
+
+  async function messageOrError(worker: Worker) {
+    const { promise, resolve, reject } = Promise.withResolvers<any>();
+    worker.onmessage = e => resolve(e.data);
+    worker.onerror = e => reject(e.message ?? e);
+    try {
+      return await promise;
+    } finally {
+      worker.terminate();
+    }
+  }
+
+  test("self.name reflects the name option", async () => {
+    const worker = new Worker(
+      "data:text/javascript," +
+        encodeURIComponent(`postMessage({ name: self.name, global: globalThis.name, type: typeof self.name });`),
+      { name: "wanted-name" },
+    );
+    expect(await messageOrError(worker)).toEqual({ name: "wanted-name", global: "wanted-name", type: "string" });
+  });
+
+  test("self.name defaults to the empty string", async () => {
+    const worker = new Worker("data:text/javascript," + encodeURIComponent(`postMessage(self.name);`));
+    expect(await messageOrError(worker)).toBe("");
+  });
+
+  test("self.close() ends the worker after the current task", async () => {
+    const src = `
+      const r = { closeType: typeof self.close, name: self.name };
+      try { self.close(); r.afterClose = "reached"; } catch (e) { r.afterClose = "THROW " + e.constructor.name; }
+      postMessage(r);
+      setTimeout(() => postMessage({ late: true }), 0);
+    `;
+    const worker = new Worker("data:text/javascript," + encodeURIComponent(src), { name: "closer" });
+
+    const messages: any[] = [];
+    worker.addEventListener("message", e => messages.push(e.data));
+    const [close] = await once(worker, "close");
+
+    expect(messages).toEqual([{ closeType: "function", name: "closer", afterClose: "reached" }]);
+    expect(close.code).toBe(0);
+  });
+
+  test("terminate() still interrupts after self.close()", async () => {
+    const src = `self.close(); postMessage("closing"); while (true) {}`;
+    const worker = new Worker("data:text/javascript," + encodeURIComponent(src));
+    // messageOrError resolves on "closing" and then calls worker.terminate();
+    // the worker is in the infinite loop by then, so terminate() must arm the
+    // TerminationException for the close event to ever fire.
+    expect(await messageOrError(worker)).toBe("closing");
+    const [close] = await once(worker, "close");
+    expect([0, 1]).toContain(close.code);
+  });
+
+  test("self.close() followed by a top-level throw still reports the error", async () => {
+    const src = `self.close(); throw new Error("boom");`;
+    const worker = new Worker("data:text/javascript," + encodeURIComponent(src));
+    const { promise, resolve, reject } = Promise.withResolvers<any>();
+    worker.onerror = e => resolve(e.message);
+    worker.addEventListener("close", e => reject(new Error(`closed (${e.code}) without error event`)));
+    expect(await promise).toContain("boom");
+  });
+
+  test("self.close() during top-level await with a live handle exits", async () => {
+    const src = `setInterval(() => postMessage("tick"), 1e6); self.close(); postMessage("closing"); await new Promise(() => {});`;
+    const worker = new Worker("data:text/javascript," + encodeURIComponent(src));
+    const messages: any[] = [];
+    worker.addEventListener("message", e => messages.push(e.data));
+    worker.onerror = e => messages.push("error: " + e.message);
+    const [close] = await once(worker, "close");
+    expect(messages).toEqual(["closing"]);
+    expect(close.code).toBe(0);
+  });
+
+  for (const defer of ["sync", "microtask"] as const) {
+    test(`self.close() from onmessage (${defer}) drops the rest of the batch`, async () => {
+      const call = defer === "sync" ? "self.close()" : "queueMicrotask(() => self.close())";
+      const src = `self.onmessage = e => { postMessage(e.data); if (e.data === 0) ${call}; };`;
+      const worker = new Worker("data:text/javascript," + encodeURIComponent(src));
+      const errored = new Promise<never>((_, r) => (worker.onerror = e => r(e.message ?? e)));
+      await Promise.race([once(worker, "open"), errored]);
+      for (let i = 0; i < 5; i++) worker.postMessage(i);
+      const messages: any[] = [];
+      worker.addEventListener("message", e => messages.push(e.data));
+      await Promise.race([once(worker, "close"), errored]);
+      expect(messages).toEqual([0]);
+    });
+  }
+
+  test("self.close() from a MessagePort onmessage drops the rest of the batch", async () => {
+    const src = `
+      const { port1, port2 } = new MessageChannel();
+      port1.onmessage = e => { postMessage(e.data); if (e.data === 0) self.close(); };
+      self.onmessage = () => { for (let i = 0; i < 5; i++) port2.postMessage(i); };
+    `;
+    const worker = new Worker("data:text/javascript," + encodeURIComponent(src));
+    const errored = new Promise<never>((_, r) => (worker.onerror = e => r(e.message ?? e)));
+    await Promise.race([once(worker, "open"), errored]);
+    worker.postMessage("go");
+    const messages: any[] = [];
+    worker.addEventListener("message", e => messages.push(e.data));
+    await Promise.race([once(worker, "close"), errored]);
+    expect(messages).toEqual([0]);
+  });
+
+  test("close and name are not defined on the main-thread global", () => {
+    expect("close" in globalThis).toBe(false);
+    expect("name" in globalThis).toBe(false);
+  });
+
+  test("close and name are not defined in a node:worker_threads worker", async () => {
+    const worker = new wt.Worker(
+      `require("worker_threads").parentPort.postMessage({ close: "close" in globalThis, name: "name" in globalThis })`,
+      { eval: true, name: "nw" },
+    );
+    const [msg] = await once(worker, "message");
+    await worker.terminate();
+    expect(msg).toEqual({ close: false, name: false });
+  });
 });
 
 // TODO: move to node:worker_threads tests directory

@@ -13,6 +13,8 @@
 #include "ScriptExecutionContext.h"
 #include <wtf/Locker.h>
 
+extern "C" bool WebWorker__isCloseRequested(void* bunVM);
+
 namespace WebCore {
 
 MessagePortPipe::~MessagePortPipe() = default;
@@ -167,8 +169,8 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         // Node's MakeCallback wraps each emit in an InternalCallbackScope,
         // which drains nextTick + microtasks on exit; match that so
         // queueMicrotask(cb) inside onmessage runs before the next message.
-        if (globalObject->drainMicrotasks())
-            break; // termination pending
+        if (globalObject->drainMicrotasks() || WebWorker__isCloseRequested(globalObject->bunVM()))
+            break; // termination pending, or self.close() asked us to stop
 
         // Listeners may have been removed mid-drain (port.off()); pause like the
         // pre-loop check instead of dispatching the rest to zero listeners.

@@ -607,6 +607,12 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());
             }
 
+            if (options.kind == WebCore::WorkerOptions::Kind::Web) {
+                // DedicatedWorkerGlobalScope members (node:worker_threads keeps the main-thread global shape).
+                globalObject->putDirect(vm, vm.propertyNames->name, jsString(vm, options.name.isolatedCopy()), PropertyAttribute::ReadOnly | 0);
+                globalObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "close"_s), 0, WebCore::jsFunctionWorkerGlobalScopeClose, ImplementationVisibility::Public, NoIntrinsic, 0);
+            }
+
             // Ensure that the TerminationException singleton is constructed. Workers need this so
             // that we can request their termination from another thread. For the main thread, we
             // can delay this until we are actually requesting termination (until and unless we ever

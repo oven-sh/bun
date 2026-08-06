@@ -42,6 +42,7 @@
 extern "C" void Bun__Process__emitWarning(Zig::GlobalObject*, JSC::EncodedJSValue warning, JSC::EncodedJSValue type, JSC::EncodedJSValue code, JSC::EncodedJSValue ctor);
 
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
+extern "C" bool WebWorker__isCloseRequested(void* bunVM);
 
 namespace WebCore {
 
@@ -187,8 +188,8 @@ void MessagePort::flushQueuedMessagesBeforeClose()
         if (!message)
             break;
         dispatchOneMessage(*context, WTF::move(*message));
-        if (globalObject->drainMicrotasks())
-            break; // termination pending
+        if (globalObject->drainMicrotasks() || WebWorker__isCloseRequested(globalObject->bunVM()))
+            break; // termination pending, or self.close() asked us to stop
     }
 }
 

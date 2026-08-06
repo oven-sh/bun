@@ -1163,13 +1163,9 @@ impl EventLoop {
             .expect("worker is not initialized");
         match promise.status() {
             PromiseStatus::Pending => {
-                while !worker.has_requested_terminate()
-                    && promise.status() == PromiseStatus::Pending
-                {
+                while !worker.should_exit_loop() && promise.status() == PromiseStatus::Pending {
                     self.tick();
-                    if !worker.has_requested_terminate()
-                        && promise.status() == PromiseStatus::Pending
-                    {
+                    if !worker.should_exit_loop() && promise.status() == PromiseStatus::Pending {
                         // Unsettled top-level await: the loop has drained but the
                         // entry module's evaluation promise is still pending. Stop
                         // waiting so the worker can exit (node uses exit code 13).

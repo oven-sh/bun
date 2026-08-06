@@ -710,7 +710,6 @@ impl TranspilerJob {
         // as the `Transpiler<'_>` cast above.
         transpiler.linker.resolver = ptr::addr_of_mut!(transpiler.resolver).cast();
 
-        let mut fd: Option<Fd> = None;
         let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);
 
@@ -722,21 +721,9 @@ impl TranspilerJob {
         let import_watcher: Option<bun_ptr::ParentRef<ImportWatcher, bun_ptr::Mut>> =
             unsafe { bun_ptr::ParentRef::from_nullable_mut((*vm).bun_watcher.cast()) };
         if let Some(iw) = import_watcher {
-            // The watchlist *is* mutated cross-thread (the watcher thread's
-            // `flush_evictions` closes fds and `swap_remove`s), so snapshot
-            // under the watcher mutex — see
-            // `ImportWatcher::snapshot_fd_and_package_json` doc for the EBADF
-            // race this closes.
-            (fd, package_json) = iw.snapshot_fd_and_package_json(hash);
-            // On Linux, `addFileByPathSlow` inserts watchlist entries with
-            // `fd = invalid_fd` (only kqueue needs the descriptor). Treat
-            // invalid as "no cached fd" so `readFileWithAllocator` opens the
-            // file instead of calling `seekTo` on a bogus handle. The snapshot
-            // helper already filtered `!is_valid()`; additionally reject
-            // stdio-tagged fds here.
-            if fd.is_some_and(|f| f.stdio_tag().is_some()) {
-                fd = None;
-            }
+            // Never read through the watchlist's stored fd; see
+            // `ImportWatcher::snapshot_package_json`.
+            package_json = iw.snapshot_package_json(hash);
         }
 
         // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
@@ -769,15 +756,13 @@ impl TranspilerJob {
         // only, so skipping `Drop` is sound.
         let mut fallback_source = core::mem::MaybeUninit::<bun_ast::Source>::uninit();
 
-        // Usually, we want to close the input file automatically.
-        //
-        // If we're re-using the file descriptor from the fs watcher
-        // Do not close it because that will break the kqueue-based watcher
+        // Close the input file automatically unless the watcher adopts the
+        // descriptor after the parse (`add_file` below).
         //
         // Note: stored in a `Cell` so the scopeguard closure can capture
         // `&Cell<bool>` and the post-parse writes are visible to it without
         // raw-pointer laundering (which the unused-assignment lint can't see).
-        let should_close_input_file_fd = Cell::new(fd.is_none());
+        let should_close_input_file_fd = Cell::new(true);
 
         let mut input_file_fd: Fd = Fd::INVALID;
 
@@ -798,7 +783,7 @@ impl TranspilerJob {
             path,
             loader,
             dirname_fd: Fd::INVALID,
-            file_descriptor: fd,
+            file_descriptor: None,
             // SAFETY: `input_file_fd` is a stack local declared above and
             // outlives `parse_options`; `addr_of_mut!` avoids forming an
             // intermediate `&mut` so the close-guard's later borrow stays sound.
@@ -888,18 +873,20 @@ impl TranspilerJob {
                     && bun_paths::is_absolute(path.text)
                     && !strings::contains(path.text, b"node_modules")
                 {
-                    should_close_input_file_fd.set(false);
                     if let Some(iw) = import_watcher {
                         // SAFETY: BACKREF — process-lifetime watcher; no other
                         // `&ImportWatcher` is live here, and `add_file` is
                         // thread-safe via watcher mutex.
-                        let _ = unsafe { iw.assume_mut() }.add_file::<true>(
+                        let added = unsafe { iw.assume_mut() }.add_file::<true>(
                             input_file_fd,
                             path.text,
                             hash,
                             Fd::INVALID,
                             package_json,
                         );
+                        if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
+                            should_close_input_file_fd.set(false);
+                        }
                     }
                 }
             }
@@ -913,18 +900,20 @@ impl TranspilerJob {
                 && bun_paths::is_absolute(path.text)
                 && !strings::contains(path.text, b"node_modules")
             {
-                should_close_input_file_fd.set(false);
                 if let Some(iw) = import_watcher {
                     // SAFETY: BACKREF — process-lifetime watcher; no other
                     // `&ImportWatcher` is live here, and `add_file` is
                     // thread-safe via watcher mutex.
-                    let _ = unsafe { iw.assume_mut() }.add_file::<true>(
+                    let added = unsafe { iw.assume_mut() }.add_file::<true>(
                         input_file_fd,
                         path.text,
                         hash,
                         Fd::INVALID,
                         package_json,
                     );
+                    if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
+                        should_close_input_file_fd.set(false);
+                    }
                 }
             }
         }

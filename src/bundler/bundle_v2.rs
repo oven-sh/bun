@@ -4373,13 +4373,20 @@ pub mod bv2_impl {
                             };
 
                             // Failures to watch are intentionally ignored.
-                            let _ = this.bun_watcher_mut().unwrap().add_file::<true>(
-                                fd,
-                                &load.path,
-                                bun_wyhash::hash(load.path.as_ref()) as u32,
-                                bun_sys::Fd::INVALID,
-                                None,
-                            );
+                            if !matches!(
+                                this.bun_watcher_mut().unwrap().add_file::<true>(
+                                    fd,
+                                    &load.path,
+                                    bun_wyhash::hash(load.path.as_ref()) as u32,
+                                    bun_sys::Fd::INVALID,
+                                    None,
+                                ),
+                                Ok(bun_watcher::FdOwnership::Watcher)
+                            ) && fd.is_valid()
+                            {
+                                // Not adopted; close the fd opened above.
+                                let _ = bun_sys::close(fd);
+                            }
                         }
                     }
                 }

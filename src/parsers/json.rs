@@ -1934,7 +1934,7 @@ mod tests {
         let full = probe(doc, Which::Utf8);
         let immutable = probe(doc, Which::Immutable);
         assert_eq!(full, immutable);
-        let name_key_offset = doc.windows(6).position(|w| w == b"\"name\"").unwrap();
+        let name_key_offset = bun_core::strings::index_of(doc, b"\"name\"").unwrap();
         assert!(
             full.starts_with(&format!("name@{name_key_offset}=\"pkg\"\n")),
             "{full:?}"

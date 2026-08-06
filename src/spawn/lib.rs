@@ -335,11 +335,11 @@ pub fn run(opts: RunOptions<'_>) -> crate::Result<RunResult> {
             break 'argv0;
         };
         // Only PATH-search bare names (no separator present).
-        if first.contains(&b'/') {
+        if bun_core::strings::contains_char(first, b'/') {
             break 'argv0;
         }
         #[cfg(windows)]
-        if first.iter().any(|&b| b == b'\\') {
+        if bun_core::strings::contains_char(first, b'\\') {
             break 'argv0;
         }
         let path = opts

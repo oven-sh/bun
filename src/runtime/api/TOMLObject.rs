@@ -82,7 +82,6 @@ fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         visiting: HashMap::default(),
         path: Vec::new(),
         wrote: false,
-        header_pending: false,
     };
 
     if let Err(err) = stringifier.stringify_root(global, unwrapped) {
@@ -138,19 +137,12 @@ struct Stringifier {
     path: Vec<BunString>,
     /// Whether any line has been written (controls blank lines before headers).
     wrote: bool,
-    /// A `[path]` header not yet written. Flushed before the first keyval of
-    /// the table's body, or after the body when it is empty (the header is
-    /// what materializes an empty table). A body that reaches a sub-section
-    /// first drops it instead: `[a.b]` alone implies `[a]`, and emitting
-    /// headers for such pass-through super-tables is valid but matches no
-    /// other TOML emitter.
-    header_pending: bool,
 }
 
 impl Stringifier {
     fn stringify_root(&mut self, global: &JSGlobalObject, root: JSValue) -> StringifyResult<()> {
         self.mark_visiting(global, root)?;
-        self.stringify_table_body(global, root)?;
+        self.stringify_table_body(global, root, false)?;
         self.visiting.remove(&root);
         Ok(())
     }
@@ -199,14 +191,20 @@ impl Stringifier {
     /// Emits the body of one table: `key = value` lines first, then
     /// `[sub.table]` and `[[array.of.tables]]` sections (a keyval after a
     /// header would belong to that header, so the order is forced).
+    ///
+    /// With `own_header`, the table's `[path]` header is emitted lazily:
+    /// before the first keyval, or after an empty body. A sub-section
+    /// reached first makes it redundant (`[a.b]` alone implies `[a]`).
     fn stringify_table_body(
         &mut self,
         global: &JSGlobalObject,
         table: JSValue,
+        own_header: bool,
     ) -> StringifyResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
         }
+        let mut header_pending = own_header;
 
         let iter_options = jsc::JSPropertyIteratorOptions {
             skip_empty_name: false,
@@ -223,7 +221,10 @@ impl Stringifier {
                 return Err(self.err_null_value(global, &prop_name));
             }
             if let Layout::Keyval = self.layout_of(global, value)? {
-                self.flush_pending_header();
+                if header_pending {
+                    header_pending = false;
+                    self.append_header(false);
+                }
                 self.append_key_segment(&prop_name);
                 self.builder.append_latin1(b" = ");
                 self.stringify_inline_value(global, value)?;
@@ -241,24 +242,16 @@ impl Stringifier {
             match self.layout_of(global, value)? {
                 Layout::Keyval | Layout::Skip => {}
                 Layout::Table => {
+                    header_pending = false;
                     self.mark_visiting(global, value)?;
                     self.path.push(prop_name);
-                    // Overwriting `header_pending` is what drops the
-                    // enclosing table's unflushed header: only the innermost
-                    // table can have one pending, and a pass-2 child proves
-                    // the enclosing one is pass-through.
-                    self.header_pending = true;
-                    self.stringify_table_body(global, value)?;
-                    // Still pending means the body was empty; only the header
-                    // materializes the table.
-                    self.flush_pending_header();
+                    self.stringify_table_body(global, value, true)?;
                     self.path.pop();
                     self.visiting.remove(&value);
                 }
                 Layout::ArrayOfTables => {
+                    header_pending = false;
                     self.mark_visiting(global, value)?;
-                    // `[[t.arr]]` alone implies `[t]`.
-                    self.header_pending = false;
                     self.path.push(prop_name);
                     let mut items = value.array_iterator(global)?;
                     while let Some(item) = items.next()? {
@@ -272,14 +265,21 @@ impl Stringifier {
                             return Err(self.err_changed(global));
                         }
                         self.mark_visiting(global, item)?;
+                        // Element headers are unconditional: each one creates
+                        // the element.
                         self.append_header(true);
-                        self.stringify_table_body(global, item)?;
+                        self.stringify_table_body(global, item, false)?;
                         self.visiting.remove(&item);
                     }
                     self.path.pop();
                     self.visiting.remove(&value);
                 }
             }
+        }
+
+        // An empty table is materialized only by its header.
+        if header_pending {
+            self.append_header(false);
         }
 
         Ok(())
@@ -381,13 +381,6 @@ impl Stringifier {
     }
 
     // ── output pieces ──────────────────────────────────────────────────────
-
-    fn flush_pending_header(&mut self) {
-        if self.header_pending {
-            self.header_pending = false;
-            self.append_header(false);
-        }
-    }
 
     /// `[a.b.c]` or `[[a.b.c]]` from `self.path`, preceded by a blank line
     /// when the document already has content.

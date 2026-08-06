@@ -723,10 +723,12 @@ it.concurrent("a no-op onResolve that returns args.path unchanged is transparent
   expect(exitCode).toBe(0);
 });
 
-it.concurrent("require() of a pending plugin module promise does not kill the process when it settles later", async () => {
-  // require() throws "async module ... unsupported" synchronously; the plugin's
-  // promise settling afterwards must not surface as an unhandled rejection.
-  const fixture = `
+it.concurrent(
+  "require() of a pending plugin module promise does not kill the process when it settles later",
+  async () => {
+    // require() throws "async module ... unsupported" synchronously; the plugin's
+    // promise settling afterwards must not surface as an unhandled rejection.
+    const fixture = `
     let rejectAsync, resolveInvalid;
     Bun.plugin({
       name: "p",
@@ -747,17 +749,18 @@ it.concurrent("require() of a pending plugin module promise does not kill the pr
     resolveInvalid({ loader: "object", exports: 7 });
     setTimeout(() => console.log("still alive"), 0);
   `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture],
-    env: bunEnv,
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).not.toContain("late failure");
-  expect(stdout).toBe("caught: virt-async true\ncaught: virt-invalid true\nstill alive\n");
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).not.toContain("late failure");
+    expect(stdout).toBe("caught: virt-async true\ncaught: virt-invalid true\nstill alive\n");
+    expect(exitCode).toBe(0);
+  },
+);
 
 it.concurrent("require() of an already-rejected plugin module promise throws its rejection reason", async () => {
   const fixture = `
@@ -793,8 +796,6 @@ it.concurrent("require() of an already-rejected plugin module promise throws its
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("boom");
-  expect(stdout).toBe(
-    "caught: boom caught\ncaught: boom unhandled\nimport rejected: boom import\nstill alive\n",
-  );
+  expect(stdout).toBe("caught: boom caught\ncaught: boom unhandled\nimport rejected: boom import\nstill alive\n");
   expect(exitCode).toBe(0);
 });

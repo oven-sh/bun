@@ -2707,6 +2707,67 @@ describe("binaries", () => {
     }
   });
 
+  // https://github.com/oven-sh/bun/issues/36388
+  // Windows bin shims are regular `.exe`/`.bunx` files, not symlinks, and are
+  // not covered by the dangling symlink cleanup.
+  test.skipIf(isWindows)("removes stale global bin symlinks when an update drops a bin entry", async () => {
+    await write(
+      join(packageDir, "bunfig.toml"),
+      `
+      [install]
+      cache = false
+      registry = "http://localhost:${port}/"
+      globalBinDir = "${join(packageDir, "global-bin-dir").replace(/\\/g, "\\\\")}"
+      `,
+    );
+
+    const globalEnv = { ...env, BUN_INSTALL: join(packageDir, "global-install-dir") };
+
+    async function installGlobal(spec: string) {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install", "--linker=hoisted", "-g", `--config=${join(packageDir, "bunfig.toml")}`, spec],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: globalEnv,
+      });
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      return out;
+    }
+
+    expect(await installGlobal("drops-a-bin@1.0.0")).toContain("drops-a-bin@1.0.0");
+    expect(await readdirSorted(join(packageDir, "global-bin-dir"))).toEqual(["bin-a", "bin-b"]);
+
+    // 2.0.0 no longer declares `bin-b`, so its shim must be removed instead of
+    // being left behind as a dangling symlink
+    expect(await installGlobal("drops-a-bin@2.0.0")).toContain("drops-a-bin@2.0.0");
+    expect(await readdirSorted(join(packageDir, "global-bin-dir"))).toEqual(["bin-a"]);
+  });
+
+  test.skipIf(isWindows)("removes stale bin symlinks when an update drops a bin entry", async () => {
+    async function add(spec: string) {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "add", spec],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      return out;
+    }
+
+    expect(await add("drops-a-bin@1.0.0")).toContain("drops-a-bin@1.0.0");
+    expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(["bin-a", "bin-b"]);
+
+    expect(await add("drops-a-bin@2.0.0")).toContain("drops-a-bin@2.0.0");
+    expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(["bin-a"]);
+  });
+
   for (const global of [false, true]) {
     test(`bin types${global ? " (global)" : ""}`, async () => {
       if (global) {

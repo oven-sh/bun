@@ -808,8 +808,12 @@ fn update_package_json_and_install_with_manager_with_updates(
                     );
                 }
             }
+        }
 
-            // This is where we clean dangling symlinks
+        // Clean dangling bin shims left by removed packages or dropped bin entries (#36388).
+        if subcommand == Subcommand::Remove || subcommand.can_globally_install_packages() {
+            let cwd = bun_sys::Dir::cwd();
+            let mut node_modules_buf = PathBuffer::uninit();
             // This could be slow if there are a lot of symlinks
             match bun_sys::open_dir_for_iteration(cwd.fd(), manager.options.bin_path.as_bytes()) {
                 Ok(node_modules_bin) => {
@@ -835,8 +839,16 @@ fn update_package_json_and_install_with_manager_with_updates(
                                     Ok(file) => {
                                         let _ = file.close();
                                     }
-                                    Err(_) => {
-                                        let _ = bun_sys::unlinkat(node_modules_bin, buf);
+                                    Err(err) => {
+                                        // EACCES/EMFILE etc. must not delete a valid shim.
+                                        if matches!(
+                                            err.get_errno(),
+                                            bun_sys::E::ENOENT
+                                                | bun_sys::E::ENOTDIR
+                                                | bun_sys::E::ELOOP
+                                        ) {
+                                            let _ = bun_sys::unlinkat(node_modules_bin, buf);
+                                        }
                                         continue 'iterator;
                                     }
                                 }

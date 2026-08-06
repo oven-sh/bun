@@ -1,0 +1,59 @@
+{
+	"name": "drops-a-bin",
+	"versions": {
+		"1.0.0": {
+			"name": "drops-a-bin",
+			"version": "1.0.0",
+			"bin": {
+				"bin-a": "./bin-a.js",
+				"bin-b": "./bin-b.js"
+			},
+			"_id": "drops-a-bin@1.0.0",
+			"dist": {
+				"integrity": "sha512-8Z5xun02lMv/f35n7c0bB2MQnrj+Xo4KKrTixiiJ1dGSrTOXtF2DTpDPwEC8FCmzBWFZJgugGAl2GYM0NG8zUw==",
+				"shasum": "5f5818a52b34cacb200fbf7e1e8838639274ee72",
+				"tarball": "http://localhost:4873/drops-a-bin/-/drops-a-bin-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"2.0.0": {
+			"name": "drops-a-bin",
+			"version": "2.0.0",
+			"bin": {
+				"bin-a": "./bin-a.js"
+			},
+			"_id": "drops-a-bin@2.0.0",
+			"dist": {
+				"integrity": "sha512-v6dB9hpqhscGkGOCiIEqijm2reGsdkOm6k/tnhPBK4q3su2DqhSbGHlUCRcfEsSqDF0NGPhLi4FiwueFJBlp6w==",
+				"shasum": "0aa7052066ab3add7a5d87be3d5af034879c90ef",
+				"tarball": "http://localhost:4873/drops-a-bin/-/drops-a-bin-2.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-01-20T01:14:30.608Z",
+		"created": "2024-01-20T01:14:17.228Z",
+		"1.0.0": "2024-01-20T01:14:17.228Z",
+		"2.0.0": "2024-01-20T01:14:30.608Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "2.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"drops-a-bin-1.0.0.tgz": {
+			"shasum": "5f5818a52b34cacb200fbf7e1e8838639274ee72",
+			"version": "1.0.0"
+		},
+		"drops-a-bin-2.0.0.tgz": {
+			"shasum": "0aa7052066ab3add7a5d87be3d5af034879c90ef",
+			"version": "2.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "drops-a-bin",
+	"readme": "ERROR: No README data found!"
+}

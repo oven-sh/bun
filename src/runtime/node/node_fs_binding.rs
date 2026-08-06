@@ -23,6 +23,7 @@ pub(crate) type NodeFSFunction =
 /// Async calls use a thread pool.
 
 /// `Bindings(FunctionEnum).runSync`.
+
 fn run_sync<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum>(
     this: &Binding,
     global: &JSGlobalObject,
@@ -33,6 +34,7 @@ where
 {
     // SAFETY: `bun_vm()` returns the live `*mut VirtualMachine`; borrowed only
     // for the duration of argument parsing on the JS thread.
+    global.throw_disabled_in_snapshot_error_if_needed("node:fs")?;
     let vm: &VirtualMachine = global.bun_vm();
     let mut slice = ArgumentsSlice::init(vm, frame.arguments());
     // `defer slice.deinit()` → `Drop for ArgumentsSlice`.
@@ -71,6 +73,7 @@ fn run_async<A: FsArgument>(
     frame: &CallFrame,
     create_task: fn(&JSGlobalObject, &Binding, A, &mut VirtualMachine) -> JSValue,
 ) -> JsResult<JSValue> {
+    global.throw_disabled_in_snapshot_error_if_needed("node:fs")?;
     // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
     let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));

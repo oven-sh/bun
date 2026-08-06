@@ -2939,6 +2939,7 @@ pub mod internal {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        global_this.throw_disabled_in_snapshot_error_if_needed("dns")?;
         let arguments = callframe.arguments();
 
         if arguments.len() < 1 {
@@ -4818,6 +4819,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        global_this.throw_disabled_in_snapshot_error_if_needed("dns")?;
         let arguments = callframe.arguments_as_array::<3>();
         let arguments_len = callframe.arguments_count() as usize;
         if arguments_len < 1 {
@@ -4910,6 +4912,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        global_this.throw_disabled_in_snapshot_error_if_needed("dns")?;
         let arguments = callframe.arguments_as_array::<2>();
         let arguments_len = callframe.arguments_count() as usize;
         if arguments_len < 1 {
@@ -4980,6 +4983,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        global_this.throw_disabled_in_snapshot_error_if_needed("dns")?;
         let arguments = callframe.arguments_as_array::<2>();
         let arguments_len = callframe.arguments_count() as usize;
         if arguments_len < 1 {

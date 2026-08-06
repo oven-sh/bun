@@ -312,6 +312,14 @@ impl JSGlobalObject {
         JSValue::from_encoded(std::ptr::from_ref::<Self>(self) as usize)
     }
 
+    /// I/O whose result would be baked into a heap image (network, subprocesses, files) is disabled while one is being built.
+    pub fn throw_disabled_in_snapshot_error_if_needed(&self, what: &str) -> Result<(), JsError> {
+        if !bun_core::image::building() {
+            return Ok(());
+        }
+        Err(self.throw_invalid_arguments(format_args!("{what} is disabled while building a snapshot; do it after restore (process.on('restore'))")))
+    }
+
     pub fn throw_invalid_arguments(&self, args: Arguments<'_>) -> JsError {
         let err = self.to_invalid_arguments(args);
         self.throw_value(err)

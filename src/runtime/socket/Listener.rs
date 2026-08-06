@@ -169,6 +169,7 @@ impl Listener {
     // Note: no #[bun_jsc::host_fn] — BunObject.rs::static_adapters owns the
     // C-ABI shim (it extracts `opts` from the CallFrame and calls this directly).
     pub(crate) fn listen(global: &JSGlobalObject, opts: JSValue) -> JsResult<JSValue> {
+        global.throw_disabled_in_snapshot_error_if_needed("Bun.listen")?;
         log!("listen");
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
             return Err(global.throw_invalid_arguments(format_args!("Expected object")));
@@ -1033,6 +1034,7 @@ impl Listener {
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
             return Err(global.throw_invalid_arguments(format_args!("Expected options object")));
         }
+        global.throw_disabled_in_snapshot_error_if_needed("Bun.connect")?;
         let vm = VirtualMachine::get().as_mut();
 
         // Client mode: these handlers have no owning listener, so

@@ -306,6 +306,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     args_: JSValue,
     secondary_args_value: Option<JSValue>,
 ) -> JsResult<JSValue> {
+    global_this.throw_disabled_in_snapshot_error_if_needed("Bun.spawn")?;
     if IS_SYNC {
         // We skip this on Windows due to test failures.
         #[cfg(not(windows))]

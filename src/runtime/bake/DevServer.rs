@@ -4130,6 +4130,12 @@ pub(super) fn finalize_bundle(
             // edge to re-enqueue this chunk.
             *ctx.get_cached_index(bake::Side::Client, index) =
                 CachedFileIndex::from(dev.client_graph.get_file_index(entry_key));
+            // Keep the server-graph stub so server-side route tracing can
+            // bridge to the failed client entry (mirrors the success path).
+            if metadata.imported_on_server {
+                dev.server_graph
+                    .insert_css_file_on_server(&mut ctx, index, entry_key)?;
+            }
             continue;
         }
 

@@ -20,8 +20,6 @@ const {
 
 // ---- internal/util ----------------------------------------------------
 
-const { kEmptyObject } = require("internal/shared");
-
 // Node reconstructs the regex in an internal realm; Bun lacks one, so load-time-captured
 // intrinsics close the `[Symbol.*]` override hole (tampered `.exec` still observable per spec).
 // https://github.com/nodejs/node/blob/main/lib/internal/util.js
@@ -109,16 +107,6 @@ function isEnabled() {
 function has() {
   return true;
 }
-
-// ---- internal/streams/utils ----------------------------------------------
-
-function isWritable(stream) {
-  return typeof stream?.write === "function";
-}
-
-// ---- internal/events/abort_listener ----------------------------------------------
-
-const { addAbortListener } = require("internal/abort_listener");
 
 // ---- internal/bootstrap/realm ----------------------------------------------
 
@@ -418,7 +406,6 @@ export default {
   decorateErrorStack,
   deprecate: util.deprecate,
   isError,
-  kEmptyObject,
   // internal/util/colors
   shouldColorize,
   // internal/util/debuglog
@@ -432,10 +419,6 @@ export default {
   // internal/process/permission (consumed as a namespace: permission.isEnabled())
   isEnabled,
   has,
-  // internal/streams/utils
-  isWritable,
-  // internal/events/abort_listener
-  addAbortListener,
   // internal/bootstrap/realm
   BuiltinModule,
   // internal/modules/esm/get_format

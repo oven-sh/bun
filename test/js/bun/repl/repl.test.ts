@@ -1602,14 +1602,15 @@ describe.concurrent("--interactive", () => {
     expect(exitCode).toBe(9);
   });
 
-  test.each(["module", "commonjs"])("--input-type=%s with --eval runs the matching grammar", async inputType => {
-    // Bun's eval grammar accepts ESM and CJS in one source, so both
-    // spellings' requested parse semantics are satisfied by acceptance
+  test.each([
+    ["module", 'import assert from "assert"; assert.ok(1); console.log("ok");'],
+    ["commonjs", 'const assert = require("assert"); assert.ok(1); console.log("ok");'],
+    ["module-typescript", 'import assert from "assert"; const n: number = 1; assert.ok(n); console.log("ok");'],
+    ["commonjs-typescript", 'const assert = require("assert"); const n: number = 1; assert.ok(n); console.log("ok");'],
+  ])("--input-type=%s with --eval runs the matching grammar", async (inputType, src) => {
+    // Bun's eval grammar accepts ESM, CJS, and TS in one source, so every
+    // spelling's requested parse semantics are satisfied by acceptance
     // (the vendored test-assert-esm-cjs-message-verify.js relies on this).
-    const src =
-      inputType === "module"
-        ? 'import assert from "assert"; assert.ok(1); console.log("ok");'
-        : 'const assert = require("assert"); assert.ok(1); console.log("ok");';
     await using proc = Bun.spawn({
       cmd: [bunExe(), `--input-type=${inputType}`, "-e", src],
       env,
@@ -1785,6 +1786,43 @@ test("require('node:repl') is hollow until start() or REPLServer is used", async
   expect(lines[4]).toBe("same-Recoverable=true");
   expect(lines[5]).toBe("repl.repl=x");
   expect(exitCode).toBe(0);
+});
+
+describe.concurrent("node:repl completion", () => {
+  const env = { ...bunEnv, NO_COLOR: "1" };
+
+  // completion.js offers only `node:`-prefixed specifiers that resolve:
+  // scheme-only names (node:test) are included, while Bun's builtinModules
+  // extras (bun, bun:*, undici, ws) have no node:-prefixed form.
+  test.each(['require("node:', 'import("node:'])(
+    "%s <Tab> offers real node-scheme specifiers only",
+    async prefix => {
+      const script = `
+      const repl = require("node:repl");
+      const { PassThrough } = require("node:stream");
+      const inp = new PassThrough(), out = new PassThrough(); out.resume();
+      const r = repl.start({ input: inp, output: out, terminal: false, prompt: "" });
+      r.complete(${JSON.stringify(prefix)}, (err, result) => {
+        if (err) throw err;
+        console.log("COMPLETIONS=" + JSON.stringify(result[0]));
+        r.close();
+      });
+    `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const m = stdout.match(/COMPLETIONS=(\[.*\])/);
+      expect({ matched: m !== null, stderr }).toEqual({ matched: true, stderr: expect.not.stringContaining("error") });
+      const completions = JSON.parse(m![1]);
+      expect(completions).toContain("node:test");
+      expect(completions).toContain("node:fs");
+      expect(completions).not.toContain("node:undici");
+      expect(completions).not.toContain("node:ws");
+      expect(completions).not.toContain("node:bun");
+      expect(completions).not.toContain("node:bun:ffi");
+      expect(exitCode).toBe(0);
+    },
+    interactiveTimeout,
+  );
 });
 
 describe.concurrent("node:repl process-global side effects", () => {

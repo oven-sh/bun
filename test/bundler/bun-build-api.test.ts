@@ -198,6 +198,13 @@ describe("Bun.build", () => {
         root: String(dir) + "\0zz",
       }),
     ).toThrow("The property 'root' must be a string without null bytes");
+    // with no explicit root, the root derived from the entrypoint's directory
+    // must get the same check
+    expect(() =>
+      Bun.build({
+        entrypoints: [join(String(dir), "sub\0zz", "e.mjs")],
+      }),
+    ).toThrow("The property 'root' must be a string without null bytes");
     expect(() =>
       Bun.build({
         entrypoints: [entry],

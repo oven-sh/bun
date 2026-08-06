@@ -882,7 +882,6 @@ pub mod js_bundler {
             {
                 let path: ZigStringSlice = 'brk: {
                     if let Some(slice) = config.get_optional_slice(global_this, b"root")? {
-                        check_path_null_bytes(global_this, "root", slice.slice())?;
                         break 'brk slice;
                     }
 
@@ -922,6 +921,10 @@ pub mod js_bundler {
                             .unwrap_or(b"."),
                     );
                 };
+
+                // Covers an explicit `root` and the root derived from
+                // entrypoint directories.
+                check_path_null_bytes(global_this, "root", path.slice())?;
 
                 let dir = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice()) {
                     Ok(d) => d,

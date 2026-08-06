@@ -387,8 +387,7 @@ impl SocketAddress {
     pub(crate) fn init_js(global: &JSGlobalObject, options: Options) -> JsResult<SocketAddress> {
         let mut presentation: BunString = BunString::empty();
 
-        // Checked on the original bytes: `to_owned_slice_z` below absorbs one
-        // trailing NUL, and `ares_inet_pton` stops at the first interior one.
+        // Checked pre-slice_z: that conversion absorbs one trailing NUL.
         if let Some(address_str) = &options.address {
             if address_str.to_utf8().slice().contains(&0) {
                 use bun_jsc::js_global_object::SysErrOptions;

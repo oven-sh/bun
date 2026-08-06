@@ -737,6 +737,9 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // ($makeErrorWithCode(N, ...)); without this dep an ErrorCode.ts edit leaves
   // stale error numbers in the JS bundles while the C++ enum regenerates.
   const errorCodeInput = resolve(cfg.cwd, "src", "jsc", "bindings", "ErrorCode.ts");
+  // replacements.ts also bakes the loader tables ($LoaderLabelToId /
+  // $LoaderIdToLabel) from src/api/schema.js into BundlerPlugin.ts.
+  const schemaInput = resolve(cfg.cwd, "src", "api", "schema.js");
 
   const outputs = [
     resolve(cfg.codegenDir, "WebCoreJSBuiltins.cpp"),
@@ -763,7 +766,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   n.build({
     outputs,
     rule: "codegen",
-    inputs: [script, ...sources.js, ...sources.jsCodegen, extraInput, errorCodeInput],
+    inputs: [script, ...sources.js, ...sources.jsCodegen, extraInput, errorCodeInput, schemaInput],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,

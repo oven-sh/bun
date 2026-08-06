@@ -1012,9 +1012,9 @@ impl Listener {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
-        if this.handlers.active_connections.get() == 0 {
-            this.this_value.with_mut(|r| r.downgrade());
-        }
+        // `this_value` stays strong: the wrapper roots the handlers a future
+        // accept dispatches into. `do_stop` / `mark_inactive` downgrade it
+        // once the listen socket is closed.
         Ok(JSValue::UNDEFINED)
     }
 
@@ -1624,7 +1624,7 @@ fn connect_finish<const IS_SSL: bool>(
         };
         {
             let this = socket;
-            let _ = NewSocket::<IS_SSL>::handle_connect_error(this, errno, 0);
+            NewSocket::<IS_SSL>::handle_connect_error(this, errno, 0);
             // Balance the unconditional `socket_ref.ref_()` above.
             NewSocket::deref(&this);
         }

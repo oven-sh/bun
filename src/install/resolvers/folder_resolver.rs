@@ -102,7 +102,7 @@ pub(crate) fn hash(normalized_path: &[u8]) -> u64 {
 
 // ── NewResolver ───────────────────────────────────────────────────────────
 // The const-generic tag requires `#[derive(ConstParamTy)]` (already on `Tag`).
-pub struct NewResolver<'a, const TAG: ResolutionTag> {
+struct NewResolver<'a, const TAG: ResolutionTag> {
     pub(crate) folder_path: &'a [u8],
 }
 

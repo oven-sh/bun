@@ -331,7 +331,8 @@ pub mod dir_iterator {
                 // scan for the terminator; a scalar
                 // byte loop here showed up in startup profiles on large directories.
                 let name_field = &buf[base + 19..base + reclen];
-                let nul = memchr::memchr(0, name_field).unwrap_or(name_field.len());
+                let nul = bun_core::strings::index_of_char_usize(name_field, 0)
+                    .unwrap_or(name_field.len());
                 let name = &name_field[..nul];
 
                 // skip . and .. entries
@@ -7658,10 +7659,7 @@ fn linux_kernel_is_freebsd() -> bool {
         let mut buf = [0u8; 512];
         let n = read(fd, &mut buf).unwrap_or(0);
         let _ = close(fd);
-        if buf[..n]
-            .windows(7)
-            .any(|w| w.eq_ignore_ascii_case(b"freebsd"))
-        {
+        if bun_core::strings::contains_case_insensitive_ascii(&buf[..n], b"freebsd") {
             2
         } else {
             1

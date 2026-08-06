@@ -1,4 +1,3 @@
-use bstr::ByteSlice;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::{Expect, get_signature, throw};
@@ -73,7 +72,7 @@ impl Expect {
         }
 
         // Non-overlapping occurrence count.
-        let actual_count = expect_string_as_str.find_iter(sub_string_as_str).count();
+        let actual_count = bun_core::strings::count(expect_string_as_str, sub_string_as_str);
         let mut pass = actual_count == count_as_num as usize;
 
         if not {

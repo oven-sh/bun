@@ -190,6 +190,7 @@ private:
             ((HttpResponse<SSL> *) s)->resetTimeout();
 
             /* Call filter */
+            httpResponseData->filteredOpen = true;
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
             }
@@ -232,6 +233,7 @@ private:
 
         if(!SSL) {
             /* Call filter */
+            ((AsyncSocketData<SSL> *) us_socket_ext(s))->filteredOpen = true;
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
             }
@@ -264,8 +266,10 @@ private:
         }
 
 
-        for (auto &f : httpContextData->filterHandlers) {
-            f((HttpResponse<SSL> *) s, -1);
+        if (httpResponseData->filteredOpen) {
+            for (auto &f : httpContextData->filterHandlers) {
+                f((HttpResponse<SSL> *) s, -1);
+            }
         }
 
         if (httpResponseData->socketData && httpContextData->onSocketClosed) {

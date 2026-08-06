@@ -98,7 +98,15 @@
 #include "JavaScriptCore/ISO8601.h"
 #include "JavaScriptCore/JSCTimeZone.h"
 #include "JavaScriptCore/TemporalCoreTypes.h"
+#include "JavaScriptCore/TemporalDuration.h"
 #include "JavaScriptCore/TemporalEnums.h"
+#include "JavaScriptCore/TemporalInstant.h"
+#include "JavaScriptCore/TemporalPlainDate.h"
+#include "JavaScriptCore/TemporalPlainDateTime.h"
+#include "JavaScriptCore/TemporalPlainMonthDay.h"
+#include "JavaScriptCore/TemporalPlainTime.h"
+#include "JavaScriptCore/TemporalPlainYearMonth.h"
+#include "JavaScriptCore/TemporalZonedDateTime.h"
 #include "JavaScriptCore/TimeZoneICUBridge.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
@@ -1059,6 +1067,71 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     return true;
 }
 
+static bool isTemporalObject(JSC::JSObject* object)
+{
+    return object->inherits<JSC::TemporalInstant>()
+        || object->inherits<JSC::TemporalPlainDate>()
+        || object->inherits<JSC::TemporalPlainDateTime>()
+        || object->inherits<JSC::TemporalPlainTime>()
+        || object->inherits<JSC::TemporalZonedDateTime>()
+        || object->inherits<JSC::TemporalPlainYearMonth>()
+        || object->inherits<JSC::TemporalPlainMonthDay>()
+        || object->inherits<JSC::TemporalDuration>();
+}
+
+// Temporal objects keep their state in internal slots and have no own
+// properties, so the generic own-property walk would call any two instances
+// of a class equal. Compare the internal fields instead, the way JSDateType
+// compares Dates. Returns std::nullopt only when neither side is a Temporal
+// object.
+static std::optional<bool> temporalObjectsDequal(JSC::JSObject* o1, JSC::JSObject* o2)
+{
+    if (auto* instant1 = dynamicDowncast<JSC::TemporalInstant>(o1)) {
+        auto* instant2 = dynamicDowncast<JSC::TemporalInstant>(o2);
+        return instant2 && instant1->exactTime() == instant2->exactTime();
+    }
+    if (auto* date1 = dynamicDowncast<JSC::TemporalPlainDate>(o1)) {
+        auto* date2 = dynamicDowncast<JSC::TemporalPlainDate>(o2);
+        return date2 && date1->plainDate() == date2->plainDate() && date1->calendarID() == date2->calendarID();
+    }
+    if (auto* dateTime1 = dynamicDowncast<JSC::TemporalPlainDateTime>(o1)) {
+        auto* dateTime2 = dynamicDowncast<JSC::TemporalPlainDateTime>(o2);
+        return dateTime2 && dateTime1->plainDate() == dateTime2->plainDate() && dateTime1->plainTime() == dateTime2->plainTime() && dateTime1->calendarID() == dateTime2->calendarID();
+    }
+    if (auto* time1 = dynamicDowncast<JSC::TemporalPlainTime>(o1)) {
+        auto* time2 = dynamicDowncast<JSC::TemporalPlainTime>(o2);
+        return time2 && time1->plainTime() == time2->plainTime();
+    }
+    if (auto* zoned1 = dynamicDowncast<JSC::TemporalZonedDateTime>(o1)) {
+        auto* zoned2 = dynamicDowncast<JSC::TemporalZonedDateTime>(o2);
+        return zoned2 && zoned1->exactTime() == zoned2->exactTime() && zoned1->timeZone() == zoned2->timeZone() && zoned1->calendarID() == zoned2->calendarID();
+    }
+    if (auto* yearMonth1 = dynamicDowncast<JSC::TemporalPlainYearMonth>(o1)) {
+        auto* yearMonth2 = dynamicDowncast<JSC::TemporalPlainYearMonth>(o2);
+        return yearMonth2 && yearMonth1->plainYearMonth() == yearMonth2->plainYearMonth() && yearMonth1->calendarID() == yearMonth2->calendarID();
+    }
+    if (auto* monthDay1 = dynamicDowncast<JSC::TemporalPlainMonthDay>(o1)) {
+        auto* monthDay2 = dynamicDowncast<JSC::TemporalPlainMonthDay>(o2);
+        return monthDay2 && monthDay1->plainMonthDay() == monthDay2->plainMonthDay() && monthDay1->calendarID() == monthDay2->calendarID();
+    }
+    if (auto* duration1 = dynamicDowncast<JSC::TemporalDuration>(o1)) {
+        auto* duration2 = dynamicDowncast<JSC::TemporalDuration>(o2);
+        if (!duration2)
+            return false;
+        // Field-wise: PT1H and PT60M are different Duration values.
+        for (size_t i = 0; i < JSC::numberOfTemporalUnits; i++) {
+            if (duration1->duration()[i] != duration2->duration()[i])
+                return false;
+        }
+        return true;
+    }
+    // `o1` is not a Temporal object; a Temporal `o2` can then never be equal
+    // (and must not reach the own-property walk).
+    if (isTemporalObject(o2))
+        return false;
+    return std::nullopt;
+}
+
 template<bool isStrict, bool enableAsymmetricMatchers, bool skipPrototype>
 std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2)
 {
@@ -1664,6 +1737,10 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         JSObject* obj1 = c1->getObject();
         JSObject* obj2 = c2->getObject();
         if (obj1 && obj2) {
+            std::optional<bool> temporalEqual = temporalObjectsDequal(obj1, obj2);
+            if (temporalEqual.has_value())
+                return temporalEqual;
+
             const bool isSymbol1 = obj1->inherits<SymbolObject>();
             const bool isBigInt1 = obj1->inherits<BigIntObject>();
             if (isSymbol1 || isBigInt1) {
@@ -2260,13 +2337,19 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__unwrapBoxedPrimitive(JSGlobalObject
         return JSValue::encode(value);
     }
 
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSObject* object = asObject(value);
 
     if (object->inherits<NumberObject>()) {
-        return JSValue::encode(jsNumber(object->toNumber(globalObject)));
+        double number = object->toNumber(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsNumber(number));
     }
-    if (object->inherits<StringObject>())
-        return JSValue::encode(object->toString(globalObject));
+    if (object->inherits<StringObject>()) {
+        JSString* string = object->toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(string);
+    }
     if (object->inherits<BooleanObject>() || object->inherits<BigIntObject>())
         return JSValue::encode(uncheckedDowncast<JSWrapperObject>(object)->internalValue());
 

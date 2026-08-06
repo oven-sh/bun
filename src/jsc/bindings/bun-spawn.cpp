@@ -350,6 +350,53 @@ extern "C" ssize_t posix_spawn_bun(
         if (!envp)
             envp = environ;
 
+#if defined(__OHOS__)
+        // chdir()-then-exec() into a different binary leaves that binary's
+        // own getcwd() syscall broken for EL2-sandbox paths (EACCES walking
+        // the parent chain) -- a real-device kernel/sandbox limitation
+        // (confirmed with a from-scratch repro with no Bun involved at all;
+        // does not reproduce in the CI container), not a bug in the
+        // chdir/exec sequence above. Shells never hit the broken syscall:
+        // they trust an inherited $PWD when stat($PWD) matches stat(".") and
+        // skip calling getcwd() entirely. This process only chdir()'d above
+        // without updating $PWD to match, so the exec'd program inherits a
+        // stale $PWD (or none), fails that check, and falls through to the
+        // broken kernel call. Fixed at this one shared funnel -- every spawn
+        // call site (Bun.spawn, npm lifecycle scripts, `bun run`, ...) goes
+        // through here -- rather than at any single JS-facing binding.
+        //
+        // OHOS uses fork() (not vfork() -- see the fork/vfork branch above),
+        // so the child has its own address space and plain stack arrays are
+        // safe here; avoiding heap allocation matches the rest of this
+        // function's async-signal-safety discipline.
+        char pwdBuf[PATH_MAX + 5]; // "PWD=" + PATH_MAX + NUL
+        constexpr size_t kMaxEnvEntries = 1024;
+        char* newEnvp[kMaxEnvEntries + 2];
+        if (request->chdir) {
+            int n = snprintf(pwdBuf, sizeof(pwdBuf), "PWD=%s", request->chdir);
+            if (n > 0 && static_cast<size_t>(n) < sizeof(pwdBuf)) {
+                size_t count = 0;
+                while (envp[count] && count < kMaxEnvEntries) count++;
+                if (envp[count] == nullptr) {
+                    size_t out = 0;
+                    for (size_t i = 0; i < count; i++) {
+                        // Drop any existing PWD -- it's either stale (the
+                        // parent's cwd, which no longer matches after the
+                        // chdir() above) or, if a caller set it to something
+                        // else on purpose, it still has to lose: chdir()
+                        // already changed the real cwd, so $PWD must track it
+                        // or nothing here is self-consistent.
+                        if (strncmp(envp[i], "PWD=", 4) == 0) continue;
+                        newEnvp[out++] = envp[i];
+                    }
+                    newEnvp[out++] = pwdBuf;
+                    newEnvp[out] = nullptr;
+                    envp = newEnvp;
+                }
+            }
+        }
+#endif
+
         // Close all fds > current_max_fd, preferring cloexec if available.
         // On OHOS, fcntl(F_SETFD) is ignored in vfork children, so fd CLOEXEC
         // must be prevented by excluding stdio fds (0,1,2) from the range.

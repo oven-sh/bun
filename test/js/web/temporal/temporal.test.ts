@@ -89,15 +89,15 @@ describe("Temporal core operations", () => {
   });
 });
 
-// Non-ISO calendar arithmetic opens ICU UCalendar templates that
-// TemporalCore::withCalendar caches for the process lifetime. The cache entry
-// owning them lives in bmalloc memory LeakSanitizer cannot scan, so without
-// the matching test/leaksan.supp entry LSan nondeterministically reports them
-// as direct leaks at exit (whether a stale stack pointer still reaches the
-// UCalendar decides each run). Pins the suppression: a calendar-heavy
-// workload must exit leak-clean under the repo suppression file.
+// Calendar and named-time-zone arithmetic opens ICU UCalendar templates that
+// TemporalCore::withCalendar / withTimeZone cache for the process lifetime.
+// The cache entries owning them live in bmalloc memory LeakSanitizer cannot
+// scan, so without the matching test/leaksan.supp entries LSan
+// nondeterministically reports them as direct leaks at exit (whether a stale
+// stack pointer still reaches the UCalendar decides each run). Pins both
+// suppressions: this workload must exit leak-clean under the repo file.
 test.skipIf(!isASAN)(
-  "non-ISO calendar arithmetic is leak-clean under LeakSanitizer",
+  "Temporal's ICU calendar and time zone caches are leak-clean under LeakSanitizer",
   async () => {
     // The workload runs in a timer callback: a top-level (module) stack puts
     // JSC::JSModuleLoader::evaluateNonVirtual in every allocation stack, which
@@ -113,8 +113,15 @@ test.skipIf(!isASAN)(
           Temporal.PlainYearMonth.from("2024-06-15[u-ca=" + calendar + "]").toString();
           Temporal.PlainMonthDay.from("2024-06-15[u-ca=" + calendar + "]").toString();
         }
+        // Pure-ISO PlainDateTime.with opens the iso8601 calendar template too.
+        Temporal.PlainDateTime.from("2024-06-15T10:00").with({ day: 1 }).toString();
+        // Named zones (not UTC offsets) populate the withTimeZone twin cache.
+        for (const zone of ["America/New_York", "Asia/Tokyo"]) {
+          const zdt = Temporal.ZonedDateTime.from("2024-06-15T12:34:56[" + zone + "]");
+          if (typeof (zdt.offsetNanoseconds + zdt.hoursInDay) !== "number") throw new Error(zone);
+        }
         // Scrub the stack so no stale pointer to an ICU object survives for
-        // LSan's conservative scan; staying clean is on the suppression alone.
+        // LSan's conservative scan; staying clean is on the suppressions alone.
         (function burn(n) { return n > 0 ? burn(n - 1) : JSON.parse(JSON.stringify({ n })); })(2000);
         console.log("OK");
       }, 0);

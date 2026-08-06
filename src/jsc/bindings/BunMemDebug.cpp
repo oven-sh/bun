@@ -1271,6 +1271,7 @@ extern "C" void Bun__imageContinueEventLoop();
 extern "C" void uws_adopt_loop_for_current_thread(struct us_loop_t*);
 void _mi_scavenger_forked_child(void); // C++-mangled (mimalloc is built as C++ here)
 extern "C" void Bun__imageAdoptMainThreadVM();
+extern "C" void Bun__VM__refreshStackBoundsAfterImageRestore(JSC::VM* vm) { vm->refreshStackBoundsAfterImageRestore(); }
 // "Image-capable" = a `bun build --compile` executable (BUN_COMPILED, the __BUN/.bun section header, has a non-zero size in those and is
 // readable before main by anything statically linked) or explicitly requested via env. Drives deterministic allocator hints, the fixed JIT
 // pool address and (when an image is actually built/used) the LLInt+DFG tier defaults — so a compiled app needs no environment for images.

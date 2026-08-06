@@ -1789,6 +1789,7 @@ pub extern "C" fn Bun__imageSetBuilding(on: bool) {
 
 unsafe extern "C" {
     fn Bun__Process__reloadEnvAfterImageRestore(global: *mut bun_jsc::JSGlobalObject);
+    fn Bun__VM__refreshStackBoundsAfterImageRestore(vm: *mut bun_jsc::VM);
 }
 
 #[unsafe(no_mangle)]
@@ -1798,6 +1799,11 @@ pub extern "C" fn Bun__imageAdoptMainThreadVM() {
     bun_core::image::did_restore();
     bun_threading::work_pool::WorkPool::did_restore_from_image();
     bun_jsc::virtual_machine::VirtualMachine::adopt_on_current_thread(vm_ptr);
+    {
+        // SAFETY: main-thread VM. Its cached stack top/limits are the builder's; refresh before anything can allocate JS objects (GC sanitizes the stack).
+        let vm = unsafe { &mut *vm_ptr };
+        unsafe { Bun__VM__refreshStackBoundsAfterImageRestore(vm.jsc_vm) };
+    }
     {
         // SAFETY: main-thread VM; the env loader is the builder's — replace its process-derived entries with this process's environment.
         let vm = unsafe { &mut *vm_ptr };

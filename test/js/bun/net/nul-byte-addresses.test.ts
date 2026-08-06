@@ -14,6 +14,7 @@ import { connect } from "bun";
 import { describe, expect, it } from "bun:test";
 import { tls as certs } from "harness";
 import dns from "node:dns";
+import net from "node:net";
 
 describe.concurrent("NUL bytes in addresses are rejected, not truncated", () => {
   it("dns.promises.lookupService rejects an address containing a NUL", async () => {
@@ -60,6 +61,32 @@ describe.concurrent("NUL bytes in addresses are rejected, not truncated", () => 
     for (const address of ["8.8.8.8\0.example.invalid", "8.8.8.8\0"]) {
       expect(() => resolver.setServers([address])).toThrow(expect.objectContaining({ code: "ERR_INVALID_IP_ADDRESS" }));
     }
+  });
+
+  it.each([
+    ["127.0.0.1\0evil.example.invalid", "ipv4"],
+    ["127.0.0.1\0", "ipv4"],
+    ["::1\0evil.example.invalid", "ipv6"],
+  ] as const)("new net.SocketAddress rejects address %j", (address, family) => {
+    // init_js hands the address to ares_inet_pton as a C string; without the
+    // check it parses the pre-NUL prefix while .address reports the full string.
+    expect(() => new net.SocketAddress({ address, family })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_IP_ADDRESS" }),
+    );
+  });
+
+  it("BlockList rejects addresses containing a NUL", () => {
+    // Without the check, addAddress("127.0.0.1\0evil") registers an entry
+    // that matches 127.0.0.1.
+    const blockList = new net.BlockList();
+    expect(() => blockList.addAddress("127.0.0.1\0evil.example.invalid", "ipv4")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_IP_ADDRESS" }),
+    );
+    // check() swallows parse errors like any other invalid input.
+    expect({
+      nul: blockList.check("127.0.0.1\0evil.example.invalid", "ipv4"),
+      truncated: blockList.check("127.0.0.1", "ipv4"),
+    }).toEqual({ nul: false, truncated: false });
   });
 
   it("Bun.connect({ tls: { serverName } }) rejects a serverName containing a NUL byte", async () => {

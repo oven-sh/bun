@@ -3357,13 +3357,8 @@ fn transpile_source_code_inner(
                 let watcher =
                     unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
                 if !matches!(
-                    watcher.add_file::<true>(
-                        input_fd,
-                        path.text,
-                        hash,
-                        bun_sys::Fd::INVALID,
-                        None,
-                    ),
+                    watcher
+                        .add_file::<true>(input_fd, path.text, hash, bun_sys::Fd::INVALID, None,),
                     Ok(bun_watcher::FdOwnership::Watcher)
                 ) {
                     // Not adopted (already watched, or add failed); close the

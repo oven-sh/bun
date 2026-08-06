@@ -297,6 +297,22 @@ fn handle_path(
     string: &bun_core::String,
 ) -> JsResult<*const c_char> {
     let name = string.to_owned_slice_z();
+    // An embedded NUL would truncate the path at the C-string boundary
+    // (`access` below and the BoringSSL file loaders), silently loading the
+    // file named by the prefix instead of the configured path. Reject it,
+    // like the `Bun.file()` path guard (`Valid::path_null_bytes`).
+    if bun_core::strings::index_of_char(name.as_bytes(), 0).is_some() {
+        return Err(global
+            .err(
+                jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!(
+                    "TLSOptions.{} must be a path without null bytes. Received {}",
+                    field,
+                    bun_core::fmt::quote(name.as_bytes())
+                ),
+            )
+            .throw());
+    }
     // `bun_sys::access` routes to `access(2)` on POSIX and
     // `GetFileAttributesW` on Windows (via `sys_uv`), so this is the
     // cross-platform existence probe.

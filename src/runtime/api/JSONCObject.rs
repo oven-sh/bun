@@ -18,8 +18,7 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         false,
         true,
         |_arena, log, source| {
-            // `parse_jsonc` maps empty input to `{}` for tsconfig/package.json;
-            // the public API matches `JSON.parse` and rejects it.
+            // parse_jsonc maps empty input to {}; the public API rejects it like JSON.parse.
             if source.contents.is_empty() {
                 return Err(
                     global.throw_value(global.create_syntax_error_instance(format_args!(

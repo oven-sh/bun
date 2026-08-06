@@ -864,6 +864,12 @@ pub(crate) fn edit(
     let mut remaining = updates.len();
     let mut replacing: usize = 0;
     let only_add_missing = manager.options.enable.contains(Enable::ONLY_MISSING);
+    // Explicit group flag moves an existing entry; bare `bun add` keeps placement (npm/pnpm behavior).
+    let move_to_target = manager.subcommand == Subcommand::Add
+        && !only_add_missing
+        && (manager.options.update.development
+            || manager.options.update.optional
+            || manager.options.update.peer);
 
     // There are three possible scenarios here
     // 1. There is no "dependencies" (or equivalent list) or it is empty
@@ -896,7 +902,7 @@ pub(crate) fn edit(
             let mut i: usize = 0;
             'loop_: while i < updates.len() {
                 let request = &mut updates[i];
-                // order-insensitive scan: `FOUR` is fine here
+                // `move_to_target` visits every group; otherwise order-insensitive (bails on first match).
                 'dependency_group: for list in DependencyGroup::FOUR.map(|g| g.prop) {
                     if let Some(query) = current_package_json.as_property(list) {
                         if matches!(query.expr.data, bun_ast::ExprData::EObject(_)) {
@@ -913,12 +919,40 @@ pub(crate) fn edit(
                                                     == dependency::Tag::Catalog
                                             },
                                         );
+                                    let in_target_list =
+                                        strings::eql_long(list, dependency_list, true);
 
                                     if request.package_id != INVALID_PACKAGE_ID
-                                        && strings::eql_long(list, dependency_list, true)
+                                        && in_target_list
                                         && !keep_catalog_reference
                                     {
                                         replacing += 1;
+                                    } else if move_to_target && !in_target_list {
+                                        // peer can coexist with dev/optional; dev/optional stay when target is peer.
+                                        let remove = match list {
+                                            b"peerDependencies" => false,
+                                            b"devDependencies" | b"optionalDependencies" => {
+                                                dependency_list != b"peerDependencies"
+                                            }
+                                            _ => true,
+                                        };
+                                        if remove {
+                                            let mut list_obj = query.expr.data.as_e_object();
+                                            let _ =
+                                                list_obj.properties.swap_remove(value.i as usize);
+                                            if list_obj.properties.is_empty() {
+                                                let root = current_package_json
+                                                    .data
+                                                    .e_object_mut()
+                                                    .expect("infallible: variant checked");
+                                                let _ =
+                                                    root.properties.swap_remove(query.i as usize);
+                                                root.package_json_sort();
+                                            } else {
+                                                list_obj.alphabetize_properties();
+                                            }
+                                        }
+                                        continue 'dependency_group;
                                     } else {
                                         if manager.subcommand == Subcommand::Update
                                             && options.before_install
@@ -1009,6 +1043,9 @@ pub(crate) fn edit(
                                             continue 'loop_;
                                         }
                                     }
+                                }
+                                if move_to_target {
+                                    continue 'dependency_group;
                                 }
                                 break;
                             } else {

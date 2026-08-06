@@ -14,7 +14,6 @@ import {
   readdirSorted,
   runBunInstall,
   runBunUpdate,
-  stderrForInstall,
   tempDir,
   tls,
   tmpdirSync,
@@ -212,7 +211,7 @@ describe("certificate authority", () => {
       env,
     });
     let out = await stdout.text();
-    let err = stderrForInstall(await stderr.text());
+    let err = await stderr.text();
     expect(err).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
     expect(await exited).toBe(1);
 
@@ -6239,7 +6238,7 @@ describe("pm trust", async () => {
       env,
     });
 
-    let err = stderrForInstall(await stderr.text());
+    let err = await stderr.text();
     expect(err).not.toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -6266,7 +6265,7 @@ describe("pm trust", async () => {
         env,
       });
 
-      let err = stderrForInstall(await stderr.text());
+      let err = await stderr.text();
       expect(err).toContain("error: Lockfile not found");
       let out = await stdout.text();
       expect(out).toBeEmpty();
@@ -6292,7 +6291,7 @@ describe("pm trust", async () => {
         env,
       });
 
-      let err = stderrForInstall(await stderr.text());
+      let err = await stderr.text();
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
@@ -6319,7 +6318,7 @@ describe("pm trust", async () => {
         env,
       }));
 
-      err = stderrForInstall(await stderr.text());
+      err = await stderr.text();
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");

@@ -1,7 +1,7 @@
 import { file, spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { exists } from "fs/promises";
-import { bunEnv, bunExe, normalizeBunSnapshot, stderrForInstall, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 
 // These tests cover the `configVersion` field in bun.lock and the linker
@@ -18,7 +18,7 @@ async function install(cwd: string) {
     stderr: "pipe",
   });
   const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { out, err: stderrForInstall(err), exitCode };
+  return { out, err: err, exitCode };
 }
 
 describe.concurrent("configVersion", () => {

@@ -1498,7 +1498,7 @@ export async function runBunInstall(
   });
   expect(stdout).toBeDefined();
   expect(stderr).toBeDefined();
-  let err: string = stderrForInstall(await stderr.text());
+  let err: string = await stderr.text();
   expect(err).not.toContain("panic:");
   if (!options?.allowErrors) {
     expect(err).not.toContain("error:");
@@ -1512,11 +1512,6 @@ export async function runBunInstall(
   let out: string = await stdout.text();
   expect(await exited).toBe(options?.expectedExitCode ?? 0);
   return { out, err, exited };
-}
-
-// stderr with `slow filesystem` warning removed
-export function stderrForInstall(err: string) {
-  return err.replace(/warn: Slow filesystem.*\r?\n?/g, "");
 }
 
 export async function runBunUpdate(

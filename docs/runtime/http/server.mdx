@@ -298,7 +298,17 @@ await server.stop();
 await server.stop(true);
 ```
 
-By default, `stop()` allows in-flight requests and WebSocket connections to complete. Pass `true` to immediately terminate all connections.
+By default, `stop()` allows in-flight requests and WebSocket connections to complete. Idle keep-alive connections are closed immediately, and connections with a request in flight close once their response has been sent. Pass `true` to immediately terminate all connections instead. The returned promise resolves once every connection has closed.
+
+### `server.closeIdleConnections()`
+
+To close keep-alive connections that are not currently serving a request, without stopping the server:
+
+```ts
+server.closeIdleConnections();
+```
+
+Connections with a request in flight and open WebSockets are untouched, and the server keeps accepting new connections. This mirrors `node:http`'s `server.closeIdleConnections()`.
 
 ### `server.ref()` and `server.unref()`
 

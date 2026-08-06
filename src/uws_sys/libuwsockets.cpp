@@ -387,17 +387,17 @@ extern "C"
     }
   }
 
-  void uws_app_close_idle(int ssl, uws_app_t *app)
+  void uws_app_close_idle(int ssl, uws_app_t *app, int close_when_idle)
   {
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->closeIdle();
+      uwsApp->closeIdle(close_when_idle != 0);
     }
     else
     {
       uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->closeIdle();
+      uwsApp->closeIdle(close_when_idle != 0);
     }
   }
 
@@ -1379,6 +1379,13 @@ extern "C"
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
+      /* Corked: the cork() wrapper's post-uncork gate runs the close check
+       * (nothing here uncorks, so the slot is still held). Uncorked: no later
+       * gate is guaranteed to run, so check now. */
+      if (!uwsRes->AsyncSocket<true>::isCorked())
+      {
+        uwsRes->closeIfDoneAndMarked(data);
+      }
     }
     else
     {
@@ -1401,6 +1408,13 @@ extern "C"
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
+      /* Corked: the cork() wrapper's post-uncork gate runs the close check
+       * (nothing here uncorks, so the slot is still held). Uncorked: no later
+       * gate is guaranteed to run, so check now. */
+      if (!uwsRes->AsyncSocket<false>::isCorked())
+      {
+        uwsRes->closeIfDoneAndMarked(data);
+      }
     }
   }
 

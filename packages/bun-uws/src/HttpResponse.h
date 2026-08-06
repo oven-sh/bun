@@ -96,6 +96,24 @@ public:
         getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_WROTE_DATE_HEADER;
     }
 
+    /* Shutdown+close when the connection is marked to close (Connection:
+     * close, peer FIN, close-when-idle), the response is complete and every
+     * outgoing byte has been flushed. Returns true when the socket was closed. */
+    bool closeIfDoneAndMarked(HttpResponseData<SSL> *httpResponseData) {
+        if (httpResponseData->shouldCloseConnection()) {
+            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
+                if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
+                    ((AsyncSocket<SSL> *) this)->shutdown();
+                    /* We need to force close after sending FIN since we want to hinder
+                     * clients from keeping to send their huge data */
+                    ((AsyncSocket<SSL> *) this)->close();
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     /* Returns true on success, indicating that it might be feasible to write more data.
      * Will start timeout if stream reaches totalSize or write failure.
      * keepCorked: if true, skip the trailing uncork so the caller can batch
@@ -189,19 +207,20 @@ public:
 
             /* We need to check if we should close this socket here now */
             if (!Super::isCorked()) {
-                if (httpResponseData->shouldCloseConnection()) {
-                    if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                        if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
-                            ((AsyncSocket<SSL> *) this)->shutdown();
-                            /* We need to force close after sending FIN since we want to hinder
-                                * clients from keeping to send their huge data */
-                            ((AsyncSocket<SSL> *) this)->close();
-                            return true;
-                        }
-                    }
+                if (closeIfDoneAndMarked(httpResponseData)) {
+                    return true;
                 }
             } else if (!keepCorked) {
                 this->uncork();
+                /* That uncork released our cork slot, so the cork() wrapper's
+                 * post-uncork close gate will not run. Outside the parser (an
+                 * async handler completing) no later onData gate runs either,
+                 * so close here; inside the parser, onData's post-parse gate
+                 * handles it once the buffer is fully consumed. */
+                if (!HttpContext<SSL>::fromSocket((us_socket_t *) this)->getSocketContextData()->flags.isParsingHttp
+                    && closeIfDoneAndMarked(httpResponseData)) {
+                    return true;
+                }
             }
 
             /* tryEnd can never fail when in chunked mode, since we do not have tryWrite (yet), only write */
@@ -255,18 +274,14 @@ public:
 
                 /* We need to check if we should close this socket here now */
                 if (!Super::isCorked()) {
-                    if (httpResponseData->shouldCloseConnection()) {
-                        if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                            if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
-                                ((AsyncSocket<SSL> *) this)->shutdown();
-                                /* We need to force close after sending FIN since we want to hinder
-                                * clients from keeping to send their huge data */
-                                ((AsyncSocket<SSL> *) this)->close();
-                            }
-                        }
-                    }
+                    closeIfDoneAndMarked(httpResponseData);
                 }  else if (!keepCorked) {
                     this->uncork();
+                    /* Same as the chunked arm above: the cork slot is gone, so
+                     * run the close gate here when outside the parser. */
+                    if (!HttpContext<SSL>::fromSocket((us_socket_t *) this)->getSocketContextData()->flags.isParsingHttp) {
+                        closeIfDoneAndMarked(httpResponseData);
+                    }
                 }
             }
 

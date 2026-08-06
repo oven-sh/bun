@@ -2610,9 +2610,10 @@ where
         }
         // On a Bun.serve server each close reaches `on_connection_filter(-1)`
         // synchronously; hold the guard so it cannot re-derive `&mut self`
-        // while this frame owns it.
+        // while this frame owns it. One-shot sweep (Node semantics): busy
+        // connections are spared and are NOT marked to close later.
         self.deinit_running.set(true);
-        self.app_mut().close_idle_connections();
+        self.app_mut().close_idle_connections(false);
         self.deinit_running.set(false);
         self.deinit_if_we_can();
         Ok(JSValue::UNDEFINED)

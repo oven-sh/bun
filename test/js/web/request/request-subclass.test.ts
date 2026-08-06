@@ -42,7 +42,11 @@ test("fetch() uses a subclass Request's internal state, not getter overrides", a
 
   // port 1 refuses connections, so the old getter-reading behavior fails fast
   // without touching the network.
-  const request = new MyRequest(server.url, { method: "POST", headers: { "x-my-header": "123" } }, "http://127.0.0.1:1/decoy");
+  const request = new MyRequest(
+    server.url,
+    { method: "POST", headers: { "x-my-header": "123" } },
+    "http://127.0.0.1:1/decoy",
+  );
 
   const response = await fetch(request);
   expect(await response.text()).toBe("POST");

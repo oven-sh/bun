@@ -271,40 +271,50 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // A part that failed to print (e.g. the printer's recursion guard
         // tripping on a deeply nested AST) would otherwise join the chunk as
         // silently truncated output; report it and fail the build instead.
-        let mut had_print_error = false;
-        for chunk in chunks.iter() {
-            for compile_result in chunk.compile_results_for_chunk.iter() {
-                let message: Cow<'static, [u8]> = match compile_result {
-                    crate::CompileResult::Javascript {
-                        result: bun_js_printer::PrintResult::Err(err),
-                        ..
-                    } => match err {
-                        bun_js_printer::Error::StackOverflow => Cow::Borrowed(
-                            b"Maximum call stack size exceeded while generating code for this file"
-                                .as_slice(),
-                        ),
-                        err => Cow::Owned(
-                            format!("Failed to generate code for this file ({})", err.name())
+        //
+        // Not for the dev server: its caller treats any `Err` from this
+        // function as OOM (`finish_from_bake_dev_server` returns
+        // `Result<(), AllocError>` and `on_after_decrement_scan_counter`
+        // does `.expect("oom")`), so failing here would abort the whole
+        // server on one bad file. It keeps its long-standing behavior for
+        // an unprintable part (the part's code is dropped) until print
+        // failures are routed per-file like parse failures.
+        if !IS_DEV_SERVER {
+            let mut had_print_error = false;
+            for chunk in chunks.iter() {
+                for compile_result in chunk.compile_results_for_chunk.iter() {
+                    let message: Cow<'static, [u8]> = match compile_result {
+                        crate::CompileResult::Javascript {
+                            result: bun_js_printer::PrintResult::Err(err),
+                            ..
+                        } => match err {
+                            bun_js_printer::Error::StackOverflow => Cow::Borrowed(
+                                b"Maximum call stack size exceeded while generating code for this file"
+                                    .as_slice(),
+                            ),
+                            err => Cow::Owned(
+                                format!("Failed to generate code for this file ({})", err.name())
+                                    .into_bytes(),
+                            ),
+                        },
+                        crate::CompileResult::Css {
+                            result: Err(err), ..
+                        } => Cow::Owned(
+                            format!("Failed to generate CSS for this file ({})", err.name())
                                 .into_bytes(),
                         ),
-                    },
-                    crate::CompileResult::Css {
-                        result: Err(err), ..
-                    } => Cow::Owned(
-                        format!("Failed to generate CSS for this file ({})", err.name())
-                            .into_bytes(),
-                    ),
-                    _ => continue,
-                };
-                had_print_error = true;
-                let source_index = compile_result.source_index();
-                let source =
-                    (source_index != Index::INVALID.get()).then(|| c.get_source(source_index));
-                c.log_mut().add_error(source, bun_ast::Loc::EMPTY, message);
+                        _ => continue,
+                    };
+                    had_print_error = true;
+                    let source_index = compile_result.source_index();
+                    let source =
+                        (source_index != Index::INVALID.get()).then(|| c.get_source(source_index));
+                    c.log_mut().add_error(source, bun_ast::Loc::EMPTY, message);
+                }
             }
-        }
-        if had_print_error {
-            return Err(crate::Error::PrintError);
+            if had_print_error {
+                return Err(crate::Error::PrintError);
+            }
         }
 
         // For dev server, only post-process CSS + HTML chunks.

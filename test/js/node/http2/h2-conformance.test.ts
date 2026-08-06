@@ -1733,11 +1733,12 @@ describe("stream-reset floods (CVE-2023-44487 rapid-reset, CVE-2025-8671 MadeYou
     expect(responseHeaders).toBeLessThan(50);
   });
 
-  test("a peer GOAWAY prefix does not bypass the flood protections", async () => {
-    // A peer-received GOAWAY sets the session's going-away flag, which must not exempt the
-    // session from reset accounting (the engine charges the bucket regardless). Like node, the
-    // JS layer answers a client GOAWAY by closing the session, so the flood sent behind the
-    // 17-byte prefix reaches no handler at all.
+  test("a flood behind a peer GOAWAY prefix reaches no handler", async () => {
+    // Like node, the JS layer answers a client GOAWAY(NO_ERROR) by closing the session, so a
+    // flood sent behind the 17-byte prefix is gated on session.closed before 'stream' ever
+    // fires. (The engine-level going-away skip is exercised indirectly: reset accounting is
+    // charged regardless of the peer's GOAWAY, but with the session closing the bucket is not
+    // observable at the wire here.)
     let handlers = 0;
     const server = http2.createServer();
     server.on("session", s => s.on("error", () => {}));

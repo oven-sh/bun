@@ -3233,12 +3233,9 @@ bool JSC__JSValue__asArrayBuffer(
 // silently no-ops for as long as a borrowing op (zlib, fs, crypto, shell,
 // Bun.Image, SQL blob binds, ...) happens to be in flight over that buffer.
 //
-// JSType + static_cast instead of dynamicDowncast/possiblySharedBuffer():
-// unpin is reached from drop paths that can run inside a GC sweep (a Blob
-// store releasing a pinned path buffer in its finalizer), where
-// JSCell::classInfo() asserts. Same pattern as JSC::Weak<T>::get(). A pinned
-// view is always Wasteful/DataView (pinning materialized its buffer), so the
-// sweep-reachable branches below are plain field/butterfly reads.
+// JSType + static_cast, not dynamicDowncast: unpin runs from finalizers
+// during GC sweep, where JSCell::classInfo() (reached by every debug cast
+// assert) is forbidden. Same pattern as JSC::Weak<T>::get().
 static JSC::ArrayBuffer* arrayBufferImpl(JSC::JSValue value)
 {
     if (!value.isCell())
@@ -3253,8 +3250,7 @@ static JSC::ArrayBuffer* arrayBufferImpl(JSC::JSValue value)
         auto* view = static_cast<JSC::JSArrayBufferView*>(cell);
         if (JSC::isWastefulTypedArray(view->mode()))
             return view->butterfly()->indexingHeader()->arrayBuffer();
-        // Fast/Oversize: materializes the buffer (allocates). Only reached at
-        // pin time, during a host call.
+        // Allocates; unreachable during sweep since pinning materialized it.
         return view->possiblySharedBuffer();
     }
     return nullptr;

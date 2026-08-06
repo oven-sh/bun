@@ -26,7 +26,6 @@ pub struct InitOpts<'a> {
     pub specifier: &'a [u8],
     pub path: Fs::Path<'a>,
     pub promise_ptr: Option<*mut *mut JSInternalPromise>,
-    pub fd: Option<Fd>,
     pub package_json: Option<&'a PackageJSON>,
     pub loader: bun_ast::Loader,
     pub hash: u32,
@@ -1335,14 +1334,22 @@ impl AsyncModule {
                     let package_json = self
                         .package_json
                         .map(|p| unsafe { &*p.as_ptr().cast::<bun_watcher::PackageJSON>() });
-                    let _ = watcher.add_file::<true>(
-                        fd_,
-                        path.text,
-                        self.hash,
-                        bun_ast::Loader::from_api(self.loader),
-                        Fd::INVALID,
-                        package_json,
-                    );
+                    if !matches!(
+                        watcher.add_file::<true>(
+                            fd_,
+                            path.text,
+                            self.hash,
+                            bun_ast::Loader::from_api(self.loader),
+                            Fd::INVALID,
+                            package_json,
+                        ),
+                        Ok(bun_watcher::FdOwnership::Watcher)
+                    ) {
+                        // The watcher didn't adopt the parse's descriptor
+                        // (already watched, or add failed); nothing reads it
+                        // after printing.
+                        let _ = bun_sys::close(fd_);
+                    }
                 }
             }
 

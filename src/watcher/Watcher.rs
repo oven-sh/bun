@@ -372,12 +372,12 @@ impl Watcher {
         if self.evict_list_i == 0 {
             return;
         }
-        // The close+swap_remove below must be serialized against (a) the JS
-        // thread's `ImportWatcher::snapshot_fd_and_package_json` lookup and
-        // (b) the JS thread's `append_file_maybe_lock<true>` re-add — both of
-        // which take `self.mutex`. Otherwise there's a window between pass 1
-        // (`close(fd)`) and pass 2 (`swap_remove`) where the JS thread reads
-        // the still-present entry's now-closed fd → `EBADF reading "<path>"`.
+        // The close+swap_remove below must be serialized against the JS
+        // thread's watchlist lookups (`ImportWatcher::snapshot_package_json`)
+        // and `append_file_maybe_lock<true>` re-adds — both take `self.mutex`.
+        // The close in pass 1 is also why the watchlist's stored fd is never
+        // handed out for reads: a reader that copied the number before this
+        // ran would hit `EBADF`/`EISDIR` after (see `snapshot_package_json`).
         //
         // We do NOT lock here: the only callers are deferred from
         // `WatcherContext::on_file_update`, which is itself invoked from
@@ -841,20 +841,12 @@ impl Watcher {
 
         let res = self.add_file::<true>(fd, file_path, hash, loader, Fd::INVALID, None);
         match res {
-            Ok(()) => {
-                #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-                if fd.is_valid() {
-                    self.mutex.lock();
-                    let maybe_idx = self.index_of(hash);
-                    let stored_fd = if let Some(idx) = maybe_idx {
-                        self.watchlist.items_fd()[idx as usize]
-                    } else {
-                        Fd::INVALID
-                    };
-                    self.mutex.unlock();
-                    if maybe_idx.is_some() && stored_fd.native() != fd.native() {
-                        let _ = bun_sys::close(fd);
-                    }
+            Ok(ownership) => {
+                // Another thread may have added the file between the
+                // `already_watched` check above and `add_file` taking the
+                // mutex; the descriptor opened here is then redundant.
+                if ownership == FdOwnership::Caller && fd.is_valid() {
+                    let _ = bun_sys::close(fd);
                 }
                 true
             }
@@ -875,20 +867,27 @@ impl Watcher {
         loader: Loader,
         dir_fd: Fd,
         package_json: Option<&'static PackageJSON>,
-    ) -> sys::Result<()> {
+    ) -> sys::Result<FdOwnership> {
         // This must lock due to concurrent transpiler
         self.mutex.lock();
 
         if let Some(index) = self.index_of(hash) {
-            if feature_flags::ATOMIC_FILE_WATCHER {
-                // On Linux, the file descriptor might be out of date.
-                if fd.is_valid() {
-                    let fds = self.watchlist.items_fd_mut();
+            let mut ownership = FdOwnership::Caller;
+            if feature_flags::ATOMIC_FILE_WATCHER && fd.is_valid() {
+                // Upgrade an entry inserted fd-less by `add_file_by_path_slow`
+                // (e.g. the `--hot` entrypoint) so the directory-event
+                // recovery in `hot_reloader` sees a valid descriptor for it.
+                // A valid stored fd is never replaced: it is owned by the
+                // watchlist until `flush_evictions`/shutdown closes it, and
+                // replacing it without closing leaked one fd per reload.
+                let fds = self.watchlist.items_fd_mut();
+                if !fds[index as usize].is_valid() {
                     fds[index as usize] = fd;
+                    ownership = FdOwnership::Watcher;
                 }
             }
             self.mutex.unlock();
-            return Ok(());
+            return Ok(ownership);
         }
 
         let r = self.append_file_maybe_lock::<CLONE_FILE_PATH, false>(
@@ -900,7 +899,7 @@ impl Watcher {
             package_json,
         );
         self.mutex.unlock();
-        r
+        r.map(|()| FdOwnership::Watcher)
     }
 
     pub fn index_of(&self, hash: HashType) -> Option<u32> {
@@ -1060,6 +1059,17 @@ pub struct WatchItem {
 pub enum WatchItemKind {
     File,
     Directory,
+}
+
+/// Who owns the `fd` passed to [`Watcher::add_file`] after it returns.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FdOwnership {
+    /// The watchlist stored the descriptor; `flush_evictions`/shutdown will
+    /// close it. The caller must not use or close it afterwards.
+    Watcher,
+    /// The file was already watched with a valid stored descriptor; the
+    /// caller still owns `fd` and must close it (or keep using it).
+    Caller,
 }
 
 /// Typed SoA column accessors — thin safe wrappers over the reflection-backed

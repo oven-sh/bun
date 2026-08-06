@@ -1,6 +1,7 @@
 import { TOML } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 // Hand-written coverage beyond the official conformance suite
 // (toml-test-suite.test.ts): the JS-facing API surface, JS value mapping,
@@ -310,9 +311,10 @@ describe("date/times return Temporal objects", () => {
     using dir = tempDir("toml-deep-header", {
       "deep.toml": "[" + Buffer.alloc(200_000, "a.").toString() + "a]\nd = 1979-05-27\n",
     });
+    const entry = join(String(dir), "deep.toml");
     for (const args of [
-      ["build", "./deep.toml"],
-      ["build", "--no-bundle", "./deep.toml"],
+      ["build", entry],
+      ["build", "--no-bundle", entry],
     ]) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), ...args],
@@ -321,7 +323,10 @@ describe("date/times return Temporal objects", () => {
         stdout: "ignore",
         stderr: "pipe",
       });
-      const exitCode = await proc.exited;
+      // Drain stderr concurrently so the child cannot block on a full pipe.
+      // Exit 0 is today's behavior and a clean diagnostic exit would also be
+      // fine; death by signal (stack overflow) is neither.
+      const [exitCode] = await Promise.all([proc.exited, proc.stderr.text()]);
       expect([0, 1]).toContain(exitCode);
     }
   });

@@ -1378,13 +1378,25 @@ static bool platformIsJITRegion(const PlatformRegion& r) { return r.executable &
 static uint64_t platformTextBase() { return (uint64_t)__executable_start; }
 static uint64_t platformLibsBase() { return (uint64_t)dlsym(RTLD_DEFAULT, "getpid"); } // libc's slide stands in for all system libs
 extern "C" char __etext[] __attribute__((weak)); extern "C" char etext[];
-static uint64_t platformBuildId() // FNV-1a over 64 KiB of code around main() + the text extent; stands in for the ELF build-id (the ELF/program headers at __executable_start change when a payload is appended, code does not)
+static uint64_t platformBuildId() // the ELF NT_GNU_BUILD_ID note (identity of this exact link), folded to 64 bits; falls back to the text extent
 {
-    extern int main(int, char**);
-    const uint8_t* t = (const uint8_t*)((uintptr_t)&main & ~(uintptr_t)0xffff); uint64_t h = 1469598103934665603ull; size_t n = 65536;
-    if (t < (const uint8_t*)__executable_start + 65536) t = (const uint8_t*)__executable_start + 65536;
-    for (size_t i = 0; i < n; i++) { h ^= t[i]; h *= 1099511628211ull; }
-    return h ^ (uint64_t)((char*)etext - (char*)__executable_start);
+    struct Ctx { uint64_t id; } ctx { 0 };
+    dl_iterate_phdr([](struct dl_phdr_info* info, size_t, void* arg) -> int {
+        if (info->dlpi_name && *info->dlpi_name) return 0; // main executable only
+        for (int i = 0; i < info->dlpi_phnum; i++) {
+            const ElfW(Phdr)& ph = info->dlpi_phdr[i]; if (ph.p_type != PT_NOTE) continue;
+            const uint8_t* p = (const uint8_t*)(info->dlpi_addr + ph.p_vaddr); const uint8_t* end = p + ph.p_memsz;
+            while (p + sizeof(ElfW(Nhdr)) <= end) {
+                const ElfW(Nhdr)* nh = (const ElfW(Nhdr)*)p; const uint8_t* name = p + sizeof *nh; const uint8_t* desc = name + ((nh->n_namesz + 3) & ~3u);
+                if (nh->n_type == NT_GNU_BUILD_ID && nh->n_namesz == 4 && !memcmp(name, "GNU", 4) && desc + nh->n_descsz <= end) {
+                    uint64_t h = 1469598103934665603ull; for (uint32_t k = 0; k < nh->n_descsz; k++) { h ^= desc[k]; h *= 1099511628211ull; } ((Ctx*)arg)->id = h; return 1;
+                }
+                p = desc + ((nh->n_descsz + 3) & ~3u);
+            }
+        }
+        return 0;
+    }, &ctx);
+    return ctx.id ? ctx.id : (uint64_t)((char*)etext - (char*)__executable_start);
 }
 #endif
 

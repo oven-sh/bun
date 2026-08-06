@@ -840,9 +840,11 @@ declare module "bun" {
       attributes: Record<string, string>;
       /**
        * Child elements and character data in document order. Text is passed through
-       * exactly (whitespace-only runs between elements included); CDATA sections and
-       * entity references are already expanded into the surrounding text. Comments and
-       * processing instructions are not represented.
+       * exactly (whitespace-only runs between elements included); CDATA sections,
+       * character references and internal entities are already expanded into the
+       * surrounding text, while a reference to an entity that only an (unread) external
+       * DTD could declare is kept as written (`"&name;"`). Comments and processing
+       * instructions are not represented.
        */
       children: Array<Node | string>;
     }
@@ -876,14 +878,16 @@ declare module "bun" {
      * skipped. All values are strings; nothing is coerced to numbers or booleans.
      *
      * A string is parsed as already-decoded text. Bytes (`Buffer`, `TypedArray`,
-     * `ArrayBuffer`, `Blob`) are decoded per the XML rules: a byte-order mark or
-     * the `encoding` declared in `<?xml ...?>` selects UTF-8, UTF-16, or ISO-8859-1.
+     * `DataView`, `ArrayBuffer`, `Blob`) are decoded per the XML rules: a byte-order
+     * mark or the `encoding` declared in `<?xml ...?>` selects UTF-8, UTF-16, or
+     * ISO-8859-1.
      *
      * @category Utilities
      *
      * @param input The XML document
-     * @throws {SyntaxError} If the document is not well-formed, uses an unsupported
-     * encoding, or references an entity that is not declared in the internal subset
+     * @throws {SyntaxError} If the document is not well-formed (which, in a document
+     * without an external DTD, includes referencing an undeclared entity), uses an
+     * unsupported encoding, or exceeds the entity-expansion limits
      *
      * @example
      * ```ts

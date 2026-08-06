@@ -47,8 +47,8 @@
           llvm
           lld
           pkgs.gcc
-          pkgs.rustc
-          pkgs.cargo
+          # Use rustup instead of rustc/cargo to honour rust-toolchain.toml
+          pkgs.rustup
           pkgs.go
 
           # Bun itself (for running build scripts via `bun bd`)
@@ -147,6 +147,7 @@
             export TMPDIR="''${TMPDIR:-/tmp}"
           '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
             export LD="${pkgs.lib.getExe' lld "ld.lld"}"
+            export BUN_LD="$LD" # bun's build pins the linker via BUN_LD, not LD
             export NIX_CFLAGS_LINK="''${NIX_CFLAGS_LINK:+$NIX_CFLAGS_LINK }-fuse-ld=lld"
             export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath packages}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           '' + ''

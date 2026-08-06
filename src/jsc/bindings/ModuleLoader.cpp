@@ -139,6 +139,7 @@ static OnLoadResult handleOnLoadObjectResult(Zig::GlobalObject* globalObject, JS
     auto& builtinNames = WebCore::builtinNames(vm);
     auto exportsValue = object->getIfPropertyExists(globalObject, builtinNames.exportsPublicName());
     if (scope.exception()) [[unlikely]] {
+        result.type = OnLoadResultTypeError;
         result.value.error = scope.exception();
         (void)scope.tryClearException();
         return result;

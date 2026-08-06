@@ -1,12 +1,13 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, bunRun } from "harness";
+import path from "node:path";
 
 // res.socket.end() half-closes the connection; the server must still release the
 // socket (drain the unconsumed body on epoll, or take kqueue's EVFILT_WRITE
 // EV_EOF from its own SHUT_WR) so server.close() resolves. On macOS that early
 // close can RST the still-writing client, so the client's EPIPE is expected and
 // the close wait must not be once(c, "close"), which would reject on it.
-test("server.close() completes after res.socket.end() with a 2 MB upload in flight", async () => {
+test.concurrent("server.close() completes after res.socket.end() with a 2 MB upload in flight", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -56,4 +57,12 @@ test("server.close() completes after res.socket.end() with a 2 MB upload in flig
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "closed destroyed=true\n", stderr: "", exitCode: 0 });
+});
+
+// Half-open Upgrade socket with queued writes; peer FINs then RSTs. kqueue reports the RST as EV_EOF on the
+// one-shot EVFILT_WRITE: the loop must close (like epoll's EPOLLERR|EPOLLHUP / libuv uv__write's error path),
+// not re-arm forever. Before the fix this spun a core on macOS and 'close' never fired.
+test.concurrent("upgrade socket with queued writes is closed, not spun, when the half-closed peer resets", async () => {
+  const { stdout, exitCode } = await bunRun(path.join(import.meta.dir, "node-http-upgrade-halfopen-reset-fixture.ts"));
+  expect({ stdout, exitCode }).toEqual({ stdout: "closed", exitCode: 0 });
 });

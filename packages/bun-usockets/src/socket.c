@@ -418,13 +418,46 @@ static void us_internal_rearm_writable(struct us_socket_t *s) {
                    LIBUS_SOCKET_WRITABLE | (s->flags.is_paused ? 0 : LIBUS_SOCKET_READABLE));
 }
 
+#ifndef _WIN32
+/* send() errnos that mean the peer or the path to it is gone: no retry can ever
+ * succeed, so report them to the caller now; only the EAGAIN/ENOBUFS class waits for
+ * another writable event (https://github.com/libuv/libuv/blob/v1.51.0/src/unix/stream.c#L820-L837). */
+static int us_internal_send_errno_is_peer_gone(int e) {
+    switch (e) {
+    case EPIPE:
+    case ECONNRESET:
+    case ECONNABORTED:
+    case ENOTCONN:
+    case ETIMEDOUT:
+    case ENETDOWN:
+    case ENETUNREACH:
+    case EHOSTUNREACH:
+        return 1;
+    default:
+        return 0;
+    }
+}
+#endif
+
+/* Peer-gone errnos are final: don't wait for writable on them (libuv fails the req and stops POLLOUT,
+ * deps/uv/src/unix/stream.c uv__try_write/uv__write). Re-arming would spin kqueue's one-shot EVFILT_WRITE,
+ * which re-fires with EV_EOF; loop.c's error/EOF paths close the socket instead. */
+static int us_internal_send_should_rearm(ssize_t written) {
+#ifndef _WIN32
+    if (written < 0 && us_internal_send_errno_is_peer_gone(errno)) {
+        return 0;
+    }
+#endif
+    return 1;
+}
+
 int us_socket_write2(struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
     if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
         return 0;
     }
 
     int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
-    if (written != header_length + payload_length) {
+    if (written != header_length + payload_length && us_internal_send_should_rearm(written)) {
         us_internal_rearm_writable(s);
     }
 
@@ -497,7 +530,7 @@ int us_socket_write(struct us_socket_t *s, const char *data, int length) {
     }
 
     int written = bsd_send(us_poll_fd(&s->p), data, length);
-    if (written != length) {
+    if (written != length && us_internal_send_should_rearm(written)) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
@@ -506,28 +539,6 @@ int us_socket_write(struct us_socket_t *s, const char *data, int length) {
 }
 
 #ifndef _WIN32
-/* send() errnos that mean the peer or the path to it is gone: no retry can
- * ever succeed, so they are reported to the caller immediately (libuv fails
- * the write request for these in uv__try_write, unix/stream.c; only the
- * EAGAIN/ENOBUFS class waits for another writable event). Mirrored by the
- * blanket `result < -1` fatal handling in h2_frame_parser's
- * is_transport_fatal_write_result - classification lives here only. */
-static int us_internal_send_errno_is_peer_gone(int e) {
-    switch (e) {
-    case EPIPE:
-    case ECONNRESET:
-    case ECONNABORTED:
-    case ENOTCONN:
-    case ETIMEDOUT:
-    case ENETDOWN:
-    case ENETUNREACH:
-    case EHOSTUNREACH:
-        return 1;
-    default:
-        return 0;
-    }
-}
-
 /* One retry runs per writable dispatch (one event-loop iteration), so 32
  * consecutive failures is far beyond any observed transient race window
  * (the macOS EPROTOTYPE race resolves within a dispatch or two) while still
@@ -618,7 +629,7 @@ int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, in
     for (int i = 0; i < count; i++) total += iov[i].iov_len;
 
     ssize_t written = bsd_writev(us_poll_fd(&s->p), iov, count);
-    if (written != (ssize_t)total) {
+    if (written != (ssize_t)total && us_internal_send_should_rearm(written)) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
@@ -637,7 +648,7 @@ int us_socket_raw_write(struct us_socket_t *s, const char *data, int length) {
     }
 
     int written = bsd_send(us_poll_fd(&s->p), data, length);
-    if (written != length) {
+    if (written != length && us_internal_send_should_rearm(written)) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
@@ -674,7 +685,7 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, 
 
     int sent = bsd_sendmsg(us_poll_fd(&s->p), &msg, 0);
 
-    if (sent != length) {
+    if (sent != length && us_internal_send_should_rearm(sent)) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }

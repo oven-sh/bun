@@ -586,6 +586,21 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             }
             /* The group can change after calling a callback but the loop is always the same */
             struct us_loop_t* loop = s->group->loop;
+            #ifdef LIBUS_USE_KQUEUE
+            /* EV_EOF on EVFILT_WRITE we didn't shutdown() = SS_CANTSENDMORE (xnu bsd/kern/uipc_socket.c filt_sowrite);
+             * with the read side already ended nothing else closes us and the one-shot filter re-fires forever, so take
+             * the POLLERR close below like epoll's EPOLLERR|EPOLLHUP (libuv: deps/uv/src/unix/stream.c uv__write error path). */
+            if ((events & LIBUS_SOCKET_WRITABLE) && eof && !error
+                && !(s->p.state.poll_type & POLL_TYPE_POLLING_IN)
+                && !s->flags.is_paused
+                && !us_socket_is_shut_down(s)) {
+                /* Clear POLLING_OUT for the consumed one-shot filter (POLLING_IN is already clear per the guard) */
+                s->p.state.poll_type = us_internal_poll_type(&s->p);
+                error = 1;
+                eof = 0; /* on_end already ran when POLLING_IN was dropped (or the read side never
+                          * started, e.g. low-prio parked mid-handshake) - error-close fits both */
+            }
+            #endif
             if (events & LIBUS_SOCKET_WRITABLE && !error) {
                 s->flags.last_write_failed = 0;
                 #ifdef LIBUS_USE_KQUEUE

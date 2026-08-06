@@ -695,6 +695,25 @@ impl All {
         }
     }
 
+    /// The owning thread's JSC VM is gone (nothing schedules a WTFTimer any
+    /// more) and the timeout objects are drained: hand the embedded
+    /// `uv_timer_t`/`uv_idle_t` to `uv_close` so their nodes leave the loop's
+    /// handle queue when the teardown closes the loop — before this struct's
+    /// storage is freed.
+    #[cfg(windows)]
+    pub(crate) fn close_loop_handles_for_teardown(&mut self) {
+        unsafe extern "C" fn timer_closed(_: *mut uv::Timer) {}
+        unsafe extern "C" fn idle_closed(_: *mut uv::uv_idle_t) {}
+        if !self.uv_timer.data.is_null() {
+            self.uv_timer.stop();
+            self.uv_timer.close(timer_closed);
+        }
+        if !self.uv_idle.data.is_null() {
+            self.uv_idle.stop();
+            self.uv_idle.close(idle_closed);
+        }
+    }
+
     /// Lazily `uv_timer_init` the
     /// per-`All` libuv timer, then (re)start it for the soonest deadline
     /// across both heaps. On Windows there is no epoll/kqueue fallback; this
@@ -715,6 +734,7 @@ impl All {
                 bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast::<core::ffi::c_void>();
             self.uv_timer.unref();
         }
+        debug_assert!(!self.uv_timer.is_closing(), "timer scheduled after teardown closed the heap's uv timer");
 
         let reg_next = self.timers.peek().map(|timer| {
             // SAFETY: `peek` returns a live heap node.

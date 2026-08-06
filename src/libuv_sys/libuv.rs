@@ -427,8 +427,35 @@ impl Loop {
         })
     }
 
-    /// Closes this
-    /// thread's libuv loop. Called from `WebWorker::shutdown`.
+    /// Complete every in-flight request on this thread's loop (fs, write,
+    /// connect): requests cannot be cancelled, and their callbacks expect the
+    /// VM that issued them, so teardown runs this after script is forbidden
+    /// and before the JSC VM goes away (Node's `CleanupHandles`).
+    pub fn drain_requests() {
+        THREADLOCAL_LOOP.with(|slot| {
+            let loop_ = slot.get();
+            if loop_.is_null() {
+                return;
+            }
+            // SAFETY: live per-thread loop; `count` is the active arm of the
+            // union whenever the loop is initialised (uv/win.h).
+            unsafe {
+                while (*loop_).active_reqs.count > 0 {
+                    log!("drain_requests: {} in flight", (*loop_).active_reqs.count);
+                    uv_run(loop_, RunMode::Once);
+                }
+            }
+        });
+    }
+
+    /// Closes this thread's libuv loop. Called from `WebWorker::shutdown` after
+    /// the thread's uws loop has been freed and the event loop's pending
+    /// keep-alive delta has been folded (Bun's virtual keep-alive count shares
+    /// `active_handles` with libuv, so an unbalanced ref would keep the loop
+    /// alive forever). Every handle Bun registered on the loop must have been
+    /// closed while its owner was alive; what remains here is uSockets' own
+    /// pre/check/async/timer, closed by us_loop_free and freed by their close
+    /// callbacks when the loop next turns.
     pub fn shutdown() {
         THREADLOCAL_LOOP.with(|slot| {
             let loop_ = slot.get();
@@ -437,11 +464,16 @@ impl Loop {
             }
             // SAFETY: `loop_` is the live per-thread loop initialized in `get()`.
             if let Some(err) = unsafe { uv_loop_close(loop_) }.raw_errno() {
-                // Only EBUSY means handles are
-                // still open; walk + close them, run once to flush close
-                // callbacks, then close again (must succeed). `uv_loop_close`
-                // documents no other failure code.
+                // Only EBUSY means handles are still linked; walk + close any not
+                // already closing, run to flush close callbacks and endgames, then
+                // close again (must succeed). `uv_loop_close` documents no other
+                // failure code.
                 if err == (UV_EBUSY as c_int).unsigned_abs() as u16 {
+                    // Anything open and not already closing here was left by an
+                    // owner that never closed it; name it under BUN_DEBUG_uv.
+                    // SAFETY: every linked handle's storage is still allocated
+                    // (owners are freed only after this returns).
+                    unsafe { uv_walk(loop_, Some(log_unclosed_cb), ptr::null_mut()) };
                     unsafe { uv_walk(loop_, Some(close_walk_cb), ptr::null_mut()) };
                     let _ = unsafe { uv_run(loop_, RunMode::Default) };
                     // NOTE the call is unconditional — the close must run in
@@ -532,6 +564,36 @@ impl Loop {
     pub fn dump_active_handles(&mut self, stream: *mut c_void) {
         // SAFETY: self is a live loop.
         unsafe { uv_print_active_handles(self, stream) };
+    }
+}
+
+/// `Loop::shutdown` diagnostics: which handles keep the worker's loop busy.
+unsafe extern "C" fn log_unclosed_cb(handle: *mut uv_handle_t, data: *mut c_void) {
+    // SAFETY: libuv passes live handles.
+    if unsafe { uv_is_closing(handle) } == 0 {
+        // SAFETY: as above.
+        unsafe { log_walk_cb(handle, data) };
+    }
+}
+
+unsafe extern "C" fn log_walk_cb(handle: *mut uv_handle_t, _data: *mut c_void) {
+    // SAFETY: libuv passes a live handle; these calls only read its header.
+    unsafe {
+        let name = uv_handle_type_name(uv_handle_get_type(handle));
+        let name = if name.is_null() {
+            "?"
+        } else {
+            core::ffi::CStr::from_ptr(name).to_str().unwrap_or("?")
+        };
+        log!(
+            "handle left open by its owner: {} @{:p} active={} closing={} ref={} data={:p}",
+            name,
+            handle,
+            uv_is_active(handle),
+            uv_is_closing(handle),
+            uv_has_ref(handle),
+            (*handle).data
+        );
     }
 }
 

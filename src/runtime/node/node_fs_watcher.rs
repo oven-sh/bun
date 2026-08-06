@@ -1024,12 +1024,10 @@ impl FSWatcher {
     // this can be called multiple times
     pub(crate) fn detach(&self) {
         let ctx_ptr = self.as_ctx_ptr().cast::<c_void>();
-        if self.vm().test_isolation_enabled {
-            if let Some(handles) = crate::jsc_hooks::isolation_handles() {
-                handles.swap_remove(&crate::jsc_hooks::IsolationHandle::FsWatcher(
-                    core::ptr::NonNull::from(self),
-                ));
-            }
+        if let Some(handles) = crate::jsc_hooks::active_handles() {
+            handles.swap_remove(&crate::jsc_hooks::ActiveHandle::FsWatcher(
+                core::ptr::NonNull::from(self),
+            ));
         }
 
         if let Some(watcher) = self.path_watcher.take() {
@@ -1173,15 +1171,13 @@ impl FSWatcher {
                 args.listener.with_async_context_if_needed(args.global_this),
             )
         };
-        if vm_ref.test_isolation_enabled {
-            if let Some(handles) = crate::jsc_hooks::isolation_handles() {
-                bun_core::handle_oom(handles.put(
-                    crate::jsc_hooks::IsolationHandle::FsWatcher(
-                        core::ptr::NonNull::new(ctx).expect("init: watcher"),
-                    ),
-                    (),
-                ));
-            }
+        if let Some(handles) = crate::jsc_hooks::active_handles() {
+            bun_core::handle_oom(handles.put(
+                crate::jsc_hooks::ActiveHandle::FsWatcher(
+                    core::ptr::NonNull::new(ctx).expect("init: watcher"),
+                ),
+                (),
+            ));
         }
         Ok(ctx)
     }

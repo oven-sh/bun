@@ -582,6 +582,7 @@ impl Process {
                 Poller::Uv(process) => (process.is_closed(), process.is_closing()),
                 _ => return,
             };
+            bun_io::uv_owners::unregister(std::ptr::from_mut(self).cast());
             if closed {
                 self.poller = Poller::Detached;
             } else if !closing {
@@ -2065,6 +2066,15 @@ mod spawn_process_body {
             }
             return Ok(Err(err));
         }
+        // The process handle is open on this thread's loop until `close()`; a
+        // thread teardown closes it through us (the child keeps running, as with
+        // Node's ProcessWrap), so no exit callback can fire after the VM is gone.
+        unsafe fn close_for_teardown(p: *mut c_void) {
+            // SAFETY: registered key is this live Process (unregistered in `close`).
+            unsafe { (*p.cast::<Process>()).close() };
+        }
+        bun_io::uv_owners::register(process.cast(), close_for_teardown);
+
 
         // SAFETY: process is valid, poller is Uv
         unsafe {

@@ -575,7 +575,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     });
 
     if (executionContextId > -1) {
-        const auto initializeWorker = [&](WebCore::Worker& worker) -> void {
+        const auto initializeWorker = [&](WebCore::WorkerMessagingProxy& worker) -> void {
             auto& options = worker.options();
 
             if (options.env.has_value()) {
@@ -616,7 +616,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
             vm.forbidExecutionOnTermination();
         };
 
-        if (auto* worker = static_cast<WebCore::Worker*>(worker_ptr)) {
+        if (auto* worker = static_cast<WebCore::WorkerMessagingProxy*>(worker_ptr)) {
             initializeWorker(*worker);
         }
     }
@@ -644,10 +644,14 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     // gcProtect()'d and the old one is cleanly unprotected.
     JSC::DeferGC deferGC(vm);
 
+    // The old global's workers, ports, channels and sockets were stopped by the runtime
+    // (Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation) before its sweeps and before this.
+    auto* oldContext = oldGlobal->scriptExecutionContext();
+    ASSERT(oldContext->activeDOMObjectsAreStopped());
+
     // The new global must inherit the old one's ScriptExecutionContext identifier so that
     // `Bun.isMainThread` (identifier == 1) and cross-thread task dispatch keep working.
     // Move the old context to a fresh identifier first to free the slot.
-    auto* oldContext = oldGlobal->scriptExecutionContext();
     const auto inheritedId = oldContext->identifier();
     oldContext->removeFromContextsMap();
     oldContext->regenerateIdentifier();
@@ -1050,22 +1054,8 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
 
 GlobalObject::~GlobalObject()
 {
-    // Break the Performance <-> PerformanceObserver reference cycle before the
-    // ScriptExecutionContext is torn down. Performance holds RefPtr<PerformanceObserver>
-    // in its registered-observer list and each PerformanceObserver holds RefPtr<Performance>,
-    // so neither is released unless the cycle is explicitly broken. WebKit does this from
-    // WorkerGlobalScope / LocalDOMWindow on removeAllEventListeners(); Bun has no equivalent
-    // hook, so this is the last point where the context is still fully alive. Doing it in
-    // Performance::contextDestroyed() instead is too late: dropping the last observer ref
-    // there cascades into ~ContextDestructionObserver() unregistering from the context while
-    // the context is already iterating observers in its own destructor.
-    if (m_performance)
-        m_performance->removeAllObservers();
-
-    if (auto* ctx = scriptExecutionContext()) {
-        ctx->removeFromContextsMap();
-        ctx->deref();
-    }
+    m_scriptExecutionContext->globalObjectDestroyed();
+    m_scriptExecutionContext->deref();
 }
 
 void GlobalObject::destroy(JSCell* cell)
@@ -3412,8 +3402,6 @@ extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* g
     }
 }
 
-extern "C" void Bun__queueTask(JSC::JSGlobalObject*, WebCore::EventLoopTask* task);
-extern "C" void Bun__queueTaskConcurrently(JSC::JSGlobalObject*, WebCore::EventLoopTask* task);
 extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::EventLoopTask* task)
 {
     task->performTask(*globalObject->scriptExecutionContext());
@@ -3437,16 +3425,6 @@ RefPtr<Performance> GlobalObject::performance()
     }
 
     return m_performance;
-}
-
-void GlobalObject::queueTask(WebCore::EventLoopTask* task)
-{
-    Bun__queueTask(this, task);
-}
-
-void GlobalObject::queueTaskConcurrently(WebCore::EventLoopTask* task)
-{
-    Bun__queueTaskConcurrently(this, task);
 }
 
 extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise);
@@ -4191,55 +4169,107 @@ void GlobalObject::setNodeWorkerEntryEvaluatedHook(JSObject* hook)
 
 extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*);
 
+void GlobalObject::prepareForDestruction()
+{
+    auto& vm = this->vm();
+    auto* context = m_scriptExecutionContext;
+
+    // Refuse cross-thread posts first: markTerminating() serializes with postTaskTo() on the
+    // contexts-map lock, so anything another thread enqueues after this is visible to the caller's
+    // drain and nothing later can land. DeferredWorkTimer gets the same fence because finalizers
+    // during the final collection and ~VM both reach scheduleWorkSoon().
+    context->markTerminating();
+    WebCore::clientData(vm)->deferredWorkTimer.markShuttingDown();
+
+    // WorkerOrWorkletGlobalScope::prepareForDestruction(): stop every ActiveDOMObject (workers are
+    // asked to terminate, ports/channels/sockets close without dispatching) and strip listeners,
+    // while script can still run.
+    context->prepareForDestruction();
+}
+
+void GlobalObject::forbidExecution()
+{
+    auto& vm = this->vm();
+
+    // MicrotaskQueue references Heap.
+    vm.defaultMicrotaskQueue().clear();
+
+    // Drop the module registry and require() cache so module-level bindings become unreachable
+    // for the final collection (their ExternalStringImpl deallocators must run before ~VM).
+    {
+        auto* moduleLoader = this->moduleLoader();
+        // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread under cellLock().
+        WTF::Locker locker { moduleLoader->cellLock() };
+        moduleLoader->clearAll();
+    }
+    {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        requireMap()->clear(this);
+        scope.clearException();
+    }
+
+    // WorkerOrWorkletScriptController::scheduleExecutionTermination(): no script past this point.
+    vm.setHasTerminationRequest();
+}
+
+static void destroyVM(JSC::VM& vm)
+{
+    vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+    // Every JSLockHolder still on the native stack (process.exit() from inside a JS callback,
+    // the worker thread's manual API lock) holds a RefPtr<VM> that will never destruct because
+    // this path does not return through them; release on their behalf so ~VM — and with it
+    // Heap::lastChanceToFinalize — actually runs here.
+    for (uint32_t n = vm.refCount(); n > 1; --n)
+        vm.derefSuppressingSaferCPPChecking();
+    vm.derefSuppressingSaferCPPChecking();
+}
+
+extern "C" void Zig__GlobalObject__prepareForDestruction(Zig::GlobalObject* globalObject)
+{
+    globalObject->prepareForDestruction();
+}
+
+extern "C" void Zig__GlobalObject__forbidExecution(Zig::GlobalObject* globalObject)
+{
+    globalObject->forbidExecution();
+}
+
+// `bun test --isolate`: the file that just finished is being retired on a live VM. Its context's
+// workers, ports, channels and sockets are stopped before anything else of the file is swept.
+extern "C" void Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(Zig::GlobalObject* globalObject)
+{
+    globalObject->scriptExecutionContext()->prepareForDestruction();
+}
+
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    if (vm.entryScope) {
-        vm.entryScope = nullptr;
-    }
-    // Mirror WebWorker__teardownJSCVM: mark this context terminating so late
-    // worker→parent posts (scheduleDrain/notifyPeerClosed) return false instead
-    // of enqueueing a ConcurrentTask that leaks past the last drain.
-    if (auto* ctx = globalObject->scriptExecutionContext())
-        ctx->markTerminating();
-    if (auto* clientData = WebCore::clientData(vm))
-        clientData->deferredWorkTimer.markShuttingDown();
-    Bun__InspectorConnection__disconnectAllOnExit(globalObject);
-    // Hold a Ref so the RunLoop is guaranteed to outlive the VM teardown below.
+    ASSERT(globalObject->scriptExecutionContext()->activeDOMObjectsAreStopped());
+    vm.entryScope = nullptr;
+    Ref context = *globalObject->scriptExecutionContext();
     Ref<WTF::RunLoop> runLoop = vm.runLoop();
-    {
-        // Drop the module loader's registry and the require() cache before
-        // collecting, so module-level bindings become unreachable. Without
-        // this, every value stored in a module top-level binding (e.g. the
-        // `tmpdirs[]` array in test/harness.ts that keeps mkdtempSync paths)
-        // is rooted through the registry and survives collectNow(), so the
-        // ExternalStringImpl deallocators never run and LSan reports the
-        // backing buffers as leaked. Mirrors WebWorker__teardownJSCVM.
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        {
-            auto* moduleLoader = globalObject->moduleLoader();
-            WTF::Locker locker { moduleLoader->cellLock() };
-            moduleLoader->clearAll();
-        }
-        globalObject->requireMap()->clear(globalObject);
-        scope.exception(); // mirror WebWorker__teardownJSCVM — leave any pending exception in place
-    }
+
+    Bun__InspectorConnection__disconnectAllOnExit(globalObject);
     gcUnprotect(globalObject);
     globalObject = nullptr;
-    vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
-    // The two refs that exist when this runs at event-loop top level are
-    // Zig__GlobalObject__create's manual ref and the boot-scope JSLockHolder.
-    // When process.exit() is called from inside a JS callback, every nested
-    // JSLockHolder still on the native stack (e.g. JSEventListener::handleEvent)
-    // holds a RefPtr<VM>, so a fixed two derefs leave the count > 0 and ~VM
-    // (and with it Heap::lastChanceToFinalize, which clears all marks and
-    // sweeps every cell) is skipped. Those holders never destruct because this
-    // path never returns, so release on their behalf.
-    for (uint32_t n = vm.refCount(); n > 1; --n)
-        vm.derefSuppressingSaferCPPChecking();
-    // refCount 1 -> 0 runs ~VM; `vm` is dead past this line.
-    vm.derefSuppressingSaferCPPChecking();
+
+    destroyVM(vm);
     runLoop->threadWillExit();
+    // `context` is released here, after ~VM: contextDestroyed() reaches observers at a defined
+    // point on this thread instead of from inside a GC destructor.
+}
+
+extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    ASSERT(globalObject->scriptExecutionContext()->activeDOMObjectsAreStopped());
+    Ref context = *globalObject->scriptExecutionContext();
+
+    vm.deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
+    gcUnprotect(globalObject);
+    globalObject = nullptr;
+
+    destroyVM(vm);
 }
 
 #include "ZigGeneratedClasses+lazyStructureImpl.h"

@@ -490,7 +490,7 @@ impl EventLoop {
     }
 
     pub fn tick_concurrent_with_count(&mut self) -> usize {
-        self.update_counts();
+        self.apply_concurrent_ref_delta();
 
         #[cfg(unix)]
         {
@@ -548,7 +548,12 @@ impl EventLoop {
         self.tasks.readable_length() - start_count
     }
 
-    fn update_counts(&mut self) {
+    /// Fold refs/unrefs queued through `ref_concurrently`/`unref_concurrently`
+    /// into the platform loop's keep-alive count. Runs at the top of every tick,
+    /// and once more from a worker's shutdown after its stop phase (which unrefs
+    /// ports/channels/sockets on a loop that no longer ticks) so the loop is not
+    /// torn down still believing something keeps it alive.
+    pub(crate) fn apply_concurrent_ref_delta(&mut self) {
         // Do NOT silently drop the swapped delta when the handle is
         // missing — refs queued via `ref_concurrently()` would be lost forever.
         let delta = self.concurrent_ref.swap(0, Ordering::SeqCst);
@@ -762,6 +767,23 @@ impl EventLoop {
         for task in requeue {
             let _ = self.tasks.write_item(task);
         }
+        // Pending immediates likewise: cancelling one drops its keep-alive on
+        // this thread's loop, so it happens now, not after the loop is gone.
+        self.release_pending_immediates();
+    }
+
+    /// Cancel (never run) every queued ImmediateObject; each cancel drops the
+    /// immediate's keep-alive on this loop, so the loop must still exist.
+    fn release_pending_immediates(&mut self) {
+        let pending = core::mem::take(&mut self.immediate_tasks);
+        let next = core::mem::take(&mut self.next_immediate_tasks);
+        if !pending.is_empty() || !next.is_empty() {
+            let vm = self.vm();
+            for task in pending.into_iter().chain(next) {
+                // SAFETY: `task` came from `enqueue_immediate_task`; `vm` is the live per-thread VM.
+                unsafe { __bun_cancel_pending_immediate(task, vm) };
+            }
+        }
     }
 
     pub fn deinit(&mut self) {
@@ -797,15 +819,9 @@ impl EventLoop {
         for task in requeue {
             let _ = self.tasks.write_item(task);
         }
-        let pending = core::mem::take(&mut self.immediate_tasks);
-        let next = core::mem::take(&mut self.next_immediate_tasks);
-        if !pending.is_empty() || !next.is_empty() {
-            let vm = self.vm();
-            for task in pending.into_iter().chain(next) {
-                // SAFETY: `task` came from `enqueue_immediate_task`; `vm` is the live per-thread VM.
-                unsafe { __bun_cancel_pending_immediate(task, vm) };
-            }
-        }
+        // A thread teardown released these already (before its loop went away);
+        // other callers (macro loop, bake's production VM) still own a live loop.
+        self.release_pending_immediates();
         // Free the deferred-task map's storage. The tasks must not be run (same rule as the
         // queued tasks above), and an entry owns nothing but a `Copy` ctx pointer whose owner
         // released it when the JSC teardown before this finalized it. A worker's VM box is

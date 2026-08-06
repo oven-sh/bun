@@ -21,6 +21,8 @@
 #include "config.h"
 #include "JSMessagePort.h"
 
+#include "ActiveDOMObject.h"
+
 #include "EventNames.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
@@ -153,7 +155,7 @@ JSMessagePort::JSMessagePort(Structure* structure, JSDOMGlobalObject& globalObje
 {
 }
 
-// static_assert(std::is_base_of<ActiveDOMObject, MessagePort>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
+static_assert(std::is_base_of<ActiveDOMObject, MessagePort>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
 
 JSObject* JSMessagePort::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
@@ -446,7 +448,7 @@ bool JSMessagePortOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
 {
     auto* jsMessagePort = uncheckedDowncast<JSMessagePort>(handle.slot()->asCell());
     auto& wrapped = jsMessagePort->wrapped();
-    if (wrapped.hasPendingActivity()) {
+    if (!wrapped.isContextStopped() && wrapped.hasPendingActivity()) {
         if (reason) [[unlikely]]
             *reason = "ActiveDOMObject with pending activity"_s;
         return true;

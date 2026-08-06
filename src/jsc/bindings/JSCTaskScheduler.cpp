@@ -122,15 +122,6 @@ extern "C" void Bun__runDeferredWork(Bun::JSCDeferredWorkTask* job)
     runPendingWork(clientData->bunVM, clientData->deferredWorkTimer, job);
 }
 
-// Flip m_isShuttingDown from the owning JS thread before the final concurrent-
-// task drain. Any onScheduleWorkSoon that serializes before this under m_lock
-// has its enqueue visible to the drain; any that serializes after drops.
-extern "C" void Bun__JSCTaskScheduler__markShuttingDown(JSC::JSGlobalObject* globalObject)
-{
-    if (auto* clientData = WebCore::clientData(JSC::getVM(globalObject)))
-        clientData->deferredWorkTimer.markShuttingDown();
-}
-
 // Reclaim a queued-but-never-dispatched job during shutdown. Called while the
 // JSC VM is still alive, so ~Ref<Ticket> and the captured Task lambda may
 // safely touch TZone-allocated / JSC-owned state. Mirrors runPendingWork's

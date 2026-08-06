@@ -98,17 +98,23 @@ pub(crate) struct RuntimeState {
     /// has not been proven safe; keep the prior behavior of leaking any
     /// still-occupied slot while still freeing the pool allocation itself.
     pub(crate) body_value_pool: Box<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>,
-    pub(crate) isolation_handles: IsolationHandles,
+    pub(crate) active_handles: ActiveHandles,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub enum IsolationHandle {
+/// A native handle behind a JS object that must be stopped while the VM is
+/// alive rather than by a GC finalizer during `~VM` (Node's `HandleWrap` list):
+/// registered while open, removed by its own close, and closed by
+/// [`close_active_handles`] in every teardown's stop phase and at the
+/// `bun test --isolate` global swap.
+pub enum ActiveHandle {
     FsWatcher(ptr::NonNull<crate::node::node_fs_watcher::FSWatcher>),
     StatWatcher(ptr::NonNull<crate::node::node_fs_stat_watcher::StatWatcher>),
     Server(crate::server::AnyServer),
+    Listener(ptr::NonNull<crate::socket::Listener>),
 }
 
-pub(crate) type IsolationHandles = bun_collections::ArrayHashMap<IsolationHandle, ()>;
+pub(crate) type ActiveHandles = bun_collections::ArrayHashMap<ActiveHandle, ()>;
 
 thread_local! {
     /// One `RuntimeState` per JS thread (`VirtualMachine` is per-thread).
@@ -169,13 +175,13 @@ pub(crate) fn timer_all_mut() -> &'static mut timer::All {
 }
 
 #[inline]
-pub(crate) fn isolation_handles() -> Option<&'static mut IsolationHandles> {
+pub(crate) fn active_handles() -> Option<&'static mut ActiveHandles> {
     let state = runtime_state();
     if state.is_null() {
         return None;
     }
     // SAFETY: live boxed per-thread `RuntimeState`.
-    Some(unsafe { &mut (*state).isolation_handles })
+    Some(unsafe { &mut (*state).active_handles })
 }
 
 /// Per-VM lazy DNS resolver storage. Shared borrow only — c-ares callbacks
@@ -353,7 +359,7 @@ unsafe fn init_runtime_state(
                 )
             }
         },
-        isolation_handles: IsolationHandles::default(),
+        active_handles: ActiveHandles::default(),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 
@@ -1474,10 +1480,11 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     parse_worker_exec_argv_allow_addons,
     cron_clear_all_teardown,
     cron_clear_all_reload,
-    terminate_all_workers_and_wait,
     retroactively_report_discovered_tests,
     cancel_all_timers,
     close_dns_for_terminate,
+    close_active_handles: close_active_handles_hook,
+    close_timer_loop_handles,
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1569,16 +1576,6 @@ fn cron_clear_all_reload(vm: &mut VirtualMachine) {
     CronJob::clear_all_for_vm::<{ ClearMode::Reload }>(vm);
 }
 
-/// `webcore.WebWorker.terminateAllAndWait(timeout_ms)` —
-/// forwards to the in-crate `bun_jsc::web_worker`
-/// implementation; routed through `RuntimeHooks` because `virtual_machine.rs`
-/// sits below `web_worker.rs` in the module DAG and the wait re-enters
-/// `auto_tick` (this crate) on the worker side.
-///
-/// Main-thread only; called from `global_exit` after `is_shutting_down` is set.
-fn terminate_all_workers_and_wait(timeout_ms: u64) {
-    bun_jsc::web_worker::terminate_all_and_wait(timeout_ms);
-}
 
 /// `RuntimeHooks::cancel_all_timers` — cancel every `TimeoutObject` /
 /// `ImmediateObject` still linked in the current thread's timer heap so the
@@ -1611,6 +1608,30 @@ unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
     }
 }
 
+/// `RuntimeHooks::close_timer_loop_handles`: teardown-only companion of
+/// `cancel_all_timers` (which the `--isolate` swap also uses on a live VM).
+///
+/// # Safety
+/// `runtime_state()` is installed; JS thread; the JSC VM is already destroyed.
+unsafe fn close_timer_loop_handles(_vm: *mut VirtualMachine) {
+    #[cfg(windows)]
+    {
+        let state = runtime_state();
+        debug_assert!(!state.is_null());
+        // SAFETY: live boxed per-thread RuntimeState (fn contract).
+        unsafe { (*state).timer.close_loop_handles_for_teardown() };
+    }
+}
+
+/// `RuntimeHooks::close_active_handles` — see [`close_active_handles`].
+///
+/// # Safety
+/// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
+unsafe fn close_active_handles_hook(vm: *mut VirtualMachine) {
+    // SAFETY: per the contract above.
+    close_active_handles(unsafe { &mut *vm });
+}
+
 /// `RuntimeHooks::close_dns_for_terminate` — destroy the per-VM global DNS
 /// resolver's c-ares channel now so its `ARES_EDESTRUCTION` and socket-state
 /// callbacks run while the JSC VM, `RareData.file_polls`, and `runtime_state`
@@ -1629,7 +1650,7 @@ fn close_dns_for_terminate() {
     crate::dns_jsc::dns_sd::SharedConnection::close_for_terminate();
 }
 
-pub(crate) fn close_isolation_handles(vm: &mut VirtualMachine) {
+pub(crate) fn close_active_handles(vm: &mut VirtualMachine) {
     let state = runtime_state();
     if state.is_null() {
         return;
@@ -1660,17 +1681,19 @@ pub(crate) fn close_isolation_handles(vm: &mut VirtualMachine) {
     loop {
         // SAFETY: live boxed per-thread `RuntimeState`; the borrow ends before
         // the close below re-enters JS.
-        let Some(kv) = (unsafe { &mut (*state).isolation_handles }).pop() else {
+        let Some(kv) = (unsafe { &mut (*state).active_handles }).pop() else {
             break;
         };
         match kv.key {
             // SAFETY: live until it unregisters in `detach`.
-            IsolationHandle::FsWatcher(w) => unsafe { w.as_ref() }.close_for_isolation(),
+            ActiveHandle::FsWatcher(w) => unsafe { w.as_ref() }.close_for_isolation(),
             // Live until it unregisters in `close()` (JS thread, us) — a
             // registered entry implies `close()` has not run, and `deinit`
             // cannot fire before `close()` drops the wrapper's Strong ref.
-            IsolationHandle::StatWatcher(w) => bun_ptr::ParentRef::from(w).close(),
-            IsolationHandle::Server(mut s) => s.stop(true),
+            ActiveHandle::StatWatcher(w) => bun_ptr::ParentRef::from(w).close(),
+            ActiveHandle::Server(mut s) => s.stop(true),
+            // Live until it unregisters in `do_stop`/`finalize`.
+            ActiveHandle::Listener(l) => crate::socket::Listener::stop_for_teardown(unsafe { l.as_ref() }),
         }
     }
 }

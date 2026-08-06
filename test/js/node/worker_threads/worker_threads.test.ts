@@ -532,6 +532,15 @@ describe("worker event", () => {
   });
 });
 
+test("terminate() of a running, idle worker resolves 1 like Node", async () => {
+  const worker = new Worker(
+    `const { parentPort } = require("worker_threads"); parentPort.on("message", () => {}); parentPort.postMessage("ready");`,
+    { eval: true },
+  );
+  await once(worker, "message");
+  expect(await worker.terminate()).toBe(1);
+});
+
 describe("environmentData", () => {
   test("can pass a value to a child", async () => {
     setEnvironmentData("foo", new Map([["hello", "world"]]));
@@ -1754,5 +1763,47 @@ test("the SHARE_ENV founding thread's process.env stays live after the swap", as
   });
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout.trim()).toBe("yes,unset");
+  expect(exitCode).toBe(0);
+});
+
+test("terminating a worker stops the workers it spawned", async () => {
+  // The leaf heartbeats to the main thread over a MessagePort routed through the
+  // middle worker. Terminating the middle worker must stop the leaf, which the main
+  // thread observes as its end of the channel closing.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Worker, MessageChannel } = require("worker_threads");
+        const { port1, port2 } = new MessageChannel();
+        const middle = new Worker(
+          \`const { Worker, workerData, parentPort } = require("worker_threads");
+           const leaf = new Worker(
+             'const { workerData } = require("worker_threads");' +
+             'setInterval(() => workerData.port.postMessage("beat"), 5);',
+             { eval: true, workerData: { port: workerData.port }, transferList: [workerData.port] });
+           leaf.on("online", () => parentPort.postMessage("leaf-online"));\`,
+          { eval: true, workerData: { port: port2 }, transferList: [port2] },
+        );
+        let beats = 0;
+        port1.on("message", () => { beats++; });
+        middle.on("message", async m => {
+          if (m !== "leaf-online") return;
+          while (beats === 0) await new Promise(r => setImmediate(r));
+          port1.on("close", () => {
+            console.log("leaf port closed");
+            port1.close();
+          });
+          await middle.terminate();
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe("leaf port closed");
   expect(exitCode).toBe(0);
 });

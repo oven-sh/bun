@@ -700,7 +700,7 @@ impl StatWatcher {
         // Isolation-registry removal lives in `close()`, NOT here: the last
         // `deref` can happen on the work-pool thread (queue ref dropped in
         // `work_pool_callback` / `InitialStatTask`), where the thread-local
-        // `isolation_handles()` is null and the removal would silently no-op,
+        // `active_handles()` is null and the removal would silently no-op,
         // leaving a dangling registry pointer. Every deinit of a registered
         // watcher is preceded by a JS-thread `close()` (the Strong `this_value`
         // self-ref keeps the wrapper alive until `close()` downgrades it, so
@@ -755,18 +755,16 @@ impl StatWatcher {
 
     /// Stops file watching but does not free the instance.
     ///
-    /// Always runs on the JS thread (`do_close`, `close_isolation_handles`,
+    /// Always runs on the JS thread (`do_close`, `close_active_handles`,
     /// `shutdown_for_exit`), so this is where the watcher leaves the
     /// isolation registry — `deinit` can fire on the work-pool thread where
     /// the thread-local registry is unreachable.
     pub(crate) fn close(&self) {
         // `ctx` is a `BackRef<VirtualMachine>` (JSC_BORROW); safe Deref.
-        if self.ctx.test_isolation_enabled {
-            if let Some(handles) = crate::jsc_hooks::isolation_handles() {
-                handles.swap_remove(&crate::jsc_hooks::IsolationHandle::StatWatcher(
-                    NonNull::from(self),
-                ));
-            }
+        if let Some(handles) = crate::jsc_hooks::active_handles() {
+            handles.swap_remove(&crate::jsc_hooks::ActiveHandle::StatWatcher(
+                NonNull::from(self),
+            ));
         }
         if self.persistent.get() {
             self.persistent.set(false);
@@ -1036,15 +1034,13 @@ impl StatWatcher {
             .set(JsRef::init_strong(js_this, &args.global_this));
         js::listener_set_cached(js_this, &args.global_this, args.listener);
         // `ctx` is a `BackRef<VirtualMachine>` (JSC_BORROW); safe Deref.
-        if this_ref.ctx.test_isolation_enabled {
-            if let Some(handles) = crate::jsc_hooks::isolation_handles() {
-                bun_core::handle_oom(handles.put(
-                    crate::jsc_hooks::IsolationHandle::StatWatcher(
-                        NonNull::new(this_ptr).expect("init: watcher"),
-                    ),
-                    (),
-                ));
-            }
+        if let Some(handles) = crate::jsc_hooks::active_handles() {
+            bun_core::handle_oom(handles.put(
+                crate::jsc_hooks::ActiveHandle::StatWatcher(
+                    NonNull::new(this_ptr).expect("init: watcher"),
+                ),
+                (),
+            ));
         }
         // SAFETY: `this_ptr` was just leaked from `Box`; live with refcount 1.
         InitialStatTask::create_and_schedule(this_ptr);

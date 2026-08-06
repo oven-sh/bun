@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 Alexey Shvayka <shvaikalesh@gmail.com>.
+ * Copyright (C) 2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,34 +25,19 @@
 
 #pragma once
 
-#include "root.h"
-#include "ContextDestructionObserver.h"
-#include "EventTarget.h"
-#include "EventTargetInterfaces.h"
-#include "ScriptExecutionContext.h"
-#include <wtf/RefCounted.h>
-
 namespace WebCore {
 
-class EventTargetConcrete final : public RefCounted<EventTargetConcrete>, public EventTargetWithInlineData, private ContextDestructionObserver {
-    WTF_MAKE_TZONE_ALLOCATED(EventTargetConcrete);
+enum class TaskSource : uint8_t {
+    DOMManipulation,
+    FileReading,
+    Networking,
+    PerformanceTimeline,
+    PostedMessageQueue,
+    Timer,
+    WebSocket,
 
-public:
-    static Ref<EventTargetConcrete> create(ScriptExecutionContext&);
-
-    // ContextDestructionObserver.
-    void ref() const final { RefCounted::ref(); }
-    void deref() const final { RefCounted::deref(); }
-    USING_CAN_MAKE_WEAKPTR(EventTargetWithInlineData);
-
-private:
-    explicit EventTargetConcrete(ScriptExecutionContext&);
-
-    EventTargetInterface eventTargetInterface() const final { return EventTargetInterfaceType; }
-    ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
-
-    void refEventTarget() final { ref(); }
-    void derefEventTarget() final { deref(); }
+    // Internal to WebCore
+    InternalAsyncTask, // Safe to re-order or delay.
 };
 
 } // namespace WebCore

@@ -321,6 +321,12 @@ impl Listener {
                     .this_value
                     .with_mut(|r| r.set_strong(this_value, global));
                 this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+                if let Some(handles) = crate::jsc_hooks::active_handles() {
+                    bun_core::handle_oom(handles.put(
+                        crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(this_ref)),
+                        (),
+                    ));
+                }
                 return Ok(this_value);
             }
         }
@@ -580,6 +586,12 @@ impl Listener {
             .this_value
             .with_mut(|r| r.set_strong(this_value, global));
         this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        if let Some(handles) = crate::jsc_hooks::active_handles() {
+            bun_core::handle_oom(handles.put(
+                crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(this_ref)),
+                (),
+            ));
+        }
 
         Ok(this_value)
     }
@@ -819,11 +831,21 @@ impl Listener {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// The VM (or the finished `--isolate` file) is being torn down: stop
+    /// listening and close accepted connections now, while script can still
+    /// run their close handlers, instead of from the GC finalizer.
+    pub(crate) fn stop_for_teardown(this: &Self) {
+        Self::do_stop(this, true);
+    }
+
     fn do_stop(this: &Self, force_close: bool) {
         if matches!(this.listener.get(), ListenerType::None) {
             return;
         }
         let listener = this.listener.replace(ListenerType::None);
+        if let Some(handles) = crate::jsc_hooks::active_handles() {
+            handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(this)));
+        }
 
         if matches!(listener, ListenerType::Uws(_)) {
             Self::unlink_unix_socket_path(this);
@@ -867,6 +889,11 @@ impl Listener {
     pub fn finalize(self: Box<Self>) {
         log!("finalize");
         let listener = self.listener.replace(ListenerType::None);
+        if !matches!(listener, ListenerType::None) {
+            if let Some(handles) = crate::jsc_hooks::active_handles() {
+                handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(&*self)));
+            }
+        }
         match listener {
             ListenerType::Uws(socket) => {
                 Self::unlink_unix_socket_path(&self);

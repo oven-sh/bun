@@ -49,16 +49,18 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(MessagePort);
 
 Ref<MessagePort> MessagePort::create(ScriptExecutionContext& context, Ref<MessagePortPipe>&& pipe, uint8_t side)
 {
-    return adoptRef(*new MessagePort(context, WTF::move(pipe), side));
+    auto messagePort = adoptRef(*new MessagePort(context, WTF::move(pipe), side));
+    messagePort->suspendIfNeeded();
+    return messagePort;
 }
 
 MessagePort::MessagePort(ScriptExecutionContext& context, Ref<MessagePortPipe>&& pipe, uint8_t side)
-    : ContextDestructionObserver(&context)
+    : ActiveDOMObject(&context)
     , m_pipe(WTF::move(pipe))
     , m_side(side)
 {
     // The WeakPtrFactory must be initialized on the owning thread.
-    initializeWeakPtrFactory();
+    EventTarget::initializeWeakPtrFactory();
     // Any port with a 'message' listener refs the event loop (matching node: a
     // listening port keeps its thread alive until closed or unref'd); otherwise a
     // buffered message could be lost if its listener is added late.
@@ -162,14 +164,8 @@ void MessagePort::flushQueuedMessagesBeforeClose()
     auto* context = scriptExecutionContext();
     if (!context || !context->globalObject())
         return;
-    // During worker teardown contextDestroyed() runs from ~ScriptExecutionContext
-    // inside ~VM's lastChanceToFinalize, where allocating a MessageEvent wrapper
-    // asserts (the heap is being finalized). markTerminating() precedes ~VM, and
-    // the Rust-side scriptExecutionStatus still reports Running at that point.
-    if (context->isTerminating())
-        return;
     auto* globalObject = defaultGlobalObject(context->globalObject());
-    // Only deliver while JS can run; during teardown the queue is left for
+    // Only deliver while JS can run; otherwise the queue is left for
     // m_pipe->close() to drop (it unwinds nested port chains iteratively).
     if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running)
         return;
@@ -213,11 +209,7 @@ void MessagePort::close()
 
     // Release the self-reference taken by jsRef() (set when .onmessage is
     // assigned or .ref() is called from JS). The JS .close() binding calls
-    // jsUnref() first, so m_hasRef is already false on that path; we only
-    // reach this branch when close() runs without a preceding jsUnref() —
-    // most importantly from contextDestroyed() during Worker teardown.
-    // Without this, the self-ref pins the MessagePort past the JS wrapper
-    // sweep and it leaks forever.
+    // jsUnref() first; stop() and contextDestroyed() do not.
     if (m_hasRef) {
         m_hasRef = false;
         if (auto* context = scriptExecutionContext())
@@ -234,20 +226,15 @@ void MessagePort::close()
 
     // Defer 'close' to a task (node fires it at uv close-callback timing, i.e.
     // after sync code and microtasks), so a listener added after close() still
-    // observes it and close(cb) interleaves with other listeners. Never while the
-    // context is terminating: contextDestroyed() runs after the loop's queue was
-    // drained for shutdown, so the task would never run and would outlive the VM.
-    auto* context = scriptExecutionContext();
-    if (context && !context->isTerminating()) {
-        m_closeEventPending.store(true, std::memory_order_release);
-        context->postTask([protectedThis = Ref { *this }](ScriptExecutionContext&) {
-            protectedThis->dispatchCloseEvent();
-            protectedThis->removeAllEventListeners();
-            protectedThis->m_closeEventPending.store(false, std::memory_order_release);
-        });
-    } else {
+    // observes it and close(cb) interleaves with other listeners.
+    if (isContextStopped()) {
         removeAllEventListeners();
+        return;
     }
+    queueTaskKeepingObjectAlive(*this, TaskSource::PostedMessageQueue, [](MessagePort& port) {
+        port.dispatchCloseEvent();
+        port.removeAllEventListeners();
+    });
 }
 
 void MessagePort::dispatchCloseEvent()
@@ -257,9 +244,6 @@ void MessagePort::dispatchCloseEvent()
     m_closeEventDispatched = true;
     auto* context = scriptExecutionContext();
     if (!context || !context->globalObject())
-        return;
-    // No JS may run during worker teardown (see flushQueuedMessagesBeforeClose).
-    if (context->isTerminating())
         return;
     auto* globalObject = defaultGlobalObject(context->globalObject());
     // Bypass the m_isDetached guard in MessagePort::dispatchEvent — the deferred
@@ -328,8 +312,11 @@ TransferredMessagePort MessagePort::disentangle()
     m_isDetached = true;
     m_started = false;
 
-    if (auto* context = scriptExecutionContext())
+    // We can't receive any messages or generate any events after this, so remove ourselves from the list of active ports.
+    if (auto* context = scriptExecutionContext()) {
+        context->willDestroyActiveDOMObject(*this);
         context->willDestroyDestructionObserver(*this);
+    }
     observeContext(nullptr);
 
     return TransferredMessagePort { m_pipe.copyRef(), m_side };
@@ -392,17 +379,13 @@ void MessagePort::dispatchEvent(Event& event)
 
 void MessagePort::contextDestroyed()
 {
-    // close() releases the jsRef() self-reference, which may be the last
-    // strong ref if the JS wrapper was already swept. Protect across the
-    // call so we can cleanly detach from the dying ScriptExecutionContext
-    // first — otherwise ~ContextDestructionObserver() would call back into
-    // it while it is mid-destruction.
-    Ref protectedThis { *this };
+    ASSERT(scriptExecutionContext());
+
     close();
-    ContextDestructionObserver::contextDestroyed();
+    ActiveDOMObject::contextDestroyed();
 }
 
-bool MessagePort::hasPendingActivity() const
+bool MessagePort::virtualHasPendingActivity() const
 {
     // Called from the GC thread concurrently with the mutator; must be
     // lockless. m_pipe is a Ref<> held for the port's whole lifetime, so
@@ -410,11 +393,6 @@ bool MessagePort::hasPendingActivity() const
     // atomic loads. The plain bool reads can observe stale values but
     // cannot crash — at worst the wrapper is collected one cycle early
     // or late, which is the same tolerance as before this refactor.
-    // close() sets m_isDetached before queueing the deferred close task, and a port
-    // with only a 'close' listener has no message listener — so this must precede
-    // both gates or the wrapper is collected before the task dispatches.
-    if (m_closeEventPending.load(std::memory_order_acquire))
-        return true;
     if (!scriptExecutionContext() || m_isDetached)
         return false;
     // A 'close' listener must outlive a GC until the event lands: notifyPeerClosed()

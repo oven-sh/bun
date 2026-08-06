@@ -17,11 +17,13 @@ class DOMWrapperWorld;
 #include "BunBuiltinNames.h"
 // #include "WebCoreJSBuiltins.h"
 // #include "WorkerThreadType.h"
+#include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
 #include <wtf/RefPtr.h>
 #include <JavaScriptCore/WeakInlines.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/WeakHashSet.h>
 #include "JSCTaskScheduler.h"
 #include "HTTPHeaderIdentifiers.h"
 namespace Zig {
@@ -81,6 +83,12 @@ private:
 };
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);
+
+class JSVMClientDataClient : public AbstractRefCountedAndCanMakeWeakPtr<JSVMClientDataClient> {
+public:
+    virtual ~JSVMClientDataClient() = default;
+    virtual void willDestroyVM() = 0;
+};
 
 class JSVMClientData : public JSC::VM::ClientData {
     WTF_MAKE_NONCOPYABLE(JSVMClientData);
@@ -168,6 +176,11 @@ private:
     std::unique_ptr<ExtendedDOMClientIsoSubspaces> m_clientSubspaces;
 
     WebCore::HTTPHeaderIdentifiers m_httpHeaderIdentifiers;
+
+    WeakHashSet<JSVMClientDataClient> m_clients;
+
+public:
+    void addClient(JSVMClientDataClient& client) { m_clients.add(client); }
 };
 
 } // namespace WebCore

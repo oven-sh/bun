@@ -318,8 +318,13 @@ pub struct VirtualMachine {
     pub module_loader: ModuleLoader::ModuleLoader,
 
     pub(crate) gc_controller: crate::GarbageCollectionController,
-    // BACKREF — WebWorker owns the VM. Real type: `*const bun_runtime::webcore::WebWorker`.
+    /// The `WebWorker` whose thread this VM runs on (`None` on the main thread).
+    /// The thread holds a ref on it for its whole life.
     pub worker: Option<*const c_void>,
+    /// Workers created on this thread and not yet released by it. Parent-thread
+    /// only: `WebWorker::create` pushes, `release_parent_poll_ref` removes,
+    /// `join_child_workers` drains at exit.
+    pub child_workers: Vec<*mut crate::web_worker::WebWorker>,
     pub pending_ipc: Option<PendingIpc>,
     pub hot_reload_counter: u32,
 
@@ -382,9 +387,14 @@ unsafe extern "C" {
     safe fn Bun__closeAllSQLiteDatabasesForTermination();
     safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__WebView__closeAllForTermination();
+    safe fn Zig__GlobalObject__prepareForDestruction(global: &JSGlobalObject);
+    safe fn Zig__GlobalObject__forbidExecution(global: &JSGlobalObject);
+    safe fn Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
-    safe fn Bun__JSCTaskScheduler__markShuttingDown(global: &JSGlobalObject);
+    safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
 }
+
+bun_core::define_scoped_log!(teardown_log, Worker, hidden);
 
 pub const HOT_RELOAD_HOT: u8 = 1;
 pub const HOT_RELOAD_WATCH: u8 = 2;
@@ -1527,109 +1537,154 @@ impl VirtualMachine {
         // self.event_loop().tick();
 
         if self.should_destruct_main_thread_on_exit() {
-            #[cfg(windows)]
-            if let Some(t) = self.event_loop_mut().forever_timer.take() {
-                // SAFETY: `t` is the live usockets timer created in
-                // `EventLoop::tick_possibly_forever`; `close::<true>()`
-                // (fallthrough) frees it without re-entering the loop.
-                unsafe { uws::Timer::close::<true>(t.as_ptr()) };
-            }
-            // Drain `TimeoutObject`s / `ImmediateObject`s from `All.timers`
-            // while `runtime_state`, the event loop, and the JSC heap are all
-            // still alive: drops their JS pins and in-heap `+1` refs so the GC
-            // sweep below (`destructOnExit` → `lastChanceToFinalize`) collects
-            // them instead of leaking. Must precede `close_all_socket_groups`
-            // and `~RunLoop::Timer` so no dangling `WTFTimer` heap node is
-            // observed during the walk.
-            if let Some(hooks) = runtime_hooks() {
-                // SAFETY: `self` is the live per-thread VM on the JS thread;
-                // `runtime_state` is still installed (it's torn down in
-                // `destroy()`, well after `global_exit`).
-                unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self)) };
-            }
-            // Same reason: the GC timers are heap nodes too.
-            self.gc_controller.deinit();
-            // Detached worker threads may still be in startVM()/spin() using
-            // the process-global resolver BSSMap singletons. transpiler.deinit()
-            // below frees those singletons, so request termination of every
-            // live worker and wait for each to reach shutdown() first.
-            if let Some(hooks) = runtime_hooks() {
-                // Main-thread only; futex-waits on every registered worker
-                // until each unparks at shutdown().
-                (hooks.terminate_all_workers_and_wait)(10_000);
-            }
-
-            // Mirror web_worker.rs::shutdown(): fence DeferredWorkTimer
-            // producers before the drain so a cross-thread scheduleWorkSoon
-            // that raced the shutdown either enqueued (and is caught by the
-            // drain below) or observes the flag under m_lock and drops.
-            // destructOnExit sets it again (idempotently).
-            Bun__JSCTaskScheduler__markShuttingDown(self.global());
-
-            // Every worker has now posted its close task to our concurrent
-            // queue (OUTSTANDING is decremented after dispatchExit). Drop
-            // those queued lambdas — without running them — so the captured
-            // `Ref<Worker>` releases and the final GC sweep below brings the
-            // refcount to zero (`~Worker` → `WebWorker__destroy`). Must
-            // precede `destructOnExit`: deleting after JSC VM teardown would
-            // run `~JSEventListener` against freed Weak handle storage.
-            self.event_loop_mut().drop_concurrent_cpp_tasks();
-
-            // Embedded per-VM socket groups must drain while JSC is still
-            // alive (closeAll() fires on_close → JS). After JSC teardown,
-            // RareData's Drop only deinit()s the groups (asserts empty).
-            if self.rare_data.is_some() {
-                // Note: reshaped for borrowck — `close_all_socket_groups`
-                // walks the loop's group list via `vm.uws_loop()` and never
-                // touches `vm.rare_data`, so the disjoint reborrow is sound.
-                // SAFETY: `self` is the live per-thread VM; the shared borrow
-                // only reads `event_loop_handle` (no overlap with `rare_data`).
-                let vm_ref = unsafe { &*core::ptr::from_ref(self) };
-                self.rare_data
-                    .as_deref_mut()
-                    .unwrap()
-                    .close_all_socket_groups(vm_ref);
-            }
-            // Destroy the per-VM c-ares channel while JSC / `RareData.file_polls`
-            // / `runtime_state` are all still live — `ares_destroy()` re-enters
-            // them from its EDESTRUCTION and socket-state callbacks. Mirrors
-            // `WebWorker::shutdown`.
-            if let Some(hooks) = runtime_hooks() {
-                (hooks.close_dns_for_terminate)();
-            }
-
-            // The HTTP daemon thread holds a `Box<ThreadlocalAsyncHTTP>` per
-            // in-flight request; with the JS thread exiting those never reach
-            // a terminal state. Ask it to reclaim them now (waits up to 1s).
-            bun_http::shutdown_for_exit();
-
-            // The HTTP daemon is parked. Release any task it posted to our
-            // queue before observing `is_shutting_down` (the read is
-            // non-atomic and can lag the JS-thread store) — `FetchTasklet`'s
-            // `on_progress_update` would have dropped the JS-side ref, and
-            // without it the tasklet ⇄ `Box<AsyncHTTP>` cycle leaks. Must
-            // precede `destructOnExit` so `FetchTasklet::deinit` can drop its
-            // JSC `Strong`/`Weak` handles against a live heap.
-            self.event_loop_mut().release_queued_tasks_for_shutdown();
-
-            if let Some(rare) = self.rare_data.as_deref_mut() {
-                rare.release_js_handles();
-            }
-
-            Zig__GlobalObject__destructOnExit(self.global());
-
-            // lastChanceToFinalize() above runs Listener/Server finalize →
-            // their own embedded group.closeAll() → sockets land in
-            // loop.closed_head. Drain again now or LSAN reports every accepted
-            // socket that was still open at process.exit().
-            // SAFETY: `uws::Loop::get()` returns the process-global usockets
-            // loop, which is live for the process lifetime.
-            unsafe { (*uws::Loop::get()).drain_closed_sockets() };
-
-            self.destroy();
+            // SAFETY: main-thread VM on the main thread; exit handlers have run.
+            unsafe { Self::teardown(core::ptr::from_mut(self), Teardown::MainThreadExit) };
         }
         bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
     }
+
+    /// Tear down this thread's VM: the one sequence both a finished worker
+    /// thread and the exiting main thread (under `BUN_DESTRUCT_VM_ON_EXIT`) run.
+    ///
+    ///  A. stop, script allowed — WebCore stop phase (child workers asked to
+    ///     terminate; ports/channels/WebSockets closed without events;
+    ///     listeners stripped), native handles behind JS objects stopped
+    ///     (servers, listeners, watchers; on Windows also every open pipe/tty/
+    ///     process handle through its owner), socket groups closed (JS
+    ///     `on_close` may run), DNS channel closed; main: HTTP thread parked.
+    ///  B. script forbidden — microtasks/modules cleared; cron, user timers and
+    ///     GC-controller timers cancelled; child workers joined; in-flight loop
+    ///     requests completed against the still-live VM; queued tasks and
+    ///     RareData's JS handles released without running.
+    ///  C. JSC VM destroyed (finalizers close what only they own; JSC's RunLoop
+    ///     timers ride the timer heap until ~VM returns); sockets they closed
+    ///     drained; then the timer heap's loop handles closed.
+    ///  D. worker: keep-alive delta folded, uSockets loop freed and (Windows)
+    ///     the uv loop closed — every handle unlinks while its owner is still
+    ///     allocated. Main proceeds to process exit instead.
+    ///  E. `destroy()`: RareData, runtime state, event loop.
+    ///
+    /// # Safety
+    /// `this` is this thread's VM and no other thread can reach it any more
+    /// (worker: unpublished under `vm_lock`); `is_shutting_down` is set and
+    /// the exit handlers have run.
+    pub(crate) unsafe fn teardown(this: *mut Self, kind: Teardown) {
+        // SAFETY: per fn contract — sole owner on the owning thread.
+        let vm = unsafe { &mut *this };
+        let hooks = runtime_hooks();
+
+        // ---- A. stop phase; script may still run ------------------------------
+        Zig__GlobalObject__prepareForDestruction(vm.global());
+        if let Some(hooks) = hooks {
+            // SAFETY: fn contract; JSC heap alive.
+            unsafe { (hooks.close_active_handles)(this) };
+        }
+        // Stream and process handles the io/spawn layer opened on this thread's
+        // loop (pipes, ttys, child processes) close through their owners now, so
+        // their pending writes complete (ECANCELED) against a live VM and no
+        // request on them can hold up the loop drain in B.
+        #[cfg(windows)]
+        bun_io::uv_owners::close_all_for_teardown();
+        if let Some(rare) = vm.rare_data.as_deref_mut() {
+            // `close_all_socket_groups` walks the loop's group list through the
+            // VM and never touches `rare_data`, so the re-derived shared borrow
+            // is disjoint. SAFETY: fn contract.
+            rare.close_all_socket_groups(unsafe { &*this });
+        }
+        // After the socket sweep: an `on_close` handler may call `dns.*`, and a
+        // channel re-created after this would outlive the runtime state that
+        // `ares_destroy`'s callbacks dereference.
+        if let Some(hooks) = hooks {
+            (hooks.close_dns_for_terminate)();
+        }
+        if matches!(kind, Teardown::MainThreadExit) {
+            // The HTTP thread holds a `Box<ThreadlocalAsyncHTTP>` per in-flight
+            // request that will never complete now; have it reclaim them (≤1 s).
+            bun_http::shutdown_for_exit();
+        }
+        teardown_log!("teardown: stopped");
+
+        // ---- B. no more script -----------------------------------------------
+        Zig__GlobalObject__forbidExecution(vm.global());
+        #[cfg(windows)]
+        if let Some(t) = vm.event_loop_mut().forever_timer.take() {
+            // SAFETY: live usockets timer from `hold_forever_poll`; closed like
+            // any us_timer (freed by its close callback when the loop turns).
+            unsafe { uws::Timer::close::<true>(t.as_ptr()) };
+        }
+        if let Some(hooks) = hooks {
+            (hooks.cron_clear_all_teardown)(vm);
+            // Drop every TimeoutObject/ImmediateObject's heap node, JS pin and
+            // +1 while runtime state and the JSC heap are alive. The heap itself
+            // (and the loop handle it embeds) stays up: JSC's own RunLoop timers
+            // — GC activity callbacks, sweeper, deferred work — are WTFTimers on
+            // this heap and keep being scheduled until ~VM returns.
+            // SAFETY: fn contract.
+            unsafe { (hooks.cancel_all_timers)(this) };
+        }
+        vm.gc_controller.deinit();
+        crate::web_worker::join_child_workers(vm);
+        // A worker closes its uv loop below (D), so requests still in flight
+        // must complete first, against this live VM. Their handles were closed
+        // in A, so what remains completes on its own (threadpool work). The
+        // exiting main thread neither closes its loop nor may nest uv_run here:
+        // process.exit() can be running inside a libuv completion callback.
+        #[cfg(windows)]
+        if matches!(kind, Teardown::Worker) {
+            bun_sys::windows::libuv::Loop::drain_requests();
+        }
+        // Tasks posted by other threads (HTTP, children before they were
+        // joined) or by the request callbacks above: release, do not run —
+        // their JSC handles must drop against a live heap.
+        vm.event_loop_mut().release_queued_tasks_for_shutdown();
+        if let Some(rare) = vm.rare_data.as_deref_mut() {
+            rare.release_js_handles();
+        }
+        teardown_log!("teardown: script forbidden, resources cancelled, children joined");
+
+        // ---- C. JSC VM -------------------------------------------------------
+        match kind {
+            Teardown::Worker => WebWorker__teardownJSCVM(vm.global()),
+            Teardown::MainThreadExit => Zig__GlobalObject__destructOnExit(vm.global()),
+        }
+        // Finalizers just closed the sockets only they owned; `us_socket_close`
+        // queues onto `loop->data.closed_head`, normally freed on the next tick.
+        vm.uws_loop_mut().drain_closed_sockets();
+        // Nothing schedules a WTFTimer any more: the timer heap's loop handles
+        // can go (Windows uv_timer/uv_idle), before the loop close unlinks them.
+        if let Some(hooks) = hooks {
+            // SAFETY: fn contract; runtime state still installed.
+            unsafe { (hooks.close_timer_loop_handles)(this) };
+        }
+        teardown_log!("teardown: JSC VM destroyed");
+
+        // ---- D. loops (worker; main exits the process instead) ----------------
+        if matches!(kind, Teardown::Worker) {
+            // Whatever B/C unref'd through the concurrent counter, folded now:
+            // on Windows it shares `active_handles` with libuv and a residue
+            // would keep the loop close below spinning.
+            vm.event_loop_mut().apply_concurrent_ref_delta();
+            if let Some(rare) = vm.rare_data.as_deref_mut() {
+                rare.deinit_socket_groups();
+            }
+            // SAFETY: this thread's loop; nothing ticks it any more.
+            unsafe { (*vm.uws_loop()).internal_loop_data.jsc_vm = core::ptr::null_mut() };
+            bun_uws::on_thread_exit();
+            #[cfg(windows)]
+            bun_sys::windows::libuv::Loop::shutdown();
+            teardown_log!("teardown: loops closed");
+        }
+
+        // ---- E. free owners --------------------------------------------------
+        vm.destroy();
+    }
+}
+
+/// Which exit funnel is running [`VirtualMachine::teardown`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Teardown {
+    Worker,
+    MainThreadExit,
 }
 
 extern crate alloc;
@@ -1785,14 +1840,6 @@ pub struct RuntimeHooks {
     /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in
     /// `bun_runtime::api::cron`.
     pub cron_clear_all_teardown: fn(vm: &mut VirtualMachine),
-    /// `WebWorker.terminateAllAndWait(timeout_ms)`.
-    /// `WebWorker` lives in this crate but the
-    /// `web_worker` module is above `virtual_machine` in the dep graph
-    /// (forward use) AND the body re-enters `bun_runtime` for the worker
-    /// thread's `event_loop().auto_tick()`, so [`global_exit`] reaches it
-    /// through this slot. Prevents detached worker threads from racing the
-    /// freed resolver BSSMap singletons during `transpiler.deinit()`.
-    pub terminate_all_workers_and_wait: fn(timeout_ms: u64),
     /// `CronJob.clearAllForVM(vm, .reload)`.
     /// Same impl as `cron_clear_all_teardown` but
     /// the `.reload` mode preserves the next-fire schedule across the new
@@ -1837,6 +1884,20 @@ pub struct RuntimeHooks {
     /// never lazily created. Called from `WebWorker::shutdown` / `global_exit`
     /// right after `close_all_socket_groups`.
     pub close_dns_for_terminate: fn(),
+    /// Stop every registered native handle behind a JS object (servers,
+    /// listeners, fs watchers) — the stop phase for Rust-side JS classes, run
+    /// with the VM alive right after the WebCore stop phase.
+    ///
+    /// # Safety
+    /// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
+    pub close_active_handles: unsafe fn(vm: *mut VirtualMachine),
+    /// Teardown-only, after ~VM (JSC's RunLoop timers use the heap until then):
+    /// close the loop handles the timer heap embeds (Windows uv_timer/uv_idle)
+    /// so the loop close unlinks them before the runtime state is freed.
+    ///
+    /// # Safety
+    /// JS thread; `runtime_state` installed.
+    pub close_timer_loop_handles: unsafe fn(vm: *mut VirtualMachine),
 }
 
 /// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS
@@ -2112,6 +2173,7 @@ impl VirtualMachine {
             // their validity invariants even when len/cap are 0. Write the
             // canonical empty value via `ptr::write` (no Drop of zeroed bytes).
             addr_of_mut!((*vm).preload).write(Vec::new());
+            addr_of_mut!((*vm).child_workers).write(Vec::new());
             addr_of_mut!((*vm).argv).write(Vec::new());
             addr_of_mut!((*vm).resolved_path_dups).write(Vec::new());
             addr_of_mut!((*vm).macros).write(Default::default());
@@ -3588,11 +3650,9 @@ impl VirtualMachine {
             smol: opts.smol,
             eval_mode: opts.eval,
             is_main_thread: false,
-            // The global is created
-            // with `worker.cpp_worker`, `worker.execution_context_id`,
-            // and `worker.mini` so the C++ ZigGlobalObject is born with its
-            // WorkerGlobalScope + debugger context id wired.
-            worker_ptr: worker.cpp_worker(),
+            // The global is created with the worker's messaging proxy, context id
+            // and `mini` so the C++ ZigGlobalObject is born with its options wired.
+            worker_ptr: worker.proxy(),
             context_id: Some(worker.execution_context_id() as i32),
             mini_mode: worker.mini(),
             ..Default::default()
@@ -4603,6 +4663,11 @@ impl VirtualMachine {
     /// and cannot be called from here.
     pub fn swap_global_for_test_isolation(&mut self) {
         debug_assert!(self.test_isolation_enabled);
+
+        // The finished file's workers, ports, channels and sockets are stopped
+        // first (no events dispatched), before its socket groups and timers are
+        // swept and before the new global exists.
+        Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(self.global());
 
         if let Some(cwd) = self.test_isolation_state.saved_cwd.take() {
             let mut buf = bun_paths::PathBuffer::uninit();

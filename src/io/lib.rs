@@ -30,6 +30,8 @@ pub use error::Error;
 
 #[cfg(windows)]
 pub mod windows_event_loop;
+#[cfg(windows)]
+pub mod uv_owners;
 
 // `posix_event_loop` also defines the *shared* event-loop scaffolding
 // (`EventLoopCtx`, `AllocatorType`, `Owner`, `Flags`, `PollTag`, `Store`,

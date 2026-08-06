@@ -1617,6 +1617,15 @@ impl WindowsBufferedReader {
         debug_assert!(!self.source.as_ref().unwrap().is_closed());
         let self_ptr = core::ptr::from_mut(self).cast::<c_void>();
         self.source.as_mut().unwrap().set_data(self_ptr);
+        if matches!(self.source, Some(Source::Pipe(_) | Source::Tty(_))) {
+            unsafe fn close_for_teardown(r: *mut c_void) {
+                // SAFETY: registered key is this live reader (unregistered in `close_impl`).
+                unsafe { (*r.cast::<WindowsBufferedReader>()).close() };
+            }
+            // A thread teardown closes open stream handles through their owner
+            // (see `bun_io::uv_owners`).
+            crate::uv_owners::register(self_ptr, close_for_teardown);
+        }
         self.buffer().clear();
         self.flags.remove(WindowsFlags::IS_DONE);
         // Debug-only fault injection for test/js/bun/spawn/spawn-pipe-start-error.test.ts:
@@ -2026,6 +2035,9 @@ impl WindowsBufferedReader {
 
     pub fn close_impl<const CALL_DONE: bool>(&mut self) {
         if let Some(source) = self.source.take() {
+            if matches!(source, Source::Pipe(_) | Source::Tty(_)) {
+                crate::uv_owners::unregister(core::ptr::from_mut(self).cast());
+            }
             match source {
                 Source::SyncFile(file) | Source::File(file) => {
                     // Hand the Box off to libuv: detach() leaves either an
@@ -2247,6 +2259,7 @@ impl Drop for WindowsBufferedReader {
                 self.source = Some(source);
                 self.close_impl::<false>();
             } else {
+                crate::uv_owners::unregister(core::ptr::from_mut(self).cast());
                 core::mem::forget(source);
             }
         }

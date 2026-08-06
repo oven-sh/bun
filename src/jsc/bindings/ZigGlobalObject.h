@@ -180,8 +180,6 @@ public:
 
     WebCore::ScriptExecutionContext* scriptExecutionContext() const;
 
-    void queueTask(WebCore::EventLoopTask* task);
-    void queueTaskConcurrently(WebCore::EventLoopTask* task);
 
     JSDOMStructureMap& structures() WTF_REQUIRES_LOCK(m_gcLock) { return m_structures; }
     JSDOMStructureMap& structures(NoLockingNecessaryTag) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
@@ -348,6 +346,13 @@ public:
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
     RefPtr<WebCore::Performance> performance();
+    WebCore::Performance* existingPerformance() const { return m_performance.get(); }
+
+    // VM teardown, in order: prepareForDestruction() (fence cross-thread producers, stop every
+    // ActiveDOMObject, strip listeners — script still allowed) -> the caller's own sweeps and child
+    // joins -> forbidExecution() (clear microtasks and module caches, request termination).
+    void prepareForDestruction();
+    void forbidExecution();
 
     Bun::Process* processObject() const { return m_processObject.getInitializedOnMainThread(this); }
     JSC::JSObject* processEnvObject() const { return m_processEnvObject.getInitializedOnMainThread(this); }

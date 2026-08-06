@@ -208,10 +208,10 @@ int us_loop_close_all_groups(struct us_loop_t *loop) {
     int any = 0;
     while (g) {
         struct us_socket_group_t *next = g->next;
-        /* Only connecting/connected sockets are stranded — listen sockets are
-         * 1:1 owned by a Zig Listener / uWS App that holds a raw pointer and
-         * closes them in finalize(). Closing them here turns that into a UAF
-         * after drainClosedSockets(). */
+        /* Only connecting/connected sockets are stranded here. Listen sockets are
+         * 1:1 owned by a Listener / uWS App that holds a raw pointer to them; the
+         * runtime's stop phase has already stopped those owners before this sweep,
+         * and closing a listen socket from under one that was not would be a UAF. */
         if (g->head_sockets || g->head_connecting_sockets || g->low_prio_count) {
             us_socket_group_close_all_ex(g, /* also_listeners */ 0);
             any = 1;

@@ -181,13 +181,22 @@ describe("well-formedness", () => {
     expect(syntaxError("<a>").message).toBe("XML Parse error: Missing closing tag for element 'a'");
     expect(syntaxError("<a></b>").message).toBe("XML Parse error: Expected closing tag </a> but found </b>");
     expect(syntaxError("<a/><b/>").message).toBe("XML Parse error: Only one root element is allowed");
-    expect(syntaxError("<a/>junk").message).toBe("XML Parse error: Unexpected content after the root element: 'j'");
-    expect(syntaxError("junk<a/>").message).toBe("XML Parse error: Expected the root element but found 'j'");
+    expect(syntaxError("<a/>junk").message).toBe("XML Parse error: Unexpected 'junk' after the root element");
+    expect(syntaxError("junk<a/>").message).toBe("XML Parse error: Expected the root element but found 'junk'");
     expect(syntaxError(`<a b="1" b="2"/>`).message).toBe("XML Parse error: Duplicate attribute 'b'");
     expect(syntaxError(`<a b=1/>`).message).toBe("XML Parse error: Expected a quoted attribute value but found '1'");
-    expect(syntaxError(`<a b/>`).message).toBe("XML Parse error: Expected '=' after the attribute name but found '/'");
+    expect(syntaxError(`<a b/>`).message).toBe("XML Parse error: Expected '=' after the attribute name but found '/>'");
     expect(syntaxError(`<a b="<"/>`).message).toBe("XML Parse error: '<' is not allowed in attribute values");
     expect(syntaxError(`<A></a>`).message).toBe("XML Parse error: Expected closing tag </A> but found </a>");
+    // A stray token is named where it stands, not scanned for what it might have started.
+    expect(syntaxError(`<r/>\n'junk`).message).toBe("XML Parse error: Unexpected ''' after the root element");
+    expect(syntaxError(`'<r/>`).message).toBe("XML Parse error: Expected the root element but found '''");
+    expect(syntaxError(`<a <!--x--> b="1"/>`).message).toBe(
+      "XML Parse error: Expected an attribute name, '>' or '/>' in the start tag but found a comment",
+    );
+    expect(syntaxError(`<a %b;/>`).message).toBe(
+      "XML Parse error: Expected an attribute name, '>' or '/>' in the start tag but found '%b;'",
+    );
   });
 
   test("character rules", () => {
@@ -237,7 +246,9 @@ describe("well-formedness", () => {
     expect(XML.parse("<:a/>")).toEqual({ ":a": "" });
     expect(syntaxError("<0a/>").message).toBe("XML Parse error: Expected an element name after '<' but found '0'");
     expect(syntaxError("<-a/>").message).toContain("Expected an element name");
-    expect(syntaxError("<a×/>").message).toContain("but found '×' (U+00D7)");
+    expect(syntaxError("<a×/>").message).toBe(
+      "XML Parse error: Expected an attribute name, '>' or '/>' in the start tag but found '×' (U+00D7)",
+    );
     expect(syntaxError("< a/>").message).toContain("but found space");
     expect(syntaxError("<a>< /a>").message).toContain("but found space");
     expect(syntaxError("<a></ a>").message).toContain("but found space");
@@ -254,8 +265,8 @@ describe("well-formedness", () => {
       "XML Parse error: ']]>' is only allowed as the end of a CDATA section",
     );
     expect(XML.parse("<a>x]] >]></a>")).toEqual({ a: "x]] >]>" });
-    expect(syntaxError("<![CDATA[x]]><a/>").message).toContain("Expected '<!DOCTYPE'");
-    expect(syntaxError("<a/><![CDATA[x]]>").message).toBe("XML Parse error: Only one root element is allowed");
+    expect(syntaxError("<![CDATA[x]]><a/>").message).toContain("CDATA sections are only allowed inside elements");
+    expect(syntaxError("<a/><![CDATA[x]]>").message).toContain("CDATA sections are only allowed inside elements");
     expect(syntaxError("<a><?xml version='1.0'?></a>").message).toContain("'<?xml' is reserved");
     expect(syntaxError("<?XML version='1.0'?><a/>").message).toContain("'<?xml' is reserved");
     expect(syntaxError(" <?xml version='1.0'?><a/>").message).toContain("only allowed at the very start");
@@ -275,7 +286,7 @@ describe("well-formedness", () => {
       "XML Parse error: Unsupported XML version '2.0' (this is an XML 1.0 parser)",
     );
     expect(syntaxError(`<?xml version="1"?><a/>`).message).toContain("Unsupported XML version '1'");
-    expect(syntaxError(`<?xml?><a/>`).message).toContain("'<?xml' is reserved");
+    expect(syntaxError(`<?xml?><a/>`).message).toBe("XML Parse error: The XML declaration must specify the version");
     expect(syntaxError(`<?xml ?><a/>`).message).toBe("XML Parse error: The XML declaration must specify the version");
     expect(syntaxError(`<?xml encoding="UTF-8"?><a/>`).message).toBe(
       `XML Parse error: The XML declaration must start with version="1.0"`,
@@ -286,18 +297,24 @@ describe("well-formedness", () => {
     expect(syntaxError(`<?xml version="1.0" version="1.0"?><a/>`).message).toContain("Misplaced 'version'");
     expect(syntaxError(`<?xml version="1.0" foo="1"?><a/>`).message).toContain("Unexpected 'foo'");
     expect(syntaxError(`<?xml version="1.0" standalone="maybe"?><a/>`).message).toContain("expected yes or no");
-    expect(syntaxError(`<?xml version="1.0"encoding="UTF-8"?><a/>`).message).toContain("Expected whitespace");
+    expect(syntaxError(`<?xml version="1.0"encoding="UTF-8"?><a/>`).message).toBe(
+      "XML Parse error: Whitespace is required before 'encoding'",
+    );
     expect(syntaxError(`<?xml version="1.0" encoding="UTF 8"?><a/>`).message).toContain("Invalid encoding name");
     expect(syntaxError(`<?xml version="1.0" encoding="8UTF"?><a/>`).message).toContain("Invalid encoding name '8UTF'");
     expect(syntaxError(`<?xml version="1.0"`).message).toContain("Unterminated XML declaration");
-    expect(syntaxError(`<?xml VERSION="1.0"?><a/>`).message).toContain("Unexpected 'VERSION'");
-    expect(syntaxError(`<?xml vérsion="1.0"?><a/>`).message).toContain("Expected '=' in the XML declaration");
+    expect(syntaxError(`<?xml VERSION="1.0"?><a/>`).message).toBe(
+      `XML Parse error: Expected version="1.0" in the XML declaration but found 'VERSION'`,
+    );
+    expect(syntaxError(`<?xml vérsion="1.0"?><a/>`).message).toContain(`in the XML declaration but found 'vérsion'`);
     // The declaration is read before the bytes are known to be valid UTF-8.
     expect(syntaxError(Buffer.from([0x3c, 0x3f, 0x78, 0x6d, 0x6c, 0x20, 0xc3])).message).toContain("XML declaration");
     expect(syntaxError(Buffer.from([0x3c, 0x3f, 0x78, 0x6d, 0x6c, 0x20, 0x76, 0xf0, 0x9f])).message).toContain(
       "XML declaration",
     );
-    expect(syntaxError(Buffer.from(`<?xml version="1.ð`, "latin1")).message).toContain("XML declaration");
+    expect(syntaxError(Buffer.from([...Buffer.from(`<?xml version="1.`), 0xf0, 0x9f])).message).toBe(
+      "XML Parse error: Invalid UTF-8",
+    );
   });
 
   test("deep nesting is a catchable error, not a crash", () => {
@@ -351,25 +368,29 @@ describe("document type declaration", () => {
     expect(XML.parse(`<!DOCTYPE a PUBLIC "-//X//Y//EN" 'a.dtd' [ <!-- c --> <?pi?> ]><a/>`)).toEqual({ a: "" });
     // Invalid (root name mismatch, undeclared elements) but well-formed: accepted.
     expect(XML.parse(`<!DOCTYPE x [<!ELEMENT x (y)>]><a><b/></a>`)).toEqual({ a: { b: "" } });
-    expect(syntaxError(`<!DOCTYPE a [ <!ELEMENT> ]><a/>`).message).toContain(
-      "Expected whitespace after the declaration keyword",
+    expect(syntaxError(`<!DOCTYPE a [ <!ELEMENT> ]><a/>`).message).toBe(
+      "XML Parse error: Expected an element name after '<!ELEMENT' but found '>'",
     );
     expect(syntaxError(`<!DOCTYPE a [ <!ELEMENT a (b|c,d)> ]><a/>`).message).toContain("cannot mix ',' and '|'");
     expect(syntaxError(`<!DOCTYPE a [ <!ELEMENT a (#PCDATA|b)> ]><a/>`).message).toContain("must end with ')*'");
     expect(syntaxError(`<!DOCTYPE a [ <!ATTLIST a b CDATA > ]><a/>`).message).toContain(
       "#REQUIRED, #IMPLIED, #FIXED or a quoted default value",
     );
-    expect(syntaxError(`<!DOCTYPE a [ <!ENTITY e> ]><a/>`).message).toContain(
-      "Expected whitespace after the entity name",
+    expect(syntaxError(`<!DOCTYPE a [ <!ENTITY e> ]><a/>`).message).toBe(
+      "XML Parse error: Expected a quoted entity value, SYSTEM or PUBLIC but found '>'",
     );
     expect(syntaxError(`<!DOCTYPE a [ <![INCLUDE[]]> ]><a/>`).message).toContain("Conditional sections");
-    expect(syntaxError(`<!DOCTYPE a [ junk ]><a/>`).message).toContain("Unexpected character in the internal subset");
+    expect(syntaxError(`<!DOCTYPE a [ junk ]><a/>`).message).toBe(
+      "XML Parse error: Expected a markup declaration or ']' in the internal subset but found 'junk'",
+    );
     expect(syntaxError(`<!DOCTYPE a [`).message).toContain("Unterminated internal subset");
     expect(syntaxError(`<!DOCTYPE a><!DOCTYPE a><a/>`).message).toBe(
       "XML Parse error: Only one document type declaration is allowed",
     );
-    expect(syntaxError(`<a/><!DOCTYPE a>`).message).toBe("XML Parse error: Only one root element is allowed");
-    expect(syntaxError(`<!doctype a><a/>`).message).toContain("Expected '<!DOCTYPE'");
+    expect(syntaxError(`<a/><!DOCTYPE a>`).message).toBe(
+      "XML Parse error: Unexpected '<!DOCTYPE' after the root element",
+    );
+    expect(syntaxError(`<!doctype a><a/>`).message).toContain("'<!' must begin a comment");
   });
 
   test("internal general entities are expanded, including markup, in content and attributes", () => {
@@ -483,6 +504,18 @@ describe("document type declaration", () => {
     expect(syntaxError(`<!DOCTYPE d [<!ENTITY % half "<!ENTITY e 'x'">%half;>]><d/>`).message).toBe(
       "XML Parse error: A markup declaration must begin and end in the same entity",
     );
+    expect(syntaxError(`<!DOCTYPE d [<!ENTITY % e "]"> %e; ]><d/>`).message).toBe(
+      "XML Parse error: ']' inside a parameter entity cannot close the internal subset",
+    );
+    // Inside replacement text, though, a reference may stand for any tokens of a
+    // declaration (here: the system literal), as in the external subset.
+    expect(
+      XML.parse(`<!DOCTYPE d [<!ENTITY % l "'x.dtd'"><!ENTITY % decl "<!ENTITY e SYSTEM &#37;l;>">%decl;]><d>&e;</d>`),
+    ).toEqual({ d: "&e;" });
+    // `<!ENTITY %name` reads as a declaration missing its space, not as a reference.
+    expect(syntaxError(`<!DOCTYPE d [<!ENTITY %e "x">]><d/>`).message).toBe(
+      "XML Parse error: Whitespace is required between '%' and the name in a parameter entity declaration",
+    );
   });
 
   describe("external entities are never loaded", () => {
@@ -567,6 +600,11 @@ describe("encodings", () => {
   });
 
   test("UTF-8 bytes, with or without a BOM or declaration", () => {
+    expect(syntaxError(Buffer.from([0x3c, 0x80, 0x61, 0x2f, 0x3e])).message).toBe("XML Parse error: Invalid UTF-8");
+    expect(
+      syntaxError(Buffer.concat([Buffer.from(`<?xml version="1.0"?>`), Buffer.from([0x3c, 0x80, 0x61, 0x2f, 0x3e])]))
+        .message,
+    ).toBe("XML Parse error: Invalid UTF-8");
     expect(XML.parse(Buffer.from(text))).toEqual(expected);
     expect(XML.parse(Buffer.from("﻿" + text))).toEqual(expected);
     expect(XML.parse(Buffer.from(`<?xml version="1.0" encoding="utf-8"?>${text}`))).toEqual(expected);
@@ -598,6 +636,11 @@ describe("encodings", () => {
       doc: { "@attr": "café", "#text": "naïve" },
     });
     expect(XML.parse(Buffer.from(`<?xml version='1.0' encoding="latin1"?><d>\xff</d>`, "latin1"))).toEqual({ d: "ÿ" });
+    // Transcoding restarts the buffer; that must not make a second declaration legal.
+    expect(
+      syntaxError(Buffer.from(`<?xml version="1.0" encoding="ISO-8859-1"?><?xml version="1.0"?><r>\xe9</r>`, "latin1"))
+        .message,
+    ).toContain("'<?xml' is reserved for the XML declaration");
   });
 
   test("mismatches between the bytes and the declaration are errors", () => {

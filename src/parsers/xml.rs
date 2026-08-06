@@ -1,16 +1,20 @@
 //! XML 1.0 (Fifth Edition) scanner/parser — a non-validating processor that
 //! does not read external entities (§5.1).
 //!
-//! Architecture (mirrors `toml.rs` / `json5.rs`): a scanner reads bytes and
-//! produces typed tokens; the parser only consumes tokens and never touches
-//! source bytes. XML's lexical grammar is entirely positional (a `Name` in a
-//! start tag, in an ATTLIST declaration, and after `&` are three different
-//! tokens; `%` is a reference in the DTD and data in content), so the parser
-//! selects a scan mode per grammar production and each mode returns a narrow
-//! token type that can only represent what is legal at that position. Trivia
-//! is positional too — where `S` is optional, required, or forbidden differs
-//! per production — so each scan mode consumes exactly the whitespace,
-//! comments and processing instructions its position allows.
+//! Architecture (mirrors `yaml.rs`): the scanner turns bytes into tokens and
+//! the parser is recursive descent over tokens, never touching source bytes.
+//! Outside element content XML's lexical grammar is uniform — names, quoted
+//! literals, a handful of punctuation marks and the `<!…` / `<?…` openers —
+//! so a single `Scanner::next` loop serves the XML declaration, the document
+//! type declaration with its internal subset, and tags: it walks byte by
+//! byte, whitespace is just an arm that advances and continues, and every
+//! other byte immediately identifies the token to scan. Where the grammar
+//! makes whitespace required or forbidden (§2.3 `S`, `)*`, `?>`), the parser
+//! checks the token's `spaced` flag. The one context-sensitive lexeme is the
+//! quoted literal (`AttValue`, `EntityValue`, `SystemLiteral` and
+//! `PubidLiteral` decode differently), so `next` takes the `Literal` kind the
+//! parser's grammar position calls for. Element content, where whitespace is
+//! character data, has its own loop (`Scanner::next_content`).
 //!
 //! Entity replacement (§4.4) is character-level substitution, so it lives in
 //! the scanner: an entity reference in a context where the spec says
@@ -213,176 +217,170 @@ fn is_pubid_char(c: u8) -> bool {
 const XML_WS: &[u8] = b" \t\n\r";
 
 // ── tokens ──────────────────────────────────────────────────────────────────
-//
-// Each scan mode returns its own narrow token type: a token that is illegal
-// at a grammar position cannot be produced there. `pos` is a byte offset in
-// the document for diagnostics; `frame` identifies the input frame (document
-// or entity replacement text) the token was read from.
 
-/// What may appear before the root element after the XML declaration.
-/// Comments, PIs and whitespace are consumed as trivia.
-enum PrologItem<'a> {
-    Doctype {
-        pos: usize,
-    },
-    /// `<Name` of the root element; attributes follow via `scan_tag_item`.
-    StartTag {
-        name: &'a [u8],
-        pos: usize,
-        frame: u32,
-    },
-    Eof {
-        pos: usize,
-    },
+/// What the scanner hands the parser: `Scanner::next` produces everything
+/// but `Text`; `Scanner::next_content` produces `Text`, the tags and `Eof`.
+#[derive(Clone, Copy)]
+struct Token<'a> {
+    kind: Kind<'a>,
+    /// Byte offset in the document, for diagnostics.
+    pos: usize,
+    /// The input frame (document or entity replacement text) the token was
+    /// read from; elements and declarations must begin and end in the same
+    /// one.
+    frame: u32,
+    /// Whether whitespace came directly before the token. `S` is required,
+    /// optional or forbidden depending on the position, and the parser
+    /// checks that with this flag.
+    spaced: bool,
 }
 
-/// One pseudo-attribute of the XML declaration, or its end.
-enum XmlDeclItem<'a> {
-    Attr {
-        name: &'a [u8],
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind<'a> {
+    /// The end of the document or, with its name, of an entity's replacement
+    /// text where that is not simply the end of an inclusion.
+    Eof(Option<&'a [u8]>),
+    /// `Name` (§2.3 [5]); keywords such as `SYSTEM` or `CDATA` are names too.
+    Name(&'a [u8]),
+    /// A run of name characters that does not start with a `NameStartChar`,
+    /// so only an `Nmtoken` (§2.3 [7]).
+    Nmtoken(&'a [u8]),
+    /// `#` and a name: `#PCDATA`, `#REQUIRED`, `#IMPLIED`, `#FIXED`.
+    Hash(&'a [u8]),
+    /// `%Name;` outside parameter-entity replacement text (inside it, a
+    /// reference is included in place, §4.4.8, and never surfaces).
+    PeReference(&'a [u8]),
+    /// `%` not followed by a name: the parameter-entity declaration marker.
+    Percent,
+    /// `%Name` with no `;`: a malformed reference — or, right after
+    /// `<!ENTITY`, a parameter-entity declaration missing its space.
+    PercentName(&'a [u8]),
+    /// A quoted literal, read as the `Literal` kind the parser asked for.
+    Literal {
         value: &'a [u8],
-        pos: usize,
+        is_ascii: bool,
     },
-    End {
-        pos: usize,
+    Eq,
+    Gt,
+    SlashGt,
+    ParenOpen,
+    ParenClose,
+    Bar,
+    Comma,
+    Question,
+    Star,
+    Plus,
+    BracketOpen,
+    BracketClose,
+    /// `<!DOCTYPE`, `<!ELEMENT`, `<!ATTLIST`, `<!ENTITY`, `<!NOTATION`.
+    Decl(DeclKind),
+    /// `<?xml` at the very start of the document; its pseudo-attributes
+    /// follow as ordinary tokens.
+    XmlDecl,
+    /// A comment or processing instruction, checked and dropped.
+    Comment,
+    Pi,
+    /// `<Name`
+    StartTag(&'a [u8]),
+    /// `</Name`
+    EndTag(&'a [u8]),
+    /// Character data with CDATA sections, references and included entities
+    /// folded in.
+    Text {
+        text: &'a [u8],
+        is_ascii: bool,
     },
+    /// A character that cannot start any token; always an error, which the
+    /// parser reports along with what it expected there.
+    Unexpected(u32),
 }
 
-/// What follows the name in `<!DOCTYPE name ...>`.
-enum DoctypeItem {
-    /// `SYSTEM "..."` or `PUBLIC "..." "..."`, validated and dropped (the
-    /// external subset is not read).
-    ExternalId,
-    OpenSubset,
-    Close,
+impl core::fmt::Display for Kind<'_> {
+    /// How a token is named in "but found …" diagnostics.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let name = |f: &mut core::fmt::Formatter<'_>, prefix: &str, name: &[u8], suffix: &str| {
+            write!(f, "'{}{}{}'", prefix, bstr::BStr::new(name), suffix)
+        };
+        match *self {
+            Kind::Eof(Some(entity)) => write!(f, "the end of entity '{}'", bstr::BStr::new(entity)),
+            Kind::Eof(None) => f.write_str("end of input"),
+            Kind::Name(n) | Kind::Nmtoken(n) => name(f, "", n, ""),
+            Kind::Hash(n) => name(f, "#", n, ""),
+            Kind::PeReference(n) => name(f, "%", n, ";"),
+            Kind::Percent => f.write_str("'%'"),
+            Kind::PercentName(n) => name(f, "%", n, ""),
+            Kind::Literal { .. } => f.write_str("a quoted string"),
+            Kind::Eq => f.write_str("'='"),
+            Kind::Gt => f.write_str("'>'"),
+            Kind::SlashGt => f.write_str("'/>'"),
+            Kind::ParenOpen => f.write_str("'('"),
+            Kind::ParenClose => f.write_str("')'"),
+            Kind::Bar => f.write_str("'|'"),
+            Kind::Comma => f.write_str("','"),
+            Kind::Question => f.write_str("'?'"),
+            Kind::Star => f.write_str("'*'"),
+            Kind::Plus => f.write_str("'+'"),
+            Kind::BracketOpen => f.write_str("'['"),
+            Kind::BracketClose => f.write_str("']'"),
+            Kind::Decl(kind) => f.write_str(kind.opener()),
+            Kind::XmlDecl => f.write_str("'<?xml'"),
+            Kind::Comment => f.write_str("a comment"),
+            Kind::Pi => f.write_str("a processing instruction"),
+            Kind::StartTag(n) => name(f, "<", n, ""),
+            Kind::EndTag(n) => name(f, "</", n, ""),
+            Kind::Text { .. } => f.write_str("text"),
+            Kind::Unexpected(cp) => match char::from_u32(cp) {
+                Some(c) if c.is_ascii_graphic() => write!(f, "'{}'", c),
+                Some(c) if !c.is_control() => write!(f, "'{}' (U+{:04X})", c, cp),
+                _ => write!(f, "U+{:04X}", cp),
+            },
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum DeclKind {
+    Doctype,
     Element,
     Attlist,
     Entity,
     Notation,
 }
 
-/// The next markup declaration in the internal subset, or its end.
-/// Whitespace, comments, PIs and parameter-entity references between
-/// declarations are consumed as trivia (a reference to an internal parameter
-/// entity continues scanning inside its replacement text).
-enum SubsetItem {
-    Decl {
-        kind: DeclKind,
-        pos: usize,
-        frame: u32,
-    },
-    Close,
+impl DeclKind {
+    fn opener(self) -> &'static str {
+        match self {
+            DeclKind::Doctype => "'<!DOCTYPE'",
+            DeclKind::Element => "'<!ELEMENT'",
+            DeclKind::Attlist => "'<!ATTLIST'",
+            DeclKind::Entity => "'<!ENTITY'",
+            DeclKind::Notation => "'<!NOTATION'",
+        }
+    }
 }
 
-/// `contentspec` (§3.2 [46]) opener.
-enum ContentSpec {
-    Empty,
-    Any,
-    /// `(` — a `Mixed` or `children` group follows.
-    Open,
-}
-
-/// Occurrence indicator after a content particle.
+/// How the quoted literal at the next token is read. The literal
+/// productions (§2.3 [9]–[12]) differ in what they recognize between the
+/// quotes, and only the parser knows which one its position calls for.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Occurrence {
-    Once,
-    Optional,
-    ZeroOrMore,
-    OneOrMore,
-}
-
-/// What begins a content particle (§3.2.1 [48]).
-enum CpItem {
-    Name(Occurrence),
-    Open,
-    PcData,
-}
-
-/// What follows a content particle inside a group.
-enum CpSep {
-    Close(Occurrence),
-    Choice,
-    Seq,
-}
-
-/// The start of one `AttDef` (§3.3 [53]) or the end of the ATTLIST.
-enum AttDefItem<'a> {
-    Name(&'a [u8]),
-    End { frame: u32 },
-}
-
-/// `AttType` (§3.3.1 [54]). Only the CDATA/non-CDATA distinction matters to
-/// a non-validating processor (attribute-value normalization, §3.3.3).
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum AttType {
-    Cdata,
-    /// Tokenized or enumerated: the value is additionally space-collapsed.
-    Other,
-}
-
-/// `DefaultDecl` (§3.3.2 [60]).
-enum DefaultDecl<'a> {
-    Required,
-    Implied,
-    /// The (already normalized) default value; `#FIXED` makes no difference
-    /// without validation.
-    Value {
-        value: &'a [u8],
-        is_ascii: bool,
-    },
-}
-
-/// `S ('%' S)? Name` of an entity declaration.
-struct EntityDeclHead<'a> {
-    parameter: bool,
-    name: &'a [u8],
-}
-
-/// `EntityDef` / `PEDef` (§4.2 [73] [74]).
-enum EntityDef<'a> {
-    Internal(&'a [u8]),
-    External { unparsed: bool },
-}
-
-/// One attribute of a start tag, or the end of the tag.
-enum TagItem<'a> {
-    Attr {
-        name: &'a [u8],
-        value: &'a [u8],
-        is_ascii: bool,
-        pos: usize,
-    },
-    End {
-        empty: bool,
-    },
-}
-
-/// Element content (§3.1 [43]). Character data, CDATA sections, references
-/// and the text of included entities are folded into maximal `Text` runs;
-/// comments and PIs are consumed as trivia.
-enum Content<'a> {
-    Text {
-        text: &'a [u8],
-        is_ascii: bool,
-        pos: usize,
-    },
-    StartTag {
-        name: &'a [u8],
-        pos: usize,
-        frame: u32,
-    },
-    EndTag {
-        name: &'a [u8],
-        pos: usize,
-        frame: u32,
-    },
-    Eof {
-        pos: usize,
-    },
+enum Literal {
+    /// No literal is legal here: a quote is a `Kind::Unexpected` token.
+    None,
+    /// XML declaration values: no references, and `<` and `>` are rejected
+    /// so a missing quote cannot swallow markup.
+    Plain,
+    /// `AttValue`: references included and whitespace normalized (§4.4.5,
+    /// §3.3.3); `collapse` when the attribute is declared with a tokenized
+    /// or enumerated type, whose values additionally have leading and
+    /// trailing spaces dropped and inner runs collapsed.
+    AttValue { collapse: bool },
+    /// `EntityValue`: character and parameter-entity references included,
+    /// general entity references bypassed (§4.4.5, §4.4.7).
+    EntityValue,
+    /// `SystemLiteral`: anything up to the closing quote.
+    System,
+    /// `PubidLiteral`: `PubidChar`s only.
+    Pubid,
 }
 
 // ── entities and input frames ───────────────────────────────────────────────
@@ -451,9 +449,8 @@ struct Frame<'a> {
 
 // ── scanner ─────────────────────────────────────────────────────────────────
 
-/// Owns the byte cursor, the input-frame stack and the entity tables. The only
-/// component that reads bytes; every method scans one token (or one fixed
-/// construct) for one grammar position.
+/// Owns the byte cursor, the input-frame stack and the entity tables; the
+/// only component that reads bytes.
 struct Scanner<'a, 'log> {
     /// The frame being read (the fields of `Frame`, unpacked for the hot
     /// path); enclosing frames wait in `suspended`.
@@ -485,6 +482,9 @@ struct Scanner<'a, 'log> {
     transcoded: bool,
     saw_utf8_bom: bool,
     needs_utf16_declaration: bool,
+    /// Where the document proper starts (after a byte-order mark): the only
+    /// place an XML declaration may stand.
+    content_start: usize,
     encoding: InputEncoding,
     bump: &'a Bump,
     source: &'a Source,
@@ -622,9 +622,10 @@ impl<'a, 'log> Scanner<'a, 'log> {
     }
 
     /// Decodes the UTF-8 sequence at the cursor: (code point, byte length).
-    /// The input has been validated by the time names and text are scanned;
-    /// a sequence cut off by the end of the frame decodes as its lead byte so
-    /// the cursor can never pass the end.
+    /// Only the XML declaration is tokenized before the input is validated;
+    /// there a malformed sequence decodes as (0, len) or, when cut off by
+    /// the end of the frame, as (lead byte, 1) — never past the end, and
+    /// never as a character a name or the parser accepts.
     fn decode_utf8(&self) -> (u32, usize) {
         let first = self.peek();
         let len = strings::wtf8_byte_sequence_length(first);
@@ -639,24 +640,19 @@ impl<'a, 'log> Scanner<'a, 'log> {
         )
     }
 
-    /// Validates the non-ASCII sequence at the cursor as a `Char` (once the
-    /// input is valid UTF-8 only U+FFFE and U+FFFF are excluded) and returns
-    /// its byte length.
+    /// Validates the non-ASCII sequence at the cursor as a `Char` (in valid
+    /// UTF-8 only U+FFFE and U+FFFF are excluded) and returns its byte
+    /// length. A malformed sequence can only be met inside the XML
+    /// declaration, before the input has been validated.
     fn check_non_ascii_char(&mut self) -> PResult<usize> {
         let (cp, len) = self.decode_utf8();
+        if len == 1 || cp == 0 {
+            return Err(self.err(self.here(), "Invalid UTF-8"));
+        }
         if cp == 0xFFFE || cp == 0xFFFF {
             return Err(self.err_invalid_char());
         }
         Ok(len)
-    }
-
-    /// Skips `S`; returns whether there was any.
-    fn skip_ws(&mut self) -> bool {
-        let start = self.pos;
-        while is_ws(self.peek()) {
-            self.pos += 1;
-        }
-        self.pos != start
     }
 
     // ── input frames and entities ──────────────────────────────────────────
@@ -768,11 +764,39 @@ impl<'a, 'log> Scanner<'a, 'log> {
         buf.push(b';');
     }
 
+    /// Includes the parameter entity `name` as declarations (§4.4.8): pushes
+    /// its replacement text (the caller accounts for the space it counts as
+    /// on either side), or records that an entity that is not read was
+    /// referenced.
+    fn include_parameter_entity(&mut self, name: &'a [u8], ref_pos: usize) -> PResult<()> {
+        self.saw_pe_reference = true;
+        match self.entities.parameter.get(name).copied() {
+            Some(EntityValue::Internal(text)) => {
+                self.push_frame(text, FrameKind::Declarations, (name, true), ref_pos)
+            }
+            Some(_) => {
+                self.saw_unread_pe = true;
+                Ok(())
+            }
+            // Undeclared: only a well-formedness error when standalone (WFC:
+            // Entity Declared); otherwise the DTD is merely incomplete.
+            None if self.standalone => {
+                Err(self.err_named(ref_pos, "Parameter entity", name, " is not declared"))
+            }
+            None => {
+                self.saw_unread_pe = true;
+                Ok(())
+            }
+        }
+    }
+
     // ── document setup ─────────────────────────────────────────────────────
 
-    /// Byte-order mark handling and UTF-16 detection (§4.3.3, Appendix F).
-    /// UTF-16 input is transcoded to UTF-8 up front.
-    fn init_document(&mut self) -> PResult<()> {
+    /// Byte-order mark handling and UTF-16 detection (§4.3.3, Appendix F);
+    /// UTF-16 input is transcoded to UTF-8 up front. Returns whether an XML
+    /// declaration may follow, in which case validating the input has to
+    /// wait for the encoding it declares.
+    fn init_document(&mut self) -> PResult<bool> {
         let bytes = self.src;
         if bytes.starts_with(b"\xEF\xBB\xBF") {
             self.pos = 3;
@@ -790,19 +814,19 @@ impl<'a, 'log> Scanner<'a, 'log> {
             self.transcode_utf16(bytes, false)?;
             self.needs_utf16_declaration = true;
         }
-        Ok(())
+        self.content_start = self.pos;
+        Ok(self.starts_with(b"<?xml") && is_ws(self.peek_at(self.pos + 5)))
     }
 
-    /// The rest of the input must be valid UTF-8 (§4.3.3: malformed byte
-    /// sequences are fatal). Run after the XML declaration, whose encoding
-    /// may first cause the input to be transcoded.
+    /// The input must be valid UTF-8 (§4.3.3: malformed byte sequences are
+    /// fatal). Run after the XML declaration — whose encoding may first
+    /// cause the input to be transcoded — and before anything is decoded.
     fn validate_utf8(&mut self) -> PResult<()> {
-        let result = simdutf::validate::with_errors::utf8(&self.src[self.pos..]);
+        let result = simdutf::validate::with_errors::utf8(self.src);
         if result.is_successful() {
             Ok(())
         } else {
-            let pos = self.pos + result.count;
-            Err(self.err(pos, "Invalid UTF-8"))
+            Err(self.err(result.count, "Invalid UTF-8"))
         }
     }
 
@@ -894,6 +918,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
             if let Some(utf8) = strings::to_utf8_from_latin1(&self.src[self.pos..]) {
                 self.src = self.bump.alloc_slice_copy(&utf8);
                 self.pos = 0;
+                self.content_start = usize::MAX;
                 self.transcoded = true;
             }
             Ok(())
@@ -909,26 +934,31 @@ impl<'a, 'log> Scanner<'a, 'log> {
 
     // ── names, references, literals ────────────────────────────────────────
 
-    /// `Name` (§2.3 [5]) at the cursor. `what` phrases the "but found" error.
+    /// `Name` (§2.3 [5]) at the cursor, where the grammar allows nothing
+    /// else (after `<`, `</`, `&`, `%`, `#`, `<?`). `what` phrases the "but
+    /// found" error.
     fn scan_name(&mut self, what: &'static str) -> PResult<&'a [u8]> {
         let start = self.pos;
-        let c = self.peek();
-        if is_name_start_ascii(c) {
-            self.pos += 1;
-        } else if c >= 0x80 {
-            let (cp, len) = self.decode_utf8();
-            if !is_name_start_code_point(cp) {
-                return Err(self.err_here(what));
-            }
-            self.pos += len;
-        } else {
+        if !self.at_name_start() {
             return Err(self.err_here(what));
         }
-        self.skip_name_chars();
+        let (_, len) = self.decode_utf8();
+        self.pos += len;
+        self.scan_name_chars();
         Ok(&self.src[start..self.pos])
     }
 
-    fn skip_name_chars(&mut self) {
+    /// Whether a `NameStartChar` is at the cursor.
+    fn at_name_start(&self) -> bool {
+        let c = self.peek();
+        if c < 0x80 {
+            is_name_start_ascii(c)
+        } else {
+            is_name_start_code_point(self.decode_utf8().0)
+        }
+    }
+
+    fn scan_name_chars(&mut self) {
         loop {
             let c = self.peek();
             if is_name_char_ascii(c) {
@@ -945,14 +975,33 @@ impl<'a, 'log> Scanner<'a, 'log> {
         }
     }
 
-    /// `Nmtoken` (§2.3 [7]) at the cursor.
-    fn scan_nmtoken(&mut self) -> PResult<&'a [u8]> {
+    /// A maximal run of `NameChar`s at the cursor and whether it starts with
+    /// a `NameStartChar` (a `Name`) or not (only an `Nmtoken`); `None` if the
+    /// character at the cursor cannot start either.
+    fn scan_name_run(&mut self) -> Option<(&'a [u8], bool)> {
         let start = self.pos;
-        self.skip_name_chars();
-        if self.pos == start {
-            return Err(self.err_here("Expected a name token but found"));
-        }
-        Ok(&self.src[start..self.pos])
+        let c = self.peek();
+        let (is_name, len) = if c < 0x80 {
+            if is_name_start_ascii(c) {
+                (true, 1)
+            } else if is_name_char_ascii(c) {
+                (false, 1)
+            } else {
+                return None;
+            }
+        } else {
+            let (cp, len) = self.decode_utf8();
+            if is_name_start_code_point(cp) {
+                (true, len)
+            } else if is_name_code_point(cp) {
+                (false, len)
+            } else {
+                return None;
+            }
+        };
+        self.pos += len;
+        self.scan_name_chars();
+        Some((&self.src[start..self.pos], is_name))
     }
 
     /// `Name ';'` after `&` or `%`.
@@ -968,6 +1017,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// The rest of `&#...;` / `&#x...;` after `&#`. Returns the code point,
     /// which must be a `Char` (WFC: Legal Character).
     fn scan_char_ref(&mut self, ref_pos: usize) -> PResult<u32> {
+        let text_start = self.pos - 2;
         let hex = self.peek() == b'x';
         if hex {
             self.pos += 1;
@@ -995,12 +1045,12 @@ impl<'a, 'log> Scanner<'a, 'log> {
         }
         self.pos += 1;
         if !is_xml_char(value) {
-            return Err(self.err_fmt(
+            let text = &self.src[text_start..self.pos];
+            return Err(self.err_named(
                 ref_pos,
-                format_args!(
-                    "Character reference &#x{:X}; is not a valid XML character",
-                    value
-                ),
+                "Character reference",
+                text,
+                " is not a valid XML character",
             ));
         }
         Ok(value)
@@ -1032,47 +1082,37 @@ impl<'a, 'log> Scanner<'a, 'log> {
         buf.as_mut().expect("just set")
     }
 
-    fn expect_quote(&mut self, what: &'static str) -> PResult<u8> {
-        match self.peek() {
-            q @ (b'"' | b'\'') => {
-                self.pos += 1;
-                Ok(q)
-            }
-            _ => Err(self.err_here(what)),
-        }
-    }
-
-    /// `SystemLiteral` (§2.3 [11]), validated and dropped.
-    fn skip_system_literal(&mut self) -> PResult<()> {
-        let open = self.here();
-        let quote = self.expect_quote("Expected a quoted system identifier but found")?;
+    /// A `Plain`, `System` or `Pubid` literal after the opening quote: no
+    /// references are recognized; the kinds differ only in the characters
+    /// they admit. Returns (value, is_ascii).
+    fn scan_simple_literal(
+        &mut self,
+        quote: u8,
+        open: usize,
+        literal: Literal,
+    ) -> PResult<(&'a [u8], bool)> {
+        let start = self.pos;
+        let mut is_ascii = true;
         loop {
             match self.peek() {
-                _ if self.at_end() => return Err(self.err(open, "Unterminated system identifier")),
+                _ if self.at_end() => return Err(self.err(open, "Unterminated quoted string")),
                 c if c == quote => {
+                    let value = &self.src[start..self.pos];
                     self.pos += 1;
-                    return Ok(());
+                    return Ok((value, is_ascii));
                 }
-                c if c >= 0x80 => self.pos += self.check_non_ascii_char()?,
+                c if literal == Literal::Pubid && !is_pubid_char(c) => {
+                    return Err(self.err_here("Invalid character in a public identifier:"));
+                }
+                b'<' | b'>' if literal == Literal::Plain => {
+                    return Err(self.err_here("Invalid character in a quoted string:"));
+                }
+                c if c >= 0x80 => {
+                    is_ascii = false;
+                    self.pos += self.check_non_ascii_char()?;
+                }
                 c if c < 0x20 && !is_ws(c) => return Err(self.err_invalid_char()),
                 _ => self.pos += 1,
-            }
-        }
-    }
-
-    /// `PubidLiteral` (§2.3 [12]), validated and dropped.
-    fn skip_pubid_literal(&mut self) -> PResult<()> {
-        let open = self.here();
-        let quote = self.expect_quote("Expected a quoted public identifier but found")?;
-        loop {
-            match self.peek() {
-                _ if self.at_end() => return Err(self.err(open, "Unterminated public identifier")),
-                c if c == quote => {
-                    self.pos += 1;
-                    return Ok(());
-                }
-                c if is_pubid_char(c) => self.pos += 1,
-                _ => return Err(self.err_here("Invalid character in a public identifier:")),
             }
         }
     }
@@ -1080,9 +1120,9 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// `AttValue` (§2.3 [10]) after the opening quote, normalized per §3.3.3:
     /// a character reference appends the character, an entity reference
     /// appends its (recursively normalized) replacement text, a whitespace
-    /// character appends a space. Used for start tags and ATTLIST defaults.
-    /// Returns (value, is_ascii).
-    fn scan_att_value(&mut self, quote: u8) -> PResult<(&'a [u8], bool)> {
+    /// character appends a space; then, for a tokenized type (`collapse`),
+    /// spaces are trimmed and collapsed. Returns (value, is_ascii).
+    fn scan_att_value(&mut self, quote: u8, collapse: bool) -> PResult<(&'a [u8], bool)> {
         let literal_frame = self.frame_id;
         let open_pos = self.here();
         // The value borrows `src[start..]` until normalization or a
@@ -1103,10 +1143,16 @@ impl<'a, 'log> Scanner<'a, 'log> {
                 _ if c == quote && self.frame_id == literal_frame => {
                     let end = self.pos;
                     self.pos += 1;
-                    return Ok(match buf {
-                        Some(b) => (b.into_bump_slice(), is_ascii),
-                        None => (&self.src[start..end], is_ascii),
-                    });
+                    let value = match buf {
+                        Some(b) => b.into_bump_slice(),
+                        None => &self.src[start..end],
+                    };
+                    let value = if collapse {
+                        collapse_spaces(self.bump, value)
+                    } else {
+                        value
+                    };
+                    return Ok((value, is_ascii));
                 }
                 // WFC: No < in Attribute Values (also via replacement text).
                 b'<' => return Err(self.err(self.here(), "'<' is not allowed in attribute values")),
@@ -1165,7 +1211,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// literal, which is only legal outside the internal subset proper (WFC:
     /// PEs in Internal Subset); general entity references are bypassed —
     /// checked for form and kept verbatim (§4.4.7).
-    fn scan_entity_value(&mut self, quote: u8) -> PResult<&'a [u8]> {
+    fn scan_entity_value(&mut self, quote: u8) -> PResult<(&'a [u8], bool)> {
         let literal_frame = self.frame_id;
         let in_internal_subset = self.in_document();
         let open_pos = self.here();
@@ -1183,7 +1229,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                 }
                 _ if c == quote && self.frame_id == literal_frame => {
                     self.pos += 1;
-                    return Ok(buf.into_bump_slice());
+                    return Ok((buf.into_bump_slice(), is_ascii));
                 }
                 b'%' => {
                     let ref_pos = self.here();
@@ -1240,6 +1286,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                 _ if c < 0x20 && !is_ws(c) => return Err(self.err_invalid_char()),
                 _ => {
                     let len = if c >= 0x80 {
+                        is_ascii = false;
                         self.check_non_ascii_char()?
                     } else {
                         1
@@ -1251,10 +1298,10 @@ impl<'a, 'log> Scanner<'a, 'log> {
         }
     }
 
-    // ── trivia: comments and processing instructions ───────────────────────
+    // ── comments and processing instructions ───────────────────────────────
 
-    /// The rest of a comment after `<!--` (§2.5 [15]).
-    fn skip_comment(&mut self, start_pos: usize) -> PResult<()> {
+    /// The rest of a comment after `<!--` (§2.5 [15]); dropped.
+    fn scan_comment(&mut self, start_pos: usize) -> PResult<()> {
         loop {
             match self.peek() {
                 _ if self.at_end() => return Err(self.err(start_pos, "Unterminated comment")),
@@ -1272,11 +1319,17 @@ impl<'a, 'log> Scanner<'a, 'log> {
         }
     }
 
-    /// The rest of a processing instruction after `<?` (§2.6 [16]). The
-    /// target and data are validated and dropped.
-    fn skip_pi(&mut self, start_pos: usize) -> PResult<()> {
+    /// The rest of a processing instruction after `<?` (§2.6 [16]); target
+    /// and data are checked and dropped. Returns `true` instead, leaving the
+    /// pseudo-attributes unread, when this is the XML declaration: `<?xml`
+    /// as the very first thing in the document.
+    fn scan_pi(&mut self, start_pos: usize) -> PResult<bool> {
+        let at_document_start = self.in_document() && start_pos == self.content_start;
         let target =
             self.scan_name("Expected a processing instruction target after '<?' but found")?;
+        if target == b"xml" && at_document_start {
+            return Ok(true);
+        }
         if target.eq_ignore_ascii_case(b"xml") {
             return Err(self.err(
                 start_pos,
@@ -1285,9 +1338,9 @@ impl<'a, 'log> Scanner<'a, 'log> {
         }
         if self.starts_with(b"?>") {
             self.pos += 2;
-            return Ok(());
+            return Ok(false);
         }
-        if !self.skip_ws() {
+        if !is_ws(self.peek()) {
             return Err(self.err_here(
                 "Expected whitespace or '?>' after the processing instruction target but found",
             ));
@@ -1299,7 +1352,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                 }
                 b'?' if self.peek_at(self.pos + 1) == b'>' => {
                     self.pos += 2;
-                    return Ok(());
+                    return Ok(false);
                 }
                 c if c >= 0x80 => self.pos += self.check_non_ascii_char()?,
                 c if c < 0x20 && !is_ws(c) => return Err(self.err_invalid_char()),
@@ -1308,646 +1361,206 @@ impl<'a, 'log> Scanner<'a, 'log> {
         }
     }
 
-    // ── scan modes: prolog and epilog ──────────────────────────────────────
+    // ── tokens: markup ─────────────────────────────────────────────────────
 
-    /// `<?xml` followed by whitespace, at the very start of the document.
-    fn scan_xml_decl_start(&mut self) -> bool {
-        if self.starts_with(b"<?xml") && is_ws(self.peek_at(self.pos + 5)) {
-            self.pos += 5;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// One `name="value"` pseudo-attribute of the XML declaration (after
-    /// required whitespace), or `?>`. Values are returned raw; the parser
-    /// checks names, order and values.
-    fn scan_xml_decl_item(&mut self) -> PResult<XmlDeclItem<'a>> {
-        let had_ws = self.skip_ws();
-        let pos = self.here();
-        if self.starts_with(b"?>") {
-            self.pos += 2;
-            return Ok(XmlDeclItem::End { pos });
-        }
-        if self.at_end() {
-            return Err(self.err_here("Unterminated XML declaration: expected '?>' but found"));
-        }
-        if !had_ws {
-            return Err(self.err_here("Expected whitespace in the XML declaration before"));
-        }
-        // Not `scan_name`: this runs before the input is known to be valid
-        // UTF-8, and the three legal names are ASCII.
-        let start = self.pos;
-        while self.peek().is_ascii_alphanumeric() {
-            self.pos += 1;
-        }
-        if self.pos == start {
-            return Err(self.err_here(
-                "Expected version, encoding, standalone or '?>' in the XML declaration but found",
-            ));
-        }
-        let name = &self.src[start..self.pos];
-        self.skip_ws();
-        if self.peek() != b'=' {
-            return Err(self.err_here("Expected '=' in the XML declaration but found"));
-        }
-        self.pos += 1;
-        self.skip_ws();
-        let quote =
-            self.expect_quote("Expected a quoted value in the XML declaration but found")?;
-        let start = self.pos;
-        while self.peek() != quote {
-            if self.at_end() {
-                return Err(self.err(pos, "Unterminated value in the XML declaration"));
-            }
-            // The legal values are ASCII tokens (checked by the parser); stop
-            // markup from being swallowed by a missing quote.
-            if matches!(self.peek(), b'<' | b'>') || (self.peek() < 0x20 && !is_ws(self.peek())) {
-                return Err(self.err_here("Invalid character in an XML declaration value:"));
-            }
-            self.pos += 1;
-        }
-        let value = &self.src[start..self.pos];
-        self.pos += 1;
-        Ok(XmlDeclItem::Attr { name, value, pos })
-    }
-
-    /// `Misc*` then the DOCTYPE or the root element's `<Name`.
-    fn scan_prolog_item(&mut self) -> PResult<PrologItem<'a>> {
-        loop {
-            self.skip_ws();
+    /// The next token anywhere outside element content. Whitespace between
+    /// tokens is consumed here and reported as `Token::spaced`; a quoted
+    /// literal is read the way `literal` says.
+    fn next(&mut self, literal: Literal) -> PResult<Token<'a>> {
+        let mut spaced = false;
+        let (kind, pos) = loop {
+            let c = self.peek();
             let pos = self.here();
-            if self.at_end() {
-                return Ok(PrologItem::Eof { pos });
-            }
-            if self.peek() != b'<' {
-                return Err(self.err_here("Expected the root element but found"));
-            }
-            if self.starts_with(b"<?") {
-                self.pos += 2;
-                self.skip_pi(pos)?;
-            } else if self.starts_with(b"<!--") {
-                self.pos += 4;
-                self.skip_comment(pos)?;
-            } else if self.starts_with(b"<!DOCTYPE") {
-                self.pos += 9;
-                return Ok(PrologItem::Doctype { pos });
-            } else if self.starts_with(b"<!") {
-                return Err(self.err(pos, "Expected '<!DOCTYPE', a comment, or the root element"));
-            } else {
-                self.pos += 1;
-                let name = self.scan_name("Expected an element name after '<' but found")?;
-                return Ok(PrologItem::StartTag {
-                    name,
-                    pos,
-                    frame: self.frame_id,
-                });
-            }
-        }
-    }
-
-    /// `Misc*` after the root element, to the end of the document.
-    fn scan_epilog(&mut self) -> PResult<()> {
-        loop {
-            self.skip_ws();
-            let pos = self.here();
-            if self.at_end() {
-                return Ok(());
-            }
-            if self.starts_with(b"<?") {
-                self.pos += 2;
-                self.skip_pi(pos)?;
-            } else if self.starts_with(b"<!--") {
-                self.pos += 4;
-                self.skip_comment(pos)?;
-            } else if self.peek() == b'<' {
-                return Err(self.err(pos, "Only one root element is allowed"));
-            } else {
-                return Err(self.err_here("Unexpected content after the root element:"));
-            }
-        }
-    }
-
-    // ── scan modes: document type declaration ──────────────────────────────
-
-    /// `S Name` after `<!DOCTYPE`.
-    fn scan_doctype_name(&mut self) -> PResult<&'a [u8]> {
-        if !self.skip_ws() {
-            return Err(self.err_here("Expected whitespace after '<!DOCTYPE' but found"));
-        }
-        self.scan_name("Expected the document type name but found")
-    }
-
-    /// After the DOCTYPE name (`after_name`) or after its external ID: an
-    /// external ID (directly after the name only, and only after
-    /// whitespace), `[`, or `>`.
-    fn scan_doctype_item(&mut self, after_name: bool) -> PResult<DoctypeItem> {
-        let had_ws = self.skip_ws();
-        match self.peek() {
-            b'[' => {
-                self.pos += 1;
-                Ok(DoctypeItem::OpenSubset)
-            }
-            b'>' => {
-                self.pos += 1;
-                Ok(DoctypeItem::Close)
-            }
-            _ if self.at_end() => {
-                Err(self.err_here("Unterminated document type declaration: expected '>' but found"))
-            }
-            _ if after_name => {
-                if !had_ws {
-                    return Err(self.err_here(
-                        "Expected whitespace, '[' or '>' after the document type name but found",
-                    ));
-                }
-                self.scan_external_id(false)?;
-                Ok(DoctypeItem::ExternalId)
-            }
-            _ => {
-                Err(self.err_here("Expected '[' or '>' in the document type declaration but found"))
-            }
-        }
-    }
-
-    /// `S? '>'` closing the DOCTYPE after the internal subset's `]`.
-    fn scan_doctype_close(&mut self) -> PResult<()> {
-        self.skip_ws();
-        if self.peek() != b'>' {
-            return Err(
-                self.err_here("Expected '>' to close the document type declaration but found")
-            );
-        }
-        self.pos += 1;
-        Ok(())
-    }
-
-    /// `ExternalID` (§4.2.2 [75]) at the cursor: `SYSTEM S SystemLiteral`
-    /// or `PUBLIC S PubidLiteral S SystemLiteral`; for NOTATION declarations
-    /// (`public_only_ok`, [83]) the system literal after PUBLIC is optional.
-    /// The identifiers are validated and dropped.
-    fn scan_external_id(&mut self, public_only_ok: bool) -> PResult<()> {
-        if self.starts_with(b"SYSTEM") {
-            self.pos += 6;
-            if !self.skip_ws() {
-                return Err(self.err_here("Expected whitespace after SYSTEM but found"));
-            }
-            self.skip_system_literal()
-        } else if self.starts_with(b"PUBLIC") {
-            self.pos += 6;
-            if !self.skip_ws() {
-                return Err(self.err_here("Expected whitespace after PUBLIC but found"));
-            }
-            self.skip_pubid_literal()?;
-            let had_ws = self.skip_ws();
-            match self.peek() {
-                b'"' | b'\'' => {
-                    if !had_ws {
-                        return Err(self.err_here("Expected whitespace between the public and system identifiers but found"));
+            match c {
+                _ if self.at_end() => {
+                    // Parameter-entity text included as declarations just
+                    // ends here, counting as whitespace (§4.4.8); the end of
+                    // any other frame is for the parser to reject, or the
+                    // end of the document.
+                    if self.frame_kind == FrameKind::Declarations {
+                        self.pop_frame();
+                        spaced = true;
+                        continue;
                     }
-                    self.skip_system_literal()
+                    break (Kind::Eof(self.frame_entity.map(|(name, _)| name)), pos);
                 }
-                _ if public_only_ok => Ok(()),
-                _ => Err(self.err_here(
-                    "Expected a system identifier after the public identifier but found",
-                )),
-            }
-        } else {
-            Err(self.err_here("Expected SYSTEM or PUBLIC but found"))
-        }
-    }
-
-    /// `DeclSep*` then the next markup declaration keyword or the closing
-    /// `]` (§2.8 [28a] [28b] [29]).
-    fn scan_subset_item(&mut self) -> PResult<SubsetItem> {
-        loop {
-            self.skip_ws();
-            let pos = self.here();
-            if self.at_end() {
-                if self.frame_kind == FrameKind::Declarations {
-                    self.pop_frame();
-                    continue;
-                }
-                return Err(self.err_here("Unterminated internal subset: expected ']' but found"));
-            }
-            match self.peek() {
-                b']' if self.in_document() => {
+                b' ' | b'\t' | b'\n' | b'\r' => {
                     self.pos += 1;
-                    return Ok(SubsetItem::Close);
+                    spaced = true;
+                }
+                b'<' => match self.peek_at(self.pos + 1) {
+                    b'?' => {
+                        self.pos += 2;
+                        if self.scan_pi(pos)? {
+                            break (Kind::XmlDecl, pos);
+                        }
+                        break (Kind::Pi, pos);
+                    }
+                    b'/' => {
+                        self.pos += 2;
+                        let name =
+                            self.scan_name("Expected an element name after '</' but found")?;
+                        break (Kind::EndTag(name), pos);
+                    }
+                    b'!' => {
+                        if self.starts_with(b"<!--") {
+                            self.pos += 4;
+                            self.scan_comment(pos)?;
+                            break (Kind::Comment, pos);
+                        }
+                        const OPENERS: [(&[u8], DeclKind); 5] = [
+                            (b"<!DOCTYPE", DeclKind::Doctype),
+                            (b"<!ELEMENT", DeclKind::Element),
+                            (b"<!ATTLIST", DeclKind::Attlist),
+                            (b"<!ENTITY", DeclKind::Entity),
+                            (b"<!NOTATION", DeclKind::Notation),
+                        ];
+                        if let Some(&(opener, kind)) =
+                            OPENERS.iter().find(|(opener, _)| self.starts_with(opener))
+                        {
+                            self.pos += opener.len();
+                            break (Kind::Decl(kind), pos);
+                        }
+                        if self.starts_with(b"<![CDATA[") {
+                            return Err(
+                                self.err(pos, "CDATA sections are only allowed inside elements")
+                            );
+                        }
+                        if self.starts_with(b"<![") {
+                            return Err(self.err(
+                                pos,
+                                "Conditional sections are only allowed in the external DTD subset",
+                            ));
+                        }
+                        return Err(self.err(pos, "'<!' must begin a comment, '<![CDATA[', or a DOCTYPE, ELEMENT, ATTLIST, ENTITY or NOTATION declaration"));
+                    }
+                    _ => {
+                        self.pos += 1;
+                        let name =
+                            self.scan_name("Expected an element name after '<' but found")?;
+                        break (Kind::StartTag(name), pos);
+                    }
+                },
+                b'"' | b'\'' => {
+                    self.pos += 1;
+                    let (value, is_ascii) = match literal {
+                        Literal::None => break (Kind::Unexpected(u32::from(c)), pos),
+                        Literal::AttValue { collapse } => self.scan_att_value(c, collapse)?,
+                        Literal::EntityValue => self.scan_entity_value(c)?,
+                        Literal::Plain | Literal::System | Literal::Pubid => {
+                            self.scan_simple_literal(c, pos, literal)?
+                        }
+                    };
+                    break (Kind::Literal { value, is_ascii }, pos);
+                }
+                b'=' => {
+                    self.pos += 1;
+                    break (Kind::Eq, pos);
+                }
+                b'>' => {
+                    self.pos += 1;
+                    break (Kind::Gt, pos);
+                }
+                b'/' => {
+                    self.pos += 1;
+                    if self.peek() != b'>' {
+                        return Err(self.err_here("Expected '>' after '/' but found"));
+                    }
+                    self.pos += 1;
+                    break (Kind::SlashGt, pos);
+                }
+                b'(' => {
+                    self.pos += 1;
+                    break (Kind::ParenOpen, pos);
+                }
+                b')' => {
+                    self.pos += 1;
+                    break (Kind::ParenClose, pos);
+                }
+                b'|' => {
+                    self.pos += 1;
+                    break (Kind::Bar, pos);
+                }
+                b',' => {
+                    self.pos += 1;
+                    break (Kind::Comma, pos);
+                }
+                b'?' => {
+                    self.pos += 1;
+                    break (Kind::Question, pos);
+                }
+                b'*' => {
+                    self.pos += 1;
+                    break (Kind::Star, pos);
+                }
+                b'+' => {
+                    self.pos += 1;
+                    break (Kind::Plus, pos);
+                }
+                b'[' => {
+                    self.pos += 1;
+                    break (Kind::BracketOpen, pos);
+                }
+                b']' => {
+                    self.pos += 1;
+                    break (Kind::BracketClose, pos);
+                }
+                b'#' => {
+                    self.pos += 1;
+                    let keyword = self.scan_name("Expected a keyword after '#' but found")?;
+                    break (Kind::Hash(keyword), pos);
                 }
                 b'%' => {
                     self.pos += 1;
-                    self.include_parameter_entity(pos)?;
-                }
-                b'<' => {
-                    let frame = self.frame_id;
-                    let kind = if self.starts_with(b"<!ELEMENT") {
-                        self.pos += 9;
-                        DeclKind::Element
-                    } else if self.starts_with(b"<!ATTLIST") {
-                        self.pos += 9;
-                        DeclKind::Attlist
-                    } else if self.starts_with(b"<!ENTITY") {
-                        self.pos += 8;
-                        DeclKind::Entity
-                    } else if self.starts_with(b"<!NOTATION") {
-                        self.pos += 10;
-                        DeclKind::Notation
-                    } else if self.starts_with(b"<?") {
-                        self.pos += 2;
-                        self.skip_pi(pos)?;
-                        continue;
-                    } else if self.starts_with(b"<!--") {
-                        self.pos += 4;
-                        self.skip_comment(pos)?;
-                        continue;
-                    } else if self.starts_with(b"<![") {
-                        return Err(self.err(
-                            pos,
-                            "Conditional sections are only allowed in the external DTD subset",
-                        ));
-                    } else {
-                        return Err(self.err(pos, "Expected a markup declaration (<!ELEMENT, <!ATTLIST, <!ENTITY, <!NOTATION), a comment, or a processing instruction"));
-                    };
-                    return Ok(SubsetItem::Decl { kind, pos, frame });
-                }
-                _ => return Err(self.err_here("Unexpected character in the internal subset:")),
-            }
-        }
-    }
-
-    /// The rest of `%Name;` after `%` where a parameter entity is included as
-    /// declarations: pushes the replacement text padded with one space on
-    /// each side (§4.4.8), or records that an unread entity was referenced.
-    fn include_parameter_entity(&mut self, ref_pos: usize) -> PResult<()> {
-        let name =
-            self.scan_reference_name("Expected a parameter entity name after '%' but found")?;
-        self.saw_pe_reference = true;
-        match self.entities.parameter.get(name).copied() {
-            Some(EntityValue::Internal(text)) => {
-                let mut padded: ArenaVec<'a, u8> =
-                    ArenaVec::with_capacity_in(text.len() + 2, self.bump);
-                padded.push(b' ');
-                padded.extend_from_slice(text);
-                padded.push(b' ');
-                self.push_frame(
-                    padded.into_bump_slice(),
-                    FrameKind::Declarations,
-                    (name, true),
-                    ref_pos,
-                )
-            }
-            Some(_) => {
-                self.saw_unread_pe = true;
-                Ok(())
-            }
-            // Undeclared: only a well-formedness error when standalone (WFC:
-            // Entity Declared); otherwise the DTD is merely incomplete.
-            None if self.standalone => {
-                Err(self.err_named(ref_pos, "Parameter entity", name, " is not declared"))
-            }
-            None => {
-                self.saw_unread_pe = true;
-                Ok(())
-            }
-        }
-    }
-
-    /// Separator inside a markup declaration; returns whether there was
-    /// any. Inside the replacement text of a parameter entity, a
-    /// parameter-entity reference between tokens is included right here and
-    /// an exhausted one is left (§2.8: PEs may occur between tokens of
-    /// declarations outside the internal subset proper); in the internal
-    /// subset itself that is a well-formedness error (WFC: PEs in Internal
-    /// Subset).
-    fn skip_decl_ws(&mut self) -> PResult<bool> {
-        let mut any = false;
-        loop {
-            any |= self.skip_ws();
-            if self.at_end() && self.frame_kind == FrameKind::Declarations {
-                self.pop_frame();
-                any = true;
-                continue;
-            }
-            if self.peek() == b'%' {
-                // `%` followed by whitespace is the marker of a parameter
-                // entity declaration, not a reference.
-                let next = self.peek_at(self.pos + 1);
-                if is_ws(next) || next == 0 {
-                    return Ok(any);
-                }
-                let pos = self.here();
-                if self.in_document() {
-                    return Err(self.err(pos, "Parameter entity references are not allowed inside markup declarations in the internal subset"));
-                }
-                self.pos += 1;
-                self.include_parameter_entity(pos)?;
-                any = true;
-                continue;
-            }
-            return Ok(any);
-        }
-    }
-
-    fn require_decl_ws(&mut self, what: &'static str) -> PResult<()> {
-        if self.skip_decl_ws()? {
-            Ok(())
-        } else {
-            Err(self.err_here(what))
-        }
-    }
-
-    /// `S Name` after a declaration keyword.
-    fn scan_decl_name(&mut self) -> PResult<&'a [u8]> {
-        self.require_decl_ws("Expected whitespace after the declaration keyword but found")?;
-        self.scan_name("Expected a name in the markup declaration but found")
-    }
-
-    /// `S? '>'` ending a declaration. Returns the frame the `>` came from.
-    fn scan_decl_end(&mut self) -> PResult<u32> {
-        self.skip_decl_ws()?;
-        if self.peek() != b'>' {
-            return Err(self.err_here("Expected '>' to end the markup declaration but found"));
-        }
-        let frame = self.frame_id;
-        self.pos += 1;
-        Ok(frame)
-    }
-
-    // `<!ELEMENT` ───────────────────────────────────────────────────────────
-
-    /// `S contentspec` opener after the element name.
-    fn scan_content_spec(&mut self) -> PResult<ContentSpec> {
-        self.require_decl_ws("Expected whitespace after the element name but found")?;
-        if self.starts_with(b"EMPTY") {
-            self.pos += 5;
-            Ok(ContentSpec::Empty)
-        } else if self.starts_with(b"ANY") {
-            self.pos += 3;
-            Ok(ContentSpec::Any)
-        } else if self.peek() == b'(' {
-            self.pos += 1;
-            Ok(ContentSpec::Open)
-        } else {
-            Err(self.err_here("Expected EMPTY, ANY or '(' in the element declaration but found"))
-        }
-    }
-
-    fn scan_occurrence(&mut self) -> Occurrence {
-        let occurrence = match self.peek() {
-            b'?' => Occurrence::Optional,
-            b'*' => Occurrence::ZeroOrMore,
-            b'+' => Occurrence::OneOrMore,
-            _ => return Occurrence::Once,
-        };
-        self.pos += 1;
-        occurrence
-    }
-
-    /// A content particle position: `S?` then a name (with its occurrence
-    /// indicator, which must follow immediately), `(`, or `#PCDATA`.
-    fn scan_cp_item(&mut self) -> PResult<CpItem> {
-        self.skip_decl_ws()?;
-        match self.peek() {
-            b'(' => {
-                self.pos += 1;
-                Ok(CpItem::Open)
-            }
-            b'#' => {
-                if !self.starts_with(b"#PCDATA") {
-                    return Err(self.err_here("Expected '#PCDATA' but found"));
-                }
-                self.pos += 7;
-                Ok(CpItem::PcData)
-            }
-            _ => {
-                self.scan_name(
-                    "Expected an element name, '(' or '#PCDATA' in the content model but found",
-                )?;
-                Ok(CpItem::Name(self.scan_occurrence()))
-            }
-        }
-    }
-
-    /// After a content particle: `S?` then `)` (with its occurrence
-    /// indicator), `|`, or `,`.
-    fn scan_cp_sep(&mut self) -> PResult<CpSep> {
-        self.skip_decl_ws()?;
-        match self.peek() {
-            b')' => {
-                self.pos += 1;
-                Ok(CpSep::Close(self.scan_occurrence()))
-            }
-            b'|' => {
-                self.pos += 1;
-                Ok(CpSep::Choice)
-            }
-            b',' => {
-                self.pos += 1;
-                Ok(CpSep::Seq)
-            }
-            _ => Err(self.err_here("Expected ')', '|' or ',' in the content model but found")),
-        }
-    }
-
-    // `<!ATTLIST` ───────────────────────────────────────────────────────────
-
-    /// The next attribute definition's name (after required whitespace) or
-    /// the `>` ending the ATTLIST.
-    fn scan_attdef_item(&mut self) -> PResult<AttDefItem<'a>> {
-        let had_ws = self.skip_decl_ws()?;
-        if self.peek() == b'>' {
-            let frame = self.frame_id;
-            self.pos += 1;
-            return Ok(AttDefItem::End { frame });
-        }
-        if !had_ws {
-            return Err(self.err_here("Expected whitespace before the attribute name in the ATTLIST declaration but found"));
-        }
-        let name = self
-            .scan_name("Expected an attribute name or '>' in the ATTLIST declaration but found")?;
-        Ok(AttDefItem::Name(name))
-    }
-
-    /// `S AttType`.
-    fn scan_att_type(&mut self) -> PResult<AttType> {
-        self.require_decl_ws("Expected whitespace after the attribute name but found")?;
-        if self.peek() == b'(' {
-            self.pos += 1;
-            self.skip_enumeration(false)?;
-            return Ok(AttType::Other);
-        }
-        // Longer keywords first (IDREFS before IDREF before ID).
-        const KEYWORDS: [(&[u8], AttType); 8] = [
-            (b"CDATA", AttType::Cdata),
-            (b"IDREFS", AttType::Other),
-            (b"IDREF", AttType::Other),
-            (b"ID", AttType::Other),
-            (b"ENTITIES", AttType::Other),
-            (b"ENTITY", AttType::Other),
-            (b"NMTOKENS", AttType::Other),
-            (b"NMTOKEN", AttType::Other),
-        ];
-        for (keyword, att_type) in KEYWORDS {
-            if self.starts_with(keyword) {
-                self.pos += keyword.len();
-                return Ok(att_type);
-            }
-        }
-        if self.starts_with(b"NOTATION") {
-            self.pos += 8;
-            self.require_decl_ws("Expected whitespace after NOTATION but found")?;
-            if self.peek() != b'(' {
-                return Err(self.err_here("Expected '(' after NOTATION but found"));
-            }
-            self.pos += 1;
-            self.skip_enumeration(true)?;
-            return Ok(AttType::Other);
-        }
-        Err(self.err_here("Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found"))
-    }
-
-    /// The rest of `'(' S? x (S? '|' S? x)* S? ')'` after `(`, where `x` is
-    /// a Name (NOTATION types) or an Nmtoken (enumerations).
-    fn skip_enumeration(&mut self, names: bool) -> PResult<()> {
-        loop {
-            self.skip_decl_ws()?;
-            if names {
-                self.scan_name("Expected a notation name but found")?;
-            } else {
-                self.scan_nmtoken()?;
-            }
-            self.skip_decl_ws()?;
-            match self.peek() {
-                b'|' => self.pos += 1,
-                b')' => {
+                    if !self.at_name_start() {
+                        break (Kind::Percent, pos);
+                    }
+                    let name =
+                        self.scan_name("Expected a parameter entity name after '%' but found")?;
+                    if self.peek() != b';' {
+                        break (Kind::PercentName(name), pos);
+                    }
                     self.pos += 1;
-                    return Ok(());
+                    if self.frame_kind != FrameKind::Declarations {
+                        break (Kind::PeReference(name), pos);
+                    }
+                    // In replacement text a reference may stand between any
+                    // two tokens of a declaration (§2.8) and is included in
+                    // place, counting as whitespace on both sides (§4.4.8).
+                    self.include_parameter_entity(name, pos)?;
+                    spaced = true;
                 }
-                _ => return Err(self.err_here("Expected '|' or ')' in the enumeration but found")),
+                _ if c < 0x20 => return Err(self.err_invalid_char()),
+                _ => match self.scan_name_run() {
+                    Some((run, true)) => break (Kind::Name(run), pos),
+                    Some((run, false)) => break (Kind::Nmtoken(run), pos),
+                    None => {
+                        let len = if c >= 0x80 {
+                            self.check_non_ascii_char()?
+                        } else {
+                            1
+                        };
+                        let (cp, _) = self.decode_utf8();
+                        self.pos += len;
+                        break (Kind::Unexpected(cp), pos);
+                    }
+                },
             }
-        }
+        };
+        Ok(Token {
+            kind,
+            pos,
+            frame: self.frame_id,
+            spaced,
+        })
     }
 
-    /// `S DefaultDecl`.
-    fn scan_default_decl(&mut self) -> PResult<DefaultDecl<'a>> {
-        self.require_decl_ws("Expected whitespace after the attribute type but found")?;
-        if self.starts_with(b"#REQUIRED") {
-            self.pos += 9;
-            return Ok(DefaultDecl::Required);
-        }
-        if self.starts_with(b"#IMPLIED") {
-            self.pos += 8;
-            return Ok(DefaultDecl::Implied);
-        }
-        if self.starts_with(b"#FIXED") {
-            self.pos += 6;
-            self.require_decl_ws("Expected whitespace after #FIXED but found")?;
-        }
-        let quote = self.expect_quote(
-            "Expected #REQUIRED, #IMPLIED, #FIXED or a quoted default value but found",
-        )?;
-        let (value, is_ascii) = self.scan_att_value(quote)?;
-        Ok(DefaultDecl::Value { value, is_ascii })
-    }
+    // ── tokens: element content ────────────────────────────────────────────
 
-    // `<!ENTITY` ────────────────────────────────────────────────────────────
-
-    /// `S ('%' S)? Name`.
-    fn scan_entity_decl_head(&mut self) -> PResult<EntityDeclHead<'a>> {
-        self.require_decl_ws("Expected whitespace after '<!ENTITY' but found")?;
-        let parameter = self.peek() == b'%';
-        if parameter {
-            self.pos += 1;
-            self.require_decl_ws("Expected whitespace after '%' but found")?;
-        }
-        let name = self.scan_name("Expected an entity name but found")?;
-        Ok(EntityDeclHead { parameter, name })
-    }
-
-    /// `S (EntityValue | ExternalID NDataDecl?)`; trailing `S` is consumed.
-    fn scan_entity_def(&mut self, parameter: bool) -> PResult<EntityDef<'a>> {
-        self.require_decl_ws("Expected whitespace after the entity name but found")?;
-        if let q @ (b'"' | b'\'') = self.peek() {
-            self.pos += 1;
-            return Ok(EntityDef::Internal(self.scan_entity_value(q)?));
-        }
-        self.scan_external_id(false)?;
-        // NDataDecl ::= S 'NDATA' S Name — general entities only.
-        let had_ws = self.skip_decl_ws()?;
-        if had_ws && self.starts_with(b"NDATA") {
-            if parameter {
-                return Err(self.err_here("Parameter entities cannot have NDATA:"));
-            }
-            self.pos += 5;
-            self.require_decl_ws("Expected whitespace after NDATA but found")?;
-            self.scan_name("Expected a notation name after NDATA but found")?;
-            return Ok(EntityDef::External { unparsed: true });
-        }
-        Ok(EntityDef::External { unparsed: false })
-    }
-
-    // `<!NOTATION` ──────────────────────────────────────────────────────────
-
-    /// `S (ExternalID | PublicID)`.
-    fn scan_notation_id(&mut self) -> PResult<()> {
-        self.require_decl_ws("Expected whitespace after the notation name but found")?;
-        self.scan_external_id(true)
-    }
-
-    // ── scan modes: tags ───────────────────────────────────────────────────
-
-    /// Inside a start tag after the name: an attribute (after required
-    /// whitespace) or the end of the tag.
-    fn scan_tag_item(&mut self) -> PResult<TagItem<'a>> {
-        let had_ws = self.skip_ws();
-        match self.peek() {
-            b'>' => {
-                self.pos += 1;
-                Ok(TagItem::End { empty: false })
-            }
-            b'/' => {
-                self.pos += 1;
-                if self.peek() != b'>' {
-                    return Err(self.err_here("Expected '>' after '/' in the tag but found"));
-                }
-                self.pos += 1;
-                Ok(TagItem::End { empty: true })
-            }
-            _ if self.at_end() => {
-                Err(self.err_here("Unterminated start tag: expected '>' but found"))
-            }
-            _ => {
-                if !had_ws {
-                    return Err(self.err_here("Expected whitespace, '>' or '/>' after the previous name or value in the tag but found"));
-                }
-                let pos = self.here();
-                let name = self.scan_name("Expected an attribute name but found")?;
-                self.skip_ws();
-                if self.peek() != b'=' {
-                    return Err(self.err_here("Expected '=' after the attribute name but found"));
-                }
-                self.pos += 1;
-                self.skip_ws();
-                let quote = self.expect_quote("Expected a quoted attribute value but found")?;
-                let (value, is_ascii) = self.scan_att_value(quote)?;
-                Ok(TagItem::Attr {
-                    name,
-                    value,
-                    is_ascii,
-                    pos,
-                })
-            }
-        }
-    }
-
-    // ── scan modes: content ────────────────────────────────────────────────
-
-    /// Element content: the next tag, or one maximal text run with CDATA
-    /// sections, references and included entities folded in and comments
-    /// and PIs skipped, or the end of input.
-    fn scan_content(&mut self) -> PResult<Content<'a>> {
+    /// The next token inside an element: one maximal `Text` run (CDATA
+    /// sections, references and included entities folded in, comments and
+    /// processing instructions dropped), a `StartTag` or `EndTag`, or `Eof`.
+    fn next_content(&mut self) -> PResult<Token<'a>> {
         // The run borrows `src[start..pos]` while it is a plain slice of
         // one frame; the first divergence copies it into `buf`, after which
         // everything is appended to `buf` and `start` is kept at `pos`.
@@ -1983,10 +1596,14 @@ impl<'a, 'log> Scanner<'a, 'log> {
                         start = self.pos;
                         continue;
                     }
-                    return Ok(if have_text!() {
-                        self.finish_text(start, buf, is_ascii, text_pos)
-                    } else {
-                        Content::Eof { pos: self.here() }
+                    if have_text!() {
+                        return Ok(self.finish_text(start, buf, is_ascii, text_pos));
+                    }
+                    return Ok(Token {
+                        kind: Kind::Eof(self.frame_entity.map(|(name, _)| name)),
+                        pos: self.here(),
+                        frame: self.frame_id,
+                        spaced: false,
                     });
                 }
                 b'<' => {
@@ -1995,7 +1612,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                     if next == b'!' && self.starts_with(b"<!--") {
                         flush!();
                         self.pos += 4;
-                        self.skip_comment(pos)?;
+                        self.scan_comment(pos)?;
                         start = self.pos;
                     } else if next == b'!' && self.starts_with(b"<![CDATA[") {
                         let b = flush!();
@@ -2035,32 +1652,33 @@ impl<'a, 'log> Scanner<'a, 'log> {
                     } else if next == b'?' {
                         flush!();
                         self.pos += 2;
-                        self.skip_pi(pos)?;
+                        let is_xml_decl = self.scan_pi(pos)?;
+                        debug_assert!(!is_xml_decl, "content never starts the document");
                         start = self.pos;
                     } else if have_text!() {
                         // A tag ends the run; leave it for the next call.
                         return Ok(self.finish_text(start, buf, is_ascii, text_pos));
-                    } else if next == b'/' {
-                        self.pos += 2;
-                        let frame = self.frame_id;
-                        let name =
-                            self.scan_name("Expected an element name after '</' but found")?;
-                        self.skip_ws();
-                        if self.peek() != b'>' {
-                            return Err(
-                                self.err_here("Expected '>' to end the closing tag but found")
-                            );
-                        }
-                        self.pos += 1;
-                        return Ok(Content::EndTag { name, pos, frame });
                     } else if next == b'!' {
                         return Err(self.err(pos, "Expected a comment or CDATA section after '<!'"));
                     } else {
-                        self.pos += 1;
                         let frame = self.frame_id;
-                        let name =
-                            self.scan_name("Expected an element name after '<' but found")?;
-                        return Ok(Content::StartTag { name, pos, frame });
+                        let kind = if next == b'/' {
+                            self.pos += 2;
+                            Kind::EndTag(
+                                self.scan_name("Expected an element name after '</' but found")?,
+                            )
+                        } else {
+                            self.pos += 1;
+                            Kind::StartTag(
+                                self.scan_name("Expected an element name after '<' but found")?,
+                            )
+                        };
+                        return Ok(Token {
+                            kind,
+                            pos,
+                            frame,
+                            spaced: false,
+                        });
                     }
                 }
                 b'&' => {
@@ -2136,7 +1754,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
         buf: Option<ArenaVec<'a, u8>>,
         is_ascii: bool,
         pos: usize,
-    ) -> Content<'a> {
+    ) -> Token<'a> {
         let text: &'a [u8] = match buf {
             Some(mut b) => {
                 b.extend_from_slice(&self.src[start..self.pos]);
@@ -2144,10 +1762,11 @@ impl<'a, 'log> Scanner<'a, 'log> {
             }
             None => &self.src[start..self.pos],
         };
-        Content::Text {
-            text,
-            is_ascii,
+        Token {
+            kind: Kind::Text { text, is_ascii },
             pos,
+            frame: self.frame_id,
+            spaced: false,
         }
     }
 }
@@ -2492,12 +2111,15 @@ impl<'a> AttList<'a> {
 /// names pairwise; beyond it, through `Parser::attribute_names`.
 const LINEAR_ATTRIBUTE_LIMIT: usize = 8;
 
-/// Consumes tokens from the scanner, checks the grammar and the structural
-/// well-formedness constraints, applies DTD information to attributes, and
-/// drives a `Sink`. Has no access to source bytes.
+/// Recursive descent over the scanner's tokens: checks the grammar and the
+/// structural well-formedness constraints, applies DTD information to
+/// attributes, and drives a `Sink`. Never reads source bytes.
 struct Parser<'a, 'log, S: Sink<'a>> {
     scanner: Scanner<'a, 'log>,
-    bump: &'a Bump,
+    /// The current token.
+    tok: Token<'a>,
+    /// Inside the document type declaration, for diagnostics.
+    in_dtd: bool,
     stack_check: StackCheck,
     sink: S,
     attlists: HashMap<&'a [u8], AttList<'a>>,
@@ -2540,12 +2162,19 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
                 transcoded: false,
                 saw_utf8_bom: false,
                 needs_utf16_declaration: false,
+                content_start: 0,
                 encoding: options.encoding,
                 bump,
                 source,
                 log,
             },
-            bump,
+            tok: Token {
+                kind: Kind::Eof(None),
+                pos: 0,
+                frame: 0,
+                spaced: false,
+            },
+            in_dtd: false,
             stack_check: StackCheck::init(),
             sink,
             attlists: HashMap::default(),
@@ -2557,157 +2186,343 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
     /// Nesting too deep to recurse into. The message is for the module
     /// loader's log; `Bun.XML.parse` throws a `RangeError` regardless.
     fn stack_overflow(&mut self) -> PErr {
-        let pos = self.scanner.here();
-        let _ = self.scanner.err(pos, "Nesting is too deep");
+        let _ = self.scanner.err(self.tok.pos, "Nesting is too deep");
         PErr::StackOverflow
+    }
+
+    // ── tokens ─────────────────────────────────────────────────────────────
+
+    fn advance(&mut self) -> PResult<()> {
+        self.advance_literal(Literal::None)
+    }
+
+    /// `advance`, saying how a quoted literal is to be read if one is next.
+    fn advance_literal(&mut self, literal: Literal) -> PResult<()> {
+        self.tok = self.scanner.next(literal)?;
+        Ok(())
+    }
+
+    fn advance_content(&mut self) -> PResult<()> {
+        self.tok = self.scanner.next_content()?;
+        Ok(())
+    }
+
+    /// "Expected {expected} but found {the current token}".
+    fn unexpected(&mut self, expected: &str) -> PErr {
+        // WFC: PEs in Internal Subset is the likeliest reason for a stray
+        // reference inside a declaration, so say that instead.
+        if self.in_dtd && matches!(self.tok.kind, Kind::PeReference(_)) {
+            return self.scanner.err(
+                self.tok.pos,
+                "Parameter entity references are not allowed inside markup declarations in the internal subset",
+            );
+        }
+        if let Kind::PercentName(name) = self.tok.kind {
+            return self.scanner.err_named(
+                self.tok.pos,
+                "Expected ';' to end the parameter entity reference",
+                name,
+                "",
+            );
+        }
+        self.scanner.err_fmt(
+            self.tok.pos,
+            format_args!("Expected {} but found {}", expected, self.tok.kind),
+        )
+    }
+
+    /// Where the grammar has a required `S` before the current token.
+    fn require_spaced(&mut self) -> PResult<()> {
+        if self.tok.spaced {
+            return Ok(());
+        }
+        Err(self.scanner.err_fmt(
+            self.tok.pos,
+            format_args!("Whitespace is required before {}", self.tok.kind),
+        ))
+    }
+
+    fn expect_name(&mut self, expected: &str) -> PResult<&'a [u8]> {
+        match self.tok.kind {
+            Kind::Name(name) => Ok(name),
+            _ => Err(self.unexpected(expected)),
+        }
+    }
+
+    /// The `>` ending a declaration or tag; returns the frame it came from.
+    fn expect_gt(&mut self, expected: &str) -> PResult<u32> {
+        match self.tok.kind {
+            Kind::Gt => Ok(self.tok.frame),
+            _ => Err(self.unexpected(expected)),
+        }
     }
 
     // ── document ───────────────────────────────────────────────────────────
 
     /// `document ::= prolog element Misc*` (§2.1 [1]).
     fn parse_document(mut self) -> PResult<Expr> {
-        self.scanner.init_document()?;
-        if self.scanner.scan_xml_decl_start() {
+        // An XML declaration has to be read before the encoding it declares
+        // can be applied and the input validated (its tokens are checked
+        // against ASCII names and values, so nothing mis-decoded survives).
+        let validation_deferred = self.scanner.init_document()?;
+        if !validation_deferred {
+            self.scanner.check_utf16_declaration()?;
+            self.scanner.validate_utf8()?;
+        }
+        self.advance()?;
+        let has_xml_decl = self.tok.kind == Kind::XmlDecl;
+        if has_xml_decl {
             self.parse_xml_decl()?;
         }
-        self.scanner.check_utf16_declaration()?;
-        self.scanner.validate_utf8()?;
+        if validation_deferred {
+            self.scanner.check_utf16_declaration()?;
+            self.scanner.validate_utf8()?;
+        }
+        if has_xml_decl {
+            self.advance()?;
+        }
+
+        // prolog: Misc* (doctypedecl Misc*)?
         let mut seen_doctype = false;
         loop {
-            match self.scanner.scan_prolog_item()? {
-                PrologItem::Doctype { pos } => {
-                    if seen_doctype {
-                        return Err(self
-                            .scanner
-                            .err(pos, "Only one document type declaration is allowed"));
-                    }
+            match self.tok.kind {
+                Kind::Comment | Kind::Pi => {}
+                Kind::Decl(DeclKind::Doctype) if !seen_doctype => {
                     seen_doctype = true;
                     self.parse_doctype()?;
                 }
-                PrologItem::StartTag { name, pos, frame } => {
-                    self.parse_element(name, pos, frame)?;
-                    break;
+                Kind::Decl(DeclKind::Doctype) => {
+                    return Err(self.scanner.err(
+                        self.tok.pos,
+                        "Only one document type declaration is allowed",
+                    ));
                 }
-                PrologItem::Eof { pos } => {
+                Kind::StartTag(_) => break,
+                Kind::Eof(_) => {
                     return Err(self
                         .scanner
-                        .err(pos, "XML document must have a root element"));
+                        .err(self.tok.pos, "XML document must have a root element"));
+                }
+                Kind::Decl(_) | Kind::PeReference(_) | Kind::Percent | Kind::PercentName(_) => {
+                    return Err(self.scanner.err(
+                        self.tok.pos,
+                        "Markup declarations and parameter-entity references are only allowed in the document type declaration",
+                    ));
+                }
+                _ => return Err(self.unexpected("the root element")),
+            }
+            self.advance()?;
+        }
+
+        self.parse_element()?;
+
+        // Misc*
+        loop {
+            self.advance()?;
+            match self.tok.kind {
+                Kind::Comment | Kind::Pi => {}
+                Kind::Eof(_) => break,
+                Kind::StartTag(_) => {
+                    return Err(self
+                        .scanner
+                        .err(self.tok.pos, "Only one root element is allowed"));
+                }
+                _ => {
+                    return Err(self.scanner.err_fmt(
+                        self.tok.pos,
+                        format_args!("Unexpected {} after the root element", self.tok.kind),
+                    ));
                 }
             }
         }
-        self.scanner.scan_epilog()?;
         Ok(self.sink.finish())
     }
 
     /// `XMLDecl ::= '<?xml' VersionInfo EncodingDecl? SDDecl? S? '?>'`
-    /// (§2.8 [23]) after `<?xml`.
+    /// (§2.8 [23]); the current token is `<?xml`. Ends on the `>` of `?>`.
     fn parse_xml_decl(&mut self) -> PResult<()> {
-        #[derive(PartialEq, PartialOrd)]
-        enum Seen {
-            Nothing,
-            Version,
-            Encoding,
-            Standalone,
+        self.advance()?;
+
+        // VersionInfo. VersionNum ::= '1.' [0-9]+; a 1.x document other
+        // than 1.0 is processed as 1.0 (§2.8, erratum E10).
+        let Some((version, pos)) = self.parse_pseudo_attribute(b"version")? else {
+            return Err(match self.tok.kind {
+                Kind::Name(b"encoding" | b"standalone") => self.scanner.err(
+                    self.tok.pos,
+                    "The XML declaration must start with version=\"1.0\"",
+                ),
+                Kind::Question => self
+                    .scanner
+                    .err(self.tok.pos, "The XML declaration must specify the version"),
+                _ => self.unexpected("version=\"1.0\" in the XML declaration"),
+            });
+        };
+        if !(version.len() >= 3
+            && version.starts_with(b"1.")
+            && version[2..].iter().all(u8::is_ascii_digit))
+        {
+            return Err(self.scanner.err_named(
+                pos,
+                "Unsupported XML version",
+                version,
+                " (this is an XML 1.0 parser)",
+            ));
         }
-        let mut seen = Seen::Nothing;
-        let mut encoding: Option<(&'a [u8], usize)> = None;
-        loop {
-            match self.scanner.scan_xml_decl_item()? {
-                XmlDeclItem::End { pos } => {
-                    if seen == Seen::Nothing {
-                        return Err(self
-                            .scanner
-                            .err(pos, "The XML declaration must specify the version"));
-                    }
-                    break;
-                }
-                XmlDeclItem::Attr { name, value, pos } => {
-                    match name {
-                        b"version" if seen == Seen::Nothing => {
-                            // VersionNum ::= '1.' [0-9]+ — a 1.x document other
-                            // than 1.0 is processed as 1.0 (§2.8, erratum E10).
-                            let valid = value.len() >= 3
-                                && value.starts_with(b"1.")
-                                && value[2..].iter().all(u8::is_ascii_digit);
-                            if !valid {
-                                return Err(self.scanner.err_named(
-                                    pos,
-                                    "Unsupported XML version",
-                                    value,
-                                    " (this is an XML 1.0 parser)",
-                                ));
-                            }
-                            seen = Seen::Version;
-                        }
-                        b"encoding" if seen == Seen::Version => {
-                            // EncName ::= [A-Za-z] ([A-Za-z0-9._] | '-')*
-                            let valid = value.first().is_some_and(u8::is_ascii_alphabetic)
-                                && value.iter().all(|c| {
-                                    c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-')
-                                });
-                            if !valid {
-                                return Err(self.scanner.err_named(
-                                    pos,
-                                    "Invalid encoding name",
-                                    value,
-                                    " in the XML declaration",
-                                ));
-                            }
-                            encoding = Some((value, pos));
-                            seen = Seen::Encoding;
-                        }
-                        b"standalone" if seen == Seen::Version || seen == Seen::Encoding => {
-                            match value {
-                                b"yes" => self.scanner.standalone = true,
-                                b"no" => {}
-                                _ => {
-                                    return Err(self.scanner.err_named(pos, "Invalid value", value, " for standalone in the XML declaration (expected yes or no)"));
-                                }
-                            }
-                            seen = Seen::Standalone;
-                        }
-                        b"encoding" | b"standalone" if seen == Seen::Nothing => {
-                            return Err(self
-                                .scanner
-                                .err(pos, "The XML declaration must start with version=\"1.0\""));
-                        }
-                        b"version" | b"encoding" | b"standalone" => {
-                            return Err(self.scanner.err_named(pos, "Misplaced", name, " in the XML declaration (the order is version, encoding, standalone)"));
-                        }
-                        _ => {
-                            return Err(self.scanner.err_named(pos, "Unexpected", name, " in the XML declaration (expected version, encoding or standalone)"));
-                        }
-                    }
+
+        // EncodingDecl. EncName ::= [A-Za-z] ([A-Za-z0-9._] | '-')*
+        let encoding = self.parse_pseudo_attribute(b"encoding")?;
+        if let Some((name, pos)) = encoding {
+            let valid = name.first().is_some_and(u8::is_ascii_alphabetic)
+                && name
+                    .iter()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'));
+            if !valid {
+                return Err(self.scanner.err_named(
+                    pos,
+                    "Invalid encoding name",
+                    name,
+                    " in the XML declaration",
+                ));
+            }
+        }
+
+        // SDDecl.
+        if let Some((value, pos)) = self.parse_pseudo_attribute(b"standalone")? {
+            match value {
+                b"yes" => self.scanner.standalone = true,
+                b"no" => {}
+                _ => {
+                    return Err(self.scanner.err_named(
+                        pos,
+                        "Invalid value",
+                        value,
+                        " for standalone in the XML declaration (expected yes or no)",
+                    ));
                 }
             }
         }
+
+        // S? '?>'
+        match self.tok.kind {
+            Kind::Question => {
+                self.advance()?;
+                if self.tok.kind != Kind::Gt || self.tok.spaced {
+                    return Err(self.unexpected("'?>' to end the XML declaration"));
+                }
+            }
+            Kind::Name(name @ (b"version" | b"encoding" | b"standalone")) => {
+                return Err(self.scanner.err_named(
+                    self.tok.pos,
+                    "Misplaced",
+                    name,
+                    " in the XML declaration (the order is version, encoding, standalone)",
+                ));
+            }
+            Kind::Name(name) => {
+                return Err(self.scanner.err_named(
+                    self.tok.pos,
+                    "Unexpected",
+                    name,
+                    " in the XML declaration (expected version, encoding or standalone)",
+                ));
+            }
+            Kind::Eof(_) => {
+                return Err(self
+                    .scanner
+                    .err(self.tok.pos, "Unterminated XML declaration: expected '?>'"));
+            }
+            _ => return Err(self.unexpected("'?>' to end the XML declaration")),
+        }
+
         if let Some((name, pos)) = encoding {
             self.scanner.apply_declared_encoding(name, pos)?;
         }
         Ok(())
     }
 
+    /// `S name Eq "value"` in the XML declaration if the current token is
+    /// `name`: returns the value and the name's position and advances past
+    /// it; otherwise consumes nothing.
+    fn parse_pseudo_attribute(
+        &mut self,
+        name: &'static [u8],
+    ) -> PResult<Option<(&'a [u8], usize)>> {
+        if self.tok.kind != Kind::Name(name) {
+            return Ok(None);
+        }
+        self.require_spaced()?;
+        let pos = self.tok.pos;
+        self.advance()?;
+        if self.tok.kind != Kind::Eq {
+            return Err(self.unexpected("'=' after the name in the XML declaration"));
+        }
+        self.advance_literal(Literal::Plain)?;
+        let Kind::Literal { value, .. } = self.tok.kind else {
+            return Err(self.unexpected("a quoted value in the XML declaration"));
+        };
+        self.advance()?;
+        Ok(Some((value, pos)))
+    }
+
     // ── document type declaration ──────────────────────────────────────────
 
-    /// `doctypedecl` (§2.8 [28]) after `<!DOCTYPE`.
+    /// `doctypedecl` (§2.8 [28]); the current token is `<!DOCTYPE`. Ends on
+    /// its `>`.
     fn parse_doctype(&mut self) -> PResult<()> {
-        self.scanner.scan_doctype_name()?;
-        let mut item = self.scanner.scan_doctype_item(true)?;
-        if let DoctypeItem::ExternalId = item {
+        self.in_dtd = true;
+        self.advance()?;
+        self.expect_name("the document type name")?;
+        self.require_spaced()?;
+        self.advance()?;
+        if let Kind::Name(b"SYSTEM" | b"PUBLIC") = self.tok.kind {
+            self.require_spaced()?;
+            self.parse_external_id(false)?;
             self.scanner.has_external_subset = true;
-            item = self.scanner.scan_doctype_item(false)?;
         }
-        match item {
-            DoctypeItem::ExternalId => {
-                unreachable!("scan_doctype_item(false) does not produce ExternalId")
-            }
-            DoctypeItem::Close => {}
-            DoctypeItem::OpenSubset => {
+        match self.tok.kind {
+            Kind::Gt => {}
+            Kind::BracketOpen => {
                 self.parse_internal_subset()?;
-                self.scanner.scan_doctype_close()?;
+                self.advance()?;
+                self.expect_gt("'>' to close the document type declaration")?;
+            }
+            _ => {
+                return Err(
+                    self.unexpected("SYSTEM, PUBLIC, '[' or '>' in the document type declaration")
+                );
             }
         }
+        self.in_dtd = false;
         Ok(())
+    }
+
+    /// `ExternalID` (§4.2.2 [75]) — or, for a NOTATION (`notation`, [83]),
+    /// also a `PublicID` without system identifier; the current token is
+    /// `SYSTEM` or `PUBLIC`. The identifiers are checked and dropped (nothing
+    /// external is read). Ends on the token after the last literal.
+    fn parse_external_id(&mut self, notation: bool) -> PResult<()> {
+        if let Kind::Name(b"SYSTEM") = self.tok.kind {
+            self.advance_literal(Literal::System)?;
+            if !matches!(self.tok.kind, Kind::Literal { .. }) {
+                return Err(self.unexpected("a quoted system identifier after SYSTEM"));
+            }
+            self.require_spaced()?;
+            return self.advance();
+        }
+        self.advance_literal(Literal::Pubid)?;
+        if !matches!(self.tok.kind, Kind::Literal { .. }) {
+            return Err(self.unexpected("a quoted public identifier after PUBLIC"));
+        }
+        self.require_spaced()?;
+        self.advance_literal(Literal::System)?;
+        if matches!(self.tok.kind, Kind::Literal { .. }) {
+            self.require_spaced()?;
+            return self.advance();
+        }
+        if notation {
+            return Ok(());
+        }
+        Err(self.unexpected("a quoted system identifier after the public identifier"))
     }
 
     /// Whether ENTITY and ATTLIST declarations are still processed: not
@@ -2717,190 +2532,406 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         self.scanner.standalone || !self.scanner.saw_unread_pe
     }
 
-    /// `intSubset ::= (markupdecl | DeclSep)*` (§2.8 [28b]) up to `]`.
+    /// `intSubset ::= (markupdecl | DeclSep)*` (§2.8 [28b]); the current
+    /// token is `[`. Ends on the matching `]`.
     fn parse_internal_subset(&mut self) -> PResult<()> {
         loop {
-            match self.scanner.scan_subset_item()? {
-                SubsetItem::Close => return Ok(()),
-                SubsetItem::Decl { kind, pos, frame } => {
-                    let end_frame = match kind {
-                        DeclKind::Element => self.parse_element_decl()?,
-                        DeclKind::Attlist => self.parse_attlist_decl()?,
-                        DeclKind::Entity => self.parse_entity_decl()?,
-                        DeclKind::Notation => self.parse_notation_decl()?,
-                    };
-                    // WFC: PE Between Declarations, and VC-turned-fatal
-                    // Proper Declaration/PE Nesting for what we do read.
-                    if end_frame != frame {
-                        return Err(self.scanner.err(
-                            pos,
-                            "A markup declaration must begin and end in the same entity",
-                        ));
-                    }
+            self.advance()?;
+            let (pos, frame) = (self.tok.pos, self.tok.frame);
+            let end_frame = match self.tok.kind {
+                // Only the document's own `]` closes the subset (a frame
+                // holding included declarations has a nonzero id).
+                Kind::BracketClose if frame == 0 => return Ok(()),
+                Kind::BracketClose => {
+                    return Err(self.scanner.err(
+                        pos,
+                        "']' inside a parameter entity cannot close the internal subset",
+                    ));
                 }
+                Kind::Comment | Kind::Pi => continue,
+                Kind::PeReference(name) => {
+                    self.scanner.include_parameter_entity(name, pos)?;
+                    continue;
+                }
+                Kind::Decl(DeclKind::Element) => self.parse_element_decl()?,
+                Kind::Decl(DeclKind::Attlist) => self.parse_attlist_decl()?,
+                Kind::Decl(DeclKind::Entity) => self.parse_entity_decl()?,
+                Kind::Decl(DeclKind::Notation) => self.parse_notation_decl()?,
+                Kind::Decl(DeclKind::Doctype) => {
+                    return Err(self
+                        .scanner
+                        .err(pos, "'<!DOCTYPE' cannot appear inside the internal subset"));
+                }
+                Kind::Eof(_) => {
+                    return Err(self
+                        .scanner
+                        .err(pos, "Unterminated internal subset: expected ']'"));
+                }
+                _ => {
+                    return Err(
+                        self.unexpected("a markup declaration or ']' in the internal subset")
+                    );
+                }
+            };
+            // WFC: PE Between Declarations (and, for what is read, proper
+            // declaration/PE nesting): a declaration ends in the entity it
+            // began in.
+            if end_frame != frame {
+                return Err(self.scanner.err(
+                    pos,
+                    "A markup declaration must begin and end in the same entity",
+                ));
             }
         }
     }
 
-    /// `elementdecl` (§3.2 [45]) after `<!ELEMENT`. The content model is
-    /// checked and dropped.
+    /// `elementdecl` (§3.2 [45]); the current token is `<!ELEMENT`. The
+    /// content model is checked and dropped. Returns the frame of its `>`.
     fn parse_element_decl(&mut self) -> PResult<u32> {
-        self.scanner.scan_decl_name()?;
-        match self.scanner.scan_content_spec()? {
-            ContentSpec::Empty | ContentSpec::Any => {}
-            ContentSpec::Open => match self.scanner.scan_cp_item()? {
-                CpItem::PcData => self.parse_mixed()?,
-                first => self.parse_children(first)?,
-            },
+        self.advance()?;
+        self.expect_name("an element name after '<!ELEMENT'")?;
+        self.require_spaced()?;
+        self.advance()?;
+        match self.tok.kind {
+            Kind::Name(b"EMPTY" | b"ANY") => {
+                self.require_spaced()?;
+                self.advance()?;
+            }
+            Kind::ParenOpen => {
+                self.require_spaced()?;
+                self.advance()?;
+                if let Kind::Hash(b"PCDATA") = self.tok.kind {
+                    self.parse_mixed()?;
+                } else {
+                    self.parse_group()?;
+                }
+            }
+            _ => return Err(self.unexpected("EMPTY, ANY or '(' in the element declaration")),
         }
-        self.scanner.scan_decl_end()
+        self.expect_gt("'>' to end the element declaration")
     }
 
-    /// `Mixed` (§3.2.2 [51]) after `'(' S? '#PCDATA'`.
+    /// `Mixed` (§3.2.2 [51]) after `(`; the current token is `#PCDATA`.
+    /// Ends on the token after the group (and its `*`).
     fn parse_mixed(&mut self) -> PResult<()> {
         let mut names = 0usize;
         loop {
-            match self.scanner.scan_cp_sep()? {
-                CpSep::Choice => match self.scanner.scan_cp_item()? {
-                    CpItem::Name(Occurrence::Once) => names += 1,
-                    CpItem::Name(_) => {
-                        return Err(self.scanner.err(
-                            self.scanner.here(),
-                            "Names in a mixed content model cannot have occurrence indicators",
-                        ));
+            self.advance()?;
+            match self.tok.kind {
+                Kind::ParenClose => break,
+                Kind::Bar => {
+                    self.advance()?;
+                    match self.tok.kind {
+                        Kind::Name(_) => names += 1,
+                        Kind::Hash(_) | Kind::ParenOpen => {
+                            return Err(self.scanner.err(
+                                self.tok.pos,
+                                "Only element names may follow #PCDATA in a mixed content model",
+                            ));
+                        }
+                        _ => return Err(self.unexpected("an element name after '|'")),
                     }
-                    CpItem::Open | CpItem::PcData => {
-                        return Err(self.scanner.err(
-                            self.scanner.here(),
-                            "Only element names may follow #PCDATA in a mixed content model",
-                        ));
-                    }
-                },
-                CpSep::Seq => {
+                }
+                Kind::Comma => {
                     return Err(self.scanner.err(
-                        self.scanner.here(),
+                        self.tok.pos,
                         "A mixed content model is separated by '|', not ','",
                     ));
                 }
-                CpSep::Close(occurrence) => {
-                    return match (names, occurrence) {
-                        (_, Occurrence::ZeroOrMore) | (0, Occurrence::Once) => Ok(()),
-                        (0, _) => Err(self
-                            .scanner
-                            .err(self.scanner.here(), "(#PCDATA) may only be followed by '*'")),
-                        _ => Err(self.scanner.err(
-                            self.scanner.here(),
-                            "A mixed content model with element names must end with ')*'",
-                        )),
-                    };
+                Kind::Question | Kind::Star | Kind::Plus if !self.tok.spaced && names > 0 => {
+                    return Err(self.scanner.err(
+                        self.tok.pos,
+                        "Names in a mixed content model cannot have occurrence indicators",
+                    ));
                 }
+                _ => return Err(self.unexpected("'|' or ')' in the mixed content model")),
+            }
+        }
+        self.advance()?;
+        match self.tok.kind {
+            Kind::Star if !self.tok.spaced => self.advance(),
+            Kind::Question | Kind::Plus if !self.tok.spaced => Err(self.scanner.err(
+                self.tok.pos,
+                "A mixed content model may only be followed by '*'",
+            )),
+            _ if names > 0 => Err(self.scanner.err(
+                self.tok.pos,
+                "A mixed content model with element names must end with ')*'",
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    /// The rest of a `choice` or `seq` (§3.2.1 [49] [50]) after `(`; the
+    /// current token starts its first particle. Ends on the token after
+    /// the group's `)` and occurrence indicator.
+    fn parse_group(&mut self) -> PResult<()> {
+        self.parse_particle()?;
+        let mut separator: Option<Kind<'a>> = None;
+        loop {
+            match self.tok.kind {
+                Kind::ParenClose => {
+                    self.advance()?;
+                    return self.parse_occurrence();
+                }
+                Kind::Bar | Kind::Comma => {
+                    if *separator.get_or_insert(self.tok.kind) != self.tok.kind {
+                        return Err(self
+                            .scanner
+                            .err(self.tok.pos, "A content model group cannot mix ',' and '|'"));
+                    }
+                    self.advance()?;
+                    self.parse_particle()?;
+                }
+                _ => return Err(self.unexpected("')', '|' or ',' in the content model")),
             }
         }
     }
 
-    /// `choice` / `seq` (§3.2.1 [49] [50]) after `(` with the first
-    /// particle already scanned; nested groups recurse.
-    fn parse_children(&mut self, first: CpItem) -> PResult<()> {
+    /// `cp ::= (Name | choice | seq) ('?' | '*' | '+')?` (§3.2.1 [48]); the
+    /// current token starts the particle. Ends on the token after it.
+    fn parse_particle(&mut self) -> PResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(self.stack_overflow());
         }
-        let mut item = first;
-        let mut separator: Option<bool> = None; // Some(true): '|', Some(false): ','
-        loop {
-            match item {
-                CpItem::Name(_) => {}
-                CpItem::Open => {
-                    let inner = self.scanner.scan_cp_item()?;
-                    self.parse_children(inner)?;
-                }
-                CpItem::PcData => {
-                    return Err(self.scanner.err(
-                        self.scanner.here(),
-                        "#PCDATA must be the first item of a content model group",
-                    ));
-                }
+        match self.tok.kind {
+            Kind::Name(_) => {
+                self.advance()?;
+                self.parse_occurrence()
             }
-            let is_choice = match self.scanner.scan_cp_sep()? {
-                CpSep::Close(_) => return Ok(()),
-                CpSep::Choice => true,
-                CpSep::Seq => false,
-            };
-            if *separator.get_or_insert(is_choice) != is_choice {
-                return Err(self.scanner.err(
-                    self.scanner.here(),
-                    "A content model group cannot mix ',' and '|'",
-                ));
+            Kind::ParenOpen => {
+                self.advance()?;
+                self.parse_group()
             }
-            item = self.scanner.scan_cp_item()?;
+            Kind::Hash(b"PCDATA") => Err(self.scanner.err(
+                self.tok.pos,
+                "#PCDATA must come first in a content model, as (#PCDATA|a|b)*",
+            )),
+            _ => Err(self.unexpected("an element name or '(' in the content model")),
         }
     }
 
-    /// `AttlistDecl` (§3.3 [52]) after `<!ATTLIST`.
+    /// An optional occurrence indicator, which must directly follow its
+    /// particle.
+    fn parse_occurrence(&mut self) -> PResult<()> {
+        match self.tok.kind {
+            Kind::Question | Kind::Star | Kind::Plus if !self.tok.spaced => self.advance(),
+            Kind::Question | Kind::Star | Kind::Plus => Err(self.scanner.err(
+                self.tok.pos,
+                "An occurrence indicator must directly follow the name or ')' it applies to",
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    /// `AttlistDecl` (§3.3 [52]); the current token is `<!ATTLIST`. Returns
+    /// the frame of its `>`.
     fn parse_attlist_decl(&mut self) -> PResult<u32> {
-        let element = self.scanner.scan_decl_name()?;
+        self.advance()?;
+        let element = self.expect_name("an element name after '<!ATTLIST'")?;
+        self.require_spaced()?;
         loop {
-            let name = match self.scanner.scan_attdef_item()? {
-                AttDefItem::End { frame } => return Ok(frame),
-                AttDefItem::Name(name) => name,
-            };
-            let att_type = self.scanner.scan_att_type()?;
-            let default = self.scanner.scan_default_decl()?;
-            if !self.processing_declarations() {
-                continue;
-            }
-            let cdata = att_type == AttType::Cdata;
-            let default = match default {
-                DefaultDecl::Required | DefaultDecl::Implied => None,
-                DefaultDecl::Value { value, is_ascii } if cdata => Some((value, is_ascii)),
-                DefaultDecl::Value { value, is_ascii } => {
-                    Some((collapse_spaces(self.bump, value), is_ascii))
+            self.advance()?;
+            let name = match self.tok.kind {
+                Kind::Gt => return Ok(self.tok.frame),
+                Kind::Name(name) => name,
+                _ => {
+                    return Err(
+                        self.unexpected("an attribute name or '>' in the ATTLIST declaration")
+                    );
                 }
             };
-            self.attlists.entry(element).or_default().declare(AttDef {
-                name,
-                cdata,
-                default,
-            });
+            self.require_spaced()?;
+
+            // AttType (§3.3.1): without validation only CDATA versus the
+            // rest matters, for attribute-value normalization (§3.3.3).
+            self.advance()?;
+            let cdata = match self.tok.kind {
+                Kind::Name(b"CDATA") => {
+                    self.require_spaced()?;
+                    true
+                }
+                Kind::Name(
+                    b"ID" | b"IDREF" | b"IDREFS" | b"ENTITY" | b"ENTITIES" | b"NMTOKEN"
+                    | b"NMTOKENS",
+                ) => {
+                    self.require_spaced()?;
+                    false
+                }
+                Kind::Name(b"NOTATION") => {
+                    self.require_spaced()?;
+                    self.advance()?;
+                    if self.tok.kind != Kind::ParenOpen {
+                        return Err(self.unexpected("'(' after NOTATION"));
+                    }
+                    self.require_spaced()?;
+                    self.parse_enumeration(true)?;
+                    false
+                }
+                Kind::ParenOpen => {
+                    self.require_spaced()?;
+                    self.parse_enumeration(false)?;
+                    false
+                }
+                _ => return Err(self.unexpected("an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration)")),
+            };
+
+            // DefaultDecl (§3.3.2). The value is normalized as the type
+            // says, like a specified one (§3.3.3).
+            let literal = Literal::AttValue { collapse: !cdata };
+            self.advance_literal(literal)?;
+            let default = match self.tok.kind {
+                Kind::Hash(b"REQUIRED" | b"IMPLIED") => {
+                    self.require_spaced()?;
+                    None
+                }
+                Kind::Hash(b"FIXED") => {
+                    self.require_spaced()?;
+                    self.advance_literal(literal)?;
+                    let Kind::Literal { value, is_ascii } = self.tok.kind else {
+                        return Err(self.unexpected("a quoted default value after #FIXED"));
+                    };
+                    self.require_spaced()?;
+                    Some((value, is_ascii))
+                }
+                Kind::Literal { value, is_ascii } => {
+                    self.require_spaced()?;
+                    Some((value, is_ascii))
+                }
+                _ => {
+                    return Err(
+                        self.unexpected("#REQUIRED, #IMPLIED, #FIXED or a quoted default value")
+                    );
+                }
+            };
+
+            if self.processing_declarations() {
+                self.attlists.entry(element).or_default().declare(AttDef {
+                    name,
+                    cdata,
+                    default,
+                });
+            }
         }
     }
 
-    /// `EntityDecl` (§4.2 [70]) after `<!ENTITY`.
+    /// `'(' S? x (S? '|' S? x)* S? ')'` where `x` is a `Name` (NOTATION
+    /// types, `names`) or an `Nmtoken` (enumerations); the current token is
+    /// `(`. Ends on `)`.
+    fn parse_enumeration(&mut self, names: bool) -> PResult<()> {
+        loop {
+            self.advance()?;
+            match self.tok.kind {
+                Kind::Name(_) => {}
+                Kind::Nmtoken(_) if !names => {}
+                _ if names => return Err(self.unexpected("a notation name")),
+                _ => return Err(self.unexpected("a name token in the enumeration")),
+            }
+            self.advance()?;
+            match self.tok.kind {
+                Kind::Bar => {}
+                Kind::ParenClose => return Ok(()),
+                _ => return Err(self.unexpected("'|' or ')' in the enumeration")),
+            }
+        }
+    }
+
+    /// `EntityDecl` (§4.2 [70]); the current token is `<!ENTITY`. Returns
+    /// the frame of its `>`.
     fn parse_entity_decl(&mut self) -> PResult<u32> {
-        let head = self.scanner.scan_entity_decl_head()?;
-        let def = self.scanner.scan_entity_def(head.parameter)?;
-        let frame = self.scanner.scan_decl_end()?;
+        self.advance()?;
+        if let Kind::PercentName(_) = self.tok.kind {
+            return Err(self.scanner.err(
+                self.tok.pos,
+                "Whitespace is required between '%' and the name in a parameter entity declaration",
+            ));
+        }
+        let parameter = self.tok.kind == Kind::Percent;
+        if parameter {
+            self.require_spaced()?;
+            self.advance()?;
+        }
+        let name = self.expect_name(if parameter {
+            "the parameter entity name after '%'"
+        } else {
+            "an entity name or '%' after '<!ENTITY'"
+        })?;
+        self.require_spaced()?;
+
+        self.advance_literal(Literal::EntityValue)?;
+        let value = match self.tok.kind {
+            Kind::Literal { value, .. } => {
+                self.require_spaced()?;
+                self.advance()?;
+                EntityValue::Internal(value)
+            }
+            Kind::Name(b"SYSTEM" | b"PUBLIC") => {
+                self.require_spaced()?;
+                self.parse_external_id(false)?;
+                if let Kind::Name(b"NDATA") = self.tok.kind {
+                    self.require_spaced()?;
+                    if parameter {
+                        return Err(self
+                            .scanner
+                            .err(self.tok.pos, "Parameter entities cannot have NDATA"));
+                    }
+                    self.advance()?;
+                    self.expect_name("a notation name after NDATA")?;
+                    self.require_spaced()?;
+                    self.advance()?;
+                    EntityValue::Unparsed
+                } else {
+                    EntityValue::External
+                }
+            }
+            _ => return Err(self.unexpected("a quoted entity value, SYSTEM or PUBLIC")),
+        };
+        let frame = self.expect_gt("'>' to end the entity declaration")?;
+
         if self.processing_declarations() {
-            let value = match def {
-                EntityDef::Internal(value) => EntityValue::Internal(value),
-                EntityDef::External { unparsed: false } => EntityValue::External,
-                EntityDef::External { unparsed: true } => EntityValue::Unparsed,
-            };
-            let table = if head.parameter {
+            let table = if parameter {
                 &mut self.scanner.entities.parameter
             } else {
                 &mut self.scanner.entities.general
             };
             // The first declaration is binding (§4.2).
-            table.entry(head.name).or_insert_with(|| value);
+            table.entry(name).or_insert_with(|| value);
         }
         Ok(frame)
     }
 
-    /// `NotationDecl` (§4.7 [82]) after `<!NOTATION`.
+    /// `NotationDecl` (§4.7 [82]); the current token is `<!NOTATION`.
+    /// Returns the frame of its `>`.
     fn parse_notation_decl(&mut self) -> PResult<u32> {
-        self.scanner.scan_decl_name()?;
-        self.scanner.scan_notation_id()?;
-        self.scanner.scan_decl_end()
+        self.advance()?;
+        self.expect_name("a notation name after '<!NOTATION'")?;
+        self.require_spaced()?;
+        self.advance()?;
+        if !matches!(self.tok.kind, Kind::Name(b"SYSTEM" | b"PUBLIC")) {
+            return Err(self.unexpected("SYSTEM or PUBLIC in the notation declaration"));
+        }
+        self.require_spaced()?;
+        self.parse_external_id(true)?;
+        self.expect_gt("'>' to end the notation declaration")
     }
 
     // ── elements ───────────────────────────────────────────────────────────
 
-    /// `element` (§3.1 [39]) after `<Name`: attributes, then (unless the tag
-    /// was empty) content up to the matching end tag.
-    fn parse_element(&mut self, name: &'a [u8], pos: usize, frame: u32) -> PResult<()> {
+    /// `element` (§3.1 [39]); the current token is its `<Name`. Attributes,
+    /// then (unless the tag was empty) content up to the matching end tag.
+    fn parse_element(&mut self) -> PResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(self.stack_overflow());
         }
+        let Token {
+            kind: Kind::StartTag(name),
+            pos,
+            frame,
+            ..
+        } = self.tok
+        else {
+            unreachable!("parse_element is called on a start tag");
+        };
         let loc = self.scanner.loc(pos);
         let empty = self.parse_attributes(name)?;
         self.sink.start_element(name, &self.attributes, loc);
@@ -2909,25 +2940,18 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
             return Ok(());
         }
         loop {
-            match self.scanner.scan_content()? {
-                Content::Text {
-                    text,
-                    is_ascii,
-                    pos,
-                } => {
-                    let loc = self.scanner.loc(pos);
+            self.advance_content()?;
+            match self.tok.kind {
+                Kind::Text { text, is_ascii } => {
+                    let loc = self.scanner.loc(self.tok.pos);
                     self.sink.text(text, is_ascii, loc);
                 }
-                Content::StartTag { name, pos, frame } => self.parse_element(name, pos, frame)?,
-                Content::EndTag {
-                    name: end_name,
-                    pos: end_pos,
-                    frame: end_frame,
-                } => {
+                Kind::StartTag(_) => self.parse_element()?,
+                Kind::EndTag(end_name) => {
                     // WFC: Element Type Match.
                     if end_name != name {
                         return Err(self.scanner.err_fmt(
-                            end_pos,
+                            self.tok.pos,
                             format_args!(
                                 "Expected closing tag </{}> but found </{}>",
                                 bstr::BStr::new(name),
@@ -2935,67 +2959,76 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
                             ),
                         ));
                     }
-                    if end_frame != frame {
+                    if self.tok.frame != frame {
                         return Err(self.scanner.err_named(
-                            end_pos,
+                            self.tok.pos,
                             "Element",
                             name,
                             " must start and end within the same entity",
                         ));
                     }
+                    self.advance()?;
+                    self.expect_gt("'>' to end the closing tag")?;
                     self.sink.end_element();
                     return Ok(());
                 }
-                Content::Eof { pos: eof_pos } => {
+                Kind::Eof(_) => {
                     return Err(self.scanner.err_named(
-                        eof_pos,
+                        self.tok.pos,
                         "Missing closing tag for element",
                         name,
                         "",
                     ));
                 }
+                _ => unreachable!("next_content produces text, tags and end of input"),
             }
         }
     }
 
     /// The attributes of a start tag, into `self.attributes`: duplicates
-    /// rejected (WFC: Unique Att Spec), declared non-CDATA attributes further
-    /// normalized (§3.3.3), declared defaults supplied (§3.3.2). Returns
-    /// whether the tag was an empty-element tag.
+    /// rejected (WFC: Unique Att Spec), values normalized per their declared
+    /// type (§3.3.3), declared defaults supplied (§3.3.2). Returns whether
+    /// the tag was an empty-element tag.
     fn parse_attributes(&mut self, element: &'a [u8]) -> PResult<bool> {
         self.attributes.clear();
         self.attribute_names.clear();
-        let defs = self.attlists.get(element);
         let empty = loop {
-            match self.scanner.scan_tag_item()? {
-                TagItem::End { empty } => break empty,
-                TagItem::Attr {
-                    name,
-                    mut value,
-                    is_ascii,
-                    pos,
-                } => {
-                    if Self::has_attribute(&self.attributes, &self.attribute_names, name) {
-                        return Err(self.scanner.err_named(pos, "Duplicate attribute", name, ""));
-                    }
-                    if let Some(def) = defs.and_then(|defs| defs.get(name)) {
-                        if !def.cdata {
-                            value = collapse_spaces(self.bump, value);
-                        }
-                    }
-                    Self::push_attribute(
-                        &mut self.attributes,
-                        &mut self.attribute_names,
-                        Attribute {
-                            name,
-                            value,
-                            is_ascii,
-                        },
-                    );
-                }
+            self.advance()?;
+            let name = match self.tok.kind {
+                Kind::Gt => break false,
+                Kind::SlashGt => break true,
+                Kind::Name(name) => name,
+                _ => return Err(self.unexpected("an attribute name, '>' or '/>' in the start tag")),
+            };
+            self.require_spaced()?;
+            let pos = self.tok.pos;
+            if Self::has_attribute(&self.attributes, &self.attribute_names, name) {
+                return Err(self.scanner.err_named(pos, "Duplicate attribute", name, ""));
             }
+            self.advance()?;
+            if self.tok.kind != Kind::Eq {
+                return Err(self.unexpected("'=' after the attribute name"));
+            }
+            let collapse = self
+                .attlists
+                .get(element)
+                .and_then(|defs| defs.get(name))
+                .is_some_and(|def| !def.cdata);
+            self.advance_literal(Literal::AttValue { collapse })?;
+            let Kind::Literal { value, is_ascii } = self.tok.kind else {
+                return Err(self.unexpected("a quoted attribute value"));
+            };
+            Self::push_attribute(
+                &mut self.attributes,
+                &mut self.attribute_names,
+                Attribute {
+                    name,
+                    value,
+                    is_ascii,
+                },
+            );
         };
-        if let Some(defs) = defs {
+        if let Some(defs) = self.attlists.get(element) {
             for def in &defs.defs {
                 if let Some((value, is_ascii)) = def.default {
                     if !Self::has_attribute(&self.attributes, &self.attribute_names, def.name) {
@@ -3043,9 +3076,9 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
     }
 }
 
-/// The extra normalization for attributes declared with a non-CDATA type
-/// (§3.3.3): leading and trailing spaces removed, runs of spaces collapsed.
-/// All whitespace in `value` is already #x20.
+/// The extra normalization for attributes declared with a tokenized or
+/// enumerated type (§3.3.3): leading and trailing spaces removed, runs of
+/// spaces collapsed. All whitespace in `value` is already #x20.
 fn collapse_spaces<'a>(bump: &'a Bump, value: &'a [u8]) -> &'a [u8] {
     let trimmed = strings::trim(value, b" ");
     if strings::index_of(trimmed, b"  ").is_none() {

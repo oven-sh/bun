@@ -97,7 +97,7 @@ describe("xmltest", () => {
   test("not-wf-sa-001", () => {
     // 3.1 [41] — Attribute values must start with attribute names, not "?".
     const input: string = "<doc>\r\n<doc\r\n?\r\n<a</a>\r\n</doc>\r\n";
-    expectRejects(input, "XML Parse error: Expected an attribute name but found '?'");
+    expectRejects(input, "XML Parse error: Expected an attribute name, '>' or '/>' in the start tag but found '?'");
   });
 
   test("not-wf-sa-002", () => {
@@ -169,7 +169,7 @@ describe("xmltest", () => {
   test("not-wf-sa-012", () => {
     // 2.3 [10] — SGML-ism: attribute values must be quoted in all cases.
     const input: string = "<doc a1=v1></doc>\r\n";
-    expectRejects(input, "XML Parse error: Expected a quoted attribute value but found 'v'");
+    expectRejects(input, "XML Parse error: Expected a quoted attribute value but found 'v1'");
   });
 
   test("not-wf-sa-013", () => {
@@ -193,7 +193,7 @@ describe("xmltest", () => {
   test("not-wf-sa-016", () => {
     // 3.1 [41] — Attribute values need an associated name.
     const input: string = '<doc a1="v1" "v2"></doc>\r\n';
-    expectRejects(input, "XML Parse error: Expected an attribute name but found '\"'");
+    expectRejects(input, "XML Parse error: Expected an attribute name, '>' or '/>' in the start tag but found '\"'");
   });
 
   test("not-wf-sa-017", () => {
@@ -240,7 +240,7 @@ describe("xmltest", () => {
   test("not-wf-sa-023", () => {
     // 2.3 [5] — Digits are not valid name start characters.
     const input: string = '<doc 12="34"></doc>\r\n';
-    expectRejects(input, "XML Parse error: Expected an attribute name but found '1'");
+    expectRejects(input, "XML Parse error: Expected an attribute name, '>' or '/>' in the start tag but found '12'");
   });
 
   test("not-wf-sa-024", () => {
@@ -306,10 +306,7 @@ describe("xmltest", () => {
   test("not-wf-sa-034", () => {
     // 2.2 [2] — A form feed is not a legal XML character.
     const input: string = "<doc\f>A form-feed is not white space or a name character</doc\f>\r\n";
-    expectRejects(
-      input,
-      "XML Parse error: Expected whitespace, '>' or '/>' after the previous name or value in the tag but found control character 0x0C",
-    );
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x0C");
   });
 
   test("not-wf-sa-035", () => {
@@ -322,13 +319,13 @@ describe("xmltest", () => {
   test("not-wf-sa-036", () => {
     // 2.8 [27] — Text may not appear after the root element.
     const input: string = "<doc></doc>\r\nIllegal data\r\n";
-    expectRejects(input, "XML Parse error: Unexpected content after the root element: 'I'");
+    expectRejects(input, "XML Parse error: Unexpected 'Illegal' after the root element");
   });
 
   test("not-wf-sa-037", () => {
     // 2.8 [27] — Character references may not appear after the root element.
     const input: string = "<doc></doc>\r\n&#32;\r\n";
-    expectRejects(input, "XML Parse error: Unexpected content after the root element: '&'");
+    expectRejects(input, "XML Parse error: Unexpected '&' after the root element");
   });
 
   test("not-wf-sa-038", () => {
@@ -358,13 +355,13 @@ describe("xmltest", () => {
   test("not-wf-sa-042", () => {
     // 3.1 [42] — Invalid End Tag
     const input: string = "<doc/></doc/>\r\n";
-    expectRejects(input, "XML Parse error: Only one root element is allowed");
+    expectRejects(input, "XML Parse error: Unexpected '</doc' after the root element");
   });
 
   test("not-wf-sa-043", () => {
     // 2.8 [27] — Provides #PCDATA text after the document element.
     const input: string = "<doc/>\r\nIllegal data\r\n";
-    expectRejects(input, "XML Parse error: Unexpected content after the root element: 'I'");
+    expectRejects(input, "XML Parse error: Unexpected 'Illegal' after the root element");
   });
 
   test("not-wf-sa-044", () => {
@@ -376,25 +373,25 @@ describe("xmltest", () => {
   test("not-wf-sa-045", () => {
     // 3.1 [44] — Invalid Empty Element Tag
     const input: string = "<doc>\r\n<a/\r\n</doc>\r\n\r\n";
-    expectRejects(input, "XML Parse error: Expected '>' after '/' in the tag but found newline");
+    expectRejects(input, "XML Parse error: Expected '>' after '/' but found newline");
   });
 
   test("not-wf-sa-046", () => {
     // 3.1 [40] — This start (or empty element) tag was not terminated correctly.
     const input: string = "<doc>\r\n<a/</a>\r\n</doc>\r\n";
-    expectRejects(input, "XML Parse error: Expected '>' after '/' in the tag but found '<'");
+    expectRejects(input, "XML Parse error: Expected '>' after '/' but found '<'");
   });
 
   test("not-wf-sa-047", () => {
     // 3.1 [44] — Invalid empty element tag invalid whitespace
     const input: string = "<doc>\r\n<a / >\r\n</doc>\r\n";
-    expectRejects(input, "XML Parse error: Expected '>' after '/' in the tag but found space");
+    expectRejects(input, "XML Parse error: Expected '>' after '/' but found space");
   });
 
   test("not-wf-sa-048", () => {
     // 2.8 [27] — Provides a CDATA section after the root element.
     const input: string = "<doc>\r\n</doc>\r\n<![CDATA[]]>\r\n";
-    expectRejects(input, "XML Parse error: Only one root element is allowed");
+    expectRejects(input, "XML Parse error: CDATA sections are only allowed inside elements");
   });
 
   test("not-wf-sa-049", () => {
@@ -412,7 +409,7 @@ describe("xmltest", () => {
   test("not-wf-sa-051", () => {
     // 2.7 [18] — CDATA is invalid at top level of document.
     const input: string = "<!-- a comment -->\r\n<![CDATA[]]>\r\n<doc></doc>\r\n";
-    expectRejects(input, "XML Parse error: Expected '<!DOCTYPE', a comment, or the root element");
+    expectRejects(input, "XML Parse error: CDATA sections are only allowed inside elements");
   });
 
   test("not-wf-sa-052", () => {
@@ -430,7 +427,10 @@ describe("xmltest", () => {
   test("not-wf-sa-054", () => {
     // 4.2.2 [75] — PUBLIC requires two literals.
     const input: string = '<!DOCTYPE doc [\r\n<!ENTITY foo PUBLIC "some public id">\r\n]>\r\n<doc></doc>\r\n';
-    expectRejects(input, "XML Parse error: Expected a system identifier after the public identifier but found '>'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected a quoted system identifier after the public identifier but found '>'",
+    );
   });
 
   test("not-wf-sa-055", () => {
@@ -438,20 +438,23 @@ describe("xmltest", () => {
     const input: string = "<!DOCTYPE doc [\r\n<doc></doc>\r\n";
     expectRejects(
       input,
-      "XML Parse error: Expected a markup declaration (<!ELEMENT, <!ATTLIST, <!ENTITY, <!NOTATION), a comment, or a processing instruction",
+      "XML Parse error: Expected a markup declaration or ']' in the internal subset but found '<doc'",
     );
   });
 
   test("not-wf-sa-056", () => {
     // 2.8 [28] — Invalid Document Type Definition format - misplaced comment.
     const input: string = "<!DOCTYPE doc -- a comment -- []>\r\n<doc></doc>\r\n";
-    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC but found '-'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '--'",
+    );
   });
 
   test("not-wf-sa-057", () => {
     // 3.2 [45] — This isn't SGML; comments can't exist in declarations.
     const input: string = '<!DOCTYPE doc [\r\n<!ENTITY e "whatever" -- a comment -->\r\n]>\r\n<doc></doc>\r\n';
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found '-'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the entity declaration but found '--'");
   });
 
   test("not-wf-sa-058", () => {
@@ -467,7 +470,7 @@ describe("xmltest", () => {
       "<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ATTLIST doc a1 NMTOKEN v1>\r\n]>\r\n<doc></doc>\r\n";
     expectRejects(
       input,
-      "XML Parse error: Expected #REQUIRED, #IMPLIED, #FIXED or a quoted default value but found 'v'",
+      "XML Parse error: Expected #REQUIRED, #IMPLIED, #FIXED or a quoted default value but found 'v1'",
     );
   });
 
@@ -477,23 +480,20 @@ describe("xmltest", () => {
       "<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ATTLIST doc a1 NAME #IMPLIED>\r\n]>\r\n<doc></doc>\r\n";
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'N'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'NAME'",
     );
   });
 
   test("not-wf-sa-061", () => {
     // 4.2.2 [75] — External entity declarations require whitespace between public and system IDs.
     const input: string = '<!DOCTYPE doc [\r\n<!ENTITY e PUBLIC "whatever""e.ent">\r\n]>\r\n<doc></doc>\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected whitespace between the public and system identifiers but found '\"'",
-    );
+    expectRejects(input, "XML Parse error: Whitespace is required before a quoted string");
   });
 
   test("not-wf-sa-062", () => {
     // 4.2 [71] — Entity declarations need space after the entity name.
     const input: string = '<!DOCTYPE doc [\r\n<!ENTITY foo"some text">\r\n]>\r\n<doc></doc>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after the entity name but found '\"'");
+    expectRejects(input, "XML Parse error: Whitespace is required before a quoted string");
   });
 
   test("not-wf-sa-063", () => {
@@ -507,21 +507,21 @@ describe("xmltest", () => {
     // declarations.
     const input: string =
       '<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ATTLIST e a1 CDATA"foo">\r\n]>\r\n<doc></doc>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after the attribute type but found '\"'");
+    expectRejects(input, "XML Parse error: Whitespace is required before a quoted string");
   });
 
   test("not-wf-sa-065", () => {
     // 3.3 [53] — Space is required between attribute name and type in <!ATTLIST...> declarations.
     const input: string =
       "<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ATTLIST doc a1(foo|bar) #IMPLIED>\r\n]>\r\n<doc></doc>\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace after the attribute name but found '('");
+    expectRejects(input, "XML Parse error: Whitespace is required before '('");
   });
 
   test("not-wf-sa-066", () => {
     // 3.3 [52] — Required whitespace is missing.
     const input: string =
       "<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ATTLIST doc a1 (foo|bar)#IMPLIED>\r\n]>\r\n<doc></doc>\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace after the attribute type but found '#'");
+    expectRejects(input, "XML Parse error: Whitespace is required before '#IMPLIED'");
   });
 
   test("not-wf-sa-067", () => {
@@ -529,7 +529,7 @@ describe("xmltest", () => {
     // declarations.
     const input: string =
       '<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ATTLIST doc a1 (foo)"foo">\r\n]>\r\n<doc></doc>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after the attribute type but found '\"'");
+    expectRejects(input, "XML Parse error: Whitespace is required before a quoted string");
   });
 
   test("not-wf-sa-068", () => {
@@ -537,14 +537,14 @@ describe("xmltest", () => {
     // <!ATTLIST...> declarations.
     const input: string =
       "<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ATTLIST doc a1 NOTATION(foo) #IMPLIED>\r\n]>\r\n<doc></doc>\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace after NOTATION but found '('");
+    expectRejects(input, "XML Parse error: Whitespace is required before '('");
   });
 
   test("not-wf-sa-069", () => {
     // 4.2.2 [76] — Space is required before an NDATA entity annotation.
     const input: string =
       '<!DOCTYPE doc [\r\n<!NOTATION eps SYSTEM "eps.exe">\r\n<!-- missing space before NDATA -->\r\n<!ENTITY foo SYSTEM "foo.eps"NDATA eps>\r\n]>\r\n<doc></doc>\r\n';
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found 'N'");
+    expectRejects(input, "XML Parse error: Whitespace is required before 'NDATA'");
   });
 
   test("not-wf-sa-070", () => {
@@ -678,7 +678,7 @@ describe("xmltest", () => {
   test("not-wf-sa-089", () => {
     // 4.2 [74] — Parameter entities "are" always parsed; NDATA annotations are not permitted.
     const input: string = '<!DOCTYPE doc [\r\n<!ENTITY % foo SYSTEM "foo.xml" NDATA bar>\r\n]>\r\n<doc></doc>\r\n';
-    expectRejects(input, "XML Parse error: Parameter entities cannot have NDATA: 'N'");
+    expectRejects(input, "XML Parse error: Parameter entities cannot have NDATA");
   });
 
   test("not-wf-sa-090", () => {
@@ -692,7 +692,7 @@ describe("xmltest", () => {
     // 4.2 [74] — Parameter entities "are" always parsed; NDATA annotations are not permitted.
     const input: string =
       '<!DOCTYPE doc [\r\n<!NOTATION n SYSTEM "n">\r\n<!ENTITY % foo SYSTEM "foo.xml" NDATA n>\r\n]>\r\n<doc></doc>\r\n';
-    expectRejects(input, "XML Parse error: Parameter entities cannot have NDATA: 'N'");
+    expectRejects(input, "XML Parse error: Parameter entities cannot have NDATA");
   });
 
   test("not-wf-sa-092", () => {
@@ -714,10 +714,7 @@ describe("xmltest", () => {
   test("not-wf-sa-094", () => {
     // 2.8 [24] — Prolog VERSION must be lowercase.
     const input: string = '<?xml VERSION="1.0"?>\r\n<doc></doc>\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Unexpected 'VERSION' in the XML declaration (expected version, encoding or standalone)",
-    );
+    expectRejects(input, "XML Parse error: Expected version=\"1.0\" in the XML declaration but found 'VERSION'");
   });
 
   test("not-wf-sa-095", () => {
@@ -729,7 +726,7 @@ describe("xmltest", () => {
   test("not-wf-sa-096", () => {
     // 2.9 [32] — Space is required before the standalone declaration.
     const input = Buffer.from('<?xml version="1.0"encoding="UTF-8" ?>\r\n<doc></doc>');
-    expectRejects(input, "XML Parse error: Expected whitespace in the XML declaration before 'e'");
+    expectRejects(input, "XML Parse error: Whitespace is required before 'encoding'");
   });
 
   test("not-wf-sa-097", () => {
@@ -794,7 +791,7 @@ describe("xmltest", () => {
   test("not-wf-sa-105", () => {
     // 2.7  — Invalid placement of CDATA section.
     const input: string = "<?pi stuff?>\r\n<![CDATA[]]>\r\n<doc>\r\n</doc>\r\n";
-    expectRejects(input, "XML Parse error: Expected '<!DOCTYPE', a comment, or the root element");
+    expectRejects(input, "XML Parse error: CDATA sections are only allowed inside elements");
   });
 
   test("not-wf-sa-106", () => {
@@ -806,7 +803,7 @@ describe("xmltest", () => {
   test("not-wf-sa-107", () => {
     // 2.8 [28] — Invalid document type declaration. CDATA alone is invalid.
     const input: string = "<!DOCTYPE doc [\r\n<![CDATA[]]>\r\n]>\r\n<doc></doc>\r\n";
-    expectRejects(input, "XML Parse error: Conditional sections are only allowed in the external DTD subset");
+    expectRejects(input, "XML Parse error: CDATA sections are only allowed inside elements");
   });
 
   test("not-wf-sa-108", () => {
@@ -824,13 +821,13 @@ describe("xmltest", () => {
   test("not-wf-sa-110", () => {
     // 4.1 [68] — Entity reference must be in content of element.
     const input: string = '<!DOCTYPE doc [\r\n<!ENTITY e "">\r\n]>\r\n<doc></doc>\r\n&e;\r\n';
-    expectRejects(input, "XML Parse error: Unexpected content after the root element: '&'");
+    expectRejects(input, "XML Parse error: Unexpected '&' after the root element");
   });
 
   test("not-wf-sa-111", () => {
     // 3.1 [43] — Entiry reference must be in content of element not Start-tag.
     const input: string = "<!DOCTYPE doc [\r\n<!ENTITY e \"foo='bar'\">\r\n]>\r\n<doc &e;></doc>\r\n";
-    expectRejects(input, "XML Parse error: Expected an attribute name but found '&'");
+    expectRejects(input, "XML Parse error: Expected an attribute name, '>' or '/>' in the start tag but found '&'");
   });
 
   test("not-wf-sa-112", () => {
@@ -898,7 +895,7 @@ describe("xmltest", () => {
   test("not-wf-sa-121", () => {
     // 4.1 [68] — A name of an ENTITY was started with an invalid character.
     const input: string = '<!DOCTYPE doc [\r\n<!ENTITY #DEFAULT "default">\r\n]>\r\n<doc></doc>\r\n';
-    expectRejects(input, "XML Parse error: Expected an entity name but found '#'");
+    expectRejects(input, "XML Parse error: Expected an entity name or '%' after '<!ENTITY' but found '#DEFAULT'");
   });
 
   test("not-wf-sa-122", () => {
@@ -910,37 +907,37 @@ describe("xmltest", () => {
   test("not-wf-sa-123", () => {
     // 3.2.1 [48] — Invalid syntax mismatched parenthesis.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc ((doc?)))>\r\n]>\r\n<doc></doc>\r\n";
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found ')'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the element declaration but found ')'");
   });
 
   test("not-wf-sa-124", () => {
     // 3.2.2 [51] — Invalid format of Mixed-content declaration.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc (doc|#PCDATA)*>\r\n]>\r\n<doc></doc>\r\n";
-    expectRejects(input, "XML Parse error: #PCDATA must be the first item of a content model group");
+    expectRejects(input, "XML Parse error: #PCDATA must come first in a content model, as (#PCDATA|a|b)*");
   });
 
   test("not-wf-sa-125", () => {
     // 3.2.2 [51] — Invalid syntax extra set of parenthesis not necessary.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc ((#PCDATA))>\r\n]>\r\n<doc></doc>\r\n";
-    expectRejects(input, "XML Parse error: #PCDATA must be the first item of a content model group");
+    expectRejects(input, "XML Parse error: #PCDATA must come first in a content model, as (#PCDATA|a|b)*");
   });
 
   test("not-wf-sa-126", () => {
     // 3.2.2 [51] — Invalid syntax Mixed-content must be defined as zero or more.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)+>\r\n]>\r\n<doc></doc>\r\n";
-    expectRejects(input, "XML Parse error: (#PCDATA) may only be followed by '*'");
+    expectRejects(input, "XML Parse error: A mixed content model may only be followed by '*'");
   });
 
   test("not-wf-sa-127", () => {
     // 3.2.2 [51] — Invalid syntax Mixed-content must be defined as zero or more.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)?>\r\n]>\r\n<doc></doc>\r\n";
-    expectRejects(input, "XML Parse error: (#PCDATA) may only be followed by '*'");
+    expectRejects(input, "XML Parse error: A mixed content model may only be followed by '*'");
   });
 
   test("not-wf-sa-128", () => {
     // 2.7 [18] — Invalid CDATA syntax.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc CDATA>\r\n]>\r\n<doc></doc>\r\n";
-    expectRejects(input, "XML Parse error: Expected EMPTY, ANY or '(' in the element declaration but found 'C'");
+    expectRejects(input, "XML Parse error: Expected EMPTY, ANY or '(' in the element declaration but found 'CDATA'");
   });
 
   test("not-wf-sa-129", () => {
@@ -952,13 +949,13 @@ describe("xmltest", () => {
   test("not-wf-sa-130", () => {
     // 3.2 [45] — Invalid syntax for Element Type Declaration.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc (doc?) +(foo)>\r\n]>\r\n<doc></doc>\r\n";
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found '+'");
+    expectRejects(input, "XML Parse error: An occurrence indicator must directly follow the name or ')' it applies to");
   });
 
   test("not-wf-sa-131", () => {
     // 3.2 [45] — Invalid syntax for Element Type Declaration.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc (doc?) -(foo)>\r\n]>\r\n<doc></doc>\r\n";
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found '-'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the element declaration but found '-'");
   });
 
   test("not-wf-sa-132", () => {
@@ -970,13 +967,13 @@ describe("xmltest", () => {
   test("not-wf-sa-133", () => {
     // 3.2.1 — Illegal whitespace before optional character causes syntax error.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc (a *)>\r\n]>\r\n<doc></doc>\r\n";
-    expectRejects(input, "XML Parse error: Expected ')', '|' or ',' in the content model but found '*'");
+    expectRejects(input, "XML Parse error: An occurrence indicator must directly follow the name or ')' it applies to");
   });
 
   test("not-wf-sa-134", () => {
     // 3.2.1 — Illegal whitespace before optional character causes syntax error.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc (a) *>\r\n]>\r\n<doc></doc>\r\n";
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found '*'");
+    expectRejects(input, "XML Parse error: An occurrence indicator must directly follow the name or ')' it applies to");
   });
 
   test("not-wf-sa-135", () => {
@@ -994,7 +991,7 @@ describe("xmltest", () => {
   test("not-wf-sa-137", () => {
     // 3.2 [45] — Space is required before a content model.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc(#PCDATA)>\r\n]>\r\n<doc></doc>\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace after the element name but found '('");
+    expectRejects(input, "XML Parse error: Whitespace is required before '('");
   });
 
   test("not-wf-sa-138", () => {
@@ -1006,42 +1003,39 @@ describe("xmltest", () => {
   test("not-wf-sa-139", () => {
     // 3.2.1 [46] — The element-content model should not be empty.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc ()>\r\n]>\r\n<doc></doc>\r\n";
-    expectRejects(
-      input,
-      "XML Parse error: Expected an element name, '(' or '#PCDATA' in the content model but found ')'",
-    );
+    expectRejects(input, "XML Parse error: Expected an element name or '(' in the content model but found ')'");
   });
 
   test("not-wf-sa-142", () => {
     // 2.2 [2] — Character #x0000 is not legal anywhere in an XML document.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n]>\r\n<doc>&#0;</doc>\r\n";
-    expectRejects(input, "XML Parse error: Character reference &#x0; is not a valid XML character");
+    expectRejects(input, "XML Parse error: Character reference '&#0;' is not a valid XML character");
   });
 
   test("not-wf-sa-143", () => {
     // 2.2 [2] — Character #x001F is not legal anywhere in an XML document.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n]>\r\n<doc>&#31;</doc>\r\n";
-    expectRejects(input, "XML Parse error: Character reference &#x1F; is not a valid XML character");
+    expectRejects(input, "XML Parse error: Character reference '&#31;' is not a valid XML character");
   });
 
   test("not-wf-sa-144", () => {
     // 2.2 [2] — Character #xFFFF is not legal anywhere in an XML document.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n]>\r\n<doc>&#xFFFF;</doc>\r\n";
-    expectRejects(input, "XML Parse error: Character reference &#xFFFF; is not a valid XML character");
+    expectRejects(input, "XML Parse error: Character reference '&#xFFFF;' is not a valid XML character");
   });
 
   test("not-wf-sa-145", () => {
     // 2.2 [2] — Character #xD800 is not legal anywhere in an XML document. (If it appeared in a UTF-16
     // surrogate pair, it'd represent half of a UCS-4 character and so wouldn't really be in the document.)
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n]>\r\n<doc>&#xD800;</doc>\r\n";
-    expectRejects(input, "XML Parse error: Character reference &#xD800; is not a valid XML character");
+    expectRejects(input, "XML Parse error: Character reference '&#xD800;' is not a valid XML character");
   });
 
   test("not-wf-sa-146", () => {
     // 2.2 [2] — Character references must also refer to legal XML characters; #x00110000 is one more than
     // the largest legal character.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n]>\r\n<doc>&#x110000;</doc>\r\n";
-    expectRejects(input, "XML Parse error: Character reference &#x110000; is not a valid XML character");
+    expectRejects(input, "XML Parse error: Character reference '&#x110000;' is not a valid XML character");
   });
 
   test("not-wf-sa-147", () => {
@@ -1150,7 +1144,7 @@ describe("xmltest", () => {
     // 3.3 [52] — SGML-ism: "#NOTATION gif" can't have attributes.
     const input: string =
       '<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n<!NOTATION gif PUBLIC "image/gif" "">\r\n<!ATTLIST #NOTATION gif a1 CDATA #IMPLIED>\r\n]>\r\n<doc></doc>\r\n';
-    expectRejects(input, "XML Parse error: Expected a name in the markup declaration but found '#'");
+    expectRejects(input, "XML Parse error: Expected an element name after '<!ATTLIST' but found '#NOTATION'");
   });
 
   test("not-wf-sa-159", () => {
@@ -1194,20 +1188,26 @@ describe("xmltest", () => {
     // 4.1 [69] — Invalid placement of Parameter entity reference.
     const input: string =
       '<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ENTITY % e "">\r\n]>\r\n%e;\r\n<doc></doc>\r\n';
-    expectRejects(input, "XML Parse error: Expected the root element but found '%'");
+    expectRejects(
+      input,
+      "XML Parse error: Markup declarations and parameter-entity references are only allowed in the document type declaration",
+    );
   });
 
   test("not-wf-sa-164", () => {
     // 4.1 [69] — Invalid placement of Parameter entity reference.
     const input: string =
       '<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ENTITY % e "">\r\n] %e; >\r\n<doc></doc>\r\n';
-    expectRejects(input, "XML Parse error: Expected '>' to close the document type declaration but found '%'");
+    expectRejects(
+      input,
+      "XML Parse error: Parameter entity references are not allowed inside markup declarations in the internal subset",
+    );
   });
 
   test("not-wf-sa-165", () => {
     // 4.2 [72] — Parameter entity declarations must have a space before the '%'.
     const input: string = '<!DOCTYPE doc [\r\n<!ENTITY% e "">\r\n<!ELEMENT doc (#PCDATA)>\r\n]>\r\n<doc></doc>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after '<!ENTITY' but found '%'");
+    expectRejects(input, "XML Parse error: Whitespace is required before '%'");
   });
 
   test("not-wf-sa-166", () => {
@@ -1348,10 +1348,7 @@ describe("xmltest", () => {
     // 3.1 [44] — Whitespace is required between attribute/value pairs.
     const input: string =
       '<!DOCTYPE a [\r\n<!ELEMENT a EMPTY>\r\n<!ATTLIST a b CDATA #IMPLIED d CDATA #IMPLIED>\r\n]>\r\n<a b="c"d="e"/>\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected whitespace, '>' or '/>' after the previous name or value in the tag but found 'd'",
-    );
+    expectRejects(input, "XML Parse error: Whitespace is required before 'd'");
   });
 
   test("not-wf-not-sa-001", () => {
@@ -4007,7 +4004,7 @@ describe("sun", () => {
       '<!DOCTYPE root [\n    <!ELEMENT root EMPTY>\n\n    <!-- SGML-ism:  illegal attribute types -->\n\n    <!ATTLIST root\n\tnumber\tNUTOKEN\t"1"\n\t>\n\n]>\n\n<root/>\n';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'N'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'NUTOKEN'",
     );
   });
 
@@ -4017,7 +4014,7 @@ describe("sun", () => {
       '<!DOCTYPE root [\n    <!ELEMENT root EMPTY>\n\n    <!-- SGML-ism:  illegal attribute types -->\n\n    <!ATTLIST root\n\tnumber\tNUTOKENS\t"1 2 3"\n\t>\n\n]>\n\n<root/>\n\n';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'N'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'NUTOKENS'",
     );
   });
 
@@ -4034,7 +4031,7 @@ describe("sun", () => {
       '<!DOCTYPE root [\n    <!ELEMENT root EMPTY>\n\n    <!-- SGML-ism:  illegal attribute types -->\n\n    <!ATTLIST root\n\tnumber\tNUMBER\t"1"\n\t>\n\n]>\n\n<root/>\n\n';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'N'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'NUMBER'",
     );
   });
 
@@ -4044,7 +4041,7 @@ describe("sun", () => {
       '<!DOCTYPE root [\n    <!ELEMENT root EMPTY>\n\n    <!-- SGML-ism:  illegal attribute types -->\n\n    <!ATTLIST root\n\tnumbers\tNUMBERS\t"1 2 3 4"\n\t>\n\n]>\n\n<root/>\n\n';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'N'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'NUMBERS'",
     );
   });
 
@@ -4054,7 +4051,7 @@ describe("sun", () => {
       '<!DOCTYPE root [\n    <!ELEMENT root EMPTY>\n\n    <!-- SGML-ism:  illegal attribute types -->\n\n    <!ATTLIST root\n\tnumber\tNAME\t"Elvis"\n\t>\n\n]>\n\n<root/>\n\n';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'N'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'NAME'",
     );
   });
 
@@ -4064,7 +4061,7 @@ describe("sun", () => {
       '<!DOCTYPE root [\n    <!ELEMENT root EMPTY>\n\n    <!-- SGML-ism:  illegal attribute types -->\n\n    <!ATTLIST root\n\tnumber\tNAMES\t"The King"\n\t>\n\n]>\n\n<root/>\n\n';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'N'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'NAMES'",
     );
   });
 
@@ -4074,7 +4071,7 @@ describe("sun", () => {
       "<!DOCTYPE root [\n    <!ELEMENT root EMPTY>\n\n    <!-- SGML-ism:  illegal attribute default -->\n\n    <!ATTLIST root\n\tlanguage\tCDATA\t#CURRENT\n\t>\n\n]>\n\n<root/>\n";
     expectRejects(
       input,
-      "XML Parse error: Expected #REQUIRED, #IMPLIED, #FIXED or a quoted default value but found '#'",
+      "XML Parse error: Expected #REQUIRED, #IMPLIED, #FIXED or a quoted default value but found '#CURRENT'",
     );
   });
 
@@ -4084,7 +4081,7 @@ describe("sun", () => {
       '<!DOCTYPE root [\n    <!-- SGML-ism:  illegal attribute default -->\n\n    <!ATTLIST root\n\tlanguage\tCDATA\t#CONREF\n\t>\n\n]>\n\n<root language="Dutch"/>\n\n';
     expectRejects(
       input,
-      "XML Parse error: Expected #REQUIRED, #IMPLIED, #FIXED or a quoted default value but found '#'",
+      "XML Parse error: Expected #REQUIRED, #IMPLIED, #FIXED or a quoted default value but found '#CONREF'",
     );
   });
 
@@ -4092,20 +4089,14 @@ describe("sun", () => {
     // 3.1 [40] — Whitespace required between attributes
     const input: string =
       '<!DOCTYPE root [\n<!ELEMENT root ANY>\n<!ATTLIST root att1 CDATA #IMPLIED>\n<!ATTLIST root att2 CDATA #IMPLIED>\n]>\n<root att1="value1"att2="value2">\n    <!-- whitespace required between attributes -->\n</root>\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected whitespace, '>' or '/>' after the previous name or value in the tag but found 'a'",
-    );
+    expectRejects(input, "XML Parse error: Whitespace is required before 'att2'");
   });
 
   test("attlist11", () => {
     // 3.1 [44] — Whitespace required between attributes
     const input: string =
       '<!DOCTYPE root [\n<!ELEMENT root ANY>\n<!ATTLIST root att1 CDATA #IMPLIED>\n<!ATTLIST root att2 CDATA #IMPLIED>\n]>\n<root att1="value1"att2="value2"/>\n    <!-- whitespace required between attributes -->\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected whitespace, '>' or '/>' after the previous name or value in the tag but found 'a'",
-    );
+    expectRejects(input, "XML Parse error: Whitespace is required before 'att2'");
   });
 
   test("cond01", () => {
@@ -4126,21 +4117,21 @@ describe("sun", () => {
     // 3.2.1 [48] — No whitespace before "?" in content model
     const input: string =
       "<!DOCTYPE root [\n    <!-- no whitespace before '?', '*', '+' -->\n    <!ELEMENT root ((root) ?)>\n]>\n<root/>\n";
-    expectRejects(input, "XML Parse error: Expected ')', '|' or ',' in the content model but found '?'");
+    expectRejects(input, "XML Parse error: An occurrence indicator must directly follow the name or ')' it applies to");
   });
 
   test("content02", () => {
     // 3.2.1 [48] — No whitespace before "*" in content model
     const input: string =
       "<!DOCTYPE root [\n    <!-- no whitespace before '?', '*', '+' -->\n    <!ELEMENT root ((root) *)>\n]>\n<root/>\n\n";
-    expectRejects(input, "XML Parse error: Expected ')', '|' or ',' in the content model but found '*'");
+    expectRejects(input, "XML Parse error: An occurrence indicator must directly follow the name or ')' it applies to");
   });
 
   test("content03", () => {
     // 3.2.1 [48] — No whitespace before "+" in content model
     const input: string =
       "<!DOCTYPE root [\n    <!-- no whitespace before '?', '*', '+' -->\n    <!ELEMENT root (root +)>\n]>\n<root/>\n\n";
-    expectRejects(input, "XML Parse error: Expected ')', '|' or ',' in the content model but found '+'");
+    expectRejects(input, "XML Parse error: An occurrence indicator must directly follow the name or ')' it applies to");
   });
 
   test("decl01", () => {
@@ -4155,7 +4146,7 @@ describe("sun", () => {
     // 3.2.1 [55] — Comma mandatory in content model
     const input: string =
       "<!DOCTYPE root [\n    <!ELEMENT root (foo, bar? foo)>\n\t<!-- comma omitted -->\n    <!ELEMENT foo EMPTY>\n    <!ELEMENT bar EMPTY>\n]>\n\n<root> <foo/> <foo/> </root>\n";
-    expectRejects(input, "XML Parse error: Expected ')', '|' or ',' in the content model but found 'f'");
+    expectRejects(input, "XML Parse error: Expected ')', '|' or ',' in the content model but found 'foo'");
   });
 
   test("nwf-dtd01", () => {
@@ -4169,28 +4160,28 @@ describe("sun", () => {
     // 4.1 [69] — PE name immediately after "%"
     const input: string =
       '<!DOCTYPE root [\n    <!ELEMENT root EMPTY>\n    <!-- correct PE ref syntax -->\n    <!ENTITY % foo "<!ATTLIST root>">\n    % foo;\n]>\n\n<root/>\n';
-    expectRejects(input, "XML Parse error: Expected a parameter entity name after '%' but found space");
+    expectRejects(input, "XML Parse error: Expected a markup declaration or ']' in the internal subset but found '%'");
   });
 
   test("dtd03", () => {
     // 4.1 [69] — PE name immediately followed by ";"
     const input: string =
       '<!DOCTYPE root [\n    <!ELEMENT root EMPTY>\n    <!-- correct PE ref syntax -->\n    <!ENTITY % foo "<!ATTLIST root>">\n    %foo\n    ;\n]>\n\n<root/>\n';
-    expectRejects(input, "XML Parse error: Expected ';' after the entity name but found newline");
+    expectRejects(input, "XML Parse error: Expected ';' to end the parameter entity reference 'foo'");
   });
 
   test("dtd04", () => {
     // 4.2.2 [75] — PUBLIC literal must be quoted
     const input: string =
       '<!DOCTYPE root [\n    <!ELEMENT root EMPTY>\n    <!-- PUBLIC id must be quoted -->\n    <!ENTITY foo PUBLIC -//BadCorp//DTD-foo-1.0//EN "elvis.ent">\n]>\n\n<root/>\n';
-    expectRejects(input, "XML Parse error: Expected a quoted public identifier but found '-'");
+    expectRejects(input, "XML Parse error: Expected a quoted public identifier after PUBLIC but found '-'");
   });
 
   test("dtd05", () => {
     // 4.2.2 [75] — SYSTEM identifier must be quoted
     const input: string =
       "<!DOCTYPE root [\n    <!ELEMENT root EMPTY>\n    <!-- SYSTEM id must be quoted -->\n    <!ENTITY foo SYSTEM elvis.ent>\n]>\n\n<root/>\n";
-    expectRejects(input, "XML Parse error: Expected a quoted system identifier but found 'e'");
+    expectRejects(input, "XML Parse error: Expected a quoted system identifier after SYSTEM but found 'elvis.ent'");
   });
 
   test("dtd07", () => {
@@ -4203,7 +4194,7 @@ describe("sun", () => {
   test("element00", () => {
     // 3.1 [42] — EOF in middle of incomplete ETAG
     const input: string = "<root>\n    Incomplete end tag.\n</ro";
-    expectRejects(input, "XML Parse error: Expected '>' to end the closing tag but found end of input");
+    expectRejects(input, "XML Parse error: Expected closing tag </root> but found </ro>");
   });
 
   test("element01", () => {
@@ -4319,7 +4310,10 @@ describe("sun", () => {
     // 2.3 [12] — SGML-ism: public ID without system ID
     const input: string =
       '<!DOCTYPE root [\n\n    <!-- SGML-ism: publid ID without system ID -->\n\n    <!ENTITY e PUBLIC "this is not allowed">\n]>\n\n<root/>\n';
-    expectRejects(input, "XML Parse error: Expected a system identifier after the public identifier but found '>'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected a quoted system identifier after the public identifier but found '>'",
+    );
   });
 
   test("sgml01", () => {
@@ -4351,21 +4345,21 @@ describe("sun", () => {
     // 3.3 [52] — ATTLIST declarations apply to only one element, unlike SGML
     const input: string =
       "<!DOCTYPE root [\n    <!-- SGML-ism:  multiple attlist types -->\n\n    <!ELEMENT root EMPTY>\n    <!ELEMENT branch EMPTY>\n\n    <!ATTLIST (root|branch)\n\tTreeType CDATA #REQUIRED\n\t>\n]>\n\n<root/>\n";
-    expectRejects(input, "XML Parse error: Expected a name in the markup declaration but found '('");
+    expectRejects(input, "XML Parse error: Expected an element name after '<!ATTLIST' but found '('");
   });
 
   test("sgml05", () => {
     // 3.2 [45] — ELEMENT declarations apply to only one element, unlike SGML
     const input: string =
       "<!DOCTYPE root [\n    <!-- SGML-ism:  multiple element types -->\n\n    <!ELEMENT root EMPTY>\n    <!ELEMENT leaves EMPTY>\n    <!ELEMENT branch EMPTY>\n\n    <!ELEMENT (bush|tree) (root,leaves,branch)>\n]>\n\n<root/>\n\n";
-    expectRejects(input, "XML Parse error: Expected a name in the markup declaration but found '('");
+    expectRejects(input, "XML Parse error: Expected an element name after '<!ELEMENT' but found '('");
   });
 
   test("sgml06", () => {
     // 3.3 [52] — ATTLIST declarations are never global, unlike in SGML
     const input: string =
       "<!DOCTYPE root [\n    <!-- Web-SGML-ism:  global attlist types -->\n\n    <!ELEMENT root EMPTY>\n\n    <!ATTLIST #ALL\n\tTreeType CDATA #REQUIRED\n\t>\n]>\n\n<root/>\n";
-    expectRejects(input, "XML Parse error: Expected a name in the markup declaration but found '#'");
+    expectRejects(input, "XML Parse error: Expected an element name after '<!ATTLIST' but found '#ALL'");
   });
 
   test("sgml07", () => {
@@ -4386,28 +4380,28 @@ describe("sun", () => {
     // 3.2 [45] — SGML Content model exception specifications are not allowed
     const input: string =
       "<!DOCTYPE root [\n    <!-- SGML-ism:  exception spec -->\n\n    <!ELEMENT footnote (para*) -footnote>\n]>\n\n<root/>\n\n";
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found '-'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the element declaration but found '-footnote'");
   });
 
   test("sgml10", () => {
     // 3.2 [45] — SGML Content model exception specifications are not allowed
     const input: string =
       "<!DOCTYPE root [\n    <!-- SGML-ism:  exception spec -->\n    <!ELEMENT section (header,(para|section))* +(annotation|todo)>\n]>\n\n<root/>\n\n";
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found '+'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the element declaration but found '+'");
   });
 
   test("sgml11", () => {
     // 3.2 [46] — CDATA is not a valid content model spec
     const input: string =
       "<!DOCTYPE root [\n    <!-- SGML-ism:  CDATA content type -->\n    <!ELEMENT ROOT CDATA>\n]>\n\n<root/>\n\n";
-    expectRejects(input, "XML Parse error: Expected EMPTY, ANY or '(' in the element declaration but found 'C'");
+    expectRejects(input, "XML Parse error: Expected EMPTY, ANY or '(' in the element declaration but found 'CDATA'");
   });
 
   test("sgml12", () => {
     // 3.2 [46] — RCDATA is not a valid content model spec
     const input: string =
       "<!DOCTYPE root [\n    <!-- SGML-ism:  RCDATA content type -->\n    <!ELEMENT ROOT RCDATA>\n]>\n\n<root/>\n\n\n";
-    expectRejects(input, "XML Parse error: Expected EMPTY, ANY or '(' in the element declaration but found 'R'");
+    expectRejects(input, "XML Parse error: Expected EMPTY, ANY or '(' in the element declaration but found 'RCDATA'");
   });
 
   test("sgml13", () => {
@@ -5336,190 +5330,181 @@ describe("oasis", () => {
   test("o-p03fail10", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u000b<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x0B");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x0B");
   });
 
   test("o-p03fail11", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\f<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x0C");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x0C");
   });
 
   test("o-p03fail12", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u000e<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x0E");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x0E");
   });
 
   test("o-p03fail13", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u000f<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x0F");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x0F");
   });
 
   test("o-p03fail14", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u0010<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x10");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x10");
   });
 
   test("o-p03fail15", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u0011<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x11");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x11");
   });
 
   test("o-p03fail16", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u0012<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x12");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x12");
   });
 
   test("o-p03fail17", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u0013<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x13");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x13");
   });
 
   test("o-p03fail18", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u0014<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x14");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x14");
   });
 
   test("o-p03fail19", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u0015<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x15");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x15");
   });
 
   test("o-p03fail2", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u0001<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x01");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x01");
   });
 
   test("o-p03fail20", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u0016<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x16");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x16");
   });
 
   test("o-p03fail21", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u0017<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x17");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x17");
   });
 
   test("o-p03fail22", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u0018<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x18");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x18");
   });
 
   test("o-p03fail23", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u0019<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x19");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x19");
   });
 
   test("o-p03fail24", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u001a<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x1A");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x1A");
   });
 
   test("o-p03fail25", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u001b<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x1B");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x1B");
   });
 
   test("o-p03fail26", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u001c<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x1C");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x1C");
   });
 
   test("o-p03fail27", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u001d<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x1D");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x1D");
   });
 
   test("o-p03fail28", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u001e<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x1E");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x1E");
   });
 
   test("o-p03fail29", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u001f<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x1F");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x1F");
   });
 
   test("o-p03fail3", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u0002<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x02");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x02");
   });
 
   test("o-p03fail4", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u0003<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x03");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x03");
   });
 
   test("o-p03fail5", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u0004<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x04");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x04");
   });
 
   test("o-p03fail7", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u0006<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x06");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x06");
   });
 
   test("o-p03fail8", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\u0007<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x07");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x07");
   });
 
   test("o-p03fail9", () => {
     // 2.3 [3] — Use of illegal character within XML document.
     const input: string = "\b<doc/>";
-    expectRejects(input, "XML Parse error: Expected the root element but found control character 0x08");
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x08");
   });
 
   test("o-p04fail1", () => {
     // 2.3 [4] — Name contains invalid character.
     const input: string = "<A@/>\r\n";
-    expectRejects(
-      input,
-      "XML Parse error: Expected whitespace, '>' or '/>' after the previous name or value in the tag but found '@'",
-    );
+    expectRejects(input, "XML Parse error: Expected an attribute name, '>' or '/>' in the start tag but found '@'");
   });
 
   test("o-p04fail2", () => {
     // 2.3 [4] — Name contains invalid character.
     const input: string = "<A#/>\r\n";
-    expectRejects(
-      input,
-      "XML Parse error: Expected whitespace, '>' or '/>' after the previous name or value in the tag but found '#'",
-    );
+    expectRejects(input, "XML Parse error: Expected a keyword after '#' but found '/'");
   });
 
   test("o-p04fail3", () => {
     // 2.3 [4] — Name contains invalid character.
     const input: string = "<A$/>\r\n";
-    expectRejects(
-      input,
-      "XML Parse error: Expected whitespace, '>' or '/>' after the previous name or value in the tag but found '$'",
-    );
+    expectRejects(input, "XML Parse error: Expected an attribute name, '>' or '/>' in the start tag but found '$'");
   });
 
   test("o-p05fail1", () => {
@@ -5607,14 +5592,14 @@ describe("oasis", () => {
     // 2.3 [11] — quote types must match
     const input: string =
       "<!--Inability to resolve a notation should not be reported as an error-->\r\n<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!NOTATION not1 SYSTEM 'a\">\r\n]>\r\n<doc/>\r\n";
-    expectRejects(input, "XML Parse error: Unterminated system identifier");
+    expectRejects(input, "XML Parse error: Unterminated quoted string");
   });
 
   test("o-p11fail2", () => {
     // 2.3 [11] — cannot contain delimiting quotes
     const input: string =
       '<!--Inability to resolve a notation should not be reported as an error-->\r\n<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!NOTATION not1 SYSTEM """>\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found '\"'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the notation declaration but found '\"'");
   });
 
   test("o-p12fail1", () => {
@@ -5795,25 +5780,25 @@ describe("oasis", () => {
   test("o-p23fail5", () => {
     // 2.8 [23] — no SGML-type PIs
     const input: string = '<?xml version="1.0">\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace in the XML declaration before '>'");
+    expectRejects(input, "XML Parse error: Expected '?>' to end the XML declaration but found '>'");
   });
 
   test("o-p24fail1", () => {
     // 2.8 [24] — quote types must match
     const input: string = "<?xml version = '1.0\"?>\r\n<doc/>\r\n";
-    expectRejects(input, "XML Parse error: Invalid character in an XML declaration value: '>'");
+    expectRejects(input, "XML Parse error: Invalid character in a quoted string: '>'");
   });
 
   test("o-p24fail2", () => {
     // 2.8 [24] — quote types must match
     const input: string = "<?xml version = \"1.0'?>\r\n<doc/>\r\n";
-    expectRejects(input, "XML Parse error: Invalid character in an XML declaration value: '>'");
+    expectRejects(input, "XML Parse error: Invalid character in a quoted string: '>'");
   });
 
   test("o-p25fail1", () => {
     // 2.8 [25] — Comment is illegal in VersionInfo.
     const input: string = '<?xml version <!--bad comment--> ="1.0"?>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected '=' in the XML declaration but found '<'");
+    expectRejects(input, "XML Parse error: Expected '=' after the name in the XML declaration but found a comment");
   });
 
   test("o-p26fail1", () => {
@@ -5839,7 +5824,7 @@ describe("oasis", () => {
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc EMPTY>\r\n<doc/>\r\n]>\r\n";
     expectRejects(
       input,
-      "XML Parse error: Expected a markup declaration (<!ELEMENT, <!ATTLIST, <!ENTITY, <!NOTATION), a comment, or a processing instruction",
+      "XML Parse error: Expected a markup declaration or ']' in the internal subset but found '<doc'",
     );
   });
 
@@ -5849,7 +5834,7 @@ describe("oasis", () => {
       "<!DOCTYPE doc [\r\n<!ELEMENT doc EMPTY>\r\n<!DUNNO should not pass unknown declaration types>\r\n]>\r\n<doc/>\r\n";
     expectRejects(
       input,
-      "XML Parse error: Expected a markup declaration (<!ELEMENT, <!ATTLIST, <!ENTITY, <!NOTATION), a comment, or a processing instruction",
+      "XML Parse error: '<!' must begin a comment, '<![CDATA[', or a DOCTYPE, ELEMENT, ATTLIST, ENTITY or NOTATION declaration",
     );
   });
 
@@ -5870,25 +5855,25 @@ describe("oasis", () => {
   test("o-p32fail1", () => {
     // 2.9 [32] — quote types must match
     const input: string = '<?xml version="1.0" standalone=\'yes"?>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Invalid character in an XML declaration value: '>'");
+    expectRejects(input, "XML Parse error: Invalid character in a quoted string: '>'");
   });
 
   test("o-p32fail2", () => {
     // 2.9 [32] — quote types must match
     const input: string = '<?xml version="1.0" standalone="yes\'?>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Invalid character in an XML declaration value: '>'");
+    expectRejects(input, "XML Parse error: Invalid character in a quoted string: '>'");
   });
 
   test("o-p32fail3", () => {
     // 2.9 [32] — initial S is required
     const input: string = '<?xml version="1.0"standalone="yes"?>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace in the XML declaration before 's'");
+    expectRejects(input, "XML Parse error: Whitespace is required before 'standalone'");
   });
 
   test("o-p32fail4", () => {
     // 2.9 [32] — quotes are required
     const input: string = '<?xml version="1.0" standalone=yes?>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected a quoted value in the XML declaration but found 'y'");
+    expectRejects(input, "XML Parse error: Expected a quoted value in the XML declaration but found 'yes'");
   });
 
   test("o-p32fail5", () => {
@@ -5921,23 +5906,20 @@ describe("oasis", () => {
   test("o-p39fail4", () => {
     // 2.8 [23] — XML declarations must be correctly terminated
     const input: string = '<?xml version="1.0">\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace in the XML declaration before '>'");
+    expectRejects(input, "XML Parse error: Expected '?>' to end the XML declaration but found '>'");
   });
 
   test("o-p39fail5", () => {
     // 2.8 [23] — XML declarations must be correctly terminated
     const input: string =
       '<?xml version="1.0">\r\n<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n]>\r\n\r\n<!--comment-->\r\n<?pi?>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace in the XML declaration before '>'");
+    expectRejects(input, "XML Parse error: Expected '?>' to end the XML declaration but found '>'");
   });
 
   test("o-p40fail1", () => {
     // 3.1 [40] — S is required between attributes
     const input: string = '<doc att="val"att2="val2"></doc>';
-    expectRejects(
-      input,
-      "XML Parse error: Expected whitespace, '>' or '/>' after the previous name or value in the tag but found 'a'",
-    );
+    expectRejects(input, "XML Parse error: Whitespace is required before 'att2'");
   });
 
   test("o-p40fail2", () => {
@@ -5961,13 +5943,13 @@ describe("oasis", () => {
   test("o-p41fail1", () => {
     // 3.1 [41] — quotes are required (contrast with SGML)
     const input: string = "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc att (val|val2)>\r\n]>\r\n<doc att=val></doc>";
-    expectRejects(input, "XML Parse error: Expected EMPTY, ANY or '(' in the element declaration but found 'a'");
+    expectRejects(input, "XML Parse error: Expected EMPTY, ANY or '(' in the element declaration but found 'att'");
   });
 
   test("o-p41fail2", () => {
     // 3.1 [41] — attribute name is required (contrast with SGML)
     const input: string = "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc att (val|val2)>\r\n]>\r\n<doc val></doc>";
-    expectRejects(input, "XML Parse error: Expected EMPTY, ANY or '(' in the element declaration but found 'a'");
+    expectRejects(input, "XML Parse error: Expected EMPTY, ANY or '(' in the element declaration but found 'att'");
   });
 
   test("o-p41fail3", () => {
@@ -5985,13 +5967,13 @@ describe("oasis", () => {
   test("o-p42fail2", () => {
     // 3.1 [42] — cannot end with "/>"
     const input: string = "<doc></doc/>";
-    expectRejects(input, "XML Parse error: Expected '>' to end the closing tag but found '/'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the closing tag but found '/>'");
   });
 
   test("o-p42fail3", () => {
     // 3.1 [42] — no NET (contrast with SGML)
     const input: string = "<doc/doc/";
-    expectRejects(input, "XML Parse error: Expected '>' after '/' in the tag but found 'd'");
+    expectRejects(input, "XML Parse error: Expected '>' after '/' but found 'd'");
   });
 
   test("o-p43fail1", () => {
@@ -6024,22 +6006,19 @@ describe("oasis", () => {
   test("o-p44fail2", () => {
     // 3.1 [44] — Illegal space after Empty element tag.
     const input: string = "<doc/ >";
-    expectRejects(input, "XML Parse error: Expected '>' after '/' in the tag but found space");
+    expectRejects(input, "XML Parse error: Expected '>' after '/' but found space");
   });
 
   test("o-p44fail3", () => {
     // 3.1 [44] — Illegal comment in Empty element tag.
     const input: string = "<doc --bad comment--/>";
-    expectRejects(input, "XML Parse error: Expected an attribute name but found '-'");
+    expectRejects(input, "XML Parse error: Expected an attribute name, '>' or '/>' in the start tag but found '--bad'");
   });
 
   test("o-p44fail4", () => {
     // 3.1 [44] — Whitespace required between attributes.
     const input: string = '<doc att="val"att2="val2"/>';
-    expectRejects(
-      input,
-      "XML Parse error: Expected whitespace, '>' or '/>' after the previous name or value in the tag but found 'a'",
-    );
+    expectRejects(input, "XML Parse error: Whitespace is required before 'att2'");
   });
 
   test("o-p44fail5", () => {
@@ -6053,62 +6032,62 @@ describe("oasis", () => {
     const input: string = "<!DOCTYPE doc\r\n[\r\n<!element doc EMPTY>\r\n]>\r\n<doc/>";
     expectRejects(
       input,
-      "XML Parse error: Expected a markup declaration (<!ELEMENT, <!ATTLIST, <!ENTITY, <!NOTATION), a comment, or a processing instruction",
+      "XML Parse error: '<!' must begin a comment, '<![CDATA[', or a DOCTYPE, ELEMENT, ATTLIST, ENTITY or NOTATION declaration",
     );
   });
 
   test("o-p45fail2", () => {
     // 3.2 [45] — S before contentspec is required.
     const input: string = "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc(#PCDATA)>\r\n]>\r\n<doc/>";
-    expectRejects(input, "XML Parse error: Expected whitespace after the element name but found '('");
+    expectRejects(input, "XML Parse error: Whitespace is required before '('");
   });
 
   test("o-p45fail3", () => {
     // 3.2 [45] — only one content spec
     const input: string = "<!DOCTYPE doc\r\n[\r\n<!ELEMENT (doc|a) (#PCDATA)>\r\n]>\r\n<doc/>";
-    expectRejects(input, "XML Parse error: Expected a name in the markup declaration but found '('");
+    expectRejects(input, "XML Parse error: Expected an element name after '<!ELEMENT' but found '('");
   });
 
   test("o-p45fail4", () => {
     // 3.2 [45] — no comments in declarations (contrast with SGML)
     const input: string = "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA) --bad comment-->\r\n]>\r\n<doc/>";
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found '-'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the element declaration but found '--bad'");
   });
 
   test("o-p46fail1", () => {
     // 3.2 [46] — no parens on declared content
     const input: string = "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc ANY>\r\n<!ELEMENT a (#EMPTY)>\r\n]>\r\n<doc/>";
-    expectRejects(input, "XML Parse error: Expected '#PCDATA' but found '#'");
+    expectRejects(input, "XML Parse error: Expected an element name or '(' in the content model but found '#EMPTY'");
   });
 
   test("o-p46fail2", () => {
     // 3.2 [46] — no inclusions (contrast with SGML)
     const input: string = "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc ANY>\r\n<!ELEMENT a (#PCDATA) +(doc)>\r\n]>\r\n<doc/>";
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found '+'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the element declaration but found '+'");
   });
 
   test("o-p46fail3", () => {
     // 3.2 [46] — no exclusions (contrast with SGML)
     const input: string = "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc ANY>\r\n<!ELEMENT a (#PCDATA) -(doc)>\r\n]>\r\n<doc/>";
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found '-'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the element declaration but found '-'");
   });
 
   test("o-p46fail4", () => {
     // 3.2 [46] — no space before occurrence
     const input: string = "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc ANY>\r\n<!ELEMENT a (doc) +>\r\n]>\r\n<doc/>";
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found '+'");
+    expectRejects(input, "XML Parse error: An occurrence indicator must directly follow the name or ')' it applies to");
   });
 
   test("o-p46fail5", () => {
     // 3.2 [46] — single group
     const input: string = "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc ANY>\r\n<!ELEMENT a (#PCDATA)(doc)>\r\n]>\r\n<doc/>";
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found '('");
+    expectRejects(input, "XML Parse error: Expected '>' to end the element declaration but found '('");
   });
 
   test("o-p46fail6", () => {
     // 3.2 [46] — can't be both declared and modeled
     const input: string = "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc ANY>\r\n<!ELEMENT a EMPTY (doc)>\r\n]>\r\n<doc/>";
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found '('");
+    expectRejects(input, "XML Parse error: Expected '>' to end the element declaration but found '('");
   });
 
   test("o-p47fail1", () => {
@@ -6120,7 +6099,7 @@ describe("oasis", () => {
   test("o-p47fail2", () => {
     // 3.2.1 [47] — Illegal character '-' in Element-content model
     const input: string = "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc ANY>\r\n<!ELEMENT a (doc)->\r\n]>\r\n<doc/>";
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found '-'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the element declaration but found '-'");
   });
 
   test("o-p47fail3", () => {
@@ -6132,19 +6111,19 @@ describe("oasis", () => {
   test("o-p47fail4", () => {
     // 3.2.1 [47] — Illegal space before optional character
     const input: string = "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc ANY>\r\n<!ELEMENT a (doc) ?>\r\n]>\r\n<doc/>";
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found '?'");
+    expectRejects(input, "XML Parse error: An occurrence indicator must directly follow the name or ')' it applies to");
   });
 
   test("o-p48fail1", () => {
     // 3.2.1 [48] — Illegal space before optional character
     const input: string = "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc ANY>\r\n<!ELEMENT a (doc *)>\r\n]>\r\n<doc/>";
-    expectRejects(input, "XML Parse error: Expected ')', '|' or ',' in the content model but found '*'");
+    expectRejects(input, "XML Parse error: An occurrence indicator must directly follow the name or ')' it applies to");
   });
 
   test("o-p48fail2", () => {
     // 3.2.1 [48] — Illegal space before optional character
     const input: string = "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc ANY>\r\n<!ELEMENT a ((doc|a?) +)>\r\n]>\r\n<doc/>";
-    expectRejects(input, "XML Parse error: Expected ')', '|' or ',' in the content model but found '+'");
+    expectRejects(input, "XML Parse error: An occurrence indicator must directly follow the name or ')' it applies to");
   });
 
   test("o-p49fail1", () => {
@@ -6162,27 +6141,27 @@ describe("oasis", () => {
   test("o-p51fail1", () => {
     // 3.2.2 [51] — occurrence on #PCDATA group must be *
     const input: string = "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)?>\r\n]>\r\n<doc/>";
-    expectRejects(input, "XML Parse error: (#PCDATA) may only be followed by '*'");
+    expectRejects(input, "XML Parse error: A mixed content model may only be followed by '*'");
   });
 
   test("o-p51fail2", () => {
     // 3.2.2 [51] — occurrence on #PCDATA group must be *
     const input: string = "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)+>\r\n]>\r\n<doc/>";
-    expectRejects(input, "XML Parse error: (#PCDATA) may only be followed by '*'");
+    expectRejects(input, "XML Parse error: A mixed content model may only be followed by '*'");
   });
 
   test("o-p51fail3", () => {
     // 3.2.2 [51] — #PCDATA must come first
     const input: string =
       "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ELEMENT a (doc|#PCDATA)*>\r\n]>\r\n<doc/>";
-    expectRejects(input, "XML Parse error: #PCDATA must be the first item of a content model group");
+    expectRejects(input, "XML Parse error: #PCDATA must come first in a content model, as (#PCDATA|a|b)*");
   });
 
   test("o-p51fail4", () => {
     // 3.2.2 [51] — occurrence on #PCDATA group must be *
     const input: string =
       "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ELEMENT a (#PCDATA|doc)?>\r\n]>\r\n<doc/>";
-    expectRejects(input, "XML Parse error: A mixed content model with element names must end with ')*'");
+    expectRejects(input, "XML Parse error: A mixed content model may only be followed by '*'");
   });
 
   test("o-p51fail5", () => {
@@ -6209,27 +6188,27 @@ describe("oasis", () => {
   test("o-p52fail1", () => {
     // 3.3 [52] — A name is required
     const input: string = "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!ATTLIST  >\r\n]>\r\n<doc/>";
-    expectRejects(input, "XML Parse error: Expected a name in the markup declaration but found '>'");
+    expectRejects(input, "XML Parse error: Expected an element name after '<!ATTLIST' but found '>'");
   });
 
   test("o-p52fail2", () => {
     // 3.3 [52] — A name is required
     const input: string = "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!ATTLIST>\r\n]>\r\n<doc/>";
-    expectRejects(input, "XML Parse error: Expected whitespace after the declaration keyword but found '>'");
+    expectRejects(input, "XML Parse error: Expected an element name after '<!ATTLIST' but found '>'");
   });
 
   test("o-p53fail1", () => {
     // 3.3 [53] — S is required before default
     const input: string =
       "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!ATTLIST doc att CDATA#IMPLIED>\r\n]>\r\n<doc/>\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace after the attribute type but found '#'");
+    expectRejects(input, "XML Parse error: Whitespace is required before '#IMPLIED'");
   });
 
   test("o-p53fail2", () => {
     // 3.3 [53] — S is required before type
     const input: string =
       "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!ATTLIST doc att(a|b) #IMPLIED>\r\n]>\r\n<doc/>\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace after the attribute name but found '('");
+    expectRejects(input, "XML Parse error: Whitespace is required before '('");
   });
 
   test("o-p53fail3", () => {
@@ -6238,14 +6217,17 @@ describe("oasis", () => {
       "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!ATTLIST doc att #IMPLIED>\r\n]>\r\n<doc/>\r\n";
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found '#'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found '#IMPLIED'",
     );
   });
 
   test("o-p53fail4", () => {
     // 3.3 [53] — default is required
     const input: string = "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!ATTLIST doc att CDATA>\r\n]>\r\n<doc/>\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace after the attribute type but found '>'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected #REQUIRED, #IMPLIED, #FIXED or a quoted default value but found '>'",
+    );
   });
 
   test("o-p53fail5", () => {
@@ -6261,7 +6243,7 @@ describe("oasis", () => {
       "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!ATTLIST doc att DUNNO #IMPLIED>\r\n]>\r\n<doc/>\r\n";
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'D'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'DUNNO'",
     );
   });
 
@@ -6271,7 +6253,7 @@ describe("oasis", () => {
       "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!ATTLIST doc att cdata #IMPLIED>\r\n]>\r\n<doc/>\r\n";
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'c'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'cdata'",
     );
   });
 
@@ -6279,7 +6261,10 @@ describe("oasis", () => {
     // 3.3.1 [56] — no IDS type
     const input: string =
       "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!ATTLIST doc att IDS #IMPLIED>\r\n]>\r\n<doc/>\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace after the attribute type but found 'S'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'IDS'",
+    );
   });
 
   test("o-p56fail2", () => {
@@ -6288,7 +6273,7 @@ describe("oasis", () => {
       "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!ATTLIST doc att NUMBER #IMPLIED>\r\n]>\r\n<doc/>\r\n";
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'N'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'NUMBER'",
     );
   });
 
@@ -6298,7 +6283,7 @@ describe("oasis", () => {
       "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!ATTLIST doc att NAME #IMPLIED>\r\n]>\r\n<doc/>\r\n";
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'N'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'NAME'",
     );
   });
 
@@ -6306,7 +6291,10 @@ describe("oasis", () => {
     // 3.3.1 [56] — no ENTITYS type - types must be upper case
     const input: string =
       "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!ATTLIST doc att ENTITYS #IMPLIED>\r\n]>\r\n<doc/>\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace after the attribute type but found 'S'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'ENTITYS'",
+    );
   });
 
   test("o-p56fail5", () => {
@@ -6315,7 +6303,7 @@ describe("oasis", () => {
       "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!ATTLIST doc att id #IMPLIED>\r\n]>\r\n<doc/>\r\n";
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'i'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'id'",
     );
   });
 
@@ -6350,7 +6338,7 @@ describe("oasis", () => {
     // AttlistDecl on line 6, before reaching the notation declaration.
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!NOTATION a SYSTEM "a">\r\n<!--should fail at this AttlistDecl, before NOTATION decl-->\r\n<!ATTLIST doc att NOTATION (a|0b) #IMPLIED>\r\n\r\n\r\n\r\n<!NOTATION 0b SYSTEM "0b">\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected a notation name but found '0'");
+    expectRejects(input, "XML Parse error: Expected a notation name but found '0b'");
   });
 
   test("o-p58fail4", () => {
@@ -6359,7 +6347,7 @@ describe("oasis", () => {
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!NOTATION a SYSTEM "a">\r\n<!NOTATION b SYSTEM "b">\r\n<!ATTLIST doc att notation (a|b) #IMPLIED>\r\n]>\r\n<doc/>\r\n';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'n'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'notation'",
     );
   });
 
@@ -6367,7 +6355,7 @@ describe("oasis", () => {
     // 3.3.1 [58] — S after keyword is required
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!NOTATION a SYSTEM "a">\r\n<!NOTATION b SYSTEM "b">\r\n<!ATTLIST doc att NOTATION(a|b) #IMPLIED>\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after NOTATION but found '('");
+    expectRejects(input, "XML Parse error: Whitespace is required before '('");
   });
 
   test("o-p58fail6", () => {
@@ -6395,7 +6383,7 @@ describe("oasis", () => {
     // 3.3.1 [59] — at least one required
     const input: string =
       "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!ATTLIST doc att () #IMPLIED>\r\n]>\r\n<doc/>\r\n";
-    expectRejects(input, "XML Parse error: Expected a name token but found ')'");
+    expectRejects(input, "XML Parse error: Expected a name token in the enumeration but found ')'");
   });
 
   test("o-p59fail2", () => {
@@ -6409,7 +6397,7 @@ describe("oasis", () => {
     // 3.3.1 [59] — values are unquoted
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!ATTLIST doc att ("a") #IMPLIED>\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected a name token but found '\"'");
+    expectRejects(input, "XML Parse error: Expected a name token in the enumeration but found '\"'");
   });
 
   test("o-p60fail1", () => {
@@ -6418,7 +6406,7 @@ describe("oasis", () => {
       "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!ATTLIST doc att CDATA #implied>\r\n]>\r\n<doc/>\r\n";
     expectRejects(
       input,
-      "XML Parse error: Expected #REQUIRED, #IMPLIED, #FIXED or a quoted default value but found '#'",
+      "XML Parse error: Expected #REQUIRED, #IMPLIED, #FIXED or a quoted default value but found '#implied'",
     );
   });
 
@@ -6426,7 +6414,7 @@ describe("oasis", () => {
     // 3.3.2 [60] — S is required after #FIXED
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!ATTLIST doc att CDATA #FIXED"value">\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after #FIXED but found '\"'");
+    expectRejects(input, "XML Parse error: Whitespace is required before a quoted string");
   });
 
   test("o-p60fail3", () => {
@@ -6443,14 +6431,17 @@ describe("oasis", () => {
     // 3.3.2 [60] — #FIXED required value
     const input: string =
       "<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!ATTLIST doc att CDATA #FIXED>\r\n]>\r\n<doc/>\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace after #FIXED but found '>'");
+    expectRejects(input, "XML Parse error: Expected a quoted default value after #FIXED but found '>'");
   });
 
   test("o-p60fail5", () => {
     // 3.3.2 [60] — only one default type
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc EMPTY>\r\n<!ATTLIST doc att CDATA #IMPLIED #REQUIRED>\r\n]>\r\n<doc att="value"/>\r\n';
-    expectRejects(input, "XML Parse error: Expected an attribute name or '>' in the ATTLIST declaration but found '#'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected an attribute name or '>' in the ATTLIST declaration but found '#REQUIRED'",
+    );
   });
 
   test("o-p61fail1", () => {
@@ -6538,13 +6529,13 @@ describe("oasis", () => {
   test("o-p66fail5", () => {
     // 4.1 [66] — no references to non-characters
     const input: string = "<doc>&#5;</doc>";
-    expectRejects(input, "XML Parse error: Character reference &#x5; is not a valid XML character");
+    expectRejects(input, "XML Parse error: Character reference '&#5;' is not a valid XML character");
   });
 
   test("o-p66fail6", () => {
     // 4.1 [66] — no references to non-characters
     const input: string = "<doc>&#xd802;&#xdc02;</doc>";
-    expectRejects(input, "XML Parse error: Character reference &#xD802; is not a valid XML character");
+    expectRejects(input, "XML Parse error: Character reference '&#xd802;' is not a valid XML character");
   });
 
   test("o-p68fail1", () => {
@@ -6572,42 +6563,42 @@ describe("oasis", () => {
     // 4.1 [69] — terminating ';' is required
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ENTITY % pe "<!---->">\r\n%pe<!---->\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected ';' after the entity name but found '<'");
+    expectRejects(input, "XML Parse error: Expected ';' to end the parameter entity reference 'pe'");
   });
 
   test("o-p69fail2", () => {
     // 4.1 [69] — no S after '%'
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ENTITY % pe "<!---->">\r\n% pe;\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected a parameter entity name after '%' but found space");
+    expectRejects(input, "XML Parse error: Expected a markup declaration or ']' in the internal subset but found '%'");
   });
 
   test("o-p69fail3", () => {
     // 4.1 [69] — no S before ';'
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ENTITY % pe "<!---->">\r\n%pe ;\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected ';' after the entity name but found space");
+    expectRejects(input, "XML Parse error: Expected ';' to end the parameter entity reference 'pe'");
   });
 
   test("o-p70fail1", () => {
     // 4.2 [70] — This is neither
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ENTITY & bad "replacement text">\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected an entity name but found '&'");
+    expectRejects(input, "XML Parse error: Expected an entity name or '%' after '<!ENTITY' but found '&'");
   });
 
   test("o-p71fail1", () => {
     // 4.2 [71] — S is required before EntityDef
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ENTITY ge"replacement text">\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after the entity name but found '\"'");
+    expectRejects(input, "XML Parse error: Whitespace is required before a quoted string");
   });
 
   test("o-p71fail2", () => {
     // 4.2 [71] — Entity name is a Name, not an NMToken
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ENTITY -ge "replacement text">\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected an entity name but found '-'");
+    expectRejects(input, "XML Parse error: Expected an entity name or '%' after '<!ENTITY' but found '-ge'");
   });
 
   test("o-p71fail3", () => {
@@ -6616,7 +6607,7 @@ describe("oasis", () => {
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<! ENTITY ge "replacement text">\r\n]>\r\n<doc/>\r\n';
     expectRejects(
       input,
-      "XML Parse error: Expected a markup declaration (<!ELEMENT, <!ATTLIST, <!ENTITY, <!NOTATION), a comment, or a processing instruction",
+      "XML Parse error: '<!' must begin a comment, '<![CDATA[', or a DOCTYPE, ELEMENT, ATTLIST, ENTITY or NOTATION declaration",
     );
   });
 
@@ -6624,14 +6615,14 @@ describe("oasis", () => {
     // 4.2 [71] — S is required after "<!ENTITY"
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ENTITYge "replacement text">\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after '<!ENTITY' but found 'g'");
+    expectRejects(input, "XML Parse error: Whitespace is required before 'ge'");
   });
 
   test("o-p72fail1", () => {
     // 4.2 [72] — S is required after "<!ENTITY"
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ENTITY% pe "<!--replacement decl-->">\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after '<!ENTITY' but found '%'");
+    expectRejects(input, "XML Parse error: Whitespace is required before '%'");
   });
 
   test("o-p72fail2", () => {
@@ -6640,7 +6631,7 @@ describe("oasis", () => {
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ENTITY %pe "<!--replacement decl-->">\r\n]>\r\n<doc/>\r\n';
     expectRejects(
       input,
-      "XML Parse error: Parameter entity references are not allowed inside markup declarations in the internal subset",
+      "XML Parse error: Whitespace is required between '%' and the name in a parameter entity declaration",
     );
   });
 
@@ -6648,136 +6639,139 @@ describe("oasis", () => {
     // 4.2 [72] — S is required after name
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ENTITY % pe"<!--replacement decl-->">\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after the entity name but found '\"'");
+    expectRejects(input, "XML Parse error: Whitespace is required before a quoted string");
   });
 
   test("o-p72fail4", () => {
     // 4.2 [72] — Entity name is a name, not an NMToken
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ENTITY % .pe "<!--replacement decl-->">\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected an entity name but found '.'");
+    expectRejects(input, "XML Parse error: Expected the parameter entity name after '%' but found '.pe'");
   });
 
   test("o-p73fail1", () => {
     // 4.2 [73] — No typed replacement text
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<!NOTATION unknot PUBLIC "Unknown">\r\n<!ENTITY ge CDATA "replacement text">\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC but found 'C'");
+    expectRejects(input, "XML Parse error: Expected a quoted entity value, SYSTEM or PUBLIC but found 'CDATA'");
   });
 
   test("o-p73fail2", () => {
     // 4.2 [73] — Only one replacement value
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<!NOTATION unknot PUBLIC "Unknown">\r\n<!ENTITY ge "replacement text" "more text">\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found '\"'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the entity declaration but found '\"'");
   });
 
   test("o-p73fail3", () => {
     // 4.2 [73] — No NDataDecl on replacement text
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<!NOTATION unknot PUBLIC "Unknown">\r\n<!ENTITY ge "replacement text" NDATA unknot>\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found 'N'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the entity declaration but found 'NDATA'");
   });
 
   test("o-p73fail4", () => {
     // 4.2 [73] — Value is required
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<!NOTATION unknot PUBLIC "Unknown">\r\n<!ENTITY ge >\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC but found '>'");
+    expectRejects(input, "XML Parse error: Expected a quoted entity value, SYSTEM or PUBLIC but found '>'");
   });
 
   test("o-p73fail5", () => {
     // 4.2 [73] — No NDataDecl without value
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<!NOTATION unknot PUBLIC "Unknown">\r\n<!ENTITY ge NDATA unknot>\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC but found 'N'");
+    expectRejects(input, "XML Parse error: Expected a quoted entity value, SYSTEM or PUBLIC but found 'NDATA'");
   });
 
   test("o-p74fail1", () => {
     // 4.2 [74] — no NDataDecls on parameter entities
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!NOTATION unknot PUBLIC "Unknown">\r\n<!ENTITY % pe SYSTEM "nop.ent" NDATA unknot>\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Parameter entities cannot have NDATA: 'N'");
+    expectRejects(input, "XML Parse error: Parameter entities cannot have NDATA");
   });
 
   test("o-p74fail2", () => {
     // 4.2 [74] — value is required
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!NOTATION unknot PUBLIC "Unknown">\r\n<!ENTITY % pe>\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after the entity name but found '>'");
+    expectRejects(input, "XML Parse error: Expected a quoted entity value, SYSTEM or PUBLIC but found '>'");
   });
 
   test("o-p74fail3", () => {
     // 4.2 [74] — only one value
     const input: string = '<!DOCTYPE doc\r\n[\r\n<!ENTITY % pe "<!--decl1-->" SYSTEM "nop.ent">\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found 'S'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the entity declaration but found 'SYSTEM'");
   });
 
   test("o-p75fail1", () => {
     // 4.2.2 [75] — S required after "PUBLIC"
     const input: string = '<!DOCTYPE doc\r\n[\r\n<!ENTITY ent PUBLIC"PublicID" "nop.ent">\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after PUBLIC but found '\"'");
+    expectRejects(input, "XML Parse error: Whitespace is required before a quoted string");
   });
 
   test("o-p75fail2", () => {
     // 4.2.2 [75] — S required after "SYSTEM"
     const input: string = '<!DOCTYPE doc\r\n[\r\n<!ENTITY ent SYSTEM"nop.ent">\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after SYSTEM but found '\"'");
+    expectRejects(input, "XML Parse error: Whitespace is required before a quoted string");
   });
 
   test("o-p75fail3", () => {
     // 4.2.2 [75] — S required between literals
     const input: string = '<!DOCTYPE doc\r\n[\r\n<!ENTITY ent PUBLIC "PublicID""nop.ent">\r\n]>\r\n<doc/>\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected whitespace between the public and system identifiers but found '\"'",
-    );
+    expectRejects(input, "XML Parse error: Whitespace is required before a quoted string");
   });
 
   test("o-p75fail4", () => {
     // 4.2.2 [75] — "SYSTEM" implies only one literal
     const input: string = '<!DOCTYPE doc\r\n[\r\n<!ENTITY ent SYSTEM "PublicID" "nop.ent">\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found '\"'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the entity declaration but found '\"'");
   });
 
   test("o-p75fail5", () => {
     // 4.2.2 [75] — only one keyword
     const input: string = '<!DOCTYPE doc\r\n[\r\n<!ENTITY ent PUBLIC "PublicID" SYSTEM "nop.ent">\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected a system identifier after the public identifier but found 'S'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected a quoted system identifier after the public identifier but found 'SYSTEM'",
+    );
   });
 
   test("o-p75fail6", () => {
     // 4.2.2 [75] — "PUBLIC" requires two literals (contrast with SGML)
     const input: string = '<!DOCTYPE doc\r\n[\r\n<!ENTITY ent PUBLIC "PublicID">\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected a system identifier after the public identifier but found '>'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected a quoted system identifier after the public identifier but found '>'",
+    );
   });
 
   test("o-p76fail1", () => {
     // 4.2.2 [76] — S is required before "NDATA"
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<!NOTATION unknot PUBLIC "Unknown">\r\n<!ENTITY ge SYSTEM "nop.ent"NDATA unknot>\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found 'N'");
+    expectRejects(input, "XML Parse error: Whitespace is required before 'NDATA'");
   });
 
   test("o-p76fail2", () => {
     // 4.2.2 [76] — "NDATA" is upper-case
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<!NOTATION unknot PUBLIC "Unknown">\r\n<!ENTITY ge SYSTEM "nop.ent" ndata unknot>\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found 'n'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the entity declaration but found 'ndata'");
   });
 
   test("o-p76fail3", () => {
     // 4.2.2 [76] — notation name is required
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<!NOTATION unknot PUBLIC "Unknown">\r\n<!ENTITY ge SYSTEM "nop.ent" NDATA>\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after NDATA but found '>'");
+    expectRejects(input, "XML Parse error: Expected a notation name after NDATA but found '>'");
   });
 
   test("o-p76fail4", () => {
     // 4.2.2 [76] — notation names are Names
     const input: string =
       '<!DOCTYPE doc\r\n[\r\n<!ELEMENT doc (#PCDATA)>\r\n<!NOTATION unknot PUBLIC "Unknown">\r\n<!--error should be reported here, not at <!Notation-->\r\n<!ENTITY ge SYSTEM "nop.ent" NDATA -unknot>\r\n<!NOTATION -unknot PUBLIC "Unknown">\r\n]>\r\n<doc/>\r\n';
-    expectRejects(input, "XML Parse error: Expected a notation name after NDATA but found '-'");
+    expectRejects(input, "XML Parse error: Expected a notation name after NDATA but found '-unknot'");
   });
 
   test("o-p11pass1", () => {
@@ -7780,7 +7774,10 @@ describe("ibm", () => {
     // by #x21
     const input: string =
       "<!DOCTYPE IllegalNameChar! [\r\n   <!ELEMENT IllegalNameChar! EMPTY>\r\n]>\r\n<IllegalNameChar!/>\r\n\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '!'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '!'",
+    );
   });
 
   test("ibm-not-wf-P04-ibm04n02.xml", () => {
@@ -7788,7 +7785,10 @@ describe("ibm", () => {
     // by #x28
     const input: string =
       "<!DOCTYPE IllegalNameChar( [\r\n   <!ELEMENT IllegalNameChar( EMPTY>\r\n]>\r\n<IllegalNameChar(/>\r\n\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '('");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '('",
+    );
   });
 
   test("ibm-not-wf-P04-ibm04n03.xml", () => {
@@ -7796,7 +7796,10 @@ describe("ibm", () => {
     // by #x29
     const input: string =
       "<!DOCTYPE IllegalNameChar) [\r\n   <!ELEMENT IllegalNameChar) EMPTY>\r\n]>\r\n<IllegalNameChar)/>\r\n\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found ')'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found ')'",
+    );
   });
 
   test("ibm-not-wf-P04-ibm04n04.xml", () => {
@@ -7804,7 +7807,10 @@ describe("ibm", () => {
     // by #x2B
     const input: string =
       "<!DOCTYPE IllegalNameChar+ [\r\n   <!ELEMENT IllegalNameChar+ EMPTY>\r\n]>\r\n<IllegalNameChar+/>\r\n\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '+'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '+'",
+    );
   });
 
   test("ibm-not-wf-P04-ibm04n05.xml", () => {
@@ -7812,7 +7818,10 @@ describe("ibm", () => {
     // by #x2C
     const input: string =
       "<!DOCTYPE IllegalNameChar, [\r\n   <!ELEMENT IllegalNameChar, EMPTY>\r\n]>\r\n<IllegalNameChar,/>\r\n\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found ','");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found ','",
+    );
   });
 
   test("ibm-not-wf-P04-ibm04n06.xml", () => {
@@ -7820,7 +7829,7 @@ describe("ibm", () => {
     // by #x2F
     const input: string =
       "<!DOCTYPE IllegalNameChar/ [\r\n   <!ELEMENT IllegalNameChar/ EMPTY>\r\n]>\r\n<IllegalNameChar//>\r\n\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '/'");
+    expectRejects(input, "XML Parse error: Expected '>' after '/' but found space");
   });
 
   test("ibm-not-wf-P04-ibm04n07.xml", () => {
@@ -7828,7 +7837,10 @@ describe("ibm", () => {
     // by #x3B
     const input: string =
       "<!DOCTYPE IllegalNameChar; [\r\n   <!ELEMENT IllegalNameChar; EMPTY>\r\n]>\r\n<IllegalNameChar;/>\r\n\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found ';'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found ';'",
+    );
   });
 
   test("ibm-not-wf-P04-ibm04n08.xml", () => {
@@ -7836,7 +7848,7 @@ describe("ibm", () => {
     // by #x3C
     const input: string =
       "<!DOCTYPE IllegalNameChar< [\r\n   <!ELEMENT IllegalNameChar< EMPTY>\r\n]>\r\n<IllegalNameChar</>\r\n\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '<'");
+    expectRejects(input, "XML Parse error: Expected an element name after '<' but found space");
   });
 
   test("ibm-not-wf-P04-ibm04n09.xml", () => {
@@ -7844,7 +7856,10 @@ describe("ibm", () => {
     // by #x3D
     const input: string =
       "<!DOCTYPE IllegalNameChar= [\r\n   <!ELEMENT IllegalNameChar= EMPTY>\r\n]>\r\n<IllegalNameChar=/>\r\n\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '='");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '='",
+    );
   });
 
   test("ibm-not-wf-P04-ibm04n10.xml", () => {
@@ -7852,7 +7867,10 @@ describe("ibm", () => {
     // by #x3F
     const input: string =
       "<!DOCTYPE IllegalNameChar? [\r\n   <!ELEMENT IllegalNameChar? EMPTY>\r\n]>\r\n<IllegalNameChar?/>\r\n\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '?'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '?'",
+    );
   });
 
   test("ibm-not-wf-P04-ibm04n11.xml", () => {
@@ -7860,7 +7878,7 @@ describe("ibm", () => {
     // by #x5B
     const input: string =
       "<!DOCTYPE IllegalNameChar[ [\r\n   <!ELEMENT IllegalNameChar[ EMPTY>\r\n]>\r\n<IllegalNameChar[/>\r\n\r\n";
-    expectRejects(input, "XML Parse error: Unexpected character in the internal subset: '['");
+    expectRejects(input, "XML Parse error: Expected a markup declaration or ']' in the internal subset but found '['");
   });
 
   test("ibm-not-wf-P04-ibm04n12.xml", () => {
@@ -7870,7 +7888,7 @@ describe("ibm", () => {
       "<!DOCTYPE IllegalNameChar\\ [\r\n   <!ELEMENT IllegalNameChar\\ EMPTY>\r\n]>\r\n<IllegalNameChar\\/>\r\n\r\n";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '\\'",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '\\'",
     );
   });
 
@@ -7879,7 +7897,10 @@ describe("ibm", () => {
     // by #x5D
     const input: string =
       "<!DOCTYPE IllegalNameChar] [\r\n   <!ELEMENT IllegalNameChar] EMPTY>\r\n]>\r\n<IllegalNameChar]/>\r\n\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found ']'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found ']'",
+    );
   });
 
   test("ibm-not-wf-P04-ibm04n14.xml", () => {
@@ -7887,7 +7908,10 @@ describe("ibm", () => {
     // by #x5E
     const input: string =
       "<!DOCTYPE IllegalNameChar^ [\r\n   <!ELEMENT IllegalNameChar^ EMPTY>\r\n]>\r\n<IllegalNameChar^/>\r\n\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '^'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '^'",
+    );
   });
 
   test("ibm-not-wf-P04-ibm04n15.xml", () => {
@@ -7895,7 +7919,10 @@ describe("ibm", () => {
     // by #x60
     const input: string =
       "<!DOCTYPE IllegalNameChar` [\r\n   <!ELEMENT IllegalNameChar` EMPTY>\r\n]>\r\n<IllegalNameChar`/>\r\n\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '`'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '`'",
+    );
   });
 
   test("ibm-not-wf-P04-ibm04n16.xml", () => {
@@ -7903,7 +7930,10 @@ describe("ibm", () => {
     // by #x7B
     const input: string =
       "<!DOCTYPE IllegalNameChar{ [\r\n   <!ELEMENT IllegalNameChar{ EMPTY>\r\n]>\r\n<IllegalNameChar{/>\r\n\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '{'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '{'",
+    );
   });
 
   test("ibm-not-wf-P04-ibm04n17.xml", () => {
@@ -7911,7 +7941,10 @@ describe("ibm", () => {
     // by #x7C
     const input: string =
       "<!DOCTYPE IllegalNameChar| [\r\n   <!ELEMENT IllegalNameChar| EMPTY>\r\n]>\r\n<IllegalNameChar|/>\r\n\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '|'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '|'",
+    );
   });
 
   test("ibm-not-wf-P04-ibm04n18.xml", () => {
@@ -7919,7 +7952,10 @@ describe("ibm", () => {
     // by #x7D
     const input: string =
       "<!DOCTYPE IllegalNameChar} [\r\n   <!ELEMENT IllegalNameChar} EMPTY>\r\n]>\r\n<IllegalNameChar}/>\r\n\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '}'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '}'",
+    );
   });
 
   test("ibm-not-wf-P05-ibm05n01.xml", () => {
@@ -7927,7 +7963,7 @@ describe("ibm", () => {
     // followed by "A_name-starts_with.".
     const input: string =
       "<!DOCTYPE .A_name_starts_with. [\r\n   <!ELEMENT .A_name_starts_with. EMPTY>\r\n]>\r\n<.A_name_starts_with./>  \r\n";
-    expectRejects(input, "XML Parse error: Expected the document type name but found '.'");
+    expectRejects(input, "XML Parse error: Expected the document type name but found '.A_name_starts_with.'");
   });
 
   test("ibm-not-wf-P05-ibm05n02.xml", () => {
@@ -7935,7 +7971,7 @@ describe("ibm", () => {
     // followed by "A_name-starts_with-".
     const input: string =
       "<!DOCTYPE -A_name_starts_With- [\r\n   <!ELEMENT -A_name_starts_With- EMPTY>\r\n]>\r\n<-A_name_starts_With-/>  \r\n";
-    expectRejects(input, "XML Parse error: Expected the document type name but found '-'");
+    expectRejects(input, "XML Parse error: Expected the document type name but found '-A_name_starts_With-'");
   });
 
   test("ibm-not-wf-P05-ibm05n03.xml", () => {
@@ -7943,7 +7979,7 @@ describe("ibm", () => {
     // followed by "A_name-starts_with_digit".
     const input: string =
       "<!DOCTYPE 5A_name_starts_with_digit [\r\n   <!ELEMENT 5A_name_starts_with_digit EMPTY>\r\n]>\r\n<5A_name_starts_with_digit/>  \r\n";
-    expectRejects(input, "XML Parse error: Expected the document type name but found '5'");
+    expectRejects(input, "XML Parse error: Expected the document type name but found '5A_name_starts_with_digit'");
   });
 
   test("ibm-not-wf-P09-ibm09n01.xml", () => {
@@ -7966,7 +8002,7 @@ describe("ibm", () => {
     // double quote character in the middle.
     const input: string =
       '<?xml version="1.0"?> \r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)>\r\n\t<!ENTITY FullName "Snow"Man"> \r\n]>\r\n\r\n<!-- testing invalid entity value -->\r\n<student>My Name is &FullName;. </student>';
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found 'M'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the entity declaration but found 'Man'");
   });
 
   test("ibm-not-wf-P09-ibm09n04.xml", () => {
@@ -7998,10 +8034,7 @@ describe("ibm", () => {
     // double quote character in the middle.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)>\r\n\t<!ATTLIST student\r\n\t\tfirst CDATA #REQUIRED\r\n\t\tmiddle CDATA #IMPLIED\r\n\t\tlast CDATA #IMPLIED > \r\n\t<!ENTITY myfirst "Snow">\r\n\t<!ENTITY mymiddle "I">\r\n\t<!ENTITY mylast "Man">\r\n]>\r\n\r\n<!-- testing invalid attvalue -->\r\n<student first="Snow"Man">My Name is SnowMan. </student>\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected whitespace, '>' or '/>' after the previous name or value in the tag but found 'M'",
-    );
+    expectRejects(input, "XML Parse error: Whitespace is required before 'Man'");
   });
 
   test("ibm-not-wf-P10-ibm10n04.xml", () => {
@@ -8033,10 +8066,7 @@ describe("ibm", () => {
     // double quote character in the middle.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)>\r\n\t<!ATTLIST student\r\n\t\tfirst CDATA #REQUIRED\r\n\t\tmiddle CDATA #IMPLIED\r\n\t\tlast CDATA #IMPLIED > \r\n\t<!ENTITY myfirst "Snow">\r\n\t<!ENTITY mymiddle "I">\r\n\t<!ENTITY mylast "Man">\r\n]>\r\n\r\n<!-- testing invalid attvalue -->\r\n<student first="Snow"Man">My Name is SnowMan. </student>\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected whitespace, '>' or '/>' after the previous name or value in the tag but found 'M'",
-    );
+    expectRejects(input, "XML Parse error: Whitespace is required before 'Man'");
   });
 
   test("ibm-not-wf-P10-ibm10n08.xml", () => {
@@ -8052,7 +8082,10 @@ describe("ibm", () => {
     // in the middle.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student SYSTEM "student".dtd"[\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n\r\n<!-- testing invalid system literal  -->\r\n<student>My Name is SnowMan. </student>\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n ';
-    expectRejects(input, "XML Parse error: Expected '[' or '>' in the document type declaration but found '.'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '.dtd'",
+    );
   });
 
   test("ibm-not-wf-P11-ibm11n02.xml", () => {
@@ -8060,7 +8093,10 @@ describe("ibm", () => {
     // in the middle.
     const input: string =
       "<?xml version=\"1.0\"?>\r\n<!DOCTYPE student SYSTEM 'student'.dtd'[\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n\r\n<!-- testing invalid system literal  -->\r\n<student>My Name is SnowMan. </student>\r\n";
-    expectRejects(input, "XML Parse error: Expected '[' or '>' in the document type declaration but found '.'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '.dtd'",
+    );
   });
 
   test("ibm-not-wf-P11-ibm11n03.xml", () => {
@@ -8068,7 +8104,7 @@ describe("ibm", () => {
     // the element "student".
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student SYSTEM "student.DTD [\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n\r\n<!-- testing invalid system literal with no closing bracket  -->\r\n<student>My Name is SnowMan. </student>\r\n';
-    expectRejects(input, "XML Parse error: Unterminated system identifier");
+    expectRejects(input, "XML Parse error: Unterminated quoted string");
   });
 
   test("ibm-not-wf-P11-ibm11n04.xml", () => {
@@ -8076,7 +8112,7 @@ describe("ibm", () => {
     // the element "student".
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student SYSTEM \'student.DTD [\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n\r\n<!-- testing invalid system literal with no closing bracket  -->\r\n<student>My Name is SnowMan. </student>\r\n';
-    expectRejects(input, "XML Parse error: Unterminated system identifier");
+    expectRejects(input, "XML Parse error: Unterminated quoted string");
   });
 
   test("ibm-not-wf-P12-ibm12n01.xml", () => {
@@ -8140,7 +8176,10 @@ describe("ibm", () => {
     // 2.4 — Tests CharData. The content of the element "student" contains the character "less than".
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)>\r\n\t<!ATTLIST student first CDATA #REQUIRED\r\n\t\t\t  last  CDATA #IMPLIED>\r\n]>\r\n\r\n<!-- testing invalid chardata string  -->\r\n<student first="Snow">My name is Snow <Man </student>';
-    expectRejects(input, "XML Parse error: Expected an attribute name but found '<'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected an attribute name, '>' or '/>' in the start tag but found '</student'",
+    );
   });
 
   test("ibm-not-wf-P14-ibm14n03.xml", () => {
@@ -8168,7 +8207,10 @@ describe("ibm", () => {
     // 2.5 — Tests comment. The second comment has a wrong beginning sequence "(less than)!-".
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n\r\n<!-- testing invalid comment  -->\r\n<!- student file-1 -->\r\n<student>My Name is SnowMan. </student>';
-    expectRejects(input, "XML Parse error: Expected '<!DOCTYPE', a comment, or the root element");
+    expectRejects(
+      input,
+      "XML Parse error: '<!' must begin a comment, '<![CDATA[', or a DOCTYPE, ELEMENT, ATTLIST, ENTITY or NOTATION declaration",
+    );
   });
 
   test("ibm-not-wf-P15-ibm15n04.xml", () => {
@@ -8264,14 +8306,14 @@ describe("ibm", () => {
     // 2.7 — Tests CDStart. The CDStart contains a lower case string "cdata".
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n\r\n<!-- testing invalid CDStart -->\r\n<![cdata[This is a test]]>\r\n<student>My Name is SnowMan. </student>';
-    expectRejects(input, "XML Parse error: Expected '<!DOCTYPE', a comment, or the root element");
+    expectRejects(input, "XML Parse error: Conditional sections are only allowed in the external DTD subset");
   });
 
   test("ibm-not-wf-P19-ibm19n02.xml", () => {
     // 2.7 — Tests CDStart. The CDStart contains an extra character "[".
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n\r\n<!-- testing invalid CDStart -->\r\n<![[CDATA[This is a test]]>\r\n<student>My Name is SnowMan. </student>\r\n\r\n\r\n';
-    expectRejects(input, "XML Parse error: Expected '<!DOCTYPE', a comment, or the root element");
+    expectRejects(input, "XML Parse error: Conditional sections are only allowed in the external DTD subset");
   });
 
   test("ibm-not-wf-P19-ibm19n03.xml", () => {
@@ -8286,28 +8328,28 @@ describe("ibm", () => {
     // close-bracket greater-than.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n\r\n<!-- testing invalid CData with illegal sequence -->\r\n<![CDATA[<testing>This is ]]> a test</testing>]]>\r\n<student>My Name is SnowMan. </student>';
-    expectRejects(input, "XML Parse error: Expected '<!DOCTYPE', a comment, or the root element");
+    expectRejects(input, "XML Parse error: CDATA sections are only allowed inside elements");
   });
 
   test("ibm-not-wf-P21-ibm21n01.xml", () => {
     // 2.7 — Tests CDEnd. One "]" is missing in the CDEnd.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n\r\n<!-- testing invalid CDEnd -->\r\n<![[CDATA[This is a test]>\r\n<student>My Name is SnowMan. </student>\r\n\r\n\r\n';
-    expectRejects(input, "XML Parse error: Expected '<!DOCTYPE', a comment, or the root element");
+    expectRejects(input, "XML Parse error: Conditional sections are only allowed in the external DTD subset");
   });
 
   test("ibm-not-wf-P21-ibm21n02.xml", () => {
     // 2.7 — Tests CDEnd. An extra "]" is placed in the CDEnd.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n\r\n<!-- testing invalid CDEnd -->\r\n<![cdata[This is a test]]]>\r\n<student>My Name is SnowMan. </student>';
-    expectRejects(input, "XML Parse error: Expected '<!DOCTYPE', a comment, or the root element");
+    expectRejects(input, "XML Parse error: Conditional sections are only allowed in the external DTD subset");
   });
 
   test("ibm-not-wf-P21-ibm21n03.xml", () => {
     // 2.7 — Tests CDEnd. A wrong character ")" is placed in the CDEnd.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n\r\n<!-- testing invalid CDEnd -->\r\n<![CDATA[This is a test])>\r\n<student>My Name is SnowMan. </student>';
-    expectRejects(input, "XML Parse error: Expected '<!DOCTYPE', a comment, or the root element");
+    expectRejects(input, "XML Parse error: CDATA sections are only allowed inside elements");
   });
 
   test("ibm-not-wf-P22-ibm22n01.xml", () => {
@@ -8382,17 +8424,17 @@ describe("ibm", () => {
     const input = Buffer.from(
       "<?xml version='1.0' encoding='ASCII' standalone='yes' >\r\n<!DOCTYPE doc [\r\n   <!ELEMENT doc EMPTY>\r\n]>\r\n<doc/>\r\n<!-- Wrong closing sequence in XMLDecl -->",
     );
-    expectRejects(
-      input,
-      "XML Parse error: Expected version, encoding, standalone or '?>' in the XML declaration but found '>'",
-    );
+    expectRejects(input, "XML Parse error: Expected '?>' to end the XML declaration but found '>'");
   });
 
   test("ibm-not-wf-P23-ibm23n06.xml", () => {
     // 2.8 — Tests XMLDecl with a wrong opening sequence "(less than)!".
     const input: string =
       "<!xml version='1.0' encoding='ASCII' standalone='yes' ?>\r\n<!DOCTYPE doc [\r\n   <!ELEMENT doc EMPTY>\r\n]>\r\n<doc/>\r\n<!-- Wrong opening sequence in XMLDecl -->";
-    expectRejects(input, "XML Parse error: Expected '<!DOCTYPE', a comment, or the root element");
+    expectRejects(
+      input,
+      "XML Parse error: '<!' must begin a comment, '<![CDATA[', or a DOCTYPE, ELEMENT, ATTLIST, ENTITY or NOTATION declaration",
+    );
   });
 
   test("ibm-not-wf-P24-ibm24n01.xml", () => {
@@ -8419,17 +8461,14 @@ describe("ibm", () => {
     // key word "version" and the VersionNum.
     const input: string =
       "<?xml version'1.0' ?>\r\n<!DOCTYPE doc [\r\n   <!ELEMENT doc EMPTY>\r\n]> \r\n<doc/>\r\n<!-- Eq is missing in VersionInfo -->";
-    expectRejects(input, "XML Parse error: Expected '=' in the XML declaration but found '''");
+    expectRejects(input, "XML Parse error: Expected '=' after the name in the XML declaration but found '''");
   });
 
   test("ibm-not-wf-P24-ibm24n04.xml", () => {
     // 2.8 — Tests VersionInfo with wrong field ordering. The VersionNum occurs before "=" and "version".
     const input: string =
       "<?xml '1.0'=version ?>\r\n<!DOCTYPE doc [\r\n   <!ELEMENT doc EMPTY>\r\n]>\r\n<doc/>\r\n<!-- Wrong ordering VersionNum Eq 'version' -->";
-    expectRejects(
-      input,
-      "XML Parse error: Expected version, encoding, standalone or '?>' in the XML declaration but found '''",
-    );
+    expectRejects(input, "XML Parse error: Expected version=\"1.0\" in the XML declaration but found '''");
   });
 
   test("ibm-not-wf-P24-ibm24n05.xml", () => {
@@ -8437,27 +8476,21 @@ describe("ibm", () => {
     // VersionNum.
     const input: string =
       "<?xml version'1.0'= ?>\r\n<!DOCTYPE doc [\r\n   <!ELEMENT doc EMPTY>\r\n]>\r\n<doc/>\r\n<!-- Wrong ordering version VersionNum Eq -->";
-    expectRejects(input, "XML Parse error: Expected '=' in the XML declaration but found '''");
+    expectRejects(input, "XML Parse error: Expected '=' after the name in the XML declaration but found '''");
   });
 
   test("ibm-not-wf-P24-ibm24n06.xml", () => {
     // 2.8 — Tests VersionInfo with the wrong key word "Version".
     const input: string =
       "<?xml Version='1.0' ?>\r\n<!DOCTYPE doc [\r\n   <!ELEMENT doc EMPTY>\r\n]>\r\n<doc/>\r\n<!-- Wrong key word 'Version' -->";
-    expectRejects(
-      input,
-      "XML Parse error: Unexpected 'Version' in the XML declaration (expected version, encoding or standalone)",
-    );
+    expectRejects(input, "XML Parse error: Expected version=\"1.0\" in the XML declaration but found 'Version'");
   });
 
   test("ibm-not-wf-P24-ibm24n07.xml", () => {
     // 2.8 — Tests VersionInfo with the wrong key word "versioN".
     const input: string =
       "<?xml versioN='1.0' ?>\r\n<!DOCTYPE doc [\r\n   <!ELEMENT doc EMPTY>\r\n]>\r\n<doc/>\r\n<!-- Wrong key word 'versioN' -->";
-    expectRejects(
-      input,
-      "XML Parse error: Unexpected 'versioN' in the XML declaration (expected version, encoding or standalone)",
-    );
+    expectRejects(input, "XML Parse error: Expected version=\"1.0\" in the XML declaration but found 'versioN'");
   });
 
   test("ibm-not-wf-P24-ibm24n08.xml", () => {
@@ -8465,7 +8498,7 @@ describe("ibm", () => {
     // VersionInfo.
     const input: string =
       "<?xml version='1.0\" ?>\r\n<!DOCTYPE doc [\r\n   <!ELEMENT doc EMPTY>\r\n]>\r\n<doc/>\r\n<!-- Mismatched qotes in VersionInfo -->";
-    expectRejects(input, "XML Parse error: Invalid character in an XML declaration value: '>'");
+    expectRejects(input, "XML Parse error: Invalid character in a quoted string: '>'");
   });
 
   test("ibm-not-wf-P24-ibm24n09.xml", () => {
@@ -8473,7 +8506,7 @@ describe("ibm", () => {
     // VersionNum is missing.
     const input: string =
       "<?xml version='1.0 ?>\r\n<!DOCTYPE doc [\r\n   <!ELEMENT doc EMPTY>\r\n]>\r\n<doc/>\r\n<!-- Mismatched qotes in VersionInfo -->";
-    expectRejects(input, "XML Parse error: Invalid character in an XML declaration value: '>'");
+    expectRejects(input, "XML Parse error: Invalid character in a quoted string: '>'");
   });
 
   test("ibm-not-wf-P25-ibm25n01.xml", () => {
@@ -8487,7 +8520,7 @@ describe("ibm", () => {
     // 2.8 — Tests eq with a wrong key word "eq".
     const input: string =
       "<?xml version eq '1.0' ?>\r\n<!DOCTYPE doc [\r\n   <!ELEMENT doc EMPTY>\r\n]>\r\n<doc/>\r\n<!-- Wrong key word \"eq\" in Eq -->";
-    expectRejects(input, "XML Parse error: Expected '=' in the XML declaration but found 'e'");
+    expectRejects(input, "XML Parse error: Expected '=' after the name in the XML declaration but found 'eq'");
   });
 
   test("ibm-not-wf-P26-ibm26n01.xml", () => {
@@ -8502,7 +8535,7 @@ describe("ibm", () => {
     // "animal".
     const input: string =
       '<?xml version="1.0" ?>\r\n<!DOCTYPE animal [\r\n   <!ELEMENT animal ANY>\r\n]>\r\n<animal>Wrong type of Misc following this element!</animal>\r\n<!ELEMENT cat EMPTY>';
-    expectRejects(input, "XML Parse error: Only one root element is allowed");
+    expectRejects(input, "XML Parse error: Unexpected '<!ELEMENT' after the root element");
   });
 
   test("ibm-not-wf-P28-ibm28n01.xml", () => {
@@ -8511,7 +8544,10 @@ describe("ibm", () => {
     const input = Buffer.from(
       '<?xml version="1.0" encoding=\'UTF-8\'?>\r\n<!DOCTYPE SYSTEM "ibm28n01.dtd">\r\n<!-- Name is missing in doctypedecl --> \r\n<animal/>\r\n',
     );
-    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC but found '\"'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '\"'",
+    );
   });
 
   test("ibm-not-wf-P28-ibm28n02.xml", () => {
@@ -8529,7 +8565,10 @@ describe("ibm", () => {
     const input = Buffer.from(
       '<?xml version="1.0" encoding=\'UTF-8\'?>\r\n<!DOCTYPE SYSTEM "ibm28n01.dtd" animal [\r\n   <!ATTLIST animal color CDATA #REQUIRED>\r\n]>\r\n<!-- Wrong ordering ExternalID Name [ ] in doctypedecl --> \r\n<animal color="yellow"/>\r\n',
     );
-    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC but found '\"'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '\"'",
+    );
   });
 
   test("ibm-not-wf-P28-ibm28n04.xml", () => {
@@ -8537,7 +8576,7 @@ describe("ibm", () => {
     const input = Buffer.from(
       '<?xml version="1.0" encoding=\'UTF-8\'?>\r\n<!DOCTYPE aniaml [\r\n   <!ELEMENT animal ANY>\r\n   <!ENTITY generalE "leopard">\r\n   &generalE;\r\n   <!ENTITY % parameterE "<!ELEMENT leopard EMPTY>">\r\n   %parameterE;\r\n] animal>\r\n<!-- Wrong componet general entity reference occurs inside the DTD -->\r\n<!-- General entity sould be used in the document content --> \r\n<animal>&generalE</animal>\r\n',
     );
-    expectRejects(input, "XML Parse error: Unexpected character in the internal subset: '&'");
+    expectRejects(input, "XML Parse error: Expected a markup declaration or ']' in the internal subset but found '&'");
   });
 
   test("ibm-not-wf-P28-ibm28n05.xml", () => {
@@ -8545,7 +8584,10 @@ describe("ibm", () => {
     const input = Buffer.from(
       "<?xml version=\"1.0\" encoding='UTF-8'?>\r\n<!DOCtYPE animal [\r\n   <!ELEMENT animal EMPTY>\r\n]>\r\n<!-- Wrong keyword DOCTYPE in doctypedecl --> \r\n<animal/>\r\n",
     );
-    expectRejects(input, "XML Parse error: Expected '<!DOCTYPE', a comment, or the root element");
+    expectRejects(
+      input,
+      "XML Parse error: '<!' must begin a comment, '<![CDATA[', or a DOCTYPE, ELEMENT, ATTLIST, ENTITY or NOTATION declaration",
+    );
   });
 
   test("ibm-not-wf-P28-ibm28n06.xml", () => {
@@ -8553,7 +8595,7 @@ describe("ibm", () => {
     const input = Buffer.from(
       "<?xml version=\"1.0\" encoding='UTF-8'?>\r\n<!DOCTYPE animal [\r\n   <!ELEMENT animal EMPTY>\r\n>\r\n<!-- Bracket mismatch in [ ] in doctypedecl --> \r\n<animal/>\r\n",
     );
-    expectRejects(input, "XML Parse error: Unexpected character in the internal subset: '>'");
+    expectRejects(input, "XML Parse error: Expected a markup declaration or ']' in the internal subset but found '>'");
   });
 
   test("ibm-not-wf-P28-ibm28n07.xml", () => {
@@ -8561,7 +8603,10 @@ describe("ibm", () => {
     const input = Buffer.from(
       "<?xml version=\"1.0\" encoding='UTF-8'?>\r\n<!DOCTYPE animal {\r\n   <!ELEMENT animal EMPTY>\r\n]>\r\n<!-- Wrong bracket in [ ] in doctypedecl --> \r\n<animal/>\r\n",
     );
-    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC but found '{'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '{'",
+    );
   });
 
   test("ibm-not-wf-P28-ibm28n08.xml", () => {
@@ -8675,7 +8720,7 @@ describe("ibm", () => {
     // in the XMLDecl.
     const input: string =
       '<?xml version="1.0"standalone="yes" ?>\r\n<!DOCTYPE animal [\r\n   <!ELEMENT animal EMPTY>\r\n]>\r\n<!-- Missing a S in SDDecl -->\r\n<animal/>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace in the XML declaration before 's'");
+    expectRejects(input, "XML Parse error: Whitespace is required before 'standalone'");
   });
 
   test("ibm-not-wf-P32-ibm32n02.xml", () => {
@@ -8683,7 +8728,7 @@ describe("ibm", () => {
     // XMLDecl.
     const input: string =
       '<?xml version="1.0" standalone"yes" ?>\r\n<!DOCTYPE animal [\r\n   <!ELEMENT animal EMPTY>\r\n]>\r\n<!-- Missing Eq in SDDecl -->\r\n<animal/>\r\n';
-    expectRejects(input, "XML Parse error: Expected '=' in the XML declaration but found '\"'");
+    expectRejects(input, "XML Parse error: Expected '=' after the name in the XML declaration but found '\"'");
   });
 
   test("ibm-not-wf-P32-ibm32n03.xml", () => {
@@ -8741,7 +8786,7 @@ describe("ibm", () => {
     // SDDecl in the XMLDecl.
     const input: string =
       '<?xml version="1.0" standalone"Yes"= ?>\r\n<!DOCTYPE animal [\r\n   <!ELEMENT animal EMPTY>\r\n]>\r\n<!-- Wrong ordering in SDDecl -->\r\n<animal/>\r\n';
-    expectRejects(input, "XML Parse error: Expected '=' in the XML declaration but found '\"'");
+    expectRejects(input, "XML Parse error: Expected '=' after the name in the XML declaration but found '\"'");
   });
 
   test("ibm-not-wf-P32-ibm32n09.xml", () => {
@@ -8765,7 +8810,7 @@ describe("ibm", () => {
     // 3 — Tests element with a required field missing. The STag is missing for the element "root".
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n]>\r\nmissing start tag</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected the root element but found 'm'");
+    expectRejects(input, "XML Parse error: Expected the root element but found 'missing'");
   });
 
   test("ibm-not-wf-P39-ibm39n03.xml", () => {
@@ -8781,7 +8826,7 @@ describe("ibm", () => {
     // element "root".
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n]>\r\n</root>\r\n<!--* Missing start tag and no content -->\r\n\r\n\r\n';
-    expectRejects(input, "XML Parse error: Expected an element name after '<' but found '/'");
+    expectRejects(input, "XML Parse error: Expected the root element but found '</root'");
   });
 
   test("ibm-not-wf-P39-ibm39n05.xml", () => {
@@ -8789,7 +8834,7 @@ describe("ibm", () => {
     // "root".
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n]>\r\n</root>switched start and end tags<root>\r\n';
-    expectRejects(input, "XML Parse error: Expected an element name after '<' but found '/'");
+    expectRejects(input, "XML Parse error: Expected the root element but found '</root'");
   });
 
   test("ibm-not-wf-P39-ibm39n06.xml", () => {
@@ -8797,7 +8842,7 @@ describe("ibm", () => {
     // "root".
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n]>\r\n<root></root>content after end tag\r\n';
-    expectRejects(input, "XML Parse error: Unexpected content after the root element: 'c'");
+    expectRejects(input, "XML Parse error: Unexpected 'content' after the root element");
   });
 
   test("ibm-not-wf-P40-ibm40n01.xml", () => {
@@ -8805,10 +8850,7 @@ describe("ibm", () => {
     // "root".
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root ANY>\r\n<!ATTLIST root attr1 CDATA #IMPLIED>\r\n<!ATTLIST root attr2 CDATA #IMPLIED>\r\n]>\r\n<attr1="any">missing name in start tag</root>\r\n\r\n\r\n\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected whitespace, '>' or '/>' after the previous name or value in the tag but found '='",
-    );
+    expectRejects(input, "XML Parse error: Expected an attribute name, '>' or '/>' in the start tag but found '='");
   });
 
   test("ibm-not-wf-P40-ibm40n02.xml", () => {
@@ -8816,10 +8858,7 @@ describe("ibm", () => {
     // attribute "attr1" is missing in the STag of the element "root".
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root ANY>\r\n<!ATTLIST root attr1 CDATA #IMPLIED>\r\n<!ATTLIST root attr2 CDATA #IMPLIED>\r\n]>\r\n<rootattr1="any">missing white space in start tag</root>\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected whitespace, '>' or '/>' after the previous name or value in the tag but found '='",
-    );
+    expectRejects(input, "XML Parse error: Expected an attribute name, '>' or '/>' in the start tag but found '='");
   });
 
   test("ibm-not-wf-P40-ibm40n03.xml", () => {
@@ -8827,10 +8866,7 @@ describe("ibm", () => {
     // the STag of the element "root".
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root ANY>\r\n<!ATTLIST root attr1 CDATA #IMPLIED>\r\n<!ATTLIST root attr2 CDATA #IMPLIED>\r\n]>\r\n<attr1="any" root>Wrong ordering in start tag</root>\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected whitespace, '>' or '/>' after the previous name or value in the tag but found '='",
-    );
+    expectRejects(input, "XML Parse error: Expected an attribute name, '>' or '/>' in the start tag but found '='");
   });
 
   test("ibm-not-wf-P40-ibm40n04.xml", () => {
@@ -8838,7 +8874,10 @@ describe("ibm", () => {
     // sequence for the STag of the element "root".
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root ANY>\r\n<!ATTLIST root attr1 CDATA #IMPLIED>\r\n<!ATTLIST root attr2 CDATA #IMPLIED>\r\n]>\r\n<!root attr1="any">wrong begining sequence in start tag</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected '<!DOCTYPE', a comment, or the root element");
+    expectRejects(
+      input,
+      "XML Parse error: '<!' must begin a comment, '<![CDATA[', or a DOCTYPE, ELEMENT, ATTLIST, ENTITY or NOTATION declaration",
+    );
   });
 
   test("ibm-not-wf-P40-ibm40n05.xml", () => {
@@ -8854,7 +8893,7 @@ describe("ibm", () => {
     // in the STag of the element "root".
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root ANY>\r\n<!ATTLIST root attr1 CDATA #IMPLIED>\r\n<!ATTLIST root attr2 CDATA #IMPLIED>\r\n]>\r\n<root ="any">missing name in Attribute</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected an attribute name but found '='");
+    expectRejects(input, "XML Parse error: Expected an attribute name, '>' or '/>' in the start tag but found '='");
   });
 
   test("ibm-not-wf-P41-ibm41n02.xml", () => {
@@ -8878,7 +8917,7 @@ describe("ibm", () => {
     // Attribute in the STag of the element "root".
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root ANY>\r\n<!ATTLIST root attr1 CDATA #IMPLIED>\r\n<!ATTLIST root attr2 CDATA #IMPLIED>\r\n]>\r\n<root "any">missing name and Eq in Attribute</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected an attribute name but found '\"'");
+    expectRejects(input, "XML Parse error: Expected an attribute name, '>' or '/>' in the start tag but found '\"'");
   });
 
   test("ibm-not-wf-P41-ibm41n05.xml", () => {
@@ -8894,7 +8933,7 @@ describe("ibm", () => {
     // Attribute in the STag of the element "root".
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root ANY>\r\n<!ATTLIST root attr1 CDATA #IMPLIED>\r\n<!ATTLIST root attr2 CDATA #IMPLIED>\r\n]>\r\n<root = >missing Name and AttValue in Attribute</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected an attribute name but found '='");
+    expectRejects(input, "XML Parse error: Expected an attribute name, '>' or '/>' in the start tag but found '='");
   });
 
   test("ibm-not-wf-P41-ibm41n07.xml", () => {
@@ -8910,7 +8949,7 @@ describe("ibm", () => {
     // Attribute in the STag of the element "root".
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root ANY>\r\n<!ATTLIST root attr1 CDATA #IMPLIED>\r\n<!ATTLIST root attr2 CDATA #IMPLIED>\r\n]>\r\n<root "any"=attr1>wrong ordering in Attribute</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected an attribute name but found '\"'");
+    expectRejects(input, "XML Parse error: Expected an attribute name, '>' or '/>' in the start tag but found '\"'");
   });
 
   test("ibm-not-wf-P41-ibm41n09.xml", () => {
@@ -8918,7 +8957,7 @@ describe("ibm", () => {
     // the Attribute in the STag of the element "root".
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root ANY>\r\n<!ATTLIST root attr1 CDATA #IMPLIED>\r\n<!ATTLIST root attr2 CDATA #IMPLIED>\r\n]>\r\n<root =attr1"any">wrong ordering in Attribute</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected an attribute name but found '='");
+    expectRejects(input, "XML Parse error: Expected an attribute name, '>' or '/>' in the start tag but found '='");
   });
 
   test("ibm-not-wf-P41-ibm41n10.xml", () => {
@@ -8998,7 +9037,7 @@ describe("ibm", () => {
     // (attr1="any").
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root ANY>\r\n<!ATTLIST root attr1 CDATA #IMPLIED>\r\n]>\r\n<root> Attribute in ETag </root attr1="any">\r\n';
-    expectRejects(input, "XML Parse error: Expected '>' to end the closing tag but found 'a'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the closing tag but found 'attr1'");
   });
 
   test("ibm-not-wf-P43-ibm43n01.xml", () => {
@@ -9046,10 +9085,7 @@ describe("ibm", () => {
     // name of the element "root" in the EmptyElemTag.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root EMPTY>\r\n<!ATTLIST root attr1 CDATA #IMPLIED>\r\n<!ATTLIST root attr2 CDATA #IMPLIED>\r\n]>\r\n<attr1="any" root/>\r\n<!--* Swithech positions of Name and Attribute EmptyElemTag *-->\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected whitespace, '>' or '/>' after the previous name or value in the tag but found '='",
-    );
+    expectRejects(input, "XML Parse error: Expected an attribute name, '>' or '/>' in the start tag but found '='");
   });
 
   test("ibm-not-wf-P44-ibm44n03.xml", () => {
@@ -9057,10 +9093,7 @@ describe("ibm", () => {
     // sequence in the EmptyElemtag of the element "root".
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root EMPTY>\r\n<!ATTLIST root attr1 CDATA #IMPLIED>\r\n<!ATTLIST root attr2 CDATA #IMPLIED>\r\n]>\r\n<root attr1="any"\\>\r\n<!--* Wrong closing sequence in EmptyElemTag *-->\r\n\r\n\r\n\r\n\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected whitespace, '>' or '/>' after the previous name or value in the tag but found '\\'",
-    );
+    expectRejects(input, "XML Parse error: Expected an attribute name, '>' or '/>' in the start tag but found '\\'");
   });
 
   test("ibm-not-wf-P44-ibm44n04.xml", () => {
@@ -9076,7 +9109,7 @@ describe("ibm", () => {
     // in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!--* Mising Name in elementdecl *-->\r\n<!ELEMENT (#PCDATA)>\r\n]>\r\n<root>Any content</root>\r\n\r\n\r\n';
-    expectRejects(input, "XML Parse error: Expected a name in the markup declaration but found '('");
+    expectRejects(input, "XML Parse error: Expected an element name after '<!ELEMENT' but found '('");
   });
 
   test("ibm-not-wf-P45-ibm45n02.xml", () => {
@@ -9084,7 +9117,7 @@ describe("ibm", () => {
     // "(#PCDATA)" in the second elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!--* Mising white space in elementdecl *-->\r\n<!ELEMENT aEle(#PCDATA)>\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after the element name but found '('");
+    expectRejects(input, "XML Parse error: Whitespace is required before '('");
   });
 
   test("ibm-not-wf-P45-ibm45n03.xml", () => {
@@ -9100,7 +9133,7 @@ describe("ibm", () => {
     // missing in the second elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!--* Mising contentspec and white space in elementdecl *-->\r\n<!ELEMENT root>\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after the element name but found '>'");
+    expectRejects(input, "XML Parse error: Expected EMPTY, ANY or '(' in the element declaration but found '>'");
   });
 
   test("ibm-not-wf-P45-ibm45n05.xml", () => {
@@ -9108,7 +9141,7 @@ describe("ibm", () => {
     // contentspec are missing in the second elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!--* Mising Name S contentspec in elementdecl *-->\r\n<!ELEMENT >\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected a name in the markup declaration but found '>'");
+    expectRejects(input, "XML Parse error: Expected an element name after '<!ELEMENT' but found '>'");
   });
 
   test("ibm-not-wf-P45-ibm45n06.xml", () => {
@@ -9116,7 +9149,7 @@ describe("ibm", () => {
     // second elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!--* Wrong ordering in elementdecl *-->\r\n<!ELEMENT (#PCDATA) aElement >\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected a name in the markup declaration but found '('");
+    expectRejects(input, "XML Parse error: Expected an element name after '<!ELEMENT' but found '('");
   });
 
   test("ibm-not-wf-P45-ibm45n07.xml", () => {
@@ -9126,7 +9159,7 @@ describe("ibm", () => {
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!--* Wrong begining sequence in elementdecl *-->\r\n<ELEMENT aElement (#PCDATA)>\r\n]>\r\n<root>Any content</root>\r\n';
     expectRejects(
       input,
-      "XML Parse error: Expected a markup declaration (<!ELEMENT, <!ATTLIST, <!ENTITY, <!NOTATION), a comment, or a processing instruction",
+      "XML Parse error: Expected a markup declaration or ']' in the internal subset but found '<ELEMENT'",
     );
   });
 
@@ -9137,7 +9170,7 @@ describe("ibm", () => {
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!--* Wrong Keyword: Element in elementdecl *-->\r\n<!Element aElement (#PCDATA)>\r\n]>\r\n<root>Any content</root>\r\n';
     expectRejects(
       input,
-      "XML Parse error: Expected a markup declaration (<!ELEMENT, <!ATTLIST, <!ENTITY, <!NOTATION), a comment, or a processing instruction",
+      "XML Parse error: '<!' must begin a comment, '<![CDATA[', or a DOCTYPE, ELEMENT, ATTLIST, ENTITY or NOTATION declaration",
     );
   });
 
@@ -9148,7 +9181,7 @@ describe("ibm", () => {
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!--* Wrong keyword: element in elementdecl *-->\r\n<!element aElement (#PCDATA)>\r\n]>\r\n<root>Any content</root>\r\n';
     expectRejects(
       input,
-      "XML Parse error: Expected a markup declaration (<!ELEMENT, <!ATTLIST, <!ENTITY, <!NOTATION), a comment, or a processing instruction",
+      "XML Parse error: '<!' must begin a comment, '<![CDATA[', or a DOCTYPE, ELEMENT, ATTLIST, ENTITY or NOTATION declaration",
     );
   });
 
@@ -9157,7 +9190,7 @@ describe("ibm", () => {
     // contentspec of the second elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!--* Wrong keyword: empty in contentspec *-->\r\n<!ELEMENT aElement empty>\r\n]>\r\n<root>Any content</root>\r\n\r\n';
-    expectRejects(input, "XML Parse error: Expected EMPTY, ANY or '(' in the element declaration but found 'e'");
+    expectRejects(input, "XML Parse error: Expected EMPTY, ANY or '(' in the element declaration but found 'empty'");
   });
 
   test("ibm-not-wf-P46-ibm46n02.xml", () => {
@@ -9165,7 +9198,7 @@ describe("ibm", () => {
     // contentspec of the second elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!--* Wrong keyword: Empty in contentspec *-->\r\n<!ELEMENT aElement Empty >\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected EMPTY, ANY or '(' in the element declaration but found 'E'");
+    expectRejects(input, "XML Parse error: Expected EMPTY, ANY or '(' in the element declaration but found 'Empty'");
   });
 
   test("ibm-not-wf-P46-ibm46n03.xml", () => {
@@ -9173,7 +9206,7 @@ describe("ibm", () => {
     // contentspec of the second elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!--* Wrong keyword: Any in contentspec *-->\r\n<!ELEMENT aElement Any>\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected EMPTY, ANY or '(' in the element declaration but found 'A'");
+    expectRejects(input, "XML Parse error: Expected EMPTY, ANY or '(' in the element declaration but found 'Any'");
   });
 
   test("ibm-not-wf-P46-ibm46n04.xml", () => {
@@ -9181,7 +9214,7 @@ describe("ibm", () => {
     // contentspec of the second elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!--* Wrong keyword: any in contentspec *-->\r\n<!ELEMENT aElement any >\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected EMPTY, ANY or '(' in the element declaration but found 'a'");
+    expectRejects(input, "XML Parse error: Expected EMPTY, ANY or '(' in the element declaration but found 'any'");
   });
 
   test("ibm-not-wf-P46-ibm46n05.xml", () => {
@@ -9189,7 +9222,7 @@ describe("ibm", () => {
     // second elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!--* Bogus content type: #CDATA in contentspec *-->\r\n<!ELEMENT aElement #CDATA>\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected EMPTY, ANY or '(' in the element declaration but found '#'");
+    expectRejects(input, "XML Parse error: Expected EMPTY, ANY or '(' in the element declaration but found '#CDATA'");
   });
 
   test("ibm-not-wf-P47-ibm47n01.xml", () => {
@@ -9237,7 +9270,7 @@ describe("ibm", () => {
     // elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!--* Wrong keyword: ^  in children *-->\r\n<!ELEMENT aElement (a,a)^ >\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found '^'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the element declaration but found '^'");
   });
 
   test("ibm-not-wf-P48-ibm48n01.xml", () => {
@@ -9245,10 +9278,7 @@ describe("ibm", () => {
     // cp in the choice field in the third elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!--* Missing seq|choice|Name in cp *-->\r\n<!ELEMENT aElement ((a,a)|+) >\r\n]>\r\n<root>Any content</root>\r\n\r\n\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected an element name, '(' or '#PCDATA' in the content model but found '+'",
-    );
+    expectRejects(input, "XML Parse error: Expected an element name or '(' in the content model but found '+'");
   });
 
   test("ibm-not-wf-P48-ibm48n02.xml", () => {
@@ -9256,10 +9286,7 @@ describe("ibm", () => {
     // the third elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!--* Missing seq|choice|Name in cp *-->\r\n<!ELEMENT aElement (*) >\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected an element name, '(' or '#PCDATA' in the content model but found '*'",
-    );
+    expectRejects(input, "XML Parse error: Expected an element name or '(' in the content model but found '*'");
   });
 
   test("ibm-not-wf-P48-ibm48n03.xml", () => {
@@ -9267,10 +9294,7 @@ describe("ibm", () => {
     // cp in the choice field in the third elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!--* Missing seq|choice|Name in cp *-->\r\n<!ELEMENT aElement (?|(a,a)|a) >\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected an element name, '(' or '#PCDATA' in the content model but found '?'",
-    );
+    expectRejects(input, "XML Parse error: Expected an element name or '(' in the content model but found '?'");
   });
 
   test("ibm-not-wf-P48-ibm48n04.xml", () => {
@@ -9278,10 +9302,7 @@ describe("ibm", () => {
     // the choice field in the third elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!--* wrong ordering in cp *-->\r\n<!ELEMENT aElement (+(a,a)|a) >\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected an element name, '(' or '#PCDATA' in the content model but found '+'",
-    );
+    expectRejects(input, "XML Parse error: Expected an element name or '(' in the content model but found '+'");
   });
 
   test("ibm-not-wf-P48-ibm48n05.xml", () => {
@@ -9289,10 +9310,7 @@ describe("ibm", () => {
     // in the seq field in the third elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!ELEMENT b ANY>\r\n<!--* wrong ordering in cp *-->\r\n<!ELEMENT aElement (*(a|b),a) >\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected an element name, '(' or '#PCDATA' in the content model but found '*'",
-    );
+    expectRejects(input, "XML Parse error: Expected an element name or '(' in the content model but found '*'");
   });
 
   test("ibm-not-wf-P48-ibm48n06.xml", () => {
@@ -9300,10 +9318,7 @@ describe("ibm", () => {
     // the seq field in the third elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!--* wrong ordering in cp *-->\r\n<!ELEMENT aElement (a, ?a) >\r\n]>\r\n<root>Any content</root>\r\n\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected an element name, '(' or '#PCDATA' in the content model but found '?'",
-    );
+    expectRejects(input, "XML Parse error: Expected an element name or '(' in the content model but found '?'");
   });
 
   test("ibm-not-wf-P48-ibm48n07.xml", () => {
@@ -9319,10 +9334,7 @@ describe("ibm", () => {
     // the third elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!--* missing cp in choice *-->\r\n<!ELEMENT aElement (|)* >\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected an element name, '(' or '#PCDATA' in the content model but found '|'",
-    );
+    expectRejects(input, "XML Parse error: Expected an element name or '(' in the content model but found '|'");
   });
 
   test("ibm-not-wf-P49-ibm49n02.xml", () => {
@@ -9330,10 +9342,7 @@ describe("ibm", () => {
     // the fourth elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!ELEMENT b ANY>\r\n<!--* missing cp in choice *-->\r\n<!ELEMENT aElement (a |b|)* >\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected an element name, '(' or '#PCDATA' in the content model but found ')'",
-    );
+    expectRejects(input, "XML Parse error: Expected an element name or '(' in the content model but found ')'");
   });
 
   test("ibm-not-wf-P49-ibm49n03.xml", () => {
@@ -9357,10 +9366,7 @@ describe("ibm", () => {
     // field in the fourth elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!ELEMENT b ANY>\r\n<!--* extra separator in choice *-->\r\n<!ELEMENT aElement (a ||b)* >\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected an element name, '(' or '#PCDATA' in the content model but found '|'",
-    );
+    expectRejects(input, "XML Parse error: Expected an element name or '(' in the content model but found '|'");
   });
 
   test("ibm-not-wf-P49-ibm49n06.xml", () => {
@@ -9368,7 +9374,7 @@ describe("ibm", () => {
     // field (a |b * in the fourth elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!ELEMENT b ANY>\r\n<!--* missing closing bracket in choice *-->\r\n<!ELEMENT aElement (a |b * >\r\n]>\r\n<root>Any content</root>\r\n\r\n';
-    expectRejects(input, "XML Parse error: Expected ')', '|' or ',' in the content model but found '*'");
+    expectRejects(input, "XML Parse error: An occurrence indicator must directly follow the name or ')' it applies to");
   });
 
   test("ibm-not-wf-P50-ibm50n01.xml", () => {
@@ -9376,10 +9382,7 @@ describe("ibm", () => {
     // fourth elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!ELEMENT b ANY>\r\n<!--* missing cp in seq *-->\r\n<!ELEMENT aElement (,) >\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected an element name, '(' or '#PCDATA' in the content model but found ','",
-    );
+    expectRejects(input, "XML Parse error: Expected an element name or '(' in the content model but found ','");
   });
 
   test("ibm-not-wf-P50-ibm50n02.xml", () => {
@@ -9387,10 +9390,7 @@ describe("ibm", () => {
     // fourth elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!ELEMENT b ANY>\r\n<!--* missing cp in seq *-->\r\n<!ELEMENT aElement (a,a,)+ >\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected an element name, '(' or '#PCDATA' in the content model but found ')'",
-    );
+    expectRejects(input, "XML Parse error: Expected an element name or '(' in the content model but found ')'");
   });
 
   test("ibm-not-wf-P50-ibm50n03.xml", () => {
@@ -9414,10 +9414,7 @@ describe("ibm", () => {
     // in the fourth elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!ELEMENT b ANY>\r\n<!--* extra separator in seq *-->\r\n<!ELEMENT aElement ((a|b),,a)? >\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected an element name, '(' or '#PCDATA' in the content model but found ','",
-    );
+    expectRejects(input, "XML Parse error: Expected an element name or '(' in the content model but found ','");
   });
 
   test("ibm-not-wf-P50-ibm50n06.xml", () => {
@@ -9441,7 +9438,7 @@ describe("ibm", () => {
     // field in the fourth elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!ELEMENT b ANY>\r\n<!--* wrong keyword : #pcdata in Mixed  *-->\r\n<!ELEMENT aElement (#pcdata)* >\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected '#PCDATA' but found '#'");
+    expectRejects(input, "XML Parse error: Expected an element name or '(' in the content model but found '#pcdata'");
   });
 
   test("ibm-not-wf-P51-ibm51n02.xml", () => {
@@ -9449,7 +9446,7 @@ describe("ibm", () => {
     // component in the Mixed field in the fourth elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!ELEMENT b ANY>\r\n<!--* #PCDATA must be the first in Mixed  *-->\r\n<!ELEMENT aElement ( a | b|#PCDATA)* >\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(input, "XML Parse error: #PCDATA must be the first item of a content model group");
+    expectRejects(input, "XML Parse error: #PCDATA must come first in a content model, as (#PCDATA|a|b)*");
   });
 
   test("ibm-not-wf-P51-ibm51n03.xml", () => {
@@ -9457,7 +9454,7 @@ describe("ibm", () => {
     // in the Mixed field in the fourth elementdecl in the DTD.
     const input: string =
       "<?xml version=\"1.0\"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!ELEMENT b ANY>\r\n<!--* Missing '|' in Mixed  *-->\r\n<!ELEMENT aElement ( #PCDATA a )* >\r\n]>\r\n<root>Any content</root>\r\n";
-    expectRejects(input, "XML Parse error: Expected ')', '|' or ',' in the content model but found 'a'");
+    expectRejects(input, "XML Parse error: Expected '|' or ')' in the mixed content model but found 'a'");
   });
 
   test("ibm-not-wf-P51-ibm51n04.xml", () => {
@@ -9465,7 +9462,7 @@ describe("ibm", () => {
     // field in the fourth elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!ELEMENT b ANY>\r\n<!--* wrong keyword: #CDATA in Mixed  *-->\r\n<!ELEMENT aElement (#CDATA) >\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected '#PCDATA' but found '#'");
+    expectRejects(input, "XML Parse error: Expected an element name or '(' in the content model but found '#CDATA'");
   });
 
   test("ibm-not-wf-P51-ibm51n05.xml", () => {
@@ -9481,7 +9478,7 @@ describe("ibm", () => {
     // field in the fourth elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!ELEMENT b ANY>\r\n<!--* Wrong closing bracket in Mixed  *-->\r\n<!ELEMENT aElement ( #PCDATA | a ]* >\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected ')', '|' or ',' in the content model but found ']'");
+    expectRejects(input, "XML Parse error: Expected '|' or ')' in the mixed content model but found ']'");
   });
 
   test("ibm-not-wf-P51-ibm51n07.xml", () => {
@@ -9489,7 +9486,7 @@ describe("ibm", () => {
     // in the Mixed field in the fourth elementdecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!ELEMENT b ANY>\r\n<!--* Missing closing bracket in Mixed  *-->\r\n<!ELEMENT aElement ( #PCDATA *>\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected ')', '|' or ',' in the content model but found '*'");
+    expectRejects(input, "XML Parse error: Expected '|' or ')' in the mixed content model but found '*'");
   });
 
   test("ibm-not-wf-P52-ibm52n01.xml", () => {
@@ -9499,7 +9496,7 @@ describe("ibm", () => {
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!--* Missing Name in AttlistDecl *-->\r\n<!ATTLIST attr1 CDATA #IMPLIED>\r\n]>\r\n<root>Any content</root>\r\n';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found '#'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found '#IMPLIED'",
     );
   });
 
@@ -9508,7 +9505,7 @@ describe("ibm", () => {
     // beginning sequence and the name in the AttlistDecl in the DTD.
     const input: string =
       "<?xml version=\"1.0\"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!--* Missing white space after 'ATTLIST' *-->\r\n<!ATTLISTa attr1 ID #REQUIRED >\r\n]>\r\n<root>Any content</root>\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace after the declaration keyword but found 'a'");
+    expectRejects(input, "XML Parse error: Whitespace is required before 'a'");
   });
 
   test("ibm-not-wf-P52-ibm52n03.xml", () => {
@@ -9529,7 +9526,7 @@ describe("ibm", () => {
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!--* Wrong keyword: Attlist in AttlistDecl *-->\r\n<!Attlist a attr1 CDATA #REQUIRED >\r\n]>\r\n<root>Any content</root>\r\n';
     expectRejects(
       input,
-      "XML Parse error: Expected a markup declaration (<!ELEMENT, <!ATTLIST, <!ENTITY, <!NOTATION), a comment, or a processing instruction",
+      "XML Parse error: '<!' must begin a comment, '<![CDATA[', or a DOCTYPE, ELEMENT, ATTLIST, ENTITY or NOTATION declaration",
     );
   });
 
@@ -9538,7 +9535,10 @@ describe("ibm", () => {
     // in the AttlistDecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!--* Missing closing bracket in AttlistDecl *-->\r\n<!ATTLIST a \r\n<!--* random *-->\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected an attribute name or '>' in the ATTLIST declaration but found '<'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected an attribute name or '>' in the ATTLIST declaration but found a comment",
+    );
   });
 
   test("ibm-not-wf-P52-ibm52n06.xml", () => {
@@ -9548,7 +9548,7 @@ describe("ibm", () => {
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!--* Wrong begining sequence in AttlistDecl *-->\r\n<ATTLIST a attr1 CDATA "default">\r\n]>\r\n<root>Any content</root>\r\n';
     expectRejects(
       input,
-      "XML Parse error: Expected a markup declaration (<!ELEMENT, <!ATTLIST, <!ENTITY, <!NOTATION), a comment, or a processing instruction",
+      "XML Parse error: Expected a markup declaration or ']' in the internal subset but found '<ATTLIST'",
     );
   });
 
@@ -9568,7 +9568,7 @@ describe("ibm", () => {
     // "def" in the AttDef in the AttlistDecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!--* Missing white space between AttType and DefaultDecl in AttDef *-->\r\n<!ATTLIST a attr1 (abc|def)"def">\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after the attribute type but found '\"'");
+    expectRejects(input, "XML Parse error: Whitespace is required before a quoted string");
   });
 
   test("ibm-not-wf-P53-ibm53n03.xml", () => {
@@ -9578,7 +9578,7 @@ describe("ibm", () => {
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!--* Missing AttType in AttDef *-->\r\n<!ATTLIST a attr1 #IMPLIED>\r\n]>\r\n<root>Any content</root>\r\n';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found '#'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found '#IMPLIED'",
     );
   });
 
@@ -9587,7 +9587,7 @@ describe("ibm", () => {
     // (abc|def) in the AttDef in the AttlistDecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!--* Missing white space between Name and AttType in AttDef *-->\r\n<!ATTLIST a attr1(abc|def) "abc" >\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after the attribute name but found '('");
+    expectRejects(input, "XML Parse error: Whitespace is required before '('");
   });
 
   test("ibm-not-wf-P53-ibm53n05.xml", () => {
@@ -9603,10 +9603,7 @@ describe("ibm", () => {
     // in the AttDef in the AttlistDecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n<!ELEMENT root (#PCDATA)>\r\n<!ELEMENT a ANY>\r\n<!--* Missing white space before Name in AttDef *-->\r\n<!ATTLIST a attr1 CDATA "default"attr2 ID #required>\r\n]>\r\n<root>Any content</root>\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected whitespace before the attribute name in the ATTLIST declaration but found 'a'",
-    );
+    expectRejects(input, "XML Parse error: Whitespace is required before 'attr2'");
   });
 
   test("ibm-not-wf-P53-ibm53n07.xml", () => {
@@ -9635,7 +9632,7 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- test for Production 54-->\r\n<!DOCTYPE AttrType\r\n[\r\n<!ELEMENT AttrType ANY>\r\n<!ELEMENT a EMPTY>\r\n<!ATTLIST a att BOGUSATTR #IMPLIED> \r\n]>\r\n<AttrType>\r\nGiving a Bogus attribute. \r\n</AttrType>';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'B'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'BOGUSATTR'",
     );
   });
 
@@ -9646,7 +9643,7 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- test for Production 54-->\r\n<!DOCTYPE AttrType\r\n[\r\n<!ELEMENT AttrType ANY>\r\n<!ELEMENT a EMPTY>\r\n<!ATTLIST a att PCDATA #IMPLIED> \r\n]>\r\n<AttrType>\r\nGiving a wrong AttType for the attribute. \r\n<a att="23" ></a>\r\n</AttrType>';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'P'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'PCDATA'",
     );
   });
 
@@ -9657,7 +9654,7 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- test syntax invalid for Production 55-->\r\n<!DOCTYPE AttrType\r\n[\r\n<!ELEMENT AttrType (#PCDATA)>\r\n<!ELEMENT a EMPTY>\r\n<!ATTLIST a att cdata #IMPLIED>  \r\n]>\r\n<AttrType>\r\nGiving a lowercase for CDATA attribute.\r\n</AttrType>';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'c'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'cdata'",
     );
   });
 
@@ -9668,7 +9665,7 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- test invalid syntax for Production 55-->\r\n<!DOCTYPE AttrType\r\n[\r\n<!ELEMENT AttrType (#PCDATA)>\r\n<!ELEMENT a EMPTY>\r\n<!ATTLIST a att #CDATA #IMPLIED> \r\n]>\r\n<AttrType>\r\nGiving a wrong character. \r\n</AttrType>';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found '#'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found '#CDATA'",
     );
   });
 
@@ -9679,7 +9676,7 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- test invalid syntax for Production 55-->\r\n<!DOCTYPE AttrType\r\n[\r\n<!ELEMENT AttrType (#PCDATA)>\r\n<!ELEMENT a EMPTY>\r\n<!ATTLIST a att CData #IMPLIED> \r\n]>\r\n<AttrType>\r\n Giving a wrong key word of the StringType.\r\n</AttrType>';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'C'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'CData'",
     );
   });
 
@@ -9690,7 +9687,7 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- test for Production 56-->\r\n<!DOCTYPE root\r\n[\r\n<!ELEMENT root ANY>\r\n<!ELEMENT a EMPTY>\r\n<!ATTLIST a attr id #REQUIRED>\r\n]>\r\n<root>\r\nInvalid TokenizedType id(lowercase)\r\n</root>';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'i'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'id'",
     );
   });
 
@@ -9701,7 +9698,7 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- test for Production 56-->\r\n<!DOCTYPE root\r\n[\r\n<!ELEMENT root ANY>\r\n<!ELEMENT a EMPTY>\r\n<!ATTLIST a attr Idref #REQUIRED>\r\n]>\r\n<root>\r\nInvalid TokenizedType Idref(case sensitive)\r\n</root>';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'I'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'Idref'",
     );
   });
 
@@ -9712,7 +9709,7 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- test for Production 56-->\r\n<!DOCTYPE root\r\n[\r\n<!ELEMENT root ANY>\r\n<!ELEMENT a EMPTY>\r\n<!ATTLIST a attr IdRefs #REQUIRED>\r\n]>\r\n<root>\r\nInvalid TokenizedType IdRefs(case sensitive)\r\n</root>';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'I'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'IdRefs'",
     );
   });
 
@@ -9723,7 +9720,7 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- test for Production 56-->\r\n<!DOCTYPE root\r\n[\r\n<!ELEMENT root ANY>\r\n<!ELEMENT a EMPTY>\r\n<!ATTLIST a attr EntitY #REQUIRED>\r\n]>\r\n<root>\r\nInvalid TokenizedType EntitY(case sensitive)\r\n</root>';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'E'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'EntitY'",
     );
   });
 
@@ -9734,7 +9731,7 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- test for Production 56-->\r\n<!DOCTYPE root\r\n[\r\n<!ELEMENT root ANY>\r\n<!ELEMENT a EMPTY>\r\n<!ATTLIST a attr nmTOKEN #REQUIRED>\r\n]>\r\n<root>\r\nInvalid TokenizedType nmTOKEN(case sensitive)\r\n</root>';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'n'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'nmTOKEN'",
     );
   });
 
@@ -9745,7 +9742,7 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- test for Production 56-->\r\n<!DOCTYPE root\r\n[\r\n<!ELEMENT root ANY>\r\n<!ELEMENT a EMPTY>\r\n<!ATTLIST a attr NMtokens #REQUIRED>\r\n]>\r\n<root>\r\nInvalid TokenizedType NMtokens(case sensitive)\r\n</root>';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'N'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'NMtokens'",
     );
   });
 
@@ -9756,7 +9753,7 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- test for Production 56-->\r\n<!DOCTYPE root\r\n[\r\n<!ELEMENT root ANY>\r\n<!ELEMENT a EMPTY>\r\n<!ATTLIST a attr #ID #REQUIRED>\r\n]>\r\n<root>\r\nInvalid TokenizedType #ID(Wrong Character)\r\n</root>';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found '#'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found '#ID'",
     );
   });
 
@@ -9778,7 +9775,7 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 58-->\r\n<!DOCTYPE test\r\n [\r\n <!ELEMENT test ANY>\r\n <!ELEMENT one EMPTY>\r\n <!NOTATION this SYSTEM "alpha">\r\n <!ATTLIST one attr notation (this) #IMPLIED>\r\n ]>\r\n <test>\r\nThis is a Negative test with notation (name) \r\nIt is case sensitive.\r\n</test>';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'n'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'notation'",
     );
   });
 
@@ -9787,7 +9784,7 @@ describe("ibm", () => {
     // the NotationType in the AttDef in the AttlistDecl in the DTD.
     const input: string =
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 58-->\r\n<!DOCTYPE test\r\n [\r\n <!ELEMENT test ANY>\r\n <!ELEMENT one EMPTY>\r\n <!NOTATION this SYSTEM "alpha">\r\n <!ATTLIST one attr NOTATION this) #IMPLIED>\r\n ]>\r\n <test>\r\nThis is a Negative test with  (name) \r\nMissing the open parenthesis\r\n</test>';
-    expectRejects(input, "XML Parse error: Expected '(' after NOTATION but found 't'");
+    expectRejects(input, "XML Parse error: Expected '(' after NOTATION but found 'this'");
   });
 
   test("ibm-not-wf-P58-ibm58n03.xml", () => {
@@ -9803,7 +9800,7 @@ describe("ibm", () => {
     // NotationType in the AttDef in the AttlistDecl in the DTD.
     const input: string =
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 58-->\r\n<!DOCTYPE test\r\n [\r\n <!ELEMENT test ANY>\r\n <!ELEMENT one EMPTY>\r\n <!NOTATION this SYSTEM "alpha">\r\n <!ATTLIST one attr NOTATION (this #IMPLIED>\r\n ]>\r\n <test>\r\nThis is a Negative test with  NOTATION (Name \r\nMissing the closing brackets\r\n</test>';
-    expectRejects(input, "XML Parse error: Expected '|' or ')' in the enumeration but found '#'");
+    expectRejects(input, "XML Parse error: Expected '|' or ')' in the enumeration but found '#IMPLIED'");
   });
 
   test("ibm-not-wf-P58-ibm58n05.xml", () => {
@@ -9813,7 +9810,7 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 58-->\r\n<!DOCTYPE test\r\n [\r\n <!ELEMENT test ANY>\r\n <!ELEMENT one EMPTY>\r\n <!NOTATION this SYSTEM "alpha">\r\n <!ATTLIST one attr (this) NOTATION #IMPLIED>\r\n ]>\r\n <test>\r\nThis is a Negative test with (Name) NOTATION  \r\nWrong Ordering\r\n</test>';
     expectRejects(
       input,
-      "XML Parse error: Expected #REQUIRED, #IMPLIED, #FIXED or a quoted default value but found 'N'",
+      "XML Parse error: Expected #REQUIRED, #IMPLIED, #FIXED or a quoted default value but found 'NOTATION'",
     );
   });
 
@@ -9830,7 +9827,7 @@ describe("ibm", () => {
     // "NOTATION" and "(this)" in the NotationType in the AttDef in the AttlistDecl in the DTD.
     const input: string =
       '<?xml  version="1.0"?>\r\n<!-- Syntax test for Production 58-->\r\n<!DOCTYPE test\r\n [\r\n <!ELEMENT test ANY>\r\n <!ELEMENT one EMPTY>\r\n <!ELEMENT two EMPTY>\r\n <!NOTATION this SYSTEM "alpha">\r\n <!ATTLIST three attr NOTATION(this) #IMPLIED>\r\n ]>\r\n<test>\r\nNegative Test.\r\nMissing space after NOTATION\r\n</test>';
-    expectRejects(input, "XML Parse error: Expected whitespace after NOTATION but found '('");
+    expectRejects(input, "XML Parse error: Whitespace is required before '('");
   });
 
   test("ibm-not-wf-P58-ibm58n08.xml", () => {
@@ -9846,7 +9843,7 @@ describe("ibm", () => {
     // AttDef in the AttlistDecl in the DTD.
     const input: string =
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 59-->\r\n<!DOCTYPE test\r\n [\r\n <!ELEMENT test ANY>\r\n <!ELEMENT one EMPTY>\r\n <!ELEMENT enum (#PCDATA)>\r\n <!ATTLIST one attr () #IMPLIED>\r\n ]>\r\n <test>\r\nThis is a Negative test\r\nMissing the required field\r\n</test>';
-    expectRejects(input, "XML Parse error: Expected a name token but found ')'");
+    expectRejects(input, "XML Parse error: Expected a name token in the enumeration but found ')'");
   });
 
   test("ibm-not-wf-P59-ibm59n02.xml", () => {
@@ -9854,7 +9851,7 @@ describe("ibm", () => {
     // AttDef in the AttlistDecl in the DTD.
     const input: string =
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 59-->\r\n<!DOCTYPE test\r\n [\r\n <!ELEMENT test ANY>\r\n <!ELEMENT one EMPTY>\r\n <!ELEMENT enum (#PCDATA)>\r\n <!ATTLIST one attr (enum #IMPLIED>\r\n ]>\r\n <test>\r\nThis is a Negative test\r\nMissing the closing brackets\r\n</test>';
-    expectRejects(input, "XML Parse error: Expected '|' or ')' in the enumeration but found '#'");
+    expectRejects(input, "XML Parse error: Expected '|' or ')' in the enumeration but found '#IMPLIED'");
   });
 
   test("ibm-not-wf-P59-ibm59n03.xml", () => {
@@ -9870,7 +9867,7 @@ describe("ibm", () => {
     // value in the AttDef in the AttlistDecl in the DTD.
     const input: string =
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 59-->\r\n<!DOCTYPE test\r\n [\r\n <!ELEMENT test ANY>\r\n <!ELEMENT one EMPTY>\r\n <!ELEMENT enum (#PCDATA)>\r\n <!ATTLIST one attr ("enum") #IMPLIED>\r\n ]>\r\n <test>\r\nThis is a Negative test\r\nIllegal presence of quotes around the value\r\n</test>';
-    expectRejects(input, "XML Parse error: Expected a name token but found '\"'");
+    expectRejects(input, "XML Parse error: Expected a name token in the enumeration but found '\"'");
   });
 
   test("ibm-not-wf-P59-ibm59n05.xml", () => {
@@ -9880,7 +9877,7 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 59-->\r\n<!DOCTYPE test\r\n [\r\n <!ELEMENT test ANY>\r\n <!ELEMENT one EMPTY>\r\n <!ELEMENT enum (#PCDATA)>\r\n <!ATTLIST one attr enum) #IMPLIED>\r\n ]>\r\n <test>\r\nThis is a Negative test\r\nMissing the begining bracket  \r\n</test>';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'e'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'enum'",
     );
   });
 
@@ -9891,7 +9888,7 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 59-->\r\n<!DOCTYPE test\r\n [\r\n <!ELEMENT test ANY>\r\n <!ELEMENT one EMPTY>\r\n <!ELEMENT enum (#PCDATA)>\r\n <!ATTLIST one attr enum) #IMPLIED>\r\n ]>\r\n <test>\r\nThis is a Negative test\r\nMissing the Opening brackets\r\n</test>';
     expectRejects(
       input,
-      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'e'",
+      "XML Parse error: Expected an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration) but found 'enum'",
     );
   });
 
@@ -9902,7 +9899,7 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 60-->\r\n<!DOCTYPE Java \r\n [\r\n <!ELEMENT Java ANY>\r\n <!ELEMENT one EMPTY>\r\n <!ATTLIST one chapter CDATA #required>\r\n ]>\r\n<Java>\r\n<one chapter="Introduction"></one>\r\nNegative Test. Case sensitive.\r\n</Java>';
     expectRejects(
       input,
-      "XML Parse error: Expected #REQUIRED, #IMPLIED, #FIXED or a quoted default value but found '#'",
+      "XML Parse error: Expected #REQUIRED, #IMPLIED, #FIXED or a quoted default value but found '#required'",
     );
   });
 
@@ -9913,7 +9910,7 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 60-->\r\n<!DOCTYPE Java \r\n [\r\n <!ELEMENT Java ANY>\r\n <!ELEMENT one EMPTY>\r\n <!ATTLIST one chapter CDATA #Implied>\r\n ]>\r\n<Java>\r\n<one chapter="Introduction"></one>\r\nNegative test. Case Sensitive\r\n</Java>';
     expectRejects(
       input,
-      "XML Parse error: Expected #REQUIRED, #IMPLIED, #FIXED or a quoted default value but found '#'",
+      "XML Parse error: Expected #REQUIRED, #IMPLIED, #FIXED or a quoted default value but found '#Implied'",
     );
   });
 
@@ -9933,10 +9930,7 @@ describe("ibm", () => {
     // the key word "#FIXED" in the DefaultDecl in the AttDef in the AttlistDecl in the DTD.
     const input: string =
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 60-->\r\n<!DOCTYPE Java \r\n [\r\n <!ELEMENT Java ANY>\r\n <!ELEMENT one EMPTY>\r\n <!ATTLIST one chapter CDATA #FIXED >\r\n ]>\r\n<Java>\r\n<one chapter="Introduction"></one>\r\nNegative test. Missing required field(#FIXED should have a value)\r\n</Java>';
-    expectRejects(
-      input,
-      "XML Parse error: Expected #REQUIRED, #IMPLIED, #FIXED or a quoted default value but found '>'",
-    );
+    expectRejects(input, "XML Parse error: Expected a quoted default value after #FIXED but found '>'");
   });
 
   test("ibm-not-wf-P60-ibm60n05.xml", () => {
@@ -9945,7 +9939,7 @@ describe("ibm", () => {
     // DTD.
     const input: string =
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 60-->\r\n<!DOCTYPE Java \r\n [\r\n <!ELEMENT Java ANY>\r\n <!ELEMENT one EMPTY>\r\n <!ATTLIST one chapter CDATA #FIXED"Introduction">\r\n ]>\r\n<Java>\r\n<one chapter="Introduction"></one>\r\nNegative test. Missing required field(#FIXED should have a space before value)\r\n</Java>';
-    expectRejects(input, "XML Parse error: Expected whitespace after #FIXED but found '\"'");
+    expectRejects(input, "XML Parse error: Whitespace is required before a quoted string");
   });
 
   test("ibm-not-wf-P60-ibm60n06.xml", () => {
@@ -9953,7 +9947,10 @@ describe("ibm", () => {
     // attribute value "introduction" in the DefaultDecl in the AttDef in the AttlistDecl in the DTD.
     const input: string =
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 60-->\r\n<!DOCTYPE Java \r\n [\r\n <!ELEMENT Java ANY>\r\n <!ELEMENT one EMPTY>\r\n <!ATTLIST one chapter CDATA "Introduction" #FIXED>\r\n ]>\r\n<Java>\r\n<one chapter="Introduction"></one>\r\nNegative test. Wrong Ordering\r\n</Java>';
-    expectRejects(input, "XML Parse error: Expected an attribute name or '>' in the ATTLIST declaration but found '#'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected an attribute name or '>' in the ATTLIST declaration but found '#FIXED'",
+    );
   });
 
   test("ibm-not-wf-P60-ibm60n07.xml", () => {
@@ -9969,7 +9966,10 @@ describe("ibm", () => {
     // as the key words in the DefaultDecl in the AttDef in the AttlistDecl in the DTD.
     const input: string =
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 60-->\r\n<!DOCTYPE Java \r\n [\r\n <!ELEMENT Java ANY>\r\n <!ELEMENT one EMPTY>\r\n <!ATTLIST one chapter CDATA #REQUIRED #IMPLIED>\r\n ]>\r\n<Java>\r\n<one chapter="Introduction"></one>\r\nNegative Test. More than one Default type declarations.\r\n</Java>\r\n';
-    expectRejects(input, "XML Parse error: Expected an attribute name or '>' in the ATTLIST declaration but found '#'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected an attribute name or '>' in the ATTLIST declaration but found '#IMPLIED'",
+    );
   });
 
   test("ibm-not-wf-P61-ibm61n01.xml", () => {
@@ -10281,7 +10281,7 @@ describe("ibm", () => {
     // character in the attribute value in the EmptyElemTag of the element "root".
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root EMPTY>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n\r\n]>\r\n<root att="wrong replacement charater reference: &#x0000;" />\r\n';
-    expectRejects(input, "XML Parse error: Character reference &#x0; is not a valid XML character");
+    expectRejects(input, "XML Parse error: Character reference '&#x0000;' is not a valid XML character");
   });
 
   test("ibm-not-wf-P66-ibm66n13.xml", () => {
@@ -10289,7 +10289,7 @@ describe("ibm", () => {
     // character in the attribute value in the EmptyElemTag of the element "root".
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root EMPTY>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n\r\n]>\r\n<root att="wrong replacement charater: &#x001f;" />\r\n';
-    expectRejects(input, "XML Parse error: Character reference &#x1F; is not a valid XML character");
+    expectRejects(input, "XML Parse error: Character reference '&#x001f;' is not a valid XML character");
   });
 
   test("ibm-not-wf-P66-ibm66n14.xml", () => {
@@ -10297,7 +10297,7 @@ describe("ibm", () => {
     // character in the attribute value in the EmptyElemTag of the element "root".
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root EMPTY>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n\r\n]>\r\n<root att="wrong replacement charater : &#xfffe;" />\r\n';
-    expectRejects(input, "XML Parse error: Character reference &#xFFFE; is not a valid XML character");
+    expectRejects(input, "XML Parse error: Character reference '&#xfffe;' is not a valid XML character");
   });
 
   test("ibm-not-wf-P66-ibm66n15.xml", () => {
@@ -10305,7 +10305,7 @@ describe("ibm", () => {
     // character in the attribute value in the EmptyElemTag of the element "root".
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root EMPTY>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n\r\n]>\r\n<root att="wrong replacement charater: &#xffff;" />\r\n';
-    expectRejects(input, "XML Parse error: Character reference &#xFFFF; is not a valid XML character");
+    expectRejects(input, "XML Parse error: Character reference '&#xffff;' is not a valid XML character");
   });
 
   test("ibm-not-wf-P68-ibm68n01.xml", () => {
@@ -10395,7 +10395,7 @@ describe("ibm", () => {
     // in the DTD.
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ENTITY % paaa "<!ATTLIST root att CDATA #IMPLIED>">\r\n<!--* incorrect PE reference *-->\r\n%;\r\n<!ENTITY aaa "aString">\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected a parameter entity name after '%' but found ';'");
+    expectRejects(input, "XML Parse error: Expected a markup declaration or ']' in the internal subset but found '%'");
   });
 
   test("ibm-not-wf-P69-ibm69n02.xml", () => {
@@ -10403,7 +10403,7 @@ describe("ibm", () => {
     // "%paaa" in the DTD.
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ENTITY % paaa "<!ATTLIST root att CDATA #IMPLIED>">\r\n<!--* incorrect PE reference without semicolon *-->\r\n%paaa\r\n<!ENTITY aaa "aString">\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected ';' after the entity name but found newline");
+    expectRejects(input, "XML Parse error: Expected ';' to end the parameter entity reference 'paaa'");
   });
 
   test("ibm-not-wf-P69-ibm69n03.xml", () => {
@@ -10411,7 +10411,7 @@ describe("ibm", () => {
     // in the PEReference in the DTD.
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ENTITY % paaa "<!ATTLIST root att CDATA #IMPLIED>">\r\n<!--* incorrect PE reference with a extra white space charater *-->\r\n%paaa ;\r\n<!ENTITY aaa "aString">\r\n]>\r\n<root/>\r\n\r\n\r\n\r\n';
-    expectRejects(input, "XML Parse error: Expected ';' after the entity name but found space");
+    expectRejects(input, "XML Parse error: Expected ';' to end the parameter entity reference 'paaa'");
   });
 
   test("ibm-not-wf-P69-ibm69n04.xml", () => {
@@ -10419,7 +10419,7 @@ describe("ibm", () => {
     // the PEReference in the DTD.
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ENTITY % paaa "<!ATTLIST root att CDATA #IMPLIED>">\r\n<!--* incorrect PE reference with a extra white space char *-->\r\n% paaa;\r\n<!ENTITY aaa "aString">\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected a parameter entity name after '%' but found space");
+    expectRejects(input, "XML Parse error: Expected a markup declaration or ']' in the internal subset but found '%'");
   });
 
   test("ibm-not-wf-P69-ibm69n05.xml", () => {
@@ -10460,7 +10460,7 @@ describe("ibm", () => {
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!ENTITY aaa "aString">\r\n<!--* mess up Entity Declaration *-->\r\n<root/>\r\n<!ENTITY % paaa "aString">\r\n]>\r\n<root/>\r\n';
     expectRejects(
       input,
-      "XML Parse error: Expected a markup declaration (<!ELEMENT, <!ATTLIST, <!ENTITY, <!NOTATION), a comment, or a processing instruction",
+      "XML Parse error: Expected a markup declaration or ']' in the internal subset but found '<root'",
     );
   });
 
@@ -10469,7 +10469,7 @@ describe("ibm", () => {
     // beginning sequence and the Name "aaa" in the EntityDecl in the DTD.
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* missing space  *-->\r\n<!ENTITYaaa "aString">\r\n\r\n]>\r\n<root>&aaa;</root>\r\n\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after '<!ENTITY' but found 'a'");
+    expectRejects(input, "XML Parse error: Whitespace is required before 'aaa'");
   });
 
   test("ibm-not-wf-P71-ibm71n02.xml", () => {
@@ -10477,7 +10477,7 @@ describe("ibm", () => {
     // "aaa" and the EntityDef "aString" in the EntityDecl in the DTD.
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* missing space  *-->\r\n<!ENTITY aaa"aString">\r\n\r\n]>\r\n<root>&aaa;</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after the entity name but found '\"'");
+    expectRejects(input, "XML Parse error: Whitespace is required before a quoted string");
   });
 
   test("ibm-not-wf-P71-ibm71n03.xml", () => {
@@ -10485,7 +10485,7 @@ describe("ibm", () => {
     // with the Name "aaa" in the DTD.
     const input: string =
       "<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* missing EntityDef  *-->\r\n<!ENTITY aaa>\r\n\r\n]>\r\n<root>&aaa;</root>\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace after the entity name but found '>'");
+    expectRejects(input, "XML Parse error: Expected a quoted entity value, SYSTEM or PUBLIC but found '>'");
   });
 
   test("ibm-not-wf-P71-ibm71n04.xml", () => {
@@ -10493,7 +10493,7 @@ describe("ibm", () => {
     // EntityDef "aString" in the DTD.
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* missing name  *-->\r\n<!ENTITY "aString">\r\n\r\n]>\r\n<root>&aaa;</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected an entity name but found '\"'");
+    expectRejects(input, "XML Parse error: Expected an entity name or '%' after '<!ENTITY' but found '\"'");
   });
 
   test("ibm-not-wf-P71-ibm71n05.xml", () => {
@@ -10501,7 +10501,7 @@ describe("ibm", () => {
     // EntityDecl in the DTD.
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* wrong ordering  *-->\r\n<!ENTITY "aString" aaa>\r\n]>\r\n<root>&aaa;</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected an entity name but found '\"'");
+    expectRejects(input, "XML Parse error: Expected an entity name or '%' after '<!ENTITY' but found '\"'");
   });
 
   test("ibm-not-wf-P71-ibm71n06.xml", () => {
@@ -10511,7 +10511,7 @@ describe("ibm", () => {
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* ENTITY in lower case  *-->\r\n<!entity aaa "aString">\r\n]>\r\n<root>&aaa;</root>\r\n';
     expectRejects(
       input,
-      "XML Parse error: Expected a markup declaration (<!ELEMENT, <!ATTLIST, <!ENTITY, <!NOTATION), a comment, or a processing instruction",
+      "XML Parse error: '<!' must begin a comment, '<![CDATA[', or a DOCTYPE, ELEMENT, ATTLIST, ENTITY or NOTATION declaration",
     );
   });
 
@@ -10520,7 +10520,7 @@ describe("ibm", () => {
     // in the EntityDecl in the DTD.
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* missing closing bracket  *-->\r\n<!ENTITY aaa "aString"\r\n\r\n]>\r\n<root>&aaa;</root>\r\n';
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found ']'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the entity declaration but found ']'");
   });
 
   test("ibm-not-wf-P71-ibm71n08.xml", () => {
@@ -10530,7 +10530,7 @@ describe("ibm", () => {
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* exclamation mark missing  *-->\r\n<ENTITY aaa "aString">\r\n\r\n]>\r\n<root>&aaa;</root>\r\n';
     expectRejects(
       input,
-      "XML Parse error: Expected a markup declaration (<!ELEMENT, <!ATTLIST, <!ENTITY, <!NOTATION), a comment, or a processing instruction",
+      "XML Parse error: Expected a markup declaration or ']' in the internal subset but found '<ENTITY'",
     );
   });
 
@@ -10539,14 +10539,14 @@ describe("ibm", () => {
     // sequence and the "%" in the PEDecl in the DTD.
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* missing space  *-->\r\n<!ENTITY% paaa "<!-- comments -->">\r\n%paaa;\r\n]>\r\n<root/>\r\n\r\n\r\n\r\n\r\n\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after '<!ENTITY' but found '%'");
+    expectRejects(input, "XML Parse error: Whitespace is required before '%'");
   });
 
   test("ibm-not-wf-P72-ibm72n02.xml", () => {
     // 4.2 — Tests PEdecl with a required field missing. The Name is missing in the PEDecl in the DTD.
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* missing name  *-->\r\n<!ENTITY % "<!-- comments -->">\r\n%paaa;\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected an entity name but found '\"'");
+    expectRejects(input, "XML Parse error: Expected the parameter entity name after '%' but found '\"'");
   });
 
   test("ibm-not-wf-P72-ibm72n03.xml", () => {
@@ -10554,7 +10554,7 @@ describe("ibm", () => {
     // the PEDef in the PEDecl in the DTD.
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* missing space  *-->\r\n<!ENTITY % paaa"<!-- comments -->">\r\n%paaa;\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after the entity name but found '\"'");
+    expectRejects(input, "XML Parse error: Whitespace is required before a quoted string");
   });
 
   test("ibm-not-wf-P72-ibm72n04.xml", () => {
@@ -10562,7 +10562,7 @@ describe("ibm", () => {
     // PEDecl in the DTD.
     const input: string =
       "<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* missing PEDef  *-->\r\n<!ENTITY % paaa>\r\n%paaa;\r\n]>\r\n<root/>\r\n";
-    expectRejects(input, "XML Parse error: Expected whitespace after the entity name but found '>'");
+    expectRejects(input, "XML Parse error: Expected a quoted entity value, SYSTEM or PUBLIC but found '>'");
   });
 
   test("ibm-not-wf-P72-ibm72n05.xml", () => {
@@ -10570,7 +10570,7 @@ describe("ibm", () => {
     // in the DTD.
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* wrong order  *-->\r\n<!ENTITY % "<!-- comments -->" paaa>\r\n%paaa;\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected an entity name but found '\"'");
+    expectRejects(input, "XML Parse error: Expected the parameter entity name after '%' but found '\"'");
   });
 
   test("ibm-not-wf-P72-ibm72n06.xml", () => {
@@ -10578,7 +10578,7 @@ describe("ibm", () => {
     // the PEDecl in the DTD.
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* wrong order  *-->\r\n<!ENTITY "<!-- comments -->" % paaa >\r\n%paaa;\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected an entity name but found '\"'");
+    expectRejects(input, "XML Parse error: Expected an entity name or '%' after '<!ENTITY' but found '\"'");
   });
 
   test("ibm-not-wf-P72-ibm72n07.xml", () => {
@@ -10588,7 +10588,7 @@ describe("ibm", () => {
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* wrong keyword  *-->\r\n<!entity % paaa "<!-- comments -->">\r\n%paaa;\r\n]>\r\n<root/>\r\n';
     expectRejects(
       input,
-      "XML Parse error: Expected a markup declaration (<!ELEMENT, <!ATTLIST, <!ENTITY, <!NOTATION), a comment, or a processing instruction",
+      "XML Parse error: '<!' must begin a comment, '<![CDATA[', or a DOCTYPE, ELEMENT, ATTLIST, ENTITY or NOTATION declaration",
     );
   });
 
@@ -10608,7 +10608,7 @@ describe("ibm", () => {
     // sequence in the PEDecl in the DTD.
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* wrong closing sequence: extra exclamation mark *-->\r\n<!ENTITY% paaa "<!-- comments -->" !>\r\n%paaa;\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after '<!ENTITY' but found '%'");
+    expectRejects(input, "XML Parse error: Whitespace is required before '%'");
   });
 
   test("ibm-not-wf-P73-ibm73n01.xml", () => {
@@ -10616,7 +10616,7 @@ describe("ibm", () => {
     // ExternalID in the EntityDef in the EntityDecl.
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!NOTATION JPGformat SYSTEM "JPGFormat">\r\n<!--* wrong order: NDataDecl ExternalID  *-->\r\n<!ENTITY aImage NDATA JPGformat SYSTEM "image.jpg" >\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC but found 'N'");
+    expectRejects(input, "XML Parse error: Expected a quoted entity value, SYSTEM or PUBLIC but found 'NDATA'");
   });
 
   test("ibm-not-wf-P73-ibm73n03.xml", () => {
@@ -10624,7 +10624,7 @@ describe("ibm", () => {
     // in the EntityDef in the EntityDecl.
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!NOTATION JPGformat SYSTEM "JPGFormat">\r\n<!--* missing ExternalID  *-->\r\n<!ENTITY aImage NDATA JPGformat >\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC but found 'N'");
+    expectRejects(input, "XML Parse error: Expected a quoted entity value, SYSTEM or PUBLIC but found 'NDATA'");
   });
 
   test("ibm-not-wf-P74-ibm74n01.xml", () => {
@@ -10632,7 +10632,7 @@ describe("ibm", () => {
     // PEDecl in the DTD.
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!NOTATION JPGformat SYSTEM "JPGFormat">\r\n<!--* wrong PEDef: NDataDecl ExternalID  *-->\r\n<!ENTITY % pImage SYSTEM "image.jpg" NDATA JPGformat>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Parameter entities cannot have NDATA: 'N'");
+    expectRejects(input, "XML Parse error: Parameter entities cannot have NDATA");
   });
 
   test("ibm-not-wf-P75-ibm75n01.xml", () => {
@@ -10640,7 +10640,7 @@ describe("ibm", () => {
     // ExternalID in the EntityDef in the EntityDecl.
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* wrong keyword: system  *-->\r\n<!ENTITY pImage system "image.jpg">\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC but found 's'");
+    expectRejects(input, "XML Parse error: Expected a quoted entity value, SYSTEM or PUBLIC but found 'system'");
   });
 
   test("ibm-not-wf-P75-ibm75n02.xml", () => {
@@ -10648,7 +10648,10 @@ describe("ibm", () => {
     // ExternalID in the doctypedecl.
     const input: string =
       '<?xml version="1.0"?>\r\n<!--* wrong keyword: public  *-->\r\n<!DOCTYPE root \r\n    public "-//W3C//DTD//EN" "empty.dtd"\r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC but found 'p'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found 'public'",
+    );
   });
 
   test("ibm-not-wf-P75-ibm75n03.xml", () => {
@@ -10656,7 +10659,10 @@ describe("ibm", () => {
     // ExternalID in the doctypedecl.
     const input: string =
       '<?xml version="1.0"?>\r\n<!--* wrong keyword: Public  *-->\r\n<!DOCTYPE root \r\n    Public "-//W3C//DTD//EN" "empty.dtd"\r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC but found 'P'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found 'Public'",
+    );
   });
 
   test("ibm-not-wf-P75-ibm75n04.xml", () => {
@@ -10664,7 +10670,10 @@ describe("ibm", () => {
     // PublicLiteral and the SystemLiteral in the ExternalID in the doctypedecl.
     const input: string =
       '<?xml version="1.0"?>\r\n<!--* wrong order *-->\r\n<!DOCTYPE root \r\n    "-//W3C//DTD//EN" "empty.dtd" PUBLIC\r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC but found '\"'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '\"'",
+    );
   });
 
   test("ibm-not-wf-P75-ibm75n05.xml", () => {
@@ -10672,7 +10681,7 @@ describe("ibm", () => {
     // Systemliteral is missing in the ExternalID in the EntityDef in the EntityDecl in the DTD.
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* missing space *-->\r\n<!ENTITY pImage SYSTEM"image.jpg">\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after SYSTEM but found '\"'");
+    expectRejects(input, "XML Parse error: Whitespace is required before a quoted string");
   });
 
   test("ibm-not-wf-P75-ibm75n06.xml", () => {
@@ -10680,7 +10689,7 @@ describe("ibm", () => {
     // in the ExternalID in the EntityDef in the EntityDecl in the DTD.
     const input: string =
       "<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* missing SystemLiterral *-->\r\n<!ENTITY pImage SYSTEM >\r\n]>\r\n<root/>\r\n";
-    expectRejects(input, "XML Parse error: Expected a quoted system identifier but found '>'");
+    expectRejects(input, "XML Parse error: Expected a quoted system identifier after SYSTEM but found '>'");
   });
 
   test("ibm-not-wf-P75-ibm75n07.xml", () => {
@@ -10688,10 +10697,7 @@ describe("ibm", () => {
     // and the Systemliteral is missing in the ExternalID in the doctypedecl.
     const input: string =
       '<?xml version="1.0"?>\r\n<!--* missing space  *-->\r\n<!DOCTYPE root \r\n    PUBLIC "-//W3C//DTD//EN""empty.dtd"\r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n]>\r\n<root/>\r\n';
-    expectRejects(
-      input,
-      "XML Parse error: Expected whitespace between the public and system identifiers but found '\"'",
-    );
+    expectRejects(input, "XML Parse error: Whitespace is required before a quoted string");
   });
 
   test("ibm-not-wf-P75-ibm75n08.xml", () => {
@@ -10699,7 +10705,10 @@ describe("ibm", () => {
     // ExternalID in the doctypedecl.
     const input: string =
       '<?xml version="1.0"?>\r\n<!--* missing keyword: PUBLIC  *-->\r\n<!DOCTYPE root \r\n    "-//W3C//DTD//EN" "empty.dtd"\r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC but found '\"'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '\"'",
+    );
   });
 
   test("ibm-not-wf-P75-ibm75n09.xml", () => {
@@ -10707,7 +10716,7 @@ describe("ibm", () => {
     // PublicLiteral is missing in the ExternalID in the doctypedecl.
     const input: string =
       '<?xml version="1.0"?>\r\n<!--* missing space  *-->\r\n<!DOCTYPE root \r\n    PUBLIC"-//W3C//DTD//EN" "empty.dtd"\r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after PUBLIC but found '\"'");
+    expectRejects(input, "XML Parse error: Whitespace is required before a quoted string");
   });
 
   test("ibm-not-wf-P75-ibm75n10.xml", () => {
@@ -10723,7 +10732,10 @@ describe("ibm", () => {
     // ExternalID in the doctypedecl.
     const input: string =
       '<?xml version="1.0"?>\r\n<!--* missing System Literal *-->\r\n<!DOCTYPE root \r\n    public "-//W3C//DTD//EN"\r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC but found 'p'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found 'public'",
+    );
   });
 
   test("ibm-not-wf-P75-ibm75n12.xml", () => {
@@ -10731,7 +10743,7 @@ describe("ibm", () => {
     // ExternalID in the doctypedecl.
     const input: string =
       '<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* wrong order *-->\r\n<!ENTITY pImage "image.jpg" SYSTEM>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found 'S'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the entity declaration but found 'SYSTEM'");
   });
 
   test("ibm-not-wf-P75-ibm75n13.xml", () => {
@@ -10739,7 +10751,10 @@ describe("ibm", () => {
     // PublicLiteral in the ExternalID in the doctypedecl.
     const input: string =
       '<?xml version="1.0"?>\r\n<!--* wrong order *-->\r\n<!DOCTYPE root \r\n    "-//W3C//DTD//EN" PUBLIC "empty.dtd"\r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC but found '\"'");
+    expectRejects(
+      input,
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '\"'",
+    );
   });
 
   test("ibm-not-wf-P76-ibm76n01.xml", () => {
@@ -10747,7 +10762,7 @@ describe("ibm", () => {
     // NDataDecl in the EntityDef in the GEDecl.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!NOTATION JPGformat SYSTEM "JPGFormat">\r\n<!--* wrong keyword in NdataDecl: ndata *-->\r\n<!ENTITY aImage SYSTEM "image.jpg" ndata JPGformat>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found 'n'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the entity declaration but found 'ndata'");
   });
 
   test("ibm-not-wf-P76-ibm76n02.xml", () => {
@@ -10755,7 +10770,7 @@ describe("ibm", () => {
     // NDataDecl in the EntityDef in the GEDecl.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!NOTATION JPGformat SYSTEM "JPGFormat">\r\n<!--* wrong keyword in NdataDecl: NData *-->\r\n<!ENTITY aImage SYSTEM "image.jpg" NData JPGformat>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found 'N'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the entity declaration but found 'NData'");
   });
 
   test("ibm-not-wf-P76-ibm76n03.xml", () => {
@@ -10763,7 +10778,7 @@ describe("ibm", () => {
     // NDataDecl in the EntityDef in the GEDecl.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!NOTATION JPGformat SYSTEM "JPGFormat">\r\n<!--* missing space in NdataDecl *-->\r\n<!ENTITY aImage SYSTEM "image.jpg"NDATA JPGformat>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found 'N'");
+    expectRejects(input, "XML Parse error: Whitespace is required before 'NDATA'");
   });
 
   test("ibm-not-wf-P76-ibm76n04.xml", () => {
@@ -10771,7 +10786,7 @@ describe("ibm", () => {
     // NDataDecl in the EntityDef in the GEDecl.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!NOTATION JPGformat SYSTEM "JPGFormat">\r\n<!--* missing keyword in NdataDecl : NDATA *-->\r\n<!ENTITY aImage SYSTEM "image.jpg" JPGformat>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found 'J'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the entity declaration but found 'JPGformat'");
   });
 
   test("ibm-not-wf-P76-ibm76n05.xml", () => {
@@ -10779,7 +10794,7 @@ describe("ibm", () => {
     // missing in the NDataDecl in the EntityDef in the GEDecl.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!NOTATION JPGformat SYSTEM "JPGFormat">\r\n<!--* Missing Name field in NdataDecl *-->\r\n<!ENTITY aImage SYSTEM "image.jpg" NDATA>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after NDATA but found '>'");
+    expectRejects(input, "XML Parse error: Expected a notation name after NDATA but found '>'");
   });
 
   test("ibm-not-wf-P76-ibm76n06.xml", () => {
@@ -10787,7 +10802,7 @@ describe("ibm", () => {
     // is missing in the NDataDecl in the EntityDef in the GEDecl.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!NOTATION JPGformat SYSTEM "JPGFormat">\r\n<!--* missing space in NdataDecl *-->\r\n<!ENTITY aImage SYSTEM "image.jpg" NDATAJPGformat>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after NDATA but found 'J'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the entity declaration but found 'NDATAJPGformat'");
   });
 
   test("ibm-not-wf-P76-ibm76n07.xml", () => {
@@ -10795,7 +10810,7 @@ describe("ibm", () => {
     // NDataDecl in the EntityDef in the GEDecl.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!NOTATION JPGformat SYSTEM "JPGFormat">\r\n<!--* wrong order in NdataDecl *-->\r\n<!ENTITY aImage SYSTEM "image.jpg" JPGformat NDATA>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found 'J'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the entity declaration but found 'JPGformat'");
   });
 
   test("ibm-not-wf-P77-ibm77n01.xml", () => {
@@ -10870,7 +10885,7 @@ describe("ibm", () => {
     const input = Buffer.from(
       '<?xml version="1.0"encoding="UTF-8"?>\r\n<!--* missing white space in above EncodingDecl *-->\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n]>\r\n<root/>\r\n',
     );
-    expectRejects(input, "XML Parse error: Expected whitespace in the XML declaration before 'e'");
+    expectRejects(input, "XML Parse error: Whitespace is required before 'encoding'");
   });
 
   test("ibm-not-wf-P80-ibm80n02.xml", () => {
@@ -10879,7 +10894,7 @@ describe("ibm", () => {
     const input = Buffer.from(
       '<?xml version="1.0" encoding "UTF-8"?>\r\n<!--* missing Eq in above EncodingDecl *-->\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n]>\r\n<root/>\r\n',
     );
-    expectRejects(input, "XML Parse error: Expected '=' in the XML declaration but found '\"'");
+    expectRejects(input, "XML Parse error: Expected '=' after the name in the XML declaration but found '\"'");
   });
 
   test("ibm-not-wf-P80-ibm80n03.xml", () => {
@@ -10897,10 +10912,7 @@ describe("ibm", () => {
     const input = Buffer.from(
       '<?xml version="1.0" "UTF-8"encoding=?>\r\n<!--* wrong ordering in above EncodingDecl *-->\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n]>\r\n<root/>\r\n',
     );
-    expectRejects(
-      input,
-      "XML Parse error: Expected version, encoding, standalone or '?>' in the XML declaration but found '\"'",
-    );
+    expectRejects(input, "XML Parse error: Expected '?>' to end the XML declaration but found '\"'");
   });
 
   test("ibm-not-wf-P80-ibm80n05.xml", () => {
@@ -10909,10 +10921,7 @@ describe("ibm", () => {
     const input = Buffer.from(
       '<?xml version="1.0" "UTF-8"=encoding?>\r\n<!--* wrong ordering in above EncodingDecl *-->\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n]>\r\n<root/>\r\n',
     );
-    expectRejects(
-      input,
-      "XML Parse error: Expected version, encoding, standalone or '?>' in the XML declaration but found '\"'",
-    );
+    expectRejects(input, "XML Parse error: Expected '?>' to end the XML declaration but found '\"'");
   });
 
   test("ibm-not-wf-P80-ibm80n06.xml", () => {
@@ -11012,7 +11021,7 @@ describe("ibm", () => {
     // of the NotationDecl is missing in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* Missing whitespace in NotationDecl *-->\r\n<!NOTATIONJPGformat SYSTEM "JPGFormat">\r\n<!ENTITY aImage SYSTEM "image.jpg" NDATA JPGformat>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after the declaration keyword but found 'J'");
+    expectRejects(input, "XML Parse error: Whitespace is required before 'JPGformat'");
   });
 
   test("ibm-not-wf-P82-ibm82n02.xml", () => {
@@ -11020,7 +11029,7 @@ describe("ibm", () => {
     // the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* Missing Name in NotationDecl *-->\r\n<!NOTATION PUBLIC "-//JPG//DTD//JPGFormat">\r\n<!ENTITY aImage SYSTEM "image.jpg" NDATA JPGformat>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC but found '\"'");
+    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC in the notation declaration but found '\"'");
   });
 
   test("ibm-not-wf-P82-ibm82n03.xml", () => {
@@ -11028,7 +11037,7 @@ describe("ibm", () => {
     // the NotationDecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* Missing ExternalID or PublicID in NotationDecl *-->\r\n<!NOTATION JPGformat >\r\n<!ENTITY aImage SYSTEM "image.jpg" NDATA JPGformat>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC but found '>'");
+    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC in the notation declaration but found '>'");
   });
 
   test("ibm-not-wf-P82-ibm82n04.xml", () => {
@@ -11036,7 +11045,7 @@ describe("ibm", () => {
     // externalID in the NotationDecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* Wrong ordering in NotationDecl *-->\r\n<!NOTATION SYSTEM "JPGFormat" JPGformat >\r\n<!ENTITY aImage SYSTEM "image.jpg" NDATA JPGformat>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC but found '\"'");
+    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC in the notation declaration but found '\"'");
   });
 
   test("ibm-not-wf-P82-ibm82n05.xml", () => {
@@ -11046,7 +11055,7 @@ describe("ibm", () => {
       '<?xml version="1.0"?>\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* Wrong keyword: notation in NotationDecl *-->\r\n<!notation JPGformat SYSTEM "JPGFormat">\r\n<!ENTITY aImage SYSTEM "image.jpg" NDATA JPGformat>\r\n]>\r\n<root/>\r\n';
     expectRejects(
       input,
-      "XML Parse error: Expected a markup declaration (<!ELEMENT, <!ATTLIST, <!ENTITY, <!NOTATION), a comment, or a processing instruction",
+      "XML Parse error: '<!' must begin a comment, '<![CDATA[', or a DOCTYPE, ELEMENT, ATTLIST, ENTITY or NOTATION declaration",
     );
   });
 
@@ -11055,7 +11064,7 @@ describe("ibm", () => {
     // character) is missing in the NotationDecl.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* Missing closing bracket in NotationDecl *-->\r\n<!NOTATION JPGformat PUBLIC "-//JPG//DTD//JPGFormat"\r\n<!ENTITY aImage SYSTEM "image.jpg" NDATA JPGformat>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found '<'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the notation declaration but found '<!ENTITY'");
   });
 
   test("ibm-not-wf-P82-ibm82n07.xml", () => {
@@ -11065,7 +11074,7 @@ describe("ibm", () => {
       '<?xml version="1.0"?>\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* Wrong beginning sequence in NotationDecl *-->\r\n<NOTATION JPGformat PUBLIC "-//JPG//DTD//JPGFormat">\r\n<!ENTITY aImage SYSTEM "image.jpg" NDATA JPGformat>\r\n]>\r\n<root/>\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n';
     expectRejects(
       input,
-      "XML Parse error: Expected a markup declaration (<!ELEMENT, <!ATTLIST, <!ENTITY, <!NOTATION), a comment, or a processing instruction",
+      "XML Parse error: Expected a markup declaration or ']' in the internal subset but found '<NOTATION'",
     );
   });
 
@@ -11074,7 +11083,7 @@ describe("ibm", () => {
     // in the NotationDecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* Wrong Closing sequence in NotationDecl *-->\r\n<!NOTATION JPGformat SYSTEM "JPGFormat"!>\r\n<!ENTITY aImage SYSTEM "image.jpg" NDATA JPGformat>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected '>' to end the markup declaration but found '!'");
+    expectRejects(input, "XML Parse error: Expected '>' to end the notation declaration but found '!'");
   });
 
   test("ibm-not-wf-P83-ibm83n01.xml", () => {
@@ -11082,7 +11091,7 @@ describe("ibm", () => {
     // PublicID in the NotationDecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* Wrong keyword in PublicID *-->\r\n<!NOTATION JPGformat public "-//JPG//DTD//JPGFormat">\r\n<!ENTITY aImage SYSTEM "image.jpg" NDATA JPGformat>\r\n]>\r\n<root/>\r\n\r\n';
-    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC but found 'p'");
+    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC in the notation declaration but found 'public'");
   });
 
   test("ibm-not-wf-P83-ibm83n02.xml", () => {
@@ -11098,7 +11107,7 @@ describe("ibm", () => {
     // in the NotationDecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* Missing keyword in PublicID *-->\r\n<!NOTATION JPGformat "-//JPG//DTD//JPGFormat">\r\n<!ENTITY aImage SYSTEM "image.jpg" NDATA JPGformat>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC but found '\"'");
+    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC in the notation declaration but found '\"'");
   });
 
   test("ibm-not-wf-P83-ibm83n04.xml", () => {
@@ -11106,7 +11115,7 @@ describe("ibm", () => {
     // PubidLiteral is missing in the PublicID in the NotationDecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* Missing White space in PublicID *-->\r\n<!NOTATION JPGformat PUBLIC"-//JPG//DTD//JPGFormat">\r\n<!ENTITY aImage SYSTEM "image.jpg" NDATA JPGformat>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected whitespace after PUBLIC but found '\"'");
+    expectRejects(input, "XML Parse error: Whitespace is required before a quoted string");
   });
 
   test("ibm-not-wf-P83-ibm83n05.xml", () => {
@@ -11114,7 +11123,7 @@ describe("ibm", () => {
     // the NotationDecl in the DTD.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* Missing PubidLiteral in PublicID *-->\r\n<!NOTATION JPGformat PUBLIC >\r\n<!ENTITY aImage SYSTEM "image.jpg" NDATA JPGformat>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected a quoted public identifier but found '>'");
+    expectRejects(input, "XML Parse error: Expected a quoted public identifier after PUBLIC but found '>'");
   });
 
   test("ibm-not-wf-P83-ibm83n06.xml", () => {
@@ -11122,7 +11131,7 @@ describe("ibm", () => {
     // in the PublicID in the NotationDecl.
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root \r\n[\r\n<!ELEMENT root (#PCDATA)>\r\n<!ATTLIST root att CDATA #IMPLIED>\r\n<!--* Wrong ordering in PublicID *-->\r\n<!NOTATION JPGformat "-//JPG//DTD//JPGFormat" PUBLIC>\r\n<!ENTITY aImage SYSTEM "image.jpg" NDATA JPGformat>\r\n]>\r\n<root/>\r\n';
-    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC but found '\"'");
+    expectRejects(input, "XML Parse error: Expected SYSTEM or PUBLIC in the notation declaration but found '\"'");
   });
 
   test("ibm-not-wf-P85-ibm85n01.xml", () => {
@@ -13322,14 +13331,14 @@ describe("eduni/errata-4e", () => {
     // 2.3 — Tests an element with an illegal NameStartChar: #0x333
     const input: string =
       "<!DOCTYPE ̳IllegalNameStartChar [\n<!ELEMENT ̳IllegalNameStartChar ANY>\n]>\n<!-- IllegalNameStartChar P4: #0x333 -->\n<̳IllegalNameStartChar/>";
-    expectRejects(input, "XML Parse error: Expected the document type name but found '̳' (U+0333)");
+    expectRejects(input, "XML Parse error: Expected the document type name but found '̳IllegalNameStartChar'");
   });
 
   test("x-ibm-1-0.5-not-wf-P04-ibm04n03.xml", () => {
     // 2.3 — Tests an element with an illegal NameStartChar: #0x369
     const input: string =
       "<!DOCTYPE ͩIllegalNameStartChar [\n<!ELEMENT ͩIllegalNameStartChar ANY>\n]>\n<!-- IllegalNameStartChar #0x369  -->\n<ͩIllegalNameStartChar/>";
-    expectRejects(input, "XML Parse error: Expected the document type name but found 'ͩ' (U+0369)");
+    expectRejects(input, "XML Parse error: Expected the document type name but found 'ͩIllegalNameStartChar'");
   });
 
   test("x-ibm-1-0.5-not-wf-P04-ibm04n04.xml", () => {
@@ -13512,7 +13521,7 @@ describe("eduni/errata-4e", () => {
     // 2.3 — Tests an element with an illegal NameStartChar: #0xFFFFF
     const input: string =
       "<!DOCTYPE \uffffIllegalNameStartChar [\n<!ELEMENT \uffffIllegalNameStartChar ANY>\n]>\n<!-- IllegalNameStartChar #0xFFFFF -->\n<\uffffIllegalNameStartChar/>";
-    expectRejects(input, "XML Parse error: Expected the document type name but found '\uffff' (U+FFFF)");
+    expectRejects(input, "XML Parse error: Invalid character in XML: '\uffff' (U+FFFF)");
   });
 
   test("x-ibm-1-0.5-not-wf-P04a-ibm04an01.xml", () => {
@@ -13521,7 +13530,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar¸ [\n<!ELEMENT IllegalNameChar¸ ANY>\n]>\n<!-- IllegalNameChar #xB8 -->\n<IllegalNameChar¸/>\n";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '¸' (U+00B8)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '¸' (U+00B8)",
     );
   });
 
@@ -13531,7 +13540,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar¡ [\n<!ELEMENT IllegalNameChar¡ ANY>\n]>\n<!-- IllegalNameChar #0xA1 -->\n<IllegalNameChar¡/>\n";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '¡' (U+00A1)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '¡' (U+00A1)",
     );
   });
 
@@ -13541,7 +13550,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar¯ [\n<!ELEMENT IllegalNameChar¯ ANY>\n]>\n<!-- IllegalNameChar #0xAF   -->\n<IllegalNameChar¯/>\n";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '¯' (U+00AF)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '¯' (U+00AF)",
     );
   });
 
@@ -13551,7 +13560,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar; [\n<!ELEMENT IllegalNameChar; ANY>\n]>\n<!-- IllegalNameChar #0x37E -->\n<IllegalNameChar;/>";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found ';' (U+037E)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found ';' (U+037E)",
     );
   });
 
@@ -13561,7 +13570,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar  [\n<!ELEMENT IllegalNameChar  ANY>\n]>\n<!-- IllegalNameChar #0x2000 -->\n<IllegalNameChar />";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found ' ' (U+2000)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found ' ' (U+2000)",
     );
   });
 
@@ -13571,7 +13580,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar  [\n<!ELEMENT IllegalNameChar  ANY>\n]>\n<!-- IllegalNameChar #0x2001 -->\n<IllegalNameChar />";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found ' ' (U+2001)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found ' ' (U+2001)",
     );
   });
 
@@ -13581,7 +13590,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar  [\n<!ELEMENT IllegalNameChar  ANY>\n]>\n<!-- IllegalNameChar #0x2002 -->\n<IllegalNameChar />";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found ' ' (U+2002)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found ' ' (U+2002)",
     );
   });
 
@@ -13591,7 +13600,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar  [\n<!ELEMENT IllegalNameChar  ANY>\n]>\n<!-- IllegalNameChar #0x2005 -->\n<IllegalNameChar />";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found ' ' (U+2005)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found ' ' (U+2005)",
     );
   });
 
@@ -13601,7 +13610,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar​ [\n<!ELEMENT IllegalNameChar​ ANY>\n]>\n<!-- IllegalNameChar #0x200B -->\n<IllegalNameChar​/>";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '​' (U+200B)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '​' (U+200B)",
     );
   });
 
@@ -13611,7 +13620,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar‎ [\n<!ELEMENT IllegalNameChar‎ ANY>\n]>\n<!-- IllegalNameChar #0x200E -->\n<IllegalNameChar‎/>";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '‎' (U+200E)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '‎' (U+200E)",
     );
   });
 
@@ -13621,7 +13630,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar‽ [\r\n<!ELEMENT IllegalNameChar‽ ANY>\r\n]>\r\n<!-- IllegalNameChar #0x2038 -->\r\n<IllegalNameChar‽/>";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '‽' (U+203D)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '‽' (U+203D)",
     );
   });
 
@@ -13631,7 +13640,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar⁁ [\r\n<!ELEMENT IllegalNameChar⁁ ANY>\r\n]>\r\n<!-- IllegalNameChar #0x2041 -->\r\n<IllegalNameChar⁁/>";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '⁁' (U+2041)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '⁁' (U+2041)",
     );
   });
 
@@ -13641,7 +13650,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar← [\n<!ELEMENT IllegalNameChar← ANY>\n]>\n<!-- IllegalNameChar #0x2190 -->\n<IllegalNameChar←/>";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '←' (U+2190)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '←' (U+2190)",
     );
   });
 
@@ -13651,7 +13660,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar⏿ [\n<!ELEMENT IllegalNameChar⏿ ANY>\n]>\n<!-- IllegalNameChar #0x23FF -->\n<IllegalNameChar⏿/>";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '⏿' (U+23FF)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '⏿' (U+23FF)",
     );
   });
 
@@ -13661,7 +13670,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar⠏ [\n<!ELEMENT IllegalNameChar⠏ ANY>\n]>\n<!-- IllegalNameChar #0x280F -->\n<IllegalNameChar⠏/>";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '⠏' (U+280F)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '⠏' (U+280F)",
     );
   });
 
@@ -13671,7 +13680,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar⨀ [\n<!ELEMENT IllegalNameChar⨀ ANY>\n]>\n<!-- IllegalNameChar #0x2A00 -->\n<IllegalNameChar⨀/>";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '⨀' (U+2A00)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '⨀' (U+2A00)",
     );
   });
 
@@ -13681,7 +13690,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar﷐ [\n<!ELEMENT IllegalNameChar﷐ ANY>\n]>\n<!-- IllegalNameChar #0xFDD0 -->\n<IllegalNameChar﷐/>\n";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '﷐' (U+FDD0)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '﷐' (U+FDD0)",
     );
   });
 
@@ -13691,7 +13700,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar﷯ [\n<!ELEMENT IllegalNameChar﷯ ANY>\n]>\n<!-- IllegalNameChar #0xFDEF -->\n<IllegalNameChar﷯/>\n";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '﷯' (U+FDEF)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '﷯' (U+FDEF)",
     );
   });
 
@@ -13701,7 +13710,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar⿿ [\n<!ELEMENT IllegalNameChar⿿ ANY>\n]>\n<!-- IllegalNameChar #0x2FFF -->\n<IllegalNameChar⿿/>";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '⿿' (U+2FFF)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '⿿' (U+2FFF)",
     );
   });
 
@@ -13711,7 +13720,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar　 [\n<!ELEMENT IllegalNameChar　 ANY>\n]>\n<!-- IllegalNameChar  #0x3000 -->\n<IllegalNameChar　/>";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '　' (U+3000)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '　' (U+3000)",
     );
   });
 
@@ -13757,7 +13766,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar [\n<!ELEMENT IllegalNameChar ANY>\n]>\n<!-- IllegalNameChar #0xEFFF -->\n<IllegalNameChar/>";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '' (U+EFFF)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '' (U+EFFF)",
     );
   });
 
@@ -13767,7 +13776,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar [\n<!ELEMENT IllegalNameChar ANY>\n]>\n<!-- IllegalNameChar #0xF1FF -->\n<IllegalNameChar/>";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '' (U+F1FF)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '' (U+F1FF)",
     );
   });
 
@@ -13777,7 +13786,7 @@ describe("eduni/errata-4e", () => {
       "<!DOCTYPE IllegalNameChar [\n<!ELEMENT IllegalNameChar ANY>\n]>\n<!-- IllegalNameChar #0xF8FF -->\n<IllegalNameChar/>";
     expectRejects(
       input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '' (U+F8FF)",
+      "XML Parse error: Expected SYSTEM, PUBLIC, '[' or '>' in the document type declaration but found '' (U+F8FF)",
     );
   });
 
@@ -13785,55 +13794,49 @@ describe("eduni/errata-4e", () => {
     // 2.3 — Tests an element with an illegal NameChar: #0xFFFFF
     const input: string =
       "<!DOCTYPE IllegalNameChar\uffff [\n<!ELEMENT IllegalNameChar\uffff ANY>\n]>\n<!-- IllegalNameChar #0xFFFFF -->\n<IllegalNameChar\uffff/>";
-    expectRejects(
-      input,
-      "XML Parse error: Expected whitespace, '[' or '>' after the document type name but found '\uffff' (U+FFFF)",
-    );
+    expectRejects(input, "XML Parse error: Invalid character in XML: '\uffff' (U+FFFF)");
   });
 
   test("x-ibm-1-0.5-not-wf-P05-ibm05n01.xml", () => {
     // 2.3 — Tests an element with an illegal Name containing #0x0B
     const input: string =
       "<!DOCTYPE root [\n<!ELEMENT root ANY>\n<!ELEMENT BadName\u000b EMPTY>\n]>\n<!-- BadName containing char 0x0B; -->\n<root>\n\t<BadName\u000b/>\t\n</root>";
-    expectRejects(
-      input,
-      "XML Parse error: Expected whitespace after the element name but found control character 0x0B",
-    );
+    expectRejects(input, "XML Parse error: Invalid character in XML: control character 0x0B");
   });
 
   test("x-ibm-1-0.5-not-wf-P05-ibm05n02.xml", () => {
     // 2.3 — Tests an element with an illegal Name containing #0x300
     const input: string =
       "<!DOCTYPE root [\n<!ELEMENT root ANY>\n<!ELEMENT ̀BadName EMPTY>\n]>\n<!-- BadName containing char 0x300; -->\n<root>\n\t<̀BadName/>\t\n</root>\n";
-    expectRejects(input, "XML Parse error: Expected a name in the markup declaration but found '̀' (U+0300)");
+    expectRejects(input, "XML Parse error: Expected an element name after '<!ELEMENT' but found '̀BadName'");
   });
 
   test("x-ibm-1-0.5-not-wf-P05-ibm05n03.xml", () => {
     // 2.3 — Tests an element with an illegal Name containing #0x36F
     const input: string =
       "<!DOCTYPE root [\n<!ELEMENT root ANY>\n<!ELEMENT ͯBadName EMPTY>\n]>\n<!-- BadName containing char 0x36F; -->\n<root>\n\t<ͯBadName/>\t\n</root>";
-    expectRejects(input, "XML Parse error: Expected a name in the markup declaration but found 'ͯ' (U+036F)");
+    expectRejects(input, "XML Parse error: Expected an element name after '<!ELEMENT' but found 'ͯBadName'");
   });
 
   test("x-ibm-1-0.5-not-wf-P05-ibm05n04.xml", () => {
     // 2.3 — Tests an element with an illegal Name containing #0x203F
     const input: string =
       "<!DOCTYPE root [\n<!ELEMENT root ANY>\n<!ELEMENT ‿BadName EMPTY>\n]>\n<!-- BadName containing char 0x203F; -->\n<root>\n\t<‿BadName/>\t\n</root>";
-    expectRejects(input, "XML Parse error: Expected a name in the markup declaration but found '‿' (U+203F)");
+    expectRejects(input, "XML Parse error: Expected an element name after '<!ELEMENT' but found '‿BadName'");
   });
 
   test("x-ibm-1-0.5-not-wf-P05-ibm05n05.xml", () => {
     // 2.3 — Tests an element with an illegal Name containing #x2040
     const input: string =
       "<!DOCTYPE root [\n<!ELEMENT root ANY>\n<!ELEMENT ⁀BadName EMPTY>\n]>\n<!-- BadName containing char #x2040; -->\n<root>\n\t<⁀BadName/>\t\n</root>";
-    expectRejects(input, "XML Parse error: Expected a name in the markup declaration but found '⁀' (U+2040)");
+    expectRejects(input, "XML Parse error: Expected an element name after '<!ELEMENT' but found '⁀BadName'");
   });
 
   test("x-ibm-1-0.5-not-wf-P05-ibm05n06.xml", () => {
     // 2.3 — Tests an element with an illegal Name containing #0xB7
     const input: string =
       "<!DOCTYPE root [\n<!ELEMENT root ANY>\n<!ELEMENT ·BadName EMPTY>\n]>\n<!-- BadName containing char 0xB7; -->\n<root>\n\t<·BadName/>\t\n</root>";
-    expectRejects(input, "XML Parse error: Expected a name in the markup declaration but found '·' (U+00B7)");
+    expectRejects(input, "XML Parse error: Expected an element name after '<!ELEMENT' but found '·BadName'");
   });
 
   test("x-ibm-1-0.5-valid-P04-ibm04v01.xml", () => {
@@ -16749,7 +16752,7 @@ describe("eduni/misc", () => {
     // from possible overflow
     const input: string =
       "<!DOCTYPE p [\n<!ELEMENT p (#PCDATA)>\n]>\n<p>Fa&#xFF000000F6;il</p>          <!-- 32 bit integer overflow -->\n";
-    expectRejects(input, "XML Parse error: Character reference &#xFFFFFFFF; is not a valid XML character");
+    expectRejects(input, "XML Parse error: Character reference '&#xFF000000F6;' is not a valid XML character");
   });
 
   test("hst-bh-002", () => {
@@ -16757,7 +16760,7 @@ describe("eduni/misc", () => {
     // possible overflow
     const input: string =
       "<!DOCTYPE p [\n<!ELEMENT p (#PCDATA)>\n]>\n<p>Fa&#4294967542;il</p>           <!-- 32 bit integer overflow -->\n";
-    expectRejects(input, "XML Parse error: Character reference &#xFFFFFFFF; is not a valid XML character");
+    expectRejects(input, "XML Parse error: Character reference '&#4294967542;' is not a valid XML character");
   });
 
   test("hst-bh-003", () => {
@@ -16765,7 +16768,7 @@ describe("eduni/misc", () => {
     // from possible overflow
     const input: string =
       "<!DOCTYPE p [\n<!ELEMENT p (#PCDATA)>\n]>\n<p>Fa&#xFFFFFFFF000000F6;il</p>    <!-- 64 bit integer overflow -->\n";
-    expectRejects(input, "XML Parse error: Character reference &#xFFFFFFFF; is not a valid XML character");
+    expectRejects(input, "XML Parse error: Character reference '&#xFFFFFFFF000000F6;' is not a valid XML character");
   });
 
   test("hst-bh-004", () => {
@@ -16773,7 +16776,7 @@ describe("eduni/misc", () => {
     // possible overflow
     const input: string =
       "<!DOCTYPE p [\n<!ELEMENT p (#PCDATA)>\n]>\n<p>Fa&#18446744073709551862;il</p> <!-- 64 bit integer overflow -->\n";
-    expectRejects(input, "XML Parse error: Character reference &#xFFFFFFFF; is not a valid XML character");
+    expectRejects(input, "XML Parse error: Character reference '&#18446744073709551862;' is not a valid XML character");
   });
 
   test("hst-bh-005", () => {

@@ -1712,11 +1712,11 @@ static void imageRestoreAndRun(const char* path)
     ipread(fd, regionsBuf, hdr.nregions * sizeof(ImageRegion), sizeof(ImageHeader));
     std::span<ImageRegion> regions(regionsBuf, hdr.nregions);
     { // this process's own (pre-overlay) allocator must not place anything where the image goes: push mimalloc's hint pointer above the image
-        uint64_t top = 0; for (auto& r : regions) if (r.addr >= 0x20000000000ull && r.addr < 0x2e0000000000ull) top = std::max<uint64_t>(top, r.addr + r.len); // mimalloc's own hint area only (WTF's OSAllocator window at 0x2e00.. has its own pointer)
+        uint64_t top = 0; for (auto& r : regions) if (r.addr >= 0x20000000000ull && r.addr < 0x2e0000000000ull) top = std::max<uint64_t>(top, r.addr + r.len);
         if (top) mi_os_hint_floor((void*)(top + (1ull << 30)));
     }
     const off_t imageBaseOff = s_imageBaseOff; // s_imageBaseOff lives in __DATA, which the overlay below rewrites with the builder's value
-    uint64_t hintFloorAfterOverlay = 0; { uint64_t top = 0; for (auto& r : regions) if (r.addr >= 0x20000000000ull && r.addr < 0x2e0000000000ull) top = std::max<uint64_t>(top, r.addr + r.len); // mimalloc's own hint area only (WTF's OSAllocator window at 0x2e00.. has its own pointer) hintFloorAfterOverlay = (top ? top : 0x20000000000ull) + (1ull << 30); }
+    uint64_t hintFloorAfterOverlay = 0; { uint64_t top = 0; for (auto& r : regions) if (r.addr >= 0x20000000000ull && r.addr < 0x2e0000000000ull) top = std::max<uint64_t>(top, r.addr + r.len); hintFloorAfterOverlay = (top ? top : 0x20000000000ull) + (1ull << 30); }
     size_t mapped = 0, copied = 0;
     struct DataSeg { uint64_t* dst; const uint64_t* src; size_t words; }; DataSeg dataSegs[16]; size_t nDataSegs = 0; // no heap here: the allocator's state is being overlaid
 #if OS(LINUX)
@@ -1827,12 +1827,12 @@ static void imageRestoreAndRun(const char* path)
         }
         if (hdr.reserved[0]) mi_theap_freeze((mi_theap_t*)hdr.reserved[0]);
         mi_arenas_seal_existing(); // every arena that exists now is image memory: nobody (any thread) allocates into its free space again
-        { uint64_t top = 0; for (auto& r : regions) if (r.addr >= 0x20000000000ull && r.addr < 0x2e0000000000ull) top = std::max<uint64_t>(top, r.addr + r.len); // mimalloc's own hint area only (WTF's OSAllocator window at 0x2e00.. has its own pointer) if (top) mi_os_hint_floor((void*)(top + (1ull << 30))); } // the overlay brought the builder's hint pointer (or none): fresh OS memory goes above everything imaged, never kernel-placed
-        { uint64_t top = 0; for (auto& r : regions) if (r.addr >= 0x20000000000ull && r.addr < 0x2e0000000000ull) top = std::max<uint64_t>(top, r.addr + r.len); // mimalloc's own hint area only (WTF's OSAllocator window at 0x2e00.. has its own pointer) if (top) mi_os_hint_floor((void*)(top + (1ull << 30))); } // the overlay brought the builder's hint pointer; make sure fresh memory goes above everything imaged
+        { uint64_t top = 0; for (auto& r : regions) if (r.addr >= 0x20000000000ull && r.addr < 0x2e0000000000ull) top = std::max<uint64_t>(top, r.addr + r.len); if (top) mi_os_hint_floor((void*)(top + (1ull << 30))); } // the overlay brought the builder's hint pointer (or none): fresh OS memory goes above everything imaged, never kernel-placed
+        { uint64_t top = 0; for (auto& r : regions) if (r.addr >= 0x20000000000ull && r.addr < 0x2e0000000000ull) top = std::max<uint64_t>(top, r.addr + r.len); if (top) mi_os_hint_floor((void*)(top + (1ull << 30))); } // the overlay brought the builder's hint pointer; make sure fresh memory goes above everything imaged
         mi_arena_id_t freshArena = 0; mi_heap_t* fresh = nullptr;
         if (getenv("BUN_IMAGE_FRESHARENA") ? strcmp(getenv("BUN_IMAGE_FRESHARENA"), "0") != 0 : (bool)OS_DARWIN_ONLY(1)) { // dedicated post-restore arena (default on macOS; on Linux the general path — sealed image arenas + hint floor — is used until the exclusive-arena binding is sorted)
             // Explicit placement (no dependence on the allocator's hint state, which the overlay just replaced): 1GiB right above everything imaged.
-            uint64_t top = 0; for (auto& r : regions) if (r.addr >= 0x20000000000ull && r.addr < 0x2e0000000000ull) top = std::max<uint64_t>(top, r.addr + r.len); // mimalloc's own hint area only (WTF's OSAllocator window at 0x2e00.. has its own pointer)
+            uint64_t top = 0; for (auto& r : regions) if (r.addr >= 0x20000000000ull && r.addr < 0x2e0000000000ull) top = std::max<uint64_t>(top, r.addr + r.len);
             void* want = (void*)((top + (1ull << 30)) & ~((1ull << 30) - 1)); size_t sz = 1ull << 30;
             void* got = mmap(want, sz, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
             if (got != MAP_FAILED && got != want) { munmap(got, sz); got = MAP_FAILED; }

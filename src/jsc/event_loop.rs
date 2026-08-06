@@ -819,9 +819,10 @@ impl EventLoop {
         for task in requeue {
             let _ = self.tasks.write_item(task);
         }
-        // A thread teardown released these already (before its loop went away);
-        // other callers (macro loop, bake's production VM) still own a live loop.
-        self.release_pending_immediates();
+        debug_assert!(
+            self.immediate_tasks.is_empty() && self.next_immediate_tasks.is_empty(),
+            "pending immediates must be released (release_queued_tasks_for_shutdown) while the loop is alive"
+        );
         // Free the deferred-task map's storage. The tasks must not be run (same rule as the
         // queued tasks above), and an entry owns nothing but a `Copy` ctx pointer whose owner
         // released it when the JSC teardown before this finalized it. A worker's VM box is

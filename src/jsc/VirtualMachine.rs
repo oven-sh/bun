@@ -1579,12 +1579,13 @@ impl VirtualMachine {
             // SAFETY: fn contract; JSC heap alive.
             unsafe { (hooks.close_active_handles)(this) };
         }
-        // Stream and process handles the io/spawn layer opened on this thread's
-        // loop (pipes, ttys, child processes) close through their owners now, so
-        // their pending writes complete (ECANCELED) against a live VM and no
-        // request on them can hold up the loop drain in B.
+        // Every pipe / tty / child-process handle open on this thread's loop
+        // closes now — through whoever drives it (reader, writer, IPC channel,
+        // named pipe, Process), or directly if nothing adopted it — so pending
+        // writes complete (ECANCELED) against a live VM and no request on them
+        // can hold up the loop drain in B.
         #[cfg(windows)]
-        bun_io::uv_owners::close_all_for_teardown();
+        bun_sys::windows::libuv::open_handles::close_all_for_teardown();
         if let Some(rare) = vm.rare_data.as_deref_mut() {
             // `close_all_socket_groups` walks the loop's group list through the
             // VM and never touches `rare_data`, so the re-derived shared borrow
@@ -1636,7 +1637,7 @@ impl VirtualMachine {
         // Tasks posted by other threads (HTTP, children before they were
         // joined) or by the request callbacks above: release, do not run —
         // their JSC handles must drop against a live heap.
-        vm.event_loop_mut().release_queued_tasks_for_shutdown();
+        vm.release_queued_work();
         if let Some(rare) = vm.rare_data.as_deref_mut() {
             rare.release_js_handles();
         }
@@ -1677,6 +1678,19 @@ impl VirtualMachine {
 
         // ---- E. free owners --------------------------------------------------
         vm.destroy();
+    }
+}
+
+impl VirtualMachine {
+    /// Release — never run — everything queued on both event loops (tasks,
+    /// concurrent tasks, pending immediates) while the JSC heap and this
+    /// thread's loop are alive: their JS handles and keep-alives drop now. The
+    /// macro loop is only ever ticked explicitly, so whatever a macro queued on
+    /// it is still there. Teardown phase B; also the one thing an owner that
+    /// calls `destroy()` without a teardown (bake's build VM) must do first.
+    pub fn release_queued_work(&mut self) {
+        self.regular_event_loop.release_queued_tasks_for_shutdown();
+        self.macro_event_loop.release_queued_tasks_for_shutdown();
     }
 }
 

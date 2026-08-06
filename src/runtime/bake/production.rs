@@ -118,8 +118,12 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     // edition-2024 disjoint-capture rules collides with the `&mut *vm_ptr`
     // re-borrows on the JSError path).
     let _vm_guard = scopeguard::guard(vm_ptr, |p| {
-        // SAFETY: p is the unique live VM on this thread.
-        unsafe { (*p).destroy() };
+        // SAFETY: p is the unique live VM on this thread; its loop is alive, so
+        // queued work is released here rather than by a thread teardown.
+        unsafe {
+            (*p).release_queued_work();
+            (*p).destroy()
+        };
     });
 
     // A special global object is used to allow registering virtual modules

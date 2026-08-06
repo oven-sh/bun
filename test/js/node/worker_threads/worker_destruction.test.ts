@@ -14,7 +14,7 @@ describe("Worker destruction", () => {
   // The worker owns a child process whose stdin pipe has a large write in flight that can never
   // complete (the child never reads). Terminating the worker must close that pipe through its owner
   // rather than wait for the write; otherwise the worker thread never finishes and terminate() hangs.
-  test("terminate() a Worker with a child process and a pending stdin write", async () => {
+  test.concurrent("terminate() a Worker with a child process and a pending stdin write", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

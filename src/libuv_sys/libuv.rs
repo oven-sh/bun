@@ -401,6 +401,121 @@ thread_local! {
     static THREADLOCAL_LOOP: Cell<*mut Loop> = const { Cell::new(ptr::null_mut()) };
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Open stream/process handles on this thread — Bun's HandleWrap list.
+//
+// Every `uv_pipe_t`, `uv_tty_t` (except the process-static stdin tty) and
+// `uv_process_t` this thread initialises is listed here from `init`/`spawn`
+// until the `uv_close` for it is issued (`UvHandle::close`,
+// `Pipe::close_and_destroy`). Whoever currently drives the handle records
+// itself with [`open_handles::set_owner`] — readers/writers do so through
+// `Source::set_data`, IPC / named pipes / Process when they take the handle —
+// so a thread teardown can close each handle through its owner's ordinary
+// close path (parents observe the close; pending writes finish ECANCELED)
+// while the VM is alive, or directly if nothing ever adopted it. Keyed by the
+// handle's address, which is stable for its life (boxed / embedded in a boxed
+// owner), so ownership moving between objects needs no re-registration.
+// ──────────────────────────────────────────────────────────────────────────
+pub mod open_handles {
+    use super::*;
+    use core::cell::RefCell;
+
+    /// How a teardown closes a handle that has an owner: `close(owner)`.
+    pub type CloseViaOwner = unsafe fn(owner: *mut c_void);
+
+    struct Entry {
+        handle: *mut uv_handle_t,
+        kind: Kind,
+        owner: *mut c_void,
+        close_via_owner: Option<CloseViaOwner>,
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Kind {
+        Pipe,
+        Tty,
+        Process,
+    }
+
+    std::thread_local! {
+        static OPEN: RefCell<Vec<Entry>> = const { RefCell::new(Vec::new()) };
+    }
+
+    fn add(handle: *mut uv_handle_t, kind: Kind) {
+        OPEN.with(|o| {
+            let mut o = o.borrow_mut();
+            debug_assert!(!o.iter().any(|e| e.handle == handle), "uv handle registered twice");
+            o.push(Entry { handle, kind, owner: ptr::null_mut(), close_via_owner: None });
+        });
+    }
+
+    pub(super) fn add_pipe(p: *mut Pipe) {
+        add(p.cast(), Kind::Pipe);
+    }
+    pub(super) fn add_tty(t: *mut uv_tty_t) {
+        add(t.cast(), Kind::Tty);
+    }
+    pub(super) fn add_process(p: *mut Process) {
+        add(p.cast(), Kind::Process);
+    }
+
+    /// The `uv_close` for `handle` has been (or is about to be) issued.
+    pub(super) fn remove(handle: *mut uv_handle_t) {
+        OPEN.with(|o| {
+            let mut o = o.borrow_mut();
+            if let Some(i) = o.iter().position(|e| e.handle == handle) {
+                o.swap_remove(i);
+            }
+        });
+    }
+
+    /// `owner` now drives `handle` and closes it via `close(owner)`; pass a
+    /// null `owner` to clear. No-op for handles not listed (never initialised
+    /// on this thread, already closing, or the process-static stdin tty).
+    pub fn set_owner(handle: *mut uv_handle_t, owner: *mut c_void, close: Option<CloseViaOwner>) {
+        OPEN.with(|o| {
+            if let Some(e) = o.borrow_mut().iter_mut().find(|e| e.handle == handle) {
+                e.owner = owner;
+                e.close_via_owner = if owner.is_null() { None } else { close };
+            }
+        });
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn count() -> usize {
+        OPEN.with(|o| o.borrow().len())
+    }
+
+    /// Thread teardown, VM alive, script still allowed: close every open pipe /
+    /// tty / process handle — through its owner when it has one, directly when
+    /// nothing adopted it. Owners may close other handles from their callbacks,
+    /// so take one entry at a time.
+    pub fn close_all_for_teardown() {
+        loop {
+            let Some(e) = OPEN.with(|o| o.borrow_mut().pop()) else { break };
+            log!("teardown: closing open {} handle @{:p} (owner {:p})", match e.kind { Kind::Pipe => "pipe", Kind::Tty => "tty", Kind::Process => "process" }, e.handle, e.owner);
+            match (e.close_via_owner, e.kind) {
+                // SAFETY: the owner recorded itself for this live handle and clears
+                // or replaces the slot before it goes away (set_owner contract).
+                (Some(close), _) => unsafe { close(e.owner) },
+                // SAFETY: listed ⇒ initialised on this thread and not closing; a
+                // pipe/tty nobody adopted is a leaked Box handed to libuv here.
+                (None, Kind::Pipe) => unsafe { Pipe::close_and_destroy_unlisted(e.handle.cast()) },
+                (None, Kind::Tty) => unsafe {
+                    unsafe extern "C" fn free_tty(t: *mut uv_tty_t) {
+                        // SAFETY: heap tty (stdin's static tty is never listed).
+                        drop(unsafe { Box::from_raw(t) });
+                    }
+                    uv_close(e.handle, Some(mem::transmute::<unsafe extern "C" fn(*mut uv_tty_t), unsafe extern "C" fn(*mut uv_handle_t)>(free_tty)));
+                },
+                // A process handle is embedded in its owner and always adopted at
+                // spawn; an unowned one cannot be freed safely — close in place.
+                (None, Kind::Process) => unsafe { uv_close(e.handle, None) },
+            }
+        }
+    }
+}
+
 impl Loop {
     /// Returns this thread's
     /// libuv loop, lazily `uv_loop_init`ing it on first call. Each thread owns
@@ -675,6 +790,7 @@ pub unsafe trait UvHandle: Sized {
     /// `*mut Self`. ABI-identical to `uv_close_cb` modulo the pointee type.
     #[inline]
     fn close(&mut self, cb: unsafe extern "C" fn(*mut Self)) {
+        open_handles::remove(self.as_handle_mut());
         // SAFETY: `Self` embeds `uv_handle_t` at offset 0; cb is ABI-identical.
         unsafe {
             uv_close(
@@ -1239,7 +1355,11 @@ impl Pipe {
     #[inline]
     pub fn init(&mut self, loop_: *mut Loop, ipc: bool) -> ReturnCode {
         // SAFETY: `self` is a valid `uv_pipe_t`-sized allocation.
-        unsafe { uv_pipe_init(loop_, self, if ipc { 1 } else { 0 }) }
+        let rc = unsafe { uv_pipe_init(loop_, self, if ipc { 1 } else { 0 }) };
+        if rc.0 == 0 {
+            open_handles::add_pipe(self);
+        }
+        rc
     }
     #[inline]
     pub fn open(&mut self, file: uv_file) -> ReturnCode {
@@ -1329,6 +1449,16 @@ impl Pipe {
     /// registered `uv_close` callback is assumed to free the box;
     /// if a non-freeing callback was registered, the pipe leaks.
     pub unsafe fn close_and_destroy(this: *mut Pipe) {
+        open_handles::remove(this.cast());
+        // SAFETY: caller contract.
+        unsafe { Self::close_and_destroy_unlisted(this) }
+    }
+
+    /// [`close_and_destroy`] for a pipe already taken off the open-handles list.
+    ///
+    /// # Safety
+    /// As [`close_and_destroy`].
+    pub(crate) unsafe fn close_and_destroy_unlisted(this: *mut Pipe) {
         unsafe extern "C" fn on_close_destroy(handle: *mut Pipe) {
             // SAFETY: handle was Box-allocated; callback fires exactly once.
             drop(unsafe { Box::from_raw(handle) });
@@ -1405,7 +1535,13 @@ impl uv_tty_t {
     #[inline]
     pub fn init(&mut self, loop_: *mut Loop, file: uv_file) -> ReturnCode {
         // SAFETY: self is a valid `uv_tty_t`-sized allocation.
-        unsafe { uv_tty_init(loop_, self, file, 0) }
+        let rc = unsafe { uv_tty_init(loop_, self, file, 0) };
+        // fd 0 is the process-static stdin tty (never freed, shared across
+        // threads by design); everything else is a heap tty owned by this thread.
+        if rc.0 == 0 && file != 0 {
+            open_handles::add_tty(self);
+        }
+        rc
     }
     #[inline]
     pub fn set_mode(&mut self, mode: TtyMode) -> ReturnCode {
@@ -1636,7 +1772,11 @@ impl Process {
     #[inline]
     pub fn spawn(&mut self, loop_: *mut Loop, options: *const uv_process_options_t) -> ReturnCode {
         // SAFETY: `self` is a valid `uv_process_t`-sized allocation.
-        unsafe { uv_spawn(loop_, self, options) }
+        let rc = unsafe { uv_spawn(loop_, self, options) };
+        if rc.0 == 0 {
+            open_handles::add_process(self);
+        }
+        rc
     }
     #[inline]
     pub fn kill(&mut self, signum: c_int) -> ReturnCode {

@@ -197,11 +197,12 @@ int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpat
   await using cc = spawn({
     cmd: [compiler!, "-shared", "-fPIC", "-o", "slow_rename.so", "slow_rename.c", "-ldl"],
     cwd: run_dir,
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
     env,
   });
-  expect(await cc.exited).toBe(0);
+  const [ccErr, ccExit] = await Promise.all([cc.stderr.text(), cc.exited]);
+  expect({ exitCode: ccExit, stderr: ccErr }).toMatchObject({ exitCode: 0 });
 
   // Each run gets a fresh project and cache so the install always populates
   // the cache (a satisfied node_modules would skip the timed path).
@@ -218,7 +219,7 @@ int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpat
     await using proc = spawn({
       cmd: [bunExe(), "install", "--no-save"],
       cwd: proj,
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
       env: {
         ...env,
@@ -227,13 +228,16 @@ int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpat
         BUN_DISABLE_SLOW_FILESYSTEM_WARNING: flag,
       },
     });
-    const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
-    expect(exitCode).toBe(0);
-    return stderr;
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
   };
 
   // Sanity: with the knob unset, the delayed renameat must trigger the warning.
-  expect(await install("warn", undefined)).toContain("Slow filesystem detected");
+  const warn = await install("warn", undefined);
+  expect(warn.stderr).toContain("Slow filesystem detected");
+  expect(warn.exitCode).toBe(0);
   // With the knob set (as bunEnv does for every test), it must stay silent.
-  expect(await install("quiet", "1")).not.toContain("Slow filesystem");
+  const quiet = await install("quiet", "1");
+  expect(quiet.stderr).not.toContain("Slow filesystem");
+  expect(quiet.exitCode).toBe(0);
 });

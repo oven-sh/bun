@@ -131,9 +131,12 @@ bool _mi_os_commit(mi_subproc_t* subproc, void* addr, size_t size, bool* is_zero
 
 // Host is a `bun build --compile` executable? (BUN_COMPILED = the embedded-module section header; size != 0 only in compiled outputs.)
 // Those get deterministic address hints from the first allocation so a heap image can be built from / mapped into them without any env.
-struct mi_bun_blob_header_s { uint64_t size; };
-extern struct mi_bun_blob_header_s BUN_COMPILED __attribute__((weak));
-#define bun_heap_image_mode ((&BUN_COMPILED != NULL) ? (BUN_COMPILED.size != 0) : 0)
+#ifdef __cplusplus
+extern "C" int bun_is_compiled_executable(void) __attribute__((weak));
+#else
+extern int bun_is_compiled_executable(void) __attribute__((weak));
+#endif
+#define bun_heap_image_mode ((bun_is_compiled_executable != NULL) ? bun_is_compiled_executable() : 0)
 static mi_decl_cache_align _Atomic(uintptr_t) aligned_base; // = 0  (hint bump pointer; file scope so mi_os_hint_floor can move it)
 
 // Heap image restore: make sure every hinted OS allocation from now on lands at or above `floor` (the image occupies the area below).

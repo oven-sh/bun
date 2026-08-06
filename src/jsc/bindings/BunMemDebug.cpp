@@ -157,10 +157,9 @@ extern "C" struct mach_header_64 _mh_execute_header;
 // Images (building or restoring one) need the executable at its link-time address. If dyld slid us, replace this process
 // with an unslid copy of ourselves (macOS private posix_spawn flag) — same argv/env, no external launcher needed.
 // The allocator / JIT placement and JSC tiering options an image depends on; applied (via the re-exec env) whenever an image is built or used.
-struct BlobHeaderView { uint64_t size; };
-extern "C" BlobHeaderView BUN_COMPILED;
-extern "C" bool Bun__isCompiledExecutable() { return BUN_COMPILED.size != 0; }
-extern "C" bool Bun__heapImageMode() { return BUN_COMPILED.size != 0 || getenv("BUN_IMAGE_IN") || getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT"); }
+extern "C" int bun_is_compiled_executable(void);
+extern "C" bool Bun__isCompiledExecutable() { return bun_is_compiled_executable(); }
+extern "C" bool Bun__heapImageMode() { return bun_is_compiled_executable() || getenv("BUN_IMAGE_IN") || getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT"); }
 static bool s_imageActive = false; // set once this process is building an image or has restored one (decided in Bun__imageMaybeRestore, before VM init)
 extern "C" bool Bun__heapImageActive() { return s_imageActive; }
 

@@ -1110,6 +1110,14 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphELFVaddr()
 
 #endif // OS(DARWIN) / __linux__
 
+// Read by our statically linked mimalloc (weak reference) before main: "is this a `bun build --compile` executable?" — those use
+// deterministic address hints from the first allocation so heap images work without any environment. A function rather than a data
+// reference because BUN_COMPILED itself is a local symbol in the final link.
+extern "C" __attribute__((visibility("default"), used)) int bun_is_compiled_executable(void)
+{
+    return BUN_COMPILED.size != 0;
+}
+
 #elif defined(_WIN32)
 // Windows PE section handling
 #include <windows.h>

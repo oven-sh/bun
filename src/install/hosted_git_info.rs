@@ -1044,7 +1044,7 @@ pub(crate) mod formatters {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
-            let mut iter = pathname.split(|&b| b == b'/');
+            let mut iter = strings::split(pathname, b"/");
             let Some(user_part) = iter.next() else {
                 return Ok(None);
             };
@@ -1112,7 +1112,7 @@ pub(crate) mod formatters {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
-            let mut iter = pathname.split(|&b| b == b'/');
+            let mut iter = strings::split(pathname, b"/");
             let Some(user_part) = iter.next() else {
                 return Ok(None);
             };
@@ -1224,7 +1224,7 @@ pub(crate) mod formatters {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
-            let mut iter = pathname.split(|&b| b == b'/');
+            let mut iter = strings::split(pathname, b"/");
             let Some(mut user_part) = iter.next() else {
                 return Ok(None);
             };
@@ -1309,7 +1309,7 @@ pub(crate) mod formatters {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
-            let mut iter = pathname.split(|&b| b == b'/');
+            let mut iter = strings::split(pathname, b"/");
             let Some(user_part) = iter.next() else {
                 return Ok(None);
             };

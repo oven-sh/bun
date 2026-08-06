@@ -1426,14 +1426,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
                             return;
                         }
                         // This is a simplified parser. A full parser would handle multiple extensions and quoted values.
-                        for ext_str in header.value().split(|b| *b == b',') {
-                            let mut ext_it = strings::trim(ext_str, b" \t").split(|b| *b == b';');
+                        for ext_str in strings::split(header.value(), b",") {
+                            let mut ext_it = strings::split(strings::trim(ext_str, b" \t"), b";");
                             let ext_name = strings::trim(ext_it.next().unwrap_or(b""), b" \t");
                             if ext_name == b"permessage-deflate" {
                                 deflate_result.enabled = true;
                                 for param_str in ext_it {
                                     let mut param_it =
-                                        strings::trim(param_str, b" \t").split(|b| *b == b'=');
+                                        strings::split(strings::trim(param_str, b" \t"), b"=");
                                     let key = strings::trim(param_it.next().unwrap_or(b""), b" \t");
                                     let value =
                                         strings::trim(param_it.next().unwrap_or(b""), b" \t");

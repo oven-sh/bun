@@ -2147,10 +2147,7 @@ fn append_envp_from_js(
         // object carrying `Path` (the usual casing there) must still drive
         // the executable lookup, like libuv's spawn does.
         let line_bytes = line.as_bytes();
-        let key_end = line_bytes
-            .iter()
-            .position(|&b| b == b'=')
-            .unwrap_or(line_bytes.len());
+        let key_end = strings::index_of_char_usize(line_bytes, b'=').unwrap_or(line_bytes.len());
         let is_path_key = if cfg!(windows) {
             strings::eql_case_insensitive_ascii(&line_bytes[..key_end], b"PATH", true)
         } else {

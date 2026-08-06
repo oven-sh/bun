@@ -203,7 +203,7 @@ impl History {
             sys::Result::Err(_) => return Ok(()),
         };
 
-        for line in content.split(|b: &u8| *b == b'\n') {
+        for line in strings::split(&content, b"\n") {
             if !line.is_empty() {
                 self.entries.push(Box::<[u8]>::from(line));
             }

@@ -1459,7 +1459,7 @@ impl<'a> Package<'a> {
         };
 
         if strings::starts_with(package.name, b".")
-            || strings::index_any_comptime(package.name, b"\\%").is_some()
+            || strings::index_of_any(package.name, b"\\%").is_some()
         {
             return None;
         }
@@ -2234,14 +2234,14 @@ impl<'a> ESModule<'a> {
 }
 
 fn find_invalid_segment(path_: &[u8]) -> Option<&[u8]> {
-    let Some(slash) = strings::index_any_comptime(path_, b"/\\") else {
+    let Some(slash) = strings::index_of_any(path_, b"/\\") else {
         return Some(b"");
     };
     let mut path = &path_[slash + 1..];
 
     while !path.is_empty() {
         let mut segment = path;
-        if let Some(new_slash) = strings::index_any_comptime(path, b"/\\") {
+        if let Some(new_slash) = strings::index_of_any(path, b"/\\") {
             segment = &path[0..new_slash];
             path = &path[new_slash + 1..];
         } else {
@@ -2264,7 +2264,7 @@ fn find_invalid_subpath_segment(path_: &[u8]) -> Option<&[u8]> {
     let mut path = path_;
     while !path.is_empty() {
         let mut segment = path;
-        if let Some(new_slash) = strings::index_any_comptime(path, b"/\\") {
+        if let Some(new_slash) = strings::index_of_any(path, b"/\\") {
             segment = &path[0..new_slash];
             path = &path[new_slash + 1..];
         } else {

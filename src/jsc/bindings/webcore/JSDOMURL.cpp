@@ -692,6 +692,11 @@ static JSObject* jsDOMURLMakeURLContext(JSGlobalObject* lexicalGlobalObject, DOM
     unsigned hostEnd = position + (hasCredentials ? 1 : 0) + hostname.length();
     uint32_t portNumber = portStr.isEmpty() ? kOmittedComponent : WTF::parseInteger<uint32_t>(portStr).value_or(kOmittedComponent);
     unsigned pathnameStart = hostEnd + (portStr.isEmpty() ? 0 : 1 + portStr.length());
+    // URL Standard section 4.5 step 3: null host + empty first path segment
+    // serializes with a /. guard that the pathname getter omits, shifting
+    // everything from the pathname on by 2.
+    if (!hasSlashes && pathname.startsWith("//"_s) && StringView(href).substring(protocolEnd).startsWith("/."_s))
+        pathnameStart += 2;
     unsigned pathnameEnd = pathnameStart + pathname.length();
     // .search/.hash return "" for both a null and an empty-string component,
     // but the href serializer emits the bare "?"/"#" for empty-but-present;

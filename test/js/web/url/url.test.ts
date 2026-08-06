@@ -1,6 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { resolveObjectURL } from "node:buffer";
+import util from "node:util";
 
 describe("url", () => {
   it("URL throws", () => {
@@ -196,6 +197,43 @@ describe("url", () => {
   searchParams: URLSearchParams { 'hello i have spaces thank you good night' => '' },
   hash: ''
 }`);
+  });
+
+  it("URLContext offsets account for the /. pathname guard", () => {
+    // URL Standard section 4.5 step 3: null host + empty first path segment
+    // serializes with a /. guard the pathname getter omits, so offsets from
+    // pathname_start on are shifted by 2 in the href.
+    expect(util.inspect(new URL("foo:/.//?x"), { showHidden: true })).toBe(`URL {
+  href: 'foo:/.//?x',
+  origin: 'null',
+  protocol: 'foo:',
+  username: '',
+  password: '',
+  host: '',
+  hostname: '',
+  port: '',
+  pathname: '//',
+  search: '?x',
+  searchParams: URLSearchParams { 'x' => '' },
+  hash: '',
+  Symbol(context): URLContext {
+    href: 'foo:/.//?x',
+    protocol_end: 4,
+    username_end: 4,
+    host_start: 4,
+    host_end: 4,
+    pathname_start: 6,
+    search_start: 8,
+    hash_start: 4294967295,
+    port: 4294967295,
+    scheme_type: 1,
+    [hasPort]: [Getter],
+    [hasSearch]: [Getter],
+    [hasHash]: [Getter]
+  }
+}`);
+    // A path whose first segment merely starts with "." gets no guard.
+    expect(util.inspect(new URL("foo:/.foo"), { showHidden: true })).toContain("pathname_start: 4,");
   });
   it("works", () => {
     const inputs = [

@@ -1944,11 +1944,12 @@ describe("LinkWorkspacePackages", () => {
     await Promise.all([
       write(
         bunfigPath,
-        `
-[install]
-linkWorkspacePackages = false
-registry = "${verdaccio.registryUrl()}"
-`,
+        Bun.TOML.stringify({
+          install: {
+            linkWorkspacePackages: false,
+            registry: verdaccio.registryUrl(),
+          },
+        }),
       ),
 
       write(
@@ -1997,11 +1998,12 @@ registry = "${verdaccio.registryUrl()}"
     await Promise.all([
       write(
         bunfigPath,
-        `
-[install]
-linkWorkspacePackages = false
-registry = "${verdaccio.registryUrl()}"
-`,
+        Bun.TOML.stringify({
+          install: {
+            linkWorkspacePackages: false,
+            registry: verdaccio.registryUrl(),
+          },
+        }),
       ),
 
       write(

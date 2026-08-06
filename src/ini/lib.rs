@@ -1449,6 +1449,12 @@ mod draft {
                 };
         }
 
+        if let Some(hoist_expr) = out.get(b"hoist") {
+            if let Some(hoist) = hoist_expr.as_bool() {
+                install.hoist = Some(hoist);
+            }
+        }
+
         let mut registry_map = install.scoped.take().unwrap_or_default();
 
         let out_ref = parser

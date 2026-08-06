@@ -2086,24 +2086,6 @@ JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue w
     if (!code.isUndefined()) errorInstance->putDirect(vm, builtinNames(vm).codePublicName(), code, JSC::PropertyAttribute::DontEnum | 0);
     if (!detail.isUndefined()) errorInstance->putDirect(vm, vm.propertyNames->detail, detail, JSC::PropertyAttribute::DontEnum | 0);
 
-    /*
-    // TODO: ErrorCaptureStackTrace(warning, ctor || process.emitWarning);
-    // This doesn't work, getStackTrace does not get any stack frames.
-    Vector<StackFrame> stackTrace;
-    const size_t framesToSkip = 1;
-    JSValue caller;
-    if (ctor.toBoolean(globalObject)) {
-        caller = ctor;
-    } else {
-        auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
-        auto* process = globalObject->processObject();
-        caller = process->get(globalObject, Identifier::fromString(vm, String("emitWarning"_s)));
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-    vm.interpreter.getStackTrace(errorInstance, stackTrace, framesToSkip, globalObject->stackTraceLimit().value_or(0), caller.isCallable() ? caller.asCell() : nullptr);
-    errorInstance->putDirect(vm, vm.propertyNames->stack, jsString(vm, Interpreter::stackTraceAsString(vm, stackTrace)), static_cast<unsigned>(PropertyAttribute::DontEnum));
-    */
-
     RELEASE_AND_RETURN(scope, emitWarningErrorInstance(lexicalGlobalObject, errorInstance));
 }
 

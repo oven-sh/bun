@@ -10,7 +10,9 @@ test.concurrent("collecting file blobs with Buffer paths does not crash during G
     for (let i = 0; i < 50; i++) {
       new Bun.S3Client({}).file(Buffer.from("key-" + i));
       new Bun.S3Client({}).file(new DataView(enc.encode("dv-key-" + i).buffer));
+      new Bun.S3Client({}).file(enc.encode("uint8-key-" + i));
       Bun.file(Buffer.from("/tmp/buffer-path-" + i));
+      Bun.file(enc.encode("/tmp/uint8-path-" + i));
       Bun.file(enc.encode("/tmp/enc-path-" + i).buffer);
       Bun.gc(true);
     }

@@ -262,8 +262,6 @@ impl CryptoHasher {
             }
             string_value.get_zig_string(global)?
         };
-        // Own the borrowed bytes: the argument coercions below can run user JS
-        // (a String-object toString()) and GC the string backing the view.
         let algorithm = algorithm.to_slice_clone();
 
         // Node.BlobOrStringOrBuffer
@@ -494,8 +492,6 @@ impl CryptoHasher {
 
         let init = 'brk: {
             if !hmac_value.is_empty_or_undefined_or_null() {
-                // Consume the borrowed bytes now: the key coercion below can
-                // run user JS and GC the string backing `algorithm`.
                 let chosen_algorithm: Option<evp::Algorithm> = {
                     let slice = algorithm.to_slice();
                     evp::lookup_ignore_case(slice.slice())

@@ -270,3 +270,14 @@ test("Bun.which can find executables in a non-ascii directory", async () => {
     process.chdir(cwd);
   }
 });
+
+test("which rejects strings with interior null bytes", () => {
+  expect(() => which("env\0zz")).toThrow("The argument 'command' must be a string without null bytes");
+  expect(() => which("env", { PATH: "/usr/bin\0zz" })).toThrow(
+    "The property 'options.PATH' must be a string without null bytes",
+  );
+  expect(() => which("env", { cwd: "/tmp\0zz" })).toThrow(
+    "The property 'options.cwd' must be a string without null bytes",
+  );
+  expect(() => which("env\0zz")).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+});

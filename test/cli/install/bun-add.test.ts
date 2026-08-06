@@ -1384,6 +1384,64 @@ it("git dep without package.json and with default branch", async () => {
   });
 });
 
+it("github dep without package.json resolves from cache on the second install", async () => {
+  // `is_folder_in_cache` must not require package.json for GitHub deps: they are
+  // allowed to have none (their completeness marker is `.bun-tag`), so a second
+  // install with a warm cache should reuse the existing entry instead of
+  // re-downloading.
+  const cacheDir = join(package_dir, ".bun-cache");
+  const envWithCache = { ...env, BUN_INSTALL_CACHE_DIR: cacheDir };
+  await Bun.write(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "install-test-3": "dylan-conway/install-test-3#v1.0.0",
+      },
+    }),
+  );
+  await Bun.write(join(package_dir, "bunfig.toml"), `[install]\ncache = "${cacheDir.replaceAll("\\", "\\\\")}"\n`);
+
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env: envWithCache,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+  }
+
+  let cacheEntry: string | undefined;
+  for (const entry of await readdirSorted(cacheDir)) {
+    if (entry.startsWith("@GH@")) cacheEntry = entry;
+  }
+  expect(cacheEntry).toBeDefined();
+  expect(await file(join(cacheDir, cacheEntry!, "package.json")).exists()).toBeFalse();
+  await Bun.write(join(cacheDir, cacheEntry!, "FROM_CACHE"), "");
+
+  await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env: envWithCache,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+  }
+
+  expect(await file(join(package_dir, "node_modules", "install-test-3", "FROM_CACHE")).exists()).toBeTrue();
+  expect(await file(join(cacheDir, cacheEntry!, "FROM_CACHE")).exists()).toBeTrue();
+});
+
 it("should let you add the same package twice", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls, { "0.0.3": {} }));

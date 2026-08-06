@@ -1218,6 +1218,7 @@ impl<'a> PackageInstaller<'a> {
                     Global::crash();
                 }
 
+                self.summary.fail += 1;
                 return 0;
             }
             break 'brk temp;

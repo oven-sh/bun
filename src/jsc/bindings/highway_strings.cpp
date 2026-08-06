@@ -663,6 +663,63 @@ size_t IndexOfNewlineOrNonASCIIOrHashOrAtImpl(const uint8_t* HWY_RESTRICT start_
     return search_len;
 }
 
+// One-pass classifier for UTF-8 decode. The low two bits of the return value
+// are the class: 0 = every byte < 0x80 (ASCII), 1 = some byte >= 0x80 but all
+// < 0xC4 (every well-formed code point fits in Latin-1), 2 = some byte >= 0xC4.
+// The remaining bits carry the index of the first byte >= 0x80 (or search_len
+// when the class is 0). Packed into a single scalar return so the FFI boundary
+// keeps everything in registers. Phase 1 scans ASCII-only blocks at one
+// compare per block; phase 2 continues from the first non-ASCII block at one
+// compare per block and early-exits on the first byte >= 0xC4.
+size_t ClassifyUTF8WidthImpl(const uint8_t* HWY_RESTRICT start_ptr, size_t search_len)
+{
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_max_ascii = hn::Set(d, uint8_t { 0x7F });
+    const auto vec_max_latin1_lead = hn::Set(d, uint8_t { 0xC3 });
+
+    const size_t simd_text_len = search_len - (search_len % N);
+    size_t i = 0;
+
+    for (; i < simd_text_len; i += N) {
+        const auto vec = hn::LoadU(d, start_ptr + i);
+        const auto mask_non_ascii = hn::Gt(vec, vec_max_ascii);
+        if (hn::AllFalse(d, mask_non_ascii)) {
+            continue;
+        }
+        const size_t packed_first = (i + static_cast<size_t>(hn::FindFirstTrue(d, mask_non_ascii))) << 2;
+        for (; i < simd_text_len; i += N) {
+            const auto v = hn::LoadU(d, start_ptr + i);
+            if (!hn::AllFalse(d, hn::Gt(v, vec_max_latin1_lead))) {
+                return packed_first | 2;
+            }
+        }
+        for (; i < search_len; ++i) {
+            if (start_ptr[i] >= 0xC4) {
+                return packed_first | 2;
+            }
+        }
+        return packed_first | 1;
+    }
+
+    for (; i < search_len; ++i) {
+        const uint8_t c = start_ptr[i];
+        if (c < 0x80) {
+            continue;
+        }
+        const size_t packed_first = i << 2;
+        for (; i < search_len; ++i) {
+            if (start_ptr[i] >= 0xC4) {
+                return packed_first | 2;
+            }
+        }
+        return packed_first | 1;
+    }
+
+    return search_len << 2;
+}
+
 size_t IndexOfNewlineOrNonASCIIImpl(const uint8_t* HWY_RESTRICT start_ptr, size_t search_len)
 {
     ASSERT(search_len > 0);
@@ -2087,6 +2144,7 @@ HWY_EXPORT(IndexOfInterestingCharacterInMultilineCommentImpl);
 HWY_EXPORT(IndexOfInterestingCharacterInStringLiteralImpl);
 HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplBacktick);
 HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplQuote);
+HWY_EXPORT(ClassifyUTF8WidthImpl);
 HWY_EXPORT(IndexOfNewlineOrNonASCIIImpl);
 HWY_EXPORT(IndexOfNewlineOrNonASCIIOrHashOrAtImpl);
 HWY_EXPORT(IndexOfSpaceOrNewlineOrNonASCIIImpl);
@@ -2230,6 +2288,11 @@ size_t highway_index_of_interesting_character_in_multiline_comment(const uint8_t
 size_t highway_index_of_newline_or_non_ascii(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len)
 {
     return HWY_DYNAMIC_DISPATCH(IndexOfNewlineOrNonASCIIImpl)(haystack, haystack_len);
+}
+
+size_t highway_classify_utf8_width(const uint8_t* HWY_RESTRICT bytes, size_t len)
+{
+    return HWY_DYNAMIC_DISPATCH(ClassifyUTF8WidthImpl)(bytes, len);
 }
 
 size_t highway_index_of_newline_or_non_ascii_or_hash_or_at(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len)

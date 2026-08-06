@@ -2639,8 +2639,7 @@ impl BlobExt for Blob {
             .or_else(|| self.store().and_then(|s| s.is_all_ascii));
 
         if could_be_all_ascii.is_none() || !could_be_all_ascii.unwrap() {
-            // if to_utf16_alloc returns None, it means there are no non-ASCII characters
-            let converted = match strings::to_utf16_alloc(buf, false, false) {
+            let converted = match strings::to_latin1_or_utf16_alloc(buf, false) {
                 Ok(converted) => converted,
                 Err(_) => {
                     if LIFETIME == Lifetime::Temporary {
@@ -2650,32 +2649,49 @@ impl BlobExt for Blob {
                     return Err(global.throw_out_of_memory());
                 }
             };
-            if let Some(external) = converted {
-                if LIFETIME != Lifetime::Temporary {
-                    self.set_is_ascii_flag(false);
+            match converted {
+                strings::Utf8Decoded::Ascii => {
+                    if LIFETIME != Lifetime::Temporary {
+                        self.set_is_ascii_flag(true);
+                    }
                 }
-                if LIFETIME == Lifetime::Transfer {
-                    self.detach();
+                strings::Utf8Decoded::Latin1(latin1) => {
+                    if LIFETIME != Lifetime::Temporary {
+                        self.set_is_ascii_flag(false);
+                    }
+                    if LIFETIME == Lifetime::Transfer {
+                        self.detach();
+                    }
+                    if LIFETIME == Lifetime::Temporary {
+                        // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
+                        unsafe { drop(bun_core::heap::take(raw_bytes)) };
+                    }
+                    return BunString::create_external_globally_allocated_latin1(latin1)
+                        .transfer_to_js(global);
                 }
-                if LIFETIME == Lifetime::Temporary {
-                    // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
-                    unsafe { drop(bun_core::heap::take(raw_bytes)) };
+                strings::Utf8Decoded::Utf16(external) => {
+                    if LIFETIME != Lifetime::Temporary {
+                        self.set_is_ascii_flag(false);
+                    }
+                    if LIFETIME == Lifetime::Transfer {
+                        self.detach();
+                    }
+                    if LIFETIME == Lifetime::Temporary {
+                        // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
+                        unsafe { drop(bun_core::heap::take(raw_bytes)) };
+                    }
+                    // Ownership of the UTF-16 buffer transfers to JSC's external-string
+                    // finalizer (which calls back into the default allocator's `free`).
+                    // `into_raw` is the explicit ownership-transfer-to-FFI API; the
+                    // matching free lives on the C++ side.
+                    let len = external.len();
+                    let ptr = bun_core::heap::into_raw(external.into_boxed_slice())
+                        .cast::<u16>()
+                        .cast_const();
+                    // SAFETY: `ptr` came from `heap::into_raw` on a global-allocator
+                    // `Box<[u16]>`; ownership transfers to JSC's external-string finalizer.
+                    return Ok(unsafe { zig_string_to_external_u16(ptr, len, global) });
                 }
-                // Ownership of the UTF-16 buffer transfers to JSC's external-string
-                // finalizer (which calls back into the default allocator's `free`).
-                // `into_raw` is the explicit ownership-transfer-to-FFI API; the
-                // matching free lives on the C++ side.
-                let len = external.len();
-                let ptr = bun_core::heap::into_raw(external.into_boxed_slice())
-                    .cast::<u16>()
-                    .cast_const();
-                // SAFETY: `ptr` came from `heap::into_raw` on a global-allocator
-                // `Box<[u16]>`; ownership transfers to JSC's external-string finalizer.
-                return Ok(unsafe { zig_string_to_external_u16(ptr, len, global) });
-            }
-
-            if LIFETIME != Lifetime::Temporary {
-                self.set_is_ascii_flag(true);
             }
         }
 
@@ -2886,19 +2902,30 @@ impl BlobExt for Blob {
         let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
 
         if could_be_all_ascii.is_none() || !could_be_all_ascii.unwrap() {
-            if let Some(external) = strings::to_utf16_alloc(buf, false, false)
+            match strings::to_latin1_or_utf16_alloc(buf, false)
                 .map_err(|_| global.throw_out_of_memory())?
             {
-                if LIFETIME != Lifetime::Temporary {
-                    self.set_is_ascii_flag(false);
+                strings::Utf8Decoded::Ascii => {
+                    if LIFETIME != Lifetime::Temporary {
+                        self.set_is_ascii_flag(true);
+                    }
                 }
-                let result = ZigString::init_utf16(&external).to_json_object(global);
-                drop(external);
-                return Ok(result);
-            }
-
-            if LIFETIME != Lifetime::Temporary {
-                self.set_is_ascii_flag(true);
+                strings::Utf8Decoded::Latin1(latin1) => {
+                    if LIFETIME != Lifetime::Temporary {
+                        self.set_is_ascii_flag(false);
+                    }
+                    let result = ZigString::init(&latin1).to_json_object(global);
+                    drop(latin1);
+                    return Ok(result);
+                }
+                strings::Utf8Decoded::Utf16(external) => {
+                    if LIFETIME != Lifetime::Temporary {
+                        self.set_is_ascii_flag(false);
+                    }
+                    let result = ZigString::init_utf16(&external).to_json_object(global);
+                    drop(external);
+                    return Ok(result);
+                }
             }
         }
 
@@ -6799,22 +6826,33 @@ impl Internal {
 
     pub(crate) fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let bytes_without_bom = strings::without_utf8_bom(&self.bytes);
-        if let Some(out) = strings::to_utf16_alloc(bytes_without_bom, false, false)
+        match strings::to_latin1_or_utf16_alloc(bytes_without_bom, false)
             .map_err(|_| global_this.throw_out_of_memory())?
         {
-            let out_len = out.len();
-            // Ownership transfers to JSC's external-string finalizer.
-            let out_ptr = bun_core::heap::into_raw(out.into_boxed_slice())
-                .cast::<u16>()
-                .cast_const();
-            // SAFETY: `out_ptr` came from `heap::into_raw` on a global-allocator
-            // `Box<[u16]>`; ownership transfers to JSC's external-string finalizer.
-            let return_value =
-                unsafe { jsc::zig_string::to_external_u16(out_ptr, out_len, global_this) };
-            return_value.ensure_still_alive();
-            self.bytes = Vec::new();
-            return Ok(return_value);
-        } else if bytes_without_bom.len() != self.bytes.len() {
+            strings::Utf8Decoded::Latin1(latin1) => {
+                let return_value = BunString::create_external_globally_allocated_latin1(latin1)
+                    .transfer_to_js(global_this)?;
+                return_value.ensure_still_alive();
+                self.bytes = Vec::new();
+                return Ok(return_value);
+            }
+            strings::Utf8Decoded::Utf16(out) => {
+                let out_len = out.len();
+                // Ownership transfers to JSC's external-string finalizer.
+                let out_ptr = bun_core::heap::into_raw(out.into_boxed_slice())
+                    .cast::<u16>()
+                    .cast_const();
+                // SAFETY: `out_ptr` came from `heap::into_raw` on a global-allocator
+                // `Box<[u16]>`; ownership transfers to JSC's external-string finalizer.
+                let return_value =
+                    unsafe { jsc::zig_string::to_external_u16(out_ptr, out_len, global_this) };
+                return_value.ensure_still_alive();
+                self.bytes = Vec::new();
+                return Ok(return_value);
+            }
+            strings::Utf8Decoded::Ascii => {}
+        }
+        if bytes_without_bom.len() != self.bytes.len() {
             // If there was a UTF8 BOM, we clone it.
             // +1 WTF ref; `OwnedString` releases it on scope exit.
             let out = OwnedString::new(BunString::clone_latin1(&self.bytes[3..]));

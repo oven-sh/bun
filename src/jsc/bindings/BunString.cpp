@@ -438,6 +438,16 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
             return { .tag = BunStringTag::Dead };
         }
         RELEASE_ASSERT(simdutf::convert_utf8_to_utf16(bytes, length, ptr.data()) == u16Length);
+        // Narrow to an 8-bit StringImpl when every decoded code unit is
+        // <= U+00FF so downstream code keeps JSC's 8-bit fast paths.
+        if (WTF::charactersAreAllLatin1(std::span<const char16_t>(ptr))) {
+            std::span<Latin1Character> narrow;
+            auto latin1Impl = WTF::StringImpl::tryCreateUninitialized(u16Length, narrow);
+            if (latin1Impl) [[likely]] {
+                WTF::StringImpl::copyCharacters(narrow, ptr);
+                return { BunStringTag::WTFStringImpl, { .wtf = latin1Impl.leakRef() } };
+            }
+        }
         return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
     }
 

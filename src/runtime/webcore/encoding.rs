@@ -22,6 +22,19 @@ fn create_external_globally_allocated_utf16(bytes: Vec<u16>) -> BunString {
     BunString::create_external_globally_allocated_utf16(bytes)
 }
 
+/// Build a Latin-1 `BunString` from an owned buffer, routing small outputs
+/// through WTF's string allocator and large ones through an external
+/// `StringImpl` (same size policy as [`encode_base64_to_bun_string`]).
+#[inline]
+fn latin1_vec_to_bun_string(bytes: Vec<u8>) -> BunString {
+    const EXTERNAL_MIN_LEN: usize = 32 * 1024;
+    if bytes.len() < EXTERNAL_MIN_LEN {
+        BunString::clone_latin1(&bytes)
+    } else {
+        create_external_globally_allocated_latin1(bytes)
+    }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Stable Rust does not allow enum-typed const generics without
 // `#![feature(adt_const_params)]`, so we use `const ENCODING: u8` and reconstitute the enum
@@ -274,21 +287,16 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
         }
         Encoding::Latin1 => create_external_globally_allocated_latin1(input),
         Encoding::Buffer | Encoding::Utf8 => {
-            let converted = match strings::to_utf16_alloc(&input, false, false) {
-                Ok(v) => v,
-                Err(_) => {
-                    // input dropped
-                    return BunString::dead();
+            match strings::to_latin1_or_utf16_alloc(&input, false) {
+                Ok(strings::Utf8Decoded::Ascii) => create_external_globally_allocated_latin1(input),
+                Ok(strings::Utf8Decoded::Latin1(latin1)) => {
+                    create_external_globally_allocated_latin1(latin1)
                 }
-            };
-
-            if let Some(utf16) = converted {
-                // input dropped at end of scope
-                return create_external_globally_allocated_utf16(utf16);
+                Ok(strings::Utf8Decoded::Utf16(utf16)) => {
+                    create_external_globally_allocated_utf16(utf16)
+                }
+                Err(_) => BunString::dead(),
             }
-
-            // If we get here, it means we can safely assume the string is 100% ASCII characters
-            create_external_globally_allocated_latin1(input)
         }
         Encoding::Ucs2 | Encoding::Utf16le => {
             // Avoid incomplete characters - if input length is 0 or odd, handle gracefully
@@ -378,17 +386,14 @@ fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
             str
         }
         Encoding::Buffer | Encoding::Utf8 => {
-            let converted = match strings::to_utf16_alloc(input, false, false) {
-                Ok(v) => v,
-                Err(_) => return BunString::dead(),
-            };
-            if let Some(utf16) = converted {
-                return create_external_globally_allocated_utf16(utf16);
+            match strings::to_latin1_or_utf16_alloc(input, false) {
+                Ok(strings::Utf8Decoded::Ascii) => BunString::clone_latin1(input),
+                Ok(strings::Utf8Decoded::Latin1(latin1)) => latin1_vec_to_bun_string(latin1),
+                Ok(strings::Utf8Decoded::Utf16(utf16)) => {
+                    create_external_globally_allocated_utf16(utf16)
+                }
+                Err(_) => BunString::dead(),
             }
-
-            // If we get here, it means we can safely assume the string is 100% ASCII characters
-            // For this, we rely on WebKit to manage the memory.
-            BunString::clone_latin1(input)
         }
         Encoding::Ucs2 | Encoding::Utf16le => {
             // Avoid incomplete characters

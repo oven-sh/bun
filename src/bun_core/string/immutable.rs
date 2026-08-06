@@ -2427,21 +2427,95 @@ impl From<ToUTF16Error> for crate::CrateError {
     }
 }
 
+/// Result of [`to_latin1_or_utf16_alloc`]: the narrowest representation the
+/// decoded code points fit in.
+pub enum Utf8Decoded {
+    /// Every byte was ASCII; the caller already holds the 8-bit form.
+    Ascii,
+    /// Every decoded code point is `<= U+00FF`; buffer is one Latin-1 byte per
+    /// code point.
+    Latin1(Vec<u8>),
+    /// At least one code point `> U+00FF` (or a U+FFFD replacement was
+    /// emitted); buffer is UTF-16LE.
+    Utf16(Vec<u16>),
+}
+
+/// Decode UTF-8 into the narrowest JSC string representation: [`Utf8Decoded::Ascii`]
+/// when every byte is ASCII, [`Utf8Decoded::Latin1`] when every decoded code
+/// point is `<= U+00FF`, else [`Utf8Decoded::Utf16`]. Error semantics match
+/// [`to_utf16_alloc`]: with `fail_if_invalid` set invalid UTF-8 yields
+/// `Err(InvalidByteSequence)`; otherwise invalid sequences are replaced with
+/// U+FFFD and the result is always `Utf16` (U+FFFD is not Latin-1).
+///
+/// Implementation: a single Highway SIMD pass over the input bytes
+/// ([`bun_highway::classify_utf8_width`]) decides the output shape up front.
+/// `HasWide` runs the existing simdutf UTF-16 decode unchanged.
+/// `Latin1Candidate` runs the same decode and, on success, narrows the code
+/// units to one byte each via `highway_copy_u16_to_u8` (valid UTF-8 with every
+/// byte `< 0xC4` is exactly the set of code points `<= U+00FF`, so no
+/// post-decode scan is needed); a decode error means invalid UTF-8, and the
+/// replacement path yields UTF-16. simdutf's own `convert_utf8_to_latin1*` is
+/// avoided because its icelake kernel passes `__m512i` by value to a helper
+/// that does not inline in the debug-ASAN WebKit build and faults on stack
+/// alignment.
+pub fn to_latin1_or_utf16_alloc(
+    bytes: &[u8],
+    fail_if_invalid: bool,
+) -> Result<Utf8Decoded, ToUTF16Error> {
+    use highway::Utf8Width;
+    let (first, narrow) = match highway::classify_utf8_width(bytes) {
+        Utf8Width::Ascii => return Ok(Utf8Decoded::Ascii),
+        Utf8Width::Latin1Candidate(i) => (i, true),
+        Utf8Width::HasWide(i) => (i, false),
+    };
+
+    let (utf16, was_valid) = to_utf16_alloc_non_ascii(bytes, first, fail_if_invalid, false)?;
+    if narrow && was_valid {
+        let mut out: Vec<u8> = Vec::new();
+        out.try_reserve_exact(utf16.len())
+            .map_err(|_| ToUTF16Error::OutOfMemory)?;
+        // SAFETY: `out` has `>= utf16.len()` bytes of capacity (just reserved);
+        // the kernel writes exactly `utf16.len()` bytes and never reads `out`.
+        unsafe {
+            highway::copy_u16_to_u8_raw(utf16.as_ptr(), utf16.len(), out.as_mut_ptr());
+            out.set_len(utf16.len());
+        }
+        return Ok(Utf8Decoded::Latin1(out));
+    }
+    Ok(Utf8Decoded::Utf16(utf16))
+}
+
 /// `strings.toUTF16Alloc` — convert UTF-8 → UTF-16LE **iff** `bytes` contains
 /// any non-ASCII byte; pure-ASCII inputs return `Ok(None)` (caller keeps the
 /// 8-bit form). When `fail_if_invalid` is set, invalid UTF-8 yields
 /// `Err(InvalidByteSequence)`; otherwise invalid sequences are replaced with
 /// U+FFFD. When `sentinel` is set the result
 /// includes a trailing 0 u16.
+///
+/// Callers that build a JS string from the result should prefer
+/// [`to_latin1_or_utf16_alloc`], which adds a Latin-1 tier so JSC's 8-bit fast
+/// paths stay available for accented-Latin text.
 pub fn to_utf16_alloc(
     bytes: &[u8],
     fail_if_invalid: bool,
     sentinel: bool,
 ) -> Result<Option<Vec<u16>>, ToUTF16Error> {
-    let Some(_first) = first_non_ascii(bytes) else {
+    let Some(first) = first_non_ascii(bytes) else {
         return Ok(None);
     };
+    to_utf16_alloc_non_ascii(bytes, first as usize, fail_if_invalid, sentinel).map(|(v, _)| Some(v))
+}
 
+/// [`to_utf16_alloc`] for input already known to contain a non-ASCII byte at
+/// `first`. Also reports whether simdutf accepted the input as valid UTF-8
+/// (callers use this to decide whether a Latin-1 narrowing is sound without
+/// re-scanning the output).
+fn to_utf16_alloc_non_ascii(
+    bytes: &[u8],
+    first: usize,
+    fail_if_invalid: bool,
+    sentinel: bool,
+) -> Result<(Vec<u16>, bool), ToUTF16Error> {
     let out_length = simdutf::length::utf16::from::utf8(bytes);
     let cap = out_length + if sentinel { 1 } else { 0 };
     // Hot path: allocate uninitialised and let simdutf write directly into the
@@ -2470,7 +2544,7 @@ pub fn to_utf16_alloc(
         if sentinel {
             out.push(0);
         }
-        return Ok(Some(out));
+        return Ok((out, true));
     }
     if fail_if_invalid {
         return Err(ToUTF16Error::InvalidByteSequence);
@@ -2480,23 +2554,25 @@ pub fn to_utf16_alloc(
     out.try_reserve(bytes.len() + if sentinel { 1 } else { 0 })
         .map_err(|_| ToUTF16Error::OutOfMemory)?;
     let mut remaining = bytes;
-    while let Some(i) = first_non_ascii(remaining) {
-        let i = i as usize;
+    let mut i = Some(first as u32);
+    while let Some(j) = i {
+        let j = j as usize;
         // Copy ASCII prefix as-is (one u16 per byte).
-        out.extend(remaining[..i].iter().map(|&b| u16::from(b)));
-        remaining = &remaining[i..];
+        out.extend(remaining[..j].iter().map(|&b| u16::from(b)));
+        remaining = &remaining[j..];
         // Decode one codepoint via `convert_utf8_bytes_into_utf16` so the
         // number/position of U+FFFD emissions stays consistent: advance by
         // `replacement.len.max(1)`, not 1.
         let replacement = unicode_draft::convert_utf8_bytes_into_utf16(remaining);
         remaining = &remaining[(replacement.len as usize).max(1)..];
         push_codepoint_utf16(&mut out, replacement.code_point);
+        i = first_non_ascii(remaining);
     }
     out.extend(remaining.iter().map(|&b| u16::from(b)));
     if sentinel {
         out.push(0);
     }
-    Ok(Some(out))
+    Ok((out, false))
 }
 
 /// WTF-8 → UTF-16LE iff `bytes` contains any non-ASCII byte; pure-ASCII inputs return `None`.
@@ -2592,6 +2668,60 @@ mod tests {
         assert_eq!(super::first_non_ascii(b"ab\xC3"), Some(2));
         assert!(super::eql_case_insensitive_ascii(b"A", b"a", true));
         assert!(!super::eql_case_insensitive_ascii(b"Ab", b"a", true));
+    }
+
+    #[test]
+    fn to_latin1_or_utf16_alloc_tiers() {
+        use super::{Utf8Decoded, to_latin1_or_utf16_alloc};
+        assert!(matches!(
+            to_latin1_or_utf16_alloc(b"hello", false).unwrap(),
+            Utf8Decoded::Ascii
+        ));
+        // é = C3 A9 → U+00E9
+        match to_latin1_or_utf16_alloc(b"caf\xC3\xA9", false).unwrap() {
+            Utf8Decoded::Latin1(v) => assert_eq!(v, b"caf\xE9"),
+            _ => panic!("expected Latin1"),
+        }
+        // U+00FF = C3 BF (boundary)
+        match to_latin1_or_utf16_alloc(b"x\xC3\xBFx", false).unwrap() {
+            Utf8Decoded::Latin1(v) => assert_eq!(v, b"x\xFFx"),
+            _ => panic!("expected Latin1"),
+        }
+        // U+0080 = C2 80 (low boundary)
+        match to_latin1_or_utf16_alloc(b"\xC2\x80", false).unwrap() {
+            Utf8Decoded::Latin1(v) => assert_eq!(v, b"\x80"),
+            _ => panic!("expected Latin1"),
+        }
+        // U+0100 = C4 80 (just past Latin-1)
+        match to_latin1_or_utf16_alloc(b"x\xC4\x80x", false).unwrap() {
+            Utf8Decoded::Utf16(v) => assert_eq!(v, [b'x' as u16, 0x0100, b'x' as u16]),
+            _ => panic!("expected Utf16"),
+        }
+        // Overlong C0 80 passes the < 0xC4 gate but is invalid; must fall through.
+        match to_latin1_or_utf16_alloc(b"a\xC0\x80b", false).unwrap() {
+            Utf8Decoded::Utf16(v) => assert_eq!(v, [b'a' as u16, 0xFFFD, 0xFFFD, b'b' as u16]),
+            _ => panic!("expected Utf16"),
+        }
+        // Stray continuation byte.
+        match to_latin1_or_utf16_alloc(b"a\xA9b", false).unwrap() {
+            Utf8Decoded::Utf16(v) => assert_eq!(v, [b'a' as u16, 0xFFFD, b'b' as u16]),
+            _ => panic!("expected Utf16"),
+        }
+        // Truncated C3.
+        match to_latin1_or_utf16_alloc(b"a\xC3", false).unwrap() {
+            Utf8Decoded::Utf16(v) => assert_eq!(v, [b'a' as u16, 0xFFFD]),
+            _ => panic!("expected Utf16"),
+        }
+        // C3 followed by non-continuation.
+        match to_latin1_or_utf16_alloc(b"a\xC3\x41b", false).unwrap() {
+            Utf8Decoded::Utf16(v) => assert_eq!(v, [b'a' as u16, 0xFFFD, b'A' as u16, b'b' as u16]),
+            _ => panic!("expected Utf16"),
+        }
+        // fail_if_invalid propagates through the Latin-1 candidate fall-through.
+        assert!(matches!(
+            to_latin1_or_utf16_alloc(b"a\xC0\x80b", true),
+            Err(super::ToUTF16Error::InvalidByteSequence)
+        ));
     }
 
     #[test]

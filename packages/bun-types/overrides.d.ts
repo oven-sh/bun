@@ -34,6 +34,16 @@ declare module "stream/web" {
   }
 }
 
+// Add convenience methods to the global ReadableStream interface
+// so that stream.text(), stream.json(), stream.bytes() are available
+// without importing from "stream/web"
+interface ReadableStream<R = any> extends BunConsumerConvenienceMethods {
+  /**
+   * Consume as a Blob
+   */
+  blob(): Promise<Blob>;
+}
+
 declare module "buffer" {
   interface Blob extends BunConsumerConvenienceMethods {
     // We have to specify bytes again even though it comes from

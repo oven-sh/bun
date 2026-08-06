@@ -950,9 +950,10 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
   // `Object.prototype.then` accessor installed, mirroring the
   // prototype-pollution state fuzzer processes run in.
   it("write completions settle under Object.prototype.then pollution", async () => {
+    using dir = tempDir("bun-write-pollution", {});
     const fixture = `
       const fs = require("fs");
-      const dir = fs.mkdtempSync(require("os").tmpdir() + "/bun-write-pollution-");
+      const dir = ${JSON.stringify(String(dir))};
       const server = Bun.serve({
         port: 0,
         async fetch() {
@@ -999,7 +1000,9 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual([11, "hello world", 7, "copy me"]);
+    // uv_fs_copyfile does not report a byte count, so the Windows copyfile
+    // completion resolves 0 when the size is not known up front.
+    expect(JSON.parse(stdout)).toEqual([11, "hello world", isWindows ? 0 : 7, "copy me"]);
     expect(exitCode).toBe(0);
   });
 });

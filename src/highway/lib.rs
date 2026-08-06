@@ -141,13 +141,21 @@ unsafe extern "C" {
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
-// ptr/len shims around the `extern "C"` highway_* dispatch stubs; inlining
+// ptr/len shims around the `extern "C"` highway_* dispatch stubs (plus, for the
+// single-byte scans, a <16-byte scalar prologue — see `SCALAR_CUTOFF`); inlining
 // them puts the FFI call directly at the hot lexer/printer call site so that
 // (a) the Rust-side frame disappears unconditionally, and (b) cross-language
 // LTO (`--profile=btg`, crossLangLto=true) can fold the C dispatch shim
 // straight into the caller. Without this the profile shows the C shim as a
 // distinct hot leaf (e.g. `highway_index_of_newline_or_non_ascii` self-samples
 // in lint/create-vue benches).
+
+/// Below the narrowest vector the kernels dispatch to (16 lanes: NEON, SSE4)
+/// they do at most one (masked) vector op or just their scalar tail, so for
+/// haystacks this short the FFI hop plus the dispatch-table call dominates —
+/// do those bytes inline. Also keeps cold call sites from dragging an FFI
+/// call into a caller's hot loop (see `pop_last_segment_t` in node/path.rs).
+const SCALAR_CUTOFF: usize = 16;
 
 /// The single-byte kernels return `haystack_len` for "not found".
 #[inline(always)]
@@ -171,8 +179,8 @@ fn match_at(result: usize) -> Option<usize> {
 
 #[inline(always)]
 pub fn index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
-    if haystack.is_empty() {
-        return None;
+    if haystack.len() < SCALAR_CUTOFF {
+        return haystack.iter().position(|&b| b == needle);
     }
     // SAFETY: haystack.ptr/len are a valid readable range.
     let result = unsafe { highway_index_of_char(haystack.as_ptr(), haystack.len(), needle) };
@@ -183,8 +191,8 @@ pub fn index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
 
 #[inline(always)]
 pub fn last_index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
-    if haystack.is_empty() {
-        return None;
+    if haystack.len() < SCALAR_CUTOFF {
+        return haystack.iter().rposition(|&b| b == needle);
     }
     // SAFETY: haystack.ptr/len are a valid readable range.
     let result = unsafe { highway_last_index_of_char(haystack.as_ptr(), haystack.len(), needle) };
@@ -197,8 +205,8 @@ pub fn last_index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
 /// run of `value`), or `None` if every byte is `value`.
 #[inline(always)]
 pub fn index_of_not_char(haystack: &[u8], value: u8) -> Option<usize> {
-    if haystack.is_empty() {
-        return None;
+    if haystack.len() < SCALAR_CUTOFF {
+        return haystack.iter().position(|&b| b != value);
     }
     // SAFETY: haystack.ptr/len are a valid readable range.
     let result = unsafe { highway_index_of_not_char(haystack.as_ptr(), haystack.len(), value) };
@@ -209,8 +217,8 @@ pub fn index_of_not_char(haystack: &[u8], value: u8) -> Option<usize> {
 
 #[inline(always)]
 pub fn count_char(haystack: &[u8], needle: u8) -> usize {
-    if haystack.is_empty() {
-        return 0;
+    if haystack.len() < SCALAR_CUTOFF {
+        return haystack.iter().filter(|&&b| b == needle).count();
     }
     // SAFETY: haystack.ptr/len are a valid readable range.
     unsafe { highway_count_char(haystack.as_ptr(), haystack.len(), needle) }
@@ -449,8 +457,12 @@ pub fn index_of_needs_escape_for_javascript_string(slice: &[u8], quote_char: u8)
 
 #[inline(always)]
 pub fn index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
-    if haystack.is_empty() || chars.is_empty() {
+    if chars.is_empty() {
         return None;
+    }
+    debug_assert!(chars.len() >= 2 && chars.len() <= 16);
+    if haystack.len() < SCALAR_CUTOFF {
+        return haystack.iter().position(|b| chars.contains(b));
     }
 
     // SAFETY: haystack and chars ptr/len are valid readable ranges.
@@ -488,8 +500,8 @@ pub fn index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
 #[inline(always)]
 pub fn last_index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
     debug_assert!(chars.len() >= 2 && chars.len() <= 16);
-    if haystack.is_empty() {
-        return None;
+    if haystack.len() < SCALAR_CUTOFF {
+        return haystack.iter().rposition(|b| chars.contains(b));
     }
 
     // SAFETY: haystack and chars ptr/len are valid readable ranges.

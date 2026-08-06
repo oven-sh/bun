@@ -1566,7 +1566,7 @@ mod safe_libc {
     use core::ffi::c_int;
     // `close` is a libc symbol std relies on; this is an FFI import (not a
     // competing definition) with the canonical signature.
-    #[allow(suspicious_runtime_symbol_definitions)]
+    #[allow(suspicious_runtime_symbol_definitions, unknown_lints)]
     unsafe extern "C" {
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub(crate) safe fn close(fd: c_int) -> c_int;

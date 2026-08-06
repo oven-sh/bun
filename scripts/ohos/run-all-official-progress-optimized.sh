@@ -584,7 +584,8 @@ while true; do
   done
   # ZOMBIE 检测（等待阶段）：subshell 已死但没写 result → 补写 TIMEOUT。
   # 主循环的 ZOMBIE 检测在分派阶段有效，最后一批 worker 只在这里被兜底。
-  # 否则 result 永远缺失 → _results < TOTAL_FILES → 卡死直到 60m 超时。
+  # 否则 result 永远缺失 → _results < TOTAL_FILES → 卡死直到超时。
+  # 同样加轮询确认：快速测试的 subshell 退出后 result 可能仍在收尾。
   for _pf in "$PDIR"/pid_*; do
     [ -f "$_pf" ] || continue
     _idx="${_pf##*/pid_}"
@@ -592,10 +593,17 @@ while true; do
     [ -f "$PDIR/running_$_idx" ] || continue
     _pid=$(cat "$_pf" 2>/dev/null || echo 0)
     if [ "$_pid" -gt 0 ] 2>/dev/null && ! kill -0 "$_pid" 2>/dev/null; then
-      _test_path=$(cat "$PDIR/running_$_idx" 2>/dev/null || echo "unknown")
-      echo "[ZOMBIE] $_test_path (subshell $_pid died without result, wait-stage)" >> "$REPORT"
-      _ohos_force_result "$_idx" "$_test_path" "0"
-      rm -f "$PDIR/running_$_idx" "$PDIR/pid_$_idx" "$PDIR/wt_$_idx" 2>/dev/null
+      _zombie_confirm=1
+      for _zc in 1 2 3 4 5; do
+        [ -f "$PDIR/result_$_idx" ] && { _zombie_confirm=0; break; }
+        sleep 0.2 2>/dev/null || sleep 1
+      done
+      if [ "$_zombie_confirm" -eq 1 ] && [ ! -f "$PDIR/result_$_idx" ]; then
+        _test_path=$(cat "$PDIR/running_$_idx" 2>/dev/null || echo "unknown")
+        echo "[ZOMBIE] $_test_path (subshell $_pid died without result, wait-stage)" >> "$REPORT"
+        _ohos_force_result "$_idx" "$_test_path" "0"
+        rm -f "$PDIR/running_$_idx" "$PDIR/pid_$_idx" "$PDIR/wt_$_idx" 2>/dev/null
+      fi
     fi
   done
 
@@ -614,8 +622,22 @@ while true; do
       : # 确实没新结果，但不要退出，继续等 watchdog 超时
     fi
   fi
-  if [ $((SECONDS - _wait_start)) -gt 3600 ]; then
-    echo "[WARN] worker cleanup: 60m timeout, killing remaining workers" >&2
+  # 动态超时：60m 固定值会在慢文件堆积时误杀仍合法运行的 worker
+  # （spawn.test WT=2400s + bunshell WT=1800s + 排队 = 超 3600s）。
+  # 改为：剩余 worker 的最大 WT × 2 + 10min 余量；无 worker 时用
+  # 兜底 3600s（等 ZOMBIE 兜底/防死锁）。
+  _max_wt=0
+  for _wf in "$PDIR"/wt_*; do
+    [ -f "$_wf" ] || continue
+    _wv=$(cat "$_wf" 2>/dev/null || echo 0)
+    [ "${_wv:-0}" -gt "$_max_wt" ] 2>/dev/null && _max_wt=$_wv
+  done
+  _wait_timeout=3600
+  if [ "$_max_wt" -gt 0 ] 2>/dev/null; then
+    _wait_timeout=$((_max_wt * 2 + 600))
+  fi
+  if [ $((SECONDS - _wait_start)) -gt "$_wait_timeout" ]; then
+    echo "[WARN] worker cleanup: ${_wait_timeout}s timeout, killing remaining workers" >&2
     # 只杀 worker（pid_* 里的 PID），不碰 show_progress（STATUS_PID）
     for _pf in "$PDIR"/pid_*; do
       [ -f "$_pf" ] || continue

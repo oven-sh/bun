@@ -50,7 +50,14 @@ import { join, resolve } from "node:path";
 import type { Config } from "../config.ts";
 import { computeCpuTargetFlags } from "../flags.ts";
 import { slash } from "../shell.ts";
-import { type Dependency, type NestedCmakeBuild, type Source, depBuildDir, depSourceDir, gitHeadSync } from "../source.ts";
+import {
+  type Dependency,
+  type NestedCmakeBuild,
+  type Source,
+  depBuildDir,
+  depSourceDir,
+  gitHeadSync,
+} from "../source.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Prebuilt URL computation
@@ -212,7 +219,7 @@ export const webkit: Dependency = {
         if (!ohosRoot) {
           throw new Error(
             "OHOS build requires OHOS_WEBKIT_ROOT env var pointing to bun-webkit installation.\n" +
-            "  Install with: brew install bun-webkit"
+              "  Install with: brew install bun-webkit",
           );
         }
         mkdirSync(destDir, { recursive: true });
@@ -421,10 +428,19 @@ export const webkit: Dependency = {
     // JSCFFIBridge.cpp. Symlink them into the parent JSC directory so the
     // include resolves without adding every subdirectory to the include path.
     const ffiHeaders = [
-      "BunFFI.h", "FFICallHost.h", "FFICallbackThunk.h",
-      "FFICallingConvention.h", "FFIContext.h", "FFIConversions.h",
-      "FFIDFG.h", "FFIICStub.h", "FFIInvokeThunk.h",
-      "FFISignature.h", "FFIType.h", "JSFFICallback.h", "JSFFIFunction.h",
+      "BunFFI.h",
+      "FFICallHost.h",
+      "FFICallbackThunk.h",
+      "FFICallingConvention.h",
+      "FFIContext.h",
+      "FFIConversions.h",
+      "FFIDFG.h",
+      "FFIICStub.h",
+      "FFIInvokeThunk.h",
+      "FFISignature.h",
+      "FFIType.h",
+      "JSFFICallback.h",
+      "JSFFIFunction.h",
     ];
     for (const h of ffiHeaders) {
       const target = resolve(srcDir, "Source", "JavaScriptCore", h);
@@ -436,7 +452,7 @@ export const webkit: Dependency = {
 
     const spec: NestedCmakeBuild = {
       kind: "nested-cmake",
-      targets: ["jsc"],
+      targets: ["WTF", "bmalloc", "JavaScriptCore"], // 只构建静态库, 跳过 jsc 可执行文件 (ICU 链接问题)
       args,
       // Release local WebKit keeps debug info so JSC crashes symbolicate.
       // LTO stays plain Release (debug info + LTO bloats significantly).
@@ -484,26 +500,48 @@ export const webkit: Dependency = {
       const icuInclude = ohosIcuDir ? `-I${ohosIcuDir}/include` : "";
       if (ohosCrossLibs) {
         args.CMAKE_CXX_FLAGS = [
-          optFlagStr, targetFlag, sysrootFlag, "-D__MUSL__",
-          "-mbranch-protection=none", "-mno-outline-atomics",
+          optFlagStr,
+          targetFlag,
+          sysrootFlag,
+          "-D__MUSL__",
+          "-mbranch-protection=none",
+          "-mno-outline-atomics",
           `-nostdinc++ -I${ohosCrossLibs}/libcxx/include/v1`,
           `-I${ohosCrossLibs}/libcxxabi/include`,
           icuInclude,
           "-fno-c++-static-destructors",
           "-std=gnu++23",
-        ].filter(Boolean).join(" ");
+        ]
+          .filter(Boolean)
+          .join(" ");
         args.CMAKE_C_FLAGS = [
-          optFlagStr, targetFlag, sysrootFlag, "-D__MUSL__",
-          "-mbranch-protection=none", "-mno-outline-atomics",
+          optFlagStr,
+          targetFlag,
+          sysrootFlag,
+          "-D__MUSL__",
+          "-mbranch-protection=none",
+          "-mno-outline-atomics",
           icuInclude,
-        ].filter(Boolean).join(" ");
-        args.CMAKE_EXE_LINKER_FLAGS = `-L${ohosCrossLibs}/libcxx/lib -L${ohosCrossLibs}/libcxxabi/lib -L${ohosCrossLibs}/libunwind/lib -lc++ -lc++abi -lunwind`;
-        args.CMAKE_SHARED_LINKER_FLAGS = `-L${ohosCrossLibs}/libcxx/lib -L${ohosCrossLibs}/libcxxabi/lib -L${ohosCrossLibs}/libunwind/lib -lc++ -lc++abi -lunwind`;
+        ]
+          .filter(Boolean)
+          .join(" ");
+        args.CMAKE_EXE_LINKER_FLAGS = `-L${ohosCrossLibs}/libcxx/lib -L${ohosCrossLibs}/libcxxabi/lib -L${ohosCrossLibs}/libunwind/lib`;
+        args.CMAKE_SHARED_LINKER_FLAGS = `-L${ohosCrossLibs}/libcxx/lib -L${ohosCrossLibs}/libcxxabi/lib -L${ohosCrossLibs}/libunwind/lib`;
+        // -lc++ after ICU libs: cmake places CMAKE_EXE_LINKER_FLAGS before
+        // LINK_LIBRARIES, but ICU's object files reference libc++ symbols
+        // (condition_variable, etc.). Using CMAKE_CXX_STANDARD_LIBRARIES puts
+        // them at the END of the link command, after ICU.
+        args.CMAKE_CXX_STANDARD_LIBRARIES = `-lc++ -lc++abi -lunwind`;
       }
       if (ohosIcuDir) {
         // hostBin is sibling of ohosIcuDir's parent: ohosIcuDir="<prefix>/target" → hostBin="<prefix>/host/bin"
         const hostBin = resolve(ohosIcuDir, "..", "host", "bin");
-        for (const [key, exe] of [["ICU_GENDATA_EXECUTABLE", "genrb"], ["ICU_GENCCODE_EXECUTABLE", "genccode"], ["ICU_GENCMN_EXECUTABLE", "gencmn"], ["ICU_PKGDATA_EXECUTABLE", "pkgdata"]] as const) {
+        for (const [key, exe] of [
+          ["ICU_GENDATA_EXECUTABLE", "genrb"],
+          ["ICU_GENCCODE_EXECUTABLE", "genccode"],
+          ["ICU_GENCMN_EXECUTABLE", "gencmn"],
+          ["ICU_PKGDATA_EXECUTABLE", "pkgdata"],
+        ] as const) {
           const exePath = resolve(hostBin, exe);
           if (existsSync(exePath)) {
             args[key] = exePath;

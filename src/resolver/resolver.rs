@@ -6107,7 +6107,18 @@ impl<'a> Resolver<'a> {
             // Propagate the browser scope into child directories
             info.enclosing_browser_scope = parent_.enclosing_browser_scope;
             info.package_json_for_browser_field = parent_.package_json_for_browser_field;
-            info.enclosing_tsconfig_json = parent_.enclosing_tsconfig_json;
+
+            // Do not inherit the enclosing tsconfig across a "node_modules" boundary.
+            // A project-level tsconfig's `paths`/`baseUrl` must not leak into
+            // dependencies: with `"*": ["node_modules/*"]` a package's own
+            // `require("x")` would otherwise be remapped to the hoisted root copy
+            // instead of its nested one. A package that ships its own tsconfig.json
+            // still picks it up below and propagates it to its subdirectories, so
+            // workspace packages installed into node_modules keep their own path
+            // mappings.
+            if !parent_.is_node_modules() {
+                info.enclosing_tsconfig_json = parent_.enclosing_tsconfig_json;
+            }
 
             if let Some(parent_package_json) = parent_.package_json() {
                 // https://github.com/oven-sh/bun/issues/229

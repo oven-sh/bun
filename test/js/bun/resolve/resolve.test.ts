@@ -1101,3 +1101,109 @@ it.skipIf(isWindows)("reports a resolution error for an absolute specifier of th
   expect(stdout).toBe("ResolveMessage ERR_MODULE_NOT_FOUND\n");
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/5377
+// A project-level tsconfig `paths`/`baseUrl` mapping must not leak into packages under
+// node_modules: `outer`'s own `require("inner")` has to find its nested copy, not the
+// hoisted root one, and the project's own files must still get the mapping.
+it("tsconfig paths are not applied to imports from inside node_modules", async () => {
+  using dir = tempDir("tsconfig-paths-node-modules", {
+    "package.json": JSON.stringify({ name: "app", dependencies: { outer: "1.0.0", inner: "2.0.0" } }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { baseUrl: ".", paths: { "*": ["node_modules/*", "src/types/*"] } },
+    }),
+    "entry.js": `
+      const outer = require("outer");
+      const alias = require("only-via-paths");
+      console.log(JSON.stringify({ outer, alias }));
+    `,
+    "src/types/only-via-paths/index.js": `module.exports = "paths-mapped";`,
+
+    "node_modules/inner/package.json": JSON.stringify({ name: "inner", version: "2.0.0", main: "index.js" }),
+    "node_modules/inner/index.js": `module.exports = "hoisted";`,
+
+    "node_modules/outer/package.json": JSON.stringify({
+      name: "outer",
+      version: "1.0.0",
+      main: "index.js",
+      dependencies: { inner: "1.0.0" },
+    }),
+    "node_modules/outer/index.js": `module.exports = require("inner");`,
+    "node_modules/outer/node_modules/inner/package.json": JSON.stringify({
+      name: "inner",
+      version: "1.0.0",
+      main: "index.js",
+    }),
+    "node_modules/outer/node_modules/inner/index.js": `module.exports = "nested";`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ outer: "nested", alias: "paths-mapped" });
+  expect(exitCode).toBe(0);
+});
+
+it("tsconfig baseUrl is not applied to imports from inside node_modules", async () => {
+  using dir = tempDir("tsconfig-baseurl-node-modules", {
+    "package.json": JSON.stringify({ name: "app" }),
+    "tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: "./src" } }),
+    "entry.js": `console.log(require("pkg"));`,
+    "src/shadowed/index.js": `module.exports = "from-src";`,
+
+    "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "index.js" }),
+    "node_modules/pkg/index.js": `module.exports = require("shadowed");`,
+    "node_modules/pkg/node_modules/shadowed/package.json": JSON.stringify({ name: "shadowed", main: "index.js" }),
+    "node_modules/pkg/node_modules/shadowed/index.js": `module.exports = "from-nested-node-modules";`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("from-nested-node-modules\n");
+  expect(exitCode).toBe(0);
+});
+
+// A package inside node_modules that carries its own tsconfig.json (e.g. a workspace
+// installed into node_modules) keeps its own `paths` mapping; only the outer
+// project's tsconfig is cut off at the node_modules boundary.
+it("a package's own tsconfig paths still apply inside node_modules", async () => {
+  using dir = tempDir("tsconfig-paths-inside-package", {
+    "package.json": JSON.stringify({ name: "app" }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { baseUrl: ".", paths: { "*": ["node_modules/*"] } },
+    }),
+    "entry.js": `console.log(require("mylib"));`,
+
+    "node_modules/mylib/package.json": JSON.stringify({ name: "mylib", version: "1.0.0", main: "src/index.js" }),
+    "node_modules/mylib/tsconfig.json": JSON.stringify({
+      compilerOptions: { baseUrl: ".", paths: { "@utils/*": ["src/utils/*"] } },
+    }),
+    "node_modules/mylib/src/index.js": `module.exports = require("@utils/helper");`,
+    "node_modules/mylib/src/utils/helper.js": `module.exports = "own-tsconfig-paths";`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("own-tsconfig-paths\n");
+  expect(exitCode).toBe(0);
+});

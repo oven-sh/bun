@@ -35,7 +35,6 @@
 #include "JavaScriptCore/Interpreter.h"
 namespace WebCore {
 
-
 enum class JSDOMIteratorType { Set,
     Map };
 

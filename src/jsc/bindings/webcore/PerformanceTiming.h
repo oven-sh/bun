@@ -64,7 +64,6 @@ public:
 
 private:
     explicit PerformanceTiming();
-
 };
 
 } // namespace WebCore

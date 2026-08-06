@@ -99,7 +99,6 @@ public:
     virtual EventTargetInterface eventTargetInterface() const = 0;
     virtual ScriptExecutionContext* scriptExecutionContext() const = 0;
 
-
     bool isContextStopped() const;
 
     using AddEventListenerOptionsOrBoolean = std::variant<AddEventListenerOptions, bool>;

@@ -37,8 +37,8 @@ HTTP_HEADERS_EACH_NAME(HTTP_HEADERS_ACCESSOR_DEFINITIONS)
 #define HTTP_HEADERS_STRING_ARRAY_ENTRIES(literal, name) \
     &HTTPHeaderIdentifiers::name##String,
 
-using StringGetter
-    = JSC::JSString* (HTTPHeaderIdentifiers::*)(JSC::JSGlobalObject*);
+    using StringGetter
+    = JSC::JSString * (HTTPHeaderIdentifiers::*)(JSC::JSGlobalObject*);
 
 static StringGetter headerStringFields[]
     = {

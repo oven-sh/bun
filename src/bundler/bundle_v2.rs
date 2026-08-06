@@ -4638,6 +4638,12 @@ pub mod bv2_impl {
                                     ..Default::default()
                                 })
                                 .expect("unreachable");
+                            this.share_non_js_source_index_across_graphs(
+                                resolve.import_record.original_target,
+                                loader,
+                                path.text,
+                                source_index.get(),
+                            );
                             let task_val = ParseTask {
                                 // SAFETY: `from_mut(this)` is the live bundle (write provenance);
                                 // outlives the task.

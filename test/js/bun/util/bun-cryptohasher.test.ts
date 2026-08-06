@@ -196,7 +196,7 @@ describe("HMAC", () => {
       import { createHmac } from "node:crypto";
       const N = 1 << 20;
       const hmac = k => createHmac("sha256", k).update("payload").digest("hex");
-      const out = { second: [], first: [] };
+      const out = { second: [], first: [], gcKey: [] };
       for (let i = 0; i < 5; i++) {
         const key = new Uint8Array(N).fill(0x41);
         const orig = key.slice();
@@ -231,6 +231,27 @@ describe("HMAC", () => {
         const got = new Bun.CryptoHasher(alg, key).update("payload").digest("hex");
         out.first.push({ calls, detached: key.byteLength === 0, ok: got === hmac(new Uint8Array(0)) });
       }
+      // A String-object key coerces via its own toString(), which runs after
+      // the algorithm string was coerced. GC pressure in that window must not
+      // invalidate the algorithm: the digest must use sha256 and the real key.
+      for (let i = 0; i < 3; i++) {
+        let calls = 0;
+        const alg = new String("sha256");
+        // Build a fresh, non-atomized string each call so nothing roots it.
+        alg.toString = () => {
+          calls++;
+          return ("sha256" + i).slice(0, 6);
+        };
+        const spray = [];
+        const key = new String("secret-key");
+        key.toString = () => {
+          Bun.gc(true);
+          for (let j = 0; j < 8; j++) spray.push(new Uint8Array(N).fill(0x5a));
+          return "secret-key";
+        };
+        const got = new Bun.CryptoHasher(alg, key).update("payload").digest("hex");
+        out.gcKey.push({ calls, ok: got === hmac("secret-key") });
+      }
       console.log(JSON.stringify(out));
     `;
     await using proc = Bun.spawn({
@@ -253,6 +274,11 @@ describe("HMAC", () => {
         { calls: 1, detached: true, ok: true },
         { calls: 1, detached: true, ok: true },
         { calls: 1, detached: true, ok: true },
+      ],
+      gcKey: [
+        { calls: 1, ok: true },
+        { calls: 1, ok: true },
+        { calls: 1, ok: true },
       ],
     });
     expect(exitCode).toBe(0);

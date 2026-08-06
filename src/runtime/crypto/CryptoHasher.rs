@@ -489,32 +489,32 @@ impl CryptoHasher {
             return Err(global.throw_invalid_arguments(format_args!("Invalid algorithm name")));
         }
 
-        let mut hmac_key: Option<StringOrBuffer> = None;
-        // `defer { if (hmac_key) |*key| key.deinit(); }` — handled by Drop on `hmac_key`.
-
-        if !hmac_value.is_empty_or_undefined_or_null() {
-            hmac_key = match StringOrBuffer::from_js(global, hmac_value)? {
-                Some(k) => Some(k),
-                None => {
-                    return Err(global
-                        .throw_invalid_arguments(format_args!("key must be a string or buffer")));
-                }
-            };
-        }
-
         let init = 'brk: {
-            if let Some(key) = &hmac_key {
-                let chosen_algorithm: evp::Algorithm = {
+            if !hmac_value.is_empty_or_undefined_or_null() {
+                // `algorithm` borrows the JSString produced by the coercion
+                // above, which nothing roots; resolve it to an enum before the
+                // key capture below can run user JS (a String-object key's
+                // toString()) and GC the backing string.
+                let chosen_algorithm: Option<evp::Algorithm> = {
                     let slice = algorithm.to_slice();
-                    match evp::lookup_ignore_case(slice.slice()) {
-                        Some(v) => v,
-                        None => {
-                            return Err(global.throw_invalid_arguments(format_args!(
-                                "algorithm must be one of {}",
-                                evp::ALGORITHM_ONE_OF
-                            )));
-                        }
+                    evp::lookup_ignore_case(slice.slice())
+                };
+
+                let key = match StringOrBuffer::from_js(global, hmac_value)? {
+                    Some(k) => k,
+                    None => {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "key must be a string or buffer"
+                        )));
                     }
+                };
+                // `defer key.deinit()` — handled by Drop on `key`.
+
+                let Some(chosen_algorithm) = chosen_algorithm else {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "algorithm must be one of {}",
+                        evp::ALGORITHM_ONE_OF
+                    )));
                 };
 
                 break 'brk CryptoHasher::Hmac(JsCell::new(Some(

@@ -1286,7 +1286,7 @@ impl AsyncModule {
         }
 
         // No watcher registration here: `maybe_watch_file` already ran before
-        // the enqueue, and `parse_result.input_fd` may have been closed (and
+        // the enqueue, and the fd the parse opened may have been closed (and
         // the number recycled) by the transpile frame's fd guard.
 
         // SAFETY: per-thread VM.

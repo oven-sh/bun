@@ -41,6 +41,15 @@ public:
 
     DECLARE_EXPORT_INFO;
     bool m_reportOnUncaughtException = false;
+    bool m_reportCompact = false;
+    bool m_reportOnFatalError = false;
+    bool m_reportOnSignal = false;
+    bool m_reportReportOnUncaughtException = false;
+    bool m_reportExcludeEnv = false;
+    bool m_reportExcludeNetwork = false;
+    WTF::String m_reportDirectory { emptyString() };
+    WTF::String m_reportFilename { emptyString() };
+    WTF::String m_reportSignal { "SIGUSR2"_s };
 
     static void destroy(JSC::JSCell* cell)
     {

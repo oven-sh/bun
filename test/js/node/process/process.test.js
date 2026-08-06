@@ -1111,6 +1111,229 @@ describe.concurrent(() => {
     JSON.stringify(process.report.getReport(), null, 2);
   });
 
+  describe("process.report", () => {
+    it("getReport() with no argument uses a synthetic error", () => {
+      const g = process.report.getReport();
+      expect(g.javascriptStack.message).toBe("Error [ERR_SYNTHETIC]: JavaScript Callstack");
+      expect(g.javascriptStack.errorProperties).toEqual({ code: "ERR_SYNTHETIC" });
+      expect(Array.isArray(g.javascriptStack.stack)).toBe(true);
+    });
+
+    it("getReport(err) embeds the error's message and stack", () => {
+      const err = new Error("marker-xyzzy");
+      err.code = "ECUSTOM";
+      err.num = 42;
+      const g = process.report.getReport(err);
+      expect(g.javascriptStack.message).toBe("Error: marker-xyzzy");
+      expect(Array.isArray(g.javascriptStack.stack)).toBe(true);
+      expect(g.javascriptStack.stack.length).toBeGreaterThan(0);
+      expect(g.javascriptStack.stack.some(l => l.includes("process.test.js"))).toBe(true);
+      expect(g.javascriptStack.errorProperties).toEqual({ code: "ECUSTOM", num: "42" });
+    });
+
+    it("getReport(err) uses the stack property verbatim when present", () => {
+      const g = process.report.getReport({ stack: "first\n  at frame1\n  at frame2\n", extra: "x" });
+      expect(g.javascriptStack).toEqual({
+        message: "first",
+        stack: ["at frame1", "at frame2"],
+        errorProperties: { extra: "x" },
+      });
+    });
+
+    it("getReport(err) handles an object without a stack", () => {
+      const g = process.report.getReport({ custom: "v" });
+      expect(g.javascriptStack).toEqual({
+        message: "No stack.",
+        stack: ["Unavailable."],
+        errorProperties: {},
+      });
+    });
+
+    it("getReport(err) swallows a throwing .stack getter", () => {
+      const o = {
+        get stack() {
+          throw new Error("boom");
+        },
+      };
+      expect(process.report.getReport(o).javascriptStack).toEqual({
+        message: "No stack.",
+        stack: ["Unavailable."],
+        errorProperties: {},
+      });
+    });
+
+    it("getReport(err) skips throwing property getters in errorProperties", () => {
+      const o = {
+        stack: "head\n  at frame\n",
+        a: 1,
+        get b() {
+          throw new Error("boom");
+        },
+        c: 3,
+      };
+      expect(process.report.getReport(o).javascriptStack).toEqual({
+        message: "head",
+        stack: ["at frame"],
+        errorProperties: { a: "1", c: "3" },
+      });
+    });
+
+    it("getReport(err) skips integer-index own properties in errorProperties", () => {
+      const o = { stack: "head\n  at frame\n", 0: "x", 1: "y", named: "z" };
+      expect(process.report.getReport(o).javascriptStack).toEqual({
+        message: "head",
+        stack: ["at frame"],
+        errorProperties: { named: "z" },
+      });
+    });
+
+    it("getReport(err) swallows a Proxy ownKeys trap that throws", () => {
+      const p = new Proxy(
+        { stack: "head\n  at frame\n" },
+        {
+          ownKeys() {
+            throw new Error("boom");
+          },
+        },
+      );
+      expect(process.report.getReport(p).javascriptStack).toEqual({
+        message: "head",
+        stack: ["at frame"],
+        errorProperties: {},
+      });
+    });
+
+    it("accessors and getReport work when invoked from a node:vm context", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const vm = require("node:vm");
+           const r = process.report;
+           const ctx = vm.createContext({ r, Error });
+           vm.runInContext("r.compact = true", ctx);
+           const sig = vm.runInContext("r.signal", ctx);
+           const msg = vm.runInContext("r.getReport(new Error('vm-marker')).javascriptStack.message", ctx);
+           console.log(JSON.stringify({ compact: r.compact, sig, msg }));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+        stdout: { compact: true, sig: "SIGUSR2", msg: "Error: vm-marker" },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("getReport(err) validates the argument type", () => {
+      for (const v of [42, "x", true, null, [], () => {}]) {
+        expect(() => process.report.getReport(v)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+      }
+      expect(() => process.report.getReport(undefined)).not.toThrow();
+      expect(() => process.report.getReport({})).not.toThrow();
+    });
+
+    it("writeReport validates its arguments", () => {
+      for (const [arg, argName] of [
+        [42, "file"],
+        [() => {}, "file"],
+        [[], "err"],
+      ]) {
+        expect(() => process.report.writeReport(arg)).toThrow(
+          expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: expect.stringContaining(`"${argName}"`) }),
+        );
+      }
+      expect(() => process.report.writeReport("file", 42)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+      );
+      expect(() => process.report.writeReport("file", null)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+      );
+      expect(() => process.report.writeReport(new Error("e"))).not.toThrow();
+    });
+
+    it("has the expected defaults", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const r = process.report;
+           console.log(JSON.stringify({
+             compact: r.compact,
+             directory: r.directory,
+             filename: r.filename,
+             signal: r.signal,
+             reportOnFatalError: r.reportOnFatalError,
+             reportOnSignal: r.reportOnSignal,
+             reportOnUncaughtException: r.reportOnUncaughtException,
+             excludeEnv: r.excludeEnv,
+             excludeNetwork: r.excludeNetwork,
+           }));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+        stdout: {
+          compact: false,
+          directory: "",
+          filename: "",
+          signal: "SIGUSR2",
+          reportOnFatalError: false,
+          reportOnSignal: false,
+          reportOnUncaughtException: false,
+          excludeEnv: false,
+          excludeNetwork: false,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    describe.each([
+      ["compact", 1, "ERR_INVALID_ARG_TYPE", true],
+      ["directory", 123, "ERR_INVALID_ARG_TYPE", "dir"],
+      ["filename", 123, "ERR_INVALID_ARG_TYPE", "file"],
+      ["signal", "NOTASIG", "ERR_UNKNOWN_SIGNAL", "SIGINT"],
+      ["signal", "NOTASIG", "ERR_UNKNOWN_SIGNAL", "SIGUSR2"],
+      ["signal", 123, "ERR_INVALID_ARG_TYPE", "SIGINT"],
+      ["reportOnFatalError", 1, "ERR_INVALID_ARG_TYPE", true],
+      ["reportOnSignal", 1, "ERR_INVALID_ARG_TYPE", true],
+      ["reportOnUncaughtException", 1, "ERR_INVALID_ARG_TYPE", true],
+      ["excludeEnv", 1, "ERR_INVALID_ARG_TYPE", true],
+      ["excludeNetwork", 1, "ERR_INVALID_ARG_TYPE", true],
+    ])("%s", (prop, bad, code, good) => {
+      it(`rejects ${JSON.stringify(bad)} with ${code} and accepts ${JSON.stringify(good)}`, async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const r = process.report;
+             const before = r[${JSON.stringify(prop)}];
+             try { r[${JSON.stringify(prop)}] = ${JSON.stringify(bad)}; console.log("bad-ok"); }
+             catch (e) { console.log("bad-err", e.code, r[${JSON.stringify(prop)}] === before); }
+             r[${JSON.stringify(prop)}] = ${JSON.stringify(good)};
+             console.log("good", JSON.stringify(r[${JSON.stringify(prop)}]));`,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: `bad-err ${code} true\ngood ${JSON.stringify(good)}\n`,
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    });
+  });
+
   it("process.exit with jsDoubleNumber that is an integer", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "./process-exit-decimal-fixture.js")],

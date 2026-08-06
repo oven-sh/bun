@@ -1780,8 +1780,7 @@ impl DNSLookup {
         bun_output::scoped_log!(DNSLookup, "onCompleteNative");
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
-            let array = match super::options_jsc::result_any_to_js(result, (*this).global_this())
-            {
+            let array = match super::options_jsc::result_any_to_js(result, (*this).global_this()) {
                 Ok(Some(array)) => array,
                 Ok(None) => {
                     error_to_deferred(
@@ -4342,8 +4341,7 @@ impl Resolver {
         // SAFETY: `self` is the live heap allocation; ref_scope keeps count > 0 across re-entrant callbacks.
         let _g = unsafe { Self::ref_scope(self.as_ctx_ptr()) };
 
-        let mut array: JSValue = match super::options_jsc::result_any_to_js(result, global_object)
-        {
+        let mut array: JSValue = match super::options_jsc::result_any_to_js(result, global_object) {
             Ok(Some(a)) => a,
             // Conversion threw; the empty sentinel makes
             // `settle_lookup_promise` reject with the pending exception.

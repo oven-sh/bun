@@ -131,12 +131,14 @@ bool _mi_os_commit(mi_subproc_t* subproc, void* addr, size_t size, bool* is_zero
 
 // Host is a `bun build --compile` executable? (BUN_COMPILED = the embedded-module section header; size != 0 only in compiled outputs.)
 // Those get deterministic address hints from the first allocation so a heap image can be built from / mapped into them without any env.
+// Defined by Bun (c-bindings.cpp); this mimalloc is only ever linked into Bun, so a strong reference (LTO internalizes the definition, which
+// would leave a weak reference unbound on ELF).
 #ifdef __cplusplus
-extern "C" int bun_is_compiled_executable(void) __attribute__((weak));
+extern "C" int bun_is_compiled_executable(void);
 #else
-extern int bun_is_compiled_executable(void) __attribute__((weak));
+extern int bun_is_compiled_executable(void);
 #endif
-#define bun_heap_image_mode ((bun_is_compiled_executable != NULL) ? bun_is_compiled_executable() : 0)
+#define bun_heap_image_mode (bun_is_compiled_executable())
 static mi_decl_cache_align _Atomic(uintptr_t) aligned_base; // = 0  (hint bump pointer; file scope so mi_os_hint_floor can move it)
 
 // Heap image restore: make sure every hinted OS allocation from now on lands at or above `floor` (the image occupies the area below).

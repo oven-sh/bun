@@ -1,12 +1,13 @@
 // moduleLoaderResolve short-circuits keys whose "ns:" prefix matches a
 // registered onLoad namespace so the C++ loader doesn't re-resolve a key the
-// plugin already produced. A single-letter prefix like "C:" is a Windows
-// drive, never a plugin namespace; resolving "C:\\..." with a one-letter
-// namespace registered must still reach the filesystem resolver.
+// plugin already produced. On Windows a single letter followed by ":" and a
+// separator is a drive root ("C:\\..."), never a namespace, so such a key must
+// still reach the filesystem resolver. Other platforms have no drive roots, so
+// the prefix is the namespace, matching PluginRunner::extract_namespace.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
-test("single-letter plugin namespace does not capture Windows drive paths", async () => {
+test("a single-letter namespace never captures a Windows drive root", async () => {
   using dir = tempDir("plugin-ns-drive-letter", {
     "preload.ts": `
       Bun.plugin({
@@ -22,18 +23,16 @@ test("single-letter plugin namespace does not capture Windows drive paths", asyn
       });
     `,
     // Static import of a non-existent absolute Windows path. moduleLoaderResolve
-    // sees the literal "C:\\..." key; the short-circuit must not treat the
-    // single-letter "C" prefix as the registered plugin namespace.
+    // sees the literal "C:\\..." key.
     "uses-drive.mjs": `
       import x from "C:\\\\__definitely_missing__\\\\x.js";
       export default x;
     `,
     "entry.mjs": `
       try {
-        await import("./uses-drive.mjs");
-        console.log("imported");
-      } catch (e) {
-        console.log("rejected:" + (e && e.constructor && e.constructor.name));
+        console.log("loaded:" + (await import("./uses-drive.mjs")).default);
+      } catch {
+        console.log("rejected");
       }
     `,
   });
@@ -45,9 +44,7 @@ test("single-letter plugin namespace does not capture Windows drive paths", asyn
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // Must NOT have produced "imported".
-  expect(stdout.trim().startsWith("rejected:")).toBe(true);
-  expect(stdout).not.toContain("imported");
+
+  expect(stdout.trim() || stderr).toBe(isWindows ? "rejected" : "loaded:from-plugin");
   expect(exitCode).toBe(0);
-  void stderr;
 });

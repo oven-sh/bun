@@ -269,8 +269,6 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObje
             throwRangeError(globalObject, throwScope, "Maximum length must be >= 0"_s);
             return {};
         }
-        // Saturate instead of toUInt32, which wraps values >= 2^32 and
-        // silently truncates the result.
         maxLength = clampTo<size_t>(number);
     }
 

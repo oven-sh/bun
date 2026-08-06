@@ -42,6 +42,7 @@ const errorCodes = {
 const IANA_DNS_PORT = 53;
 const IPv6RE = /^\[([^[\]]*)\]/;
 const addrSplitRE = /(^.+?)(?::(\d+))?$/;
+const UV_EINVAL = process.platform === "win32" ? -4071 : -22;
 
 function translateErrorCode(promise: Promise<any>) {
   return promise.catch(error => {
@@ -95,6 +96,21 @@ function setDefaultResultOrder(order) {
 
 function getDefaultResultOrder() {
   return defaultResultOrder();
+}
+
+function reverseInvalidIPError(ip) {
+  const err = new Error(ip ? `getHostByAddr EINVAL ${ip}` : "getHostByAddr EINVAL");
+  err.errno = UV_EINVAL;
+  err.code = "EINVAL";
+  err.syscall = "getHostByAddr";
+  if (ip) err.hostname = ip;
+  return err;
+}
+
+function localAddressError(message) {
+  const err = $makeTypeError(message);
+  err.code = "ERR_INVALID_ARG_VALUE";
+  return err;
 }
 
 // ares_inet_pton rejects IPv6 zone identifiers; Node's uv_inet_pton strips them.
@@ -223,9 +239,20 @@ function validateResolve(hostname, callback) {
 }
 
 function validateLocalAddresses(first, second) {
-  validateString(first);
+  validateString(first, "ipv4");
+  const firstFamily = isIP(first);
+  if (firstFamily === 0) {
+    throw localAddressError("Invalid IP address.");
+  }
   if (typeof second !== "undefined") {
-    validateString(second);
+    validateString(second, "ipv6");
+    const secondFamily = isIP(second);
+    if (secondFamily === 0) {
+      throw localAddressError("Invalid IP address.");
+    }
+    if (firstFamily === secondFamily) {
+      throw localAddressError(`Cannot specify two IPv${firstFamily} addresses.`);
+    }
   }
 }
 
@@ -350,12 +377,13 @@ function lookupService(address, port, callback) {
     throw $ERR_MISSING_ARGS("address", "port", "callback");
   }
 
+  if (isIP(address) === 0) {
+    throw $ERR_INVALID_ARG_VALUE("address", address);
+  }
+  validatePort(port, "port");
   if (typeof callback !== "function") {
     throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
   }
-
-  validateString(address);
-  validatePort(port, "port");
 
   dns.lookupService(address, +port).then(
     results => {
@@ -619,8 +647,12 @@ var InternalResolver = class Resolver {
   }
 
   reverse(ip, callback) {
+    validateString(ip, "name");
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
+    }
+    if (isIP(ip) === 0) {
+      throw reverseInvalidIPError(ip);
     }
 
     Resolver.#getResolver(this)
@@ -766,7 +798,9 @@ const promises = {
       throw $ERR_MISSING_ARGS("address", "port");
     }
 
-    validateString(address);
+    if (isIP(address) === 0) {
+      throw $ERR_INVALID_ARG_VALUE("address", address);
+    }
     validatePort(port, "port");
 
     try {
@@ -841,6 +875,10 @@ const promises = {
     return translateErrorCode(dns.resolveCname(hostname));
   },
   reverse(ip) {
+    validateString(ip, "name");
+    if (isIP(ip) === 0) {
+      return Promise.$reject(reverseInvalidIPError(ip));
+    }
     return translateErrorCode(dns.reverse(ip));
   },
 
@@ -933,6 +971,10 @@ const promises = {
     }
 
     reverse(ip) {
+      validateString(ip, "name");
+      if (isIP(ip) === 0) {
+        return Promise.$reject(reverseInvalidIPError(ip));
+      }
       return translateErrorCode(Resolver.#getResolver(this).reverse(ip));
     }
 

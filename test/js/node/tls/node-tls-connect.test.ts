@@ -1297,36 +1297,33 @@ describe("servernames containing NUL bytes", () => {
   // The SNI servername becomes the C string handed to
   // SSL_set_tlsext_host_name, so "good.example\0evil" would silently send
   // "good.example" on the wire while JS-level checks see the full string.
-  it.each(["localhost\0.example.invalid", "localhost\0"])(
-    "tls.connect rejects servername %j",
-    async servername => {
-      // A real local TLS server: without the check, the handshake COMPLETES
-      // with the truncated SNI, which the sentinel below turns into a failure.
-      const server = tls.createServer(COMMON_CERT_);
-      await once(server.listen(0, "127.0.0.1"), "listening");
-      let err: any;
-      let socket: ReturnType<typeof tls.connect> | undefined;
-      try {
-        socket = tls.connect({
-          host: "127.0.0.1",
-          port: (server.address() as AddressInfo).port,
-          servername,
-          rejectUnauthorized: false,
-        });
-        const client = socket;
-        err = await new Promise((resolve, reject) => {
-          client.on("error", resolve);
-          client.on("secureConnect", () => reject(new Error("handshake completed with a truncated SNI")));
-        });
-      } catch (e) {
-        err = e;
-      } finally {
-        socket?.destroy();
-        server.close();
-      }
-      expect(err?.message).toContain("must not contain null bytes");
-    },
-  );
+  it.each(["localhost\0.example.invalid", "localhost\0"])("tls.connect rejects servername %j", async servername => {
+    // A real local TLS server: without the check, the handshake COMPLETES
+    // with the truncated SNI, which the sentinel below turns into a failure.
+    const server = tls.createServer(COMMON_CERT_);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    let err: any;
+    let socket: ReturnType<typeof tls.connect> | undefined;
+    try {
+      socket = tls.connect({
+        host: "127.0.0.1",
+        port: (server.address() as AddressInfo).port,
+        servername,
+        rejectUnauthorized: false,
+      });
+      const client = socket;
+      err = await new Promise((resolve, reject) => {
+        client.on("error", resolve);
+        client.on("secureConnect", () => reject(new Error("handshake completed with a truncated SNI")));
+      });
+    } catch (e) {
+      err = e;
+    } finally {
+      socket?.destroy();
+      server.close();
+    }
+    expect(err?.message).toContain("must not contain null bytes");
+  });
 
   it("socket.setServername rejects a servername containing a NUL byte", async () => {
     // A plain server that never responds keeps the handshake pending, so the

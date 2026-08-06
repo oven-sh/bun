@@ -56,9 +56,7 @@ describe.concurrent("NUL bytes in addresses are rejected, not truncated", () => 
   it("resolver.setServers rejects an IP containing a NUL", () => {
     const resolver = new dns.Resolver();
     for (const address of ["8.8.8.8\0.example.invalid", "8.8.8.8\0"]) {
-      expect(() => resolver.setServers([address])).toThrow(
-        expect.objectContaining({ code: "ERR_INVALID_IP_ADDRESS" }),
-      );
+      expect(() => resolver.setServers([address])).toThrow(expect.objectContaining({ code: "ERR_INVALID_IP_ADDRESS" }));
     }
   });
 

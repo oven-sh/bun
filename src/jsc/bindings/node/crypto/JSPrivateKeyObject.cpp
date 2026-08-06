@@ -8,7 +8,6 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/LazyClassStructureInlines.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
-#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/ObjectPrototype.h>
 
 namespace Bun {

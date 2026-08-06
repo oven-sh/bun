@@ -16,7 +16,7 @@ impl Timer {
         unreachable!("FeatureFlags.tracing should be disabled in WASM");
     }
 
-    pub fn reset(&mut self) -> u64 {
+    pub fn reset(&mut self) {
         unreachable!("FeatureFlags.tracing should be disabled in WASM");
     }
 }

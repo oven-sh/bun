@@ -8,19 +8,6 @@ use crate::JSValue;
 // Drop is the release for the `init()` protect.
 
 #[cfg(debug_assertions)]
-macro_rules! enable_safety {
-    () => {
-        true
-    };
-}
-#[cfg(not(debug_assertions))]
-macro_rules! enable_safety {
-    () => {
-        false
-    };
-}
-
-#[cfg(debug_assertions)]
 type Safety = Option<SafetyData>;
 #[cfg(not(debug_assertions))]
 type Safety = ();
@@ -90,6 +77,3 @@ impl Drop for DeprecatedStrong {
         }
     }
 }
-
-// suppress unused warning in release builds
-const _: bool = enable_safety!();

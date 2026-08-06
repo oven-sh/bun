@@ -632,4 +632,90 @@ export default function IndexPage() {
     expect(css).toContain(":-webkit-full-screen");
     expect(css).toContain(":fullscreen");
   });
+
+  test("css imported through a 'use client' component is bundled once", async () => {
+    // The boundary file is parsed into both the client and SSR graphs; its
+    // stylesheet must share one source index across graphs or the build emits
+    // two chunks whose identical content collides on one output path.
+    const dir = await tempDirWithBakeDeps("bake-production-client-css", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `
+import Client from "../components/Client";
+export default function IndexPage() {
+  return <div>Hello <Client /></div>;
+}`,
+      "components/Client.tsx": `
+"use client";
+import "../styles.css";
+export default function Client() {
+  return <span>client</span>;
+}`,
+      "styles.css": `
+.box:fullscreen {
+  color: red;
+}`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).not.toContain("DuplicateOutputPath");
+    expect(exitCode).toBe(0);
+
+    const cssFiles = await Array.fromAsync(new Bun.Glob("**/*.css").scan(path.join(dir, "dist")));
+    expect(cssFiles).toHaveLength(1);
+    const css = await Bun.file(path.join(dir, "dist", cssFiles[0])).text();
+    expect(css).toContain(":-webkit-full-screen");
+  });
+
+  test("css imported from both a page and a 'use client' component is bundled once", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-shared-css", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `
+import "../styles.css";
+import Client from "../components/Client";
+export default function IndexPage() {
+  return <div>Hello <Client /></div>;
+}`,
+      "components/Client.tsx": `
+"use client";
+import "../styles.css";
+export default function Client() {
+  return <span>client</span>;
+}`,
+      "styles.css": `
+.box:fullscreen {
+  color: red;
+}`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).not.toContain("DuplicateOutputPath");
+    expect(exitCode).toBe(0);
+
+    const cssFiles = await Array.fromAsync(new Bun.Glob("**/*.css").scan(path.join(dir, "dist")));
+    expect(cssFiles).toHaveLength(1);
+    const css = await Bun.file(path.join(dir, "dist", cssFiles[0])).text();
+    expect(css).toContain(":-webkit-full-screen");
+  });
 });

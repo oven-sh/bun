@@ -1556,6 +1556,28 @@ impl<'a> BundleOptions<'a> {
         }
     }
 
+    /// Whether this bundle is part of a bake build (dev server or
+    /// `bun build --app`), i.e. it has a client graph alongside server graphs.
+    /// `framework` is set on every bake transpiler, including production
+    /// builds of frameworks that don't configure server components.
+    #[inline]
+    pub(crate) fn is_bake_build(&self) -> bool {
+        self.framework.is_some() || self.has_dev_server()
+    }
+
+    /// The target whose CSS feature set (vendor prefixing, selector
+    /// downleveling) stylesheets are minified for. Bake builds emit every
+    /// stylesheet into the client bundle, so CSS is compiled for the browser
+    /// even when the importing graph is a server one.
+    #[inline]
+    pub(crate) fn css_target(&self) -> Target {
+        if self.is_bake_build() {
+            Target::Browser
+        } else {
+            self.target
+        }
+    }
+
     pub(crate) fn load_defines(
         &mut self,
         arena: &bun_alloc::Arena,

@@ -6533,6 +6533,39 @@ pub mod bv2_impl {
                         *value_ptr = new_task.source_index.get();
                     }
 
+                    // For non-JavaScript files in server-components builds,
+                    // share one source index across graphs (mirrors
+                    // `run_resolver`): bundling a stylesheet or asset once per
+                    // graph emits duplicate chunks, and identical copies then
+                    // collide on the same content-hashed output path.
+                    if self.transpiler.options.server_components
+                        && !loader.is_javascript_like()
+                        && loader != Loader::Html
+                    {
+                        let main_target = self.transpiler.options.target;
+                        let separate_ssr = self
+                            .framework
+                            .as_ref()
+                            .and_then(|f| f.server_components.as_ref())
+                            .is_some_and(|sc| sc.separate_ssr_graph);
+                        let (ta, tb) = match target {
+                            Target::Browser => (main_target, Target::ServerComponentsSsr),
+                            Target::ServerComponentsSsr => (main_target, Target::Browser),
+                            _ => (Target::Browser, Target::ServerComponentsSsr),
+                        };
+                        let shared_index = new_task.source_index.get();
+                        self.graph
+                            .path_to_source_index_map(ta)
+                            .put(new_task.path.text, shared_index)
+                            .expect("oom");
+                        if separate_ssr {
+                            self.graph
+                                .path_to_source_index_map(tb)
+                                .put(new_task.path.text, shared_index)
+                                .expect("oom");
+                        }
+                    }
+
                     diff += 1;
 
                     self.graph

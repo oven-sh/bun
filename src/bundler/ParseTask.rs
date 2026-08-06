@@ -1028,7 +1028,7 @@ pub mod parse_worker {
                         source,
                         b"",
                     )?
-                    .unwrap(),
+                    .ok_or(AnyError::ParserError)?,
                 ));
             }
             Loader::Napi => {
@@ -1097,7 +1097,7 @@ pub mod parse_worker {
                         source,
                         b"",
                     )?
-                    .unwrap(),
+                    .ok_or(AnyError::ParserError)?,
                 ));
             }
             Loader::Html => {
@@ -1123,7 +1123,7 @@ pub mod parse_worker {
                     source,
                     b"",
                 )?
-                .unwrap();
+                .ok_or(AnyError::ParserError)?;
                 ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
 
                 // We're banning import default of html loader files for now.
@@ -1249,7 +1249,7 @@ pub mod parse_worker {
                     symbols,
                 );
                 let _ = temp_log.append_to_maybe_recycled(log, source);
-                let mut ast = JSAst::init(lazy?.unwrap());
+                let mut ast = JSAst::init(lazy?.ok_or(AnyError::ParserError)?);
                 let css_ast_heap = crate::bundled_ast::CssAstRef::from_bump(bump.alloc(css_ast));
                 ast.css = Some(css_ast_heap);
                 ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
@@ -1318,7 +1318,7 @@ pub mod parse_worker {
                         source,
                         b"",
                     )?
-                    .unwrap(),
+                    .ok_or(AnyError::ParserError)?,
                 );
                 ast.add_url_for_css(
                     bump,

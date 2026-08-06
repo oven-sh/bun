@@ -1910,7 +1910,10 @@ fn parse_data_loader<'a>(
             }]);
         }
 
-        let contains_datetime = expr_contains_toml_datetime(&expr);
+        // Only the TOML parser tags date/time strings; skip the walk for the
+        // other data loaders.
+        let contains_datetime =
+            loader == options::Loader::Toml && expr_contains_toml_datetime(&expr);
         if let Some(obj) = expr.data.e_object_mut() {
             let properties: &mut [bun_ast::G::Property] = obj.properties.slice_mut();
             if !properties.is_empty() {

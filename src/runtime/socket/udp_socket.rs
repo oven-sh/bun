@@ -394,9 +394,7 @@ impl UDPSocketConfig {
                         "Expected \"hostname\" to be a string"
                     )));
                 }
-                // Coerce once and validate the coerced bytes: `is_string`
-                // admits String objects, whose toString could return a
-                // different value on a repeated coercion.
+                // Coerce once; a repeated coercion could observe a different value.
                 let host_str = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
                 if host_str.to_utf8_without_ref().slice().contains(&0) {
                     return Err(global_this.throw_invalid_arguments(format_args!(
@@ -491,9 +489,7 @@ impl UDPSocketConfig {
                 )));
             }
 
-            // Coerce once and validate the coerced bytes: `is_string` admits
-            // String objects, whose toString could return a different value on
-            // a repeated coercion.
+            // Coerce once; a repeated coercion could observe a different value.
             let connect_host = bun_core::OwnedString::new(connect_host_js.to_bun_string(global_this)?);
             if connect_host.to_utf8_without_ref().slice().contains(&0) {
                 return Err(global_this.throw_invalid_arguments(format_args!(

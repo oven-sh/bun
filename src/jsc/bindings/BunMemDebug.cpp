@@ -1765,7 +1765,16 @@ static void imageRestoreAndRun(const char* path)
         mi_arenas_seal_existing(); // every arena that exists now is image memory: nobody (any thread) allocates into its free space again
         { uint64_t top = 0; for (auto& r : regions) if (r.addr >= 0x20000000000ull && r.addr < 0x300000000000ull) top = std::max<uint64_t>(top, r.addr + r.len); if (top) mi_os_hint_floor((void*)(top + (1ull << 30))); } // the overlay brought the builder's hint pointer; make sure fresh memory goes above everything imaged
         mi_arena_id_t freshArena = 0; mi_heap_t* fresh = nullptr;
-        if (!getenv("BUN_IMAGE_NOFRESHARENA") && mi_reserve_os_memory_ex(1ull << 30, false, false, true, &freshArena) == 0) fresh = mi_heap_new_in_arena(freshArena); // post-restore memory never interleaves with (or dirties the bitmaps of) image arenas
+        if (!getenv("BUN_IMAGE_NOFRESHARENA")) { // post-restore memory never interleaves with (or dirties the bitmaps of) image arenas
+            // Explicit placement (no dependence on the allocator's hint state, which the overlay just replaced): 1GiB right above everything imaged.
+            uint64_t top = 0; for (auto& r : regions) if (r.addr >= 0x20000000000ull && r.addr < 0x300000000000ull) top = std::max<uint64_t>(top, r.addr + r.len);
+            void* want = (void*)((top + (1ull << 30)) & ~((1ull << 30) - 1)); size_t sz = 1ull << 30;
+            void* got = mmap(want, sz, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+            if (got != MAP_FAILED && got != want) { munmap(got, sz); got = MAP_FAILED; }
+            if (got != MAP_FAILED && mi_manage_os_memory_ex(got, sz, /*committed*/ false, /*large*/ false, /*zero*/ true, /*numa*/ -1, /*exclusive*/ true, &freshArena)) fresh = mi_heap_new_in_arena(freshArena);
+            else if (mi_reserve_os_memory_ex(sz, false, false, true, &freshArena) == 0) fresh = mi_heap_new_in_arena(freshArena);
+            mi_os_hint_floor((void*)((uintptr_t)want + 2 * sz)); // and anything beyond that arena keeps going up from there
+        }
         mi_theap_set_default(mi_heap_theap(fresh ? fresh : mi_heap_new()));
         { void* probe = mi_malloc(64); if (verbose) fprintf(stderr, "[image] fresh heap: arena reserved=%d probe=%p\n", (int)(fresh != nullptr), probe); if (WTF::isInImageImmortalRange(probe)) { fprintf(stderr, "[image] fresh heap overlaps the immortal-refcount range; disabling it\n"); WTF::g_imageImmortalRangeSpan = 0; } mi_free(probe); }
     }

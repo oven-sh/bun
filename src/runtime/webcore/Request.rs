@@ -1208,7 +1208,11 @@ impl Request {
 
                     if !fields.contains(Fields::Body) {
                         match request.body_value() {
-                            BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
+                            BodyValue::Null | BodyValue::Used => {}
+                            // `Empty` is a non-null body; an input copy keeps
+                            // it, while an `init` entry leaves it to the
+                            // dictionary fallback.
+                            BodyValue::Empty if !is_input_argument => {}
                             _ => {
                                 match request.clone_body_value_via_cached_stream(global_this) {
                                     Ok(v) => {

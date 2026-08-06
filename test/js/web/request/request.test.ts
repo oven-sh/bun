@@ -285,6 +285,16 @@ describe("new Request(request) copies internal state without calling getters", (
     expect(await new Request(make(), {}).text()).toBe("real-body");
   });
 
+  test("an empty-string body input copies as a non-null empty body", async () => {
+    const make = () => new Request("http://localhost/", { method: "POST", body: "" });
+    const single = new Request(make());
+    const withInit = new Request(make(), {});
+    expect(single.body).not.toBeNull();
+    expect(withInit.body).not.toBeNull();
+    expect(await single.text()).toBe("");
+    expect(await withInit.text()).toBe("");
+  });
+
   test("the input's signal carries over even when its signal getter is shadowed", () => {
     const ctl = new AbortController();
     const input = new Request("http://localhost/", { signal: ctl.signal });
@@ -307,6 +317,15 @@ describe("new Request(request) copies internal state without calling getters", (
         "Cannot construct a Request with a Request object that has already been used.",
       );
     }
+
+    // Node throws "Request with GET/HEAD method cannot have body." here
+    // because its GET/HEAD-body check precedes the unusable check. Bun has no
+    // constructor-level GET/HEAD-body check (it enforces at fetch() time), so
+    // the unusable error fires; adding that check later must consciously flip
+    // this precedence.
+    expect(() => new Request(input, { method: "GET" })).toThrow(
+      "Cannot construct a Request with a Request object that has already been used.",
+    );
 
     // an init-provided body replaces the input's, so the used input body is
     // never read and nothing throws

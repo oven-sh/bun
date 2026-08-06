@@ -32,6 +32,7 @@ const decoy = isPosix
 
 afterAll(() => {
   decoy?.stop(true);
+  dir[Symbol.dispose]();
 });
 
 const nulPath = D + "/a\0b";

@@ -1249,11 +1249,7 @@ impl ServerConfig {
                 }
 
                 let slice = unix_str.slice();
-                // The kernel reads a filesystem sun_path as a NUL-terminated
-                // string, so an interior NUL would silently truncate the path.
-                // Abstract names (leading NUL, Linux) are length-delimited and
-                // may contain NUL bytes.
-                if slice.first().is_some_and(|&b| b != 0) && slice.contains(&0) {
+                if crate::socket::unix_path_has_interior_nul(slice) {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "\"unix\" must not contain null bytes"
                     )));

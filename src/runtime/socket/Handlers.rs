@@ -540,12 +540,7 @@ impl SocketConfig {
                 let without_prefix = slice[7..].to_vec();
                 result.hostname_or_unix = ZigStringSlice::init_owned(without_prefix);
             }
-            let slice = result.hostname_or_unix.slice();
-            // The kernel reads a filesystem sun_path as a NUL-terminated
-            // string, so an interior NUL would silently truncate the path.
-            // Abstract names (leading NUL, Linux) are length-delimited and may
-            // contain NUL bytes.
-            if slice.first().is_some_and(|&b| b != 0) && slice.contains(&0) {
+            if crate::socket::unix_path_has_interior_nul(result.hostname_or_unix.slice()) {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "\"unix\" must not contain null bytes"
                 )));

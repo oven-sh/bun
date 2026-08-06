@@ -10,13 +10,6 @@ pub use crate::shared::{
 unsafe extern "C" {
     pub safe fn zlibVersion() -> *const c_char;
 
-    pub fn deflateInit_(
-        strm: z_streamp,
-        level: c_int,
-        version: *const c_char,
-        stream_size: c_int,
-    ) -> ReturnCode;
-    pub fn inflateInit_(strm: z_streamp, version: *const c_char, stream_size: c_int) -> ReturnCode;
     pub fn deflateInit2_(
         strm: z_streamp,
         level: c_int,

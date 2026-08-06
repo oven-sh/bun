@@ -22,7 +22,6 @@ bun_output::declare_scope!(IPC, visible);
 // shims take only the global plus by-value `JSValue`s, so the validity proof
 // lives in the type signature.
 unsafe extern "C" {
-    pub safe fn Bun__Process__queueNextTick1(global: &JSGlobalObject, f: JSValue, arg: JSValue);
     pub(crate) safe fn Process__emitErrorEvent(global: &JSGlobalObject, value: JSValue);
 }
 

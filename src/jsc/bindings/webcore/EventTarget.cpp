@@ -74,11 +74,6 @@ EventTarget::~EventTarget()
         data->clear();
 }
 
-bool EventTarget::isNode() const
-{
-    return false;
-}
-
 bool EventTarget::isContextStopped() const
 {
     return !scriptExecutionContext();
@@ -237,7 +232,6 @@ void EventTarget::dispatchEvent(Event& event)
     event.setTarget(this);
     event.setCurrentTarget(this);
     event.setEventPhase(Event::AT_TARGET);
-    event.resetBeforeDispatch();
     event.setEventPath(eventPath);
     fireEventListeners(event, EventInvokePhase::Capturing);
     fireEventListeners(event, EventInvokePhase::Bubbling);

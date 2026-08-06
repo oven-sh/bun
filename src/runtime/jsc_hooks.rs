@@ -2610,7 +2610,6 @@ fn transpile_source_code_inner(
                             is_node_override,
                             path,
                             hash,
-                            loader,
                             package_json,
                         );
                     }
@@ -2659,7 +2658,6 @@ fn transpile_source_code_inner(
                         is_node_override,
                         path,
                         hash,
-                        loader,
                         package_json,
                     );
                 }
@@ -2967,7 +2965,6 @@ fn transpile_source_code_inner(
                             bun_jsc::async_module::InitOpts {
                                 parse_result,
                                 path: *path,
-                                loader,
                                 fd,
                                 package_json: package_json.map(|p| {
                                     &*core::ptr::from_ref(p)
@@ -3393,7 +3390,6 @@ fn transpile_source_code_inner(
                         input_fd,
                         path.text,
                         hash,
-                        loader,
                         bun_sys::Fd::INVALID,
                         None,
                     )
@@ -3484,7 +3480,6 @@ fn maybe_watch_file(
     is_node_override: bool,
     path: &Fs::Path,
     hash: u32,
-    loader: Loader,
     package_json: Option<&'static bun_watcher::PackageJSON>,
 ) {
     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
@@ -3508,7 +3503,6 @@ fn maybe_watch_file(
         input_file_fd,
         path.text,
         hash,
-        loader,
         bun_sys::Fd::INVALID,
         package_json,
     );

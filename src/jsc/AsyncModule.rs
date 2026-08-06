@@ -6,8 +6,6 @@ use bun_core::{OwnedString, String as BunString, ZigString};
 use bun_install::dependency::Dependency;
 use bun_install::{DependencyID, Resolution};
 use bun_io::KeepAlive;
-use bun_options_types::LoaderExt as _;
-use bun_options_types::schema::api;
 use bun_resolver::fs as Fs;
 use bun_resolver::package_json::PackageJSON;
 use bun_sys::Fd;
@@ -28,7 +26,6 @@ pub struct InitOpts<'a> {
     pub promise_ptr: Option<*mut *mut JSInternalPromise>,
     pub fd: Option<Fd>,
     pub package_json: Option<&'a PackageJSON>,
-    pub loader: bun_ast::Loader,
     pub hash: u32,
     pub arena: Box<ArenaAllocator>,
     /// Backs `parse_result`'s small `AstVec`s (inline bump chunk); must stay
@@ -52,7 +49,6 @@ pub struct AsyncModule {
     // `Queue`/`VirtualMachine` without a phantom lifetime; `global_this` uses
     // [`crate::GlobalRef`] which encapsulates the single audited deref.
     pub(crate) package_json: Option<core::ptr::NonNull<PackageJSON>>,
-    pub(crate) loader: api::Loader,
     pub(crate) hash: u32, // default = u32::MAX
     pub global_this: crate::GlobalRef,
     pub(crate) arena: Box<ArenaAllocator>,
@@ -655,7 +651,6 @@ impl AsyncModule {
             referrer_len,
             specifier_len,
             package_json: opts.package_json.map(core::ptr::NonNull::from),
-            loader: opts.loader.to_api(),
             hash: opts.hash,
             // .stmt_blocks = stmt_blocks,
             // .expr_blocks = expr_blocks,
@@ -1339,7 +1334,6 @@ impl AsyncModule {
                         fd_,
                         path.text,
                         self.hash,
-                        bun_ast::Loader::from_api(self.loader),
                         Fd::INVALID,
                         package_json,
                     );

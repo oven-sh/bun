@@ -93,7 +93,6 @@ const K_FS_EVENTS_RENAMED: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CREATED
     | K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_RENAMED;
 
 static FSEVENTS_DEFAULT_LOOP_MUTEX: Mutex = Mutex::new();
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 static FSEVENTS_DEFAULT_LOOP: std::sync::OnceLock<&'static FSEventsLoop> =
     std::sync::OnceLock::new();
 
@@ -816,8 +815,7 @@ impl FSEventsLoop {
         unsafe { (cf.run_loop_stop)(self.loop_.load(Ordering::Relaxed)) };
     }
 
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    fn shutdown(&'static self) {
+        fn shutdown(&'static self) {
         // SAFETY: `thread` is only touched here and in `init()`, always on the JS thread under `FSEVENTS_DEFAULT_LOOP_MUTEX`.
         let Some(thread) = (unsafe { (*self.thread.get()).take() }) else {
             return; // already shut down
@@ -872,8 +870,7 @@ pub type Callback = fn(ctx: *mut c_void, event: Event, is_file: bool);
 pub(crate) type UpdateEndCallback = fn(ctx: *mut c_void);
 
 impl FSEventsWatcher {
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    fn init(
+        fn init(
         loop_: &'static FSEventsLoop,
         path: &[u8],
         recursive: bool,

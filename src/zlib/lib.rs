@@ -73,10 +73,6 @@ use crate::internal::{DataType, zStream_struct};
 // ZEXTERN int ZEXPORT inflateInit OF((z_streamp strm));
 
 unsafe extern "C" {
-    /// Initializes the internal stream state for decompression. The fields next_in, avail_in, zalloc, zfree and opaque must be initialized before by the caller. In the current version of inflate, the provided input is not read or consumed. The allocation of a sliding window will be deferred to the first call of inflate (if the decompression does not complete on the first call). If zalloc and zfree are set to Z_NULL, inflateInit updates them to use default allocation functions.
-    ///
-    /// inflateInit returns Z_OK if success, Z_MEM_ERROR if there was not enough memory, Z_VERSION_ERROR if the zlib library version is incompatible with the version assumed by the caller, or Z_STREAM_ERROR if the parameters are invalid, such as a null pointer to the structure. msg is set to null if there is no error message. inflateInit does not perform any decompression. Actual decompression will be done by inflate(). So next_in, and avail_in, next_out, and avail_out are unused and unchanged. The current implementation of inflateInit() does not process any header information—that is deferred until inflate() is called.
-    pub fn inflateInit_(strm: z_streamp, version: *const u8, stream_size: c_int) -> ReturnCode;
     pub fn inflateInit2_(
         strm: z_streamp,
         window_size: c_int,
@@ -424,31 +420,6 @@ impl Default for Options {
 }
 
 unsafe extern "C" {
-    ///
-    ///     Initializes the internal stream state for compression.  The fields
-    ///   zalloc, zfree and opaque must be initialized before by the caller.  If
-    ///   zalloc and zfree are set to Z_NULL, deflateInit updates them to use default
-    ///   allocation functions.
-    ///
-    ///     The compression level must be Z_DEFAULT_COMPRESSION, or between 0 and 9:
-    ///   1 gives best speed, 9 gives best compression, 0 gives no compression at all
-    ///   (the input data is simply copied a block at a time).  Z_DEFAULT_COMPRESSION
-    ///   requests a default compromise between speed and compression (currently
-    ///   equivalent to level 6).
-    ///
-    ///     deflateInit returns Z_OK if success, Z_MEM_ERROR if there was not enough
-    ///   memory, Z_STREAM_ERROR if level is not a valid compression level, or
-    ///   Z_VERSION_ERROR if the zlib library version (zlib_version) is incompatible
-    ///   with the version assumed by the caller (ZLIB_VERSION).  msg is set to null
-    ///   if there is no error message.  deflateInit does not perform any compression:
-    ///   this will be done by deflate().
-    pub fn deflateInit_(
-        strm: z_streamp,
-        level: c_int,
-        version: *const c_char,
-        stream_size: c_int,
-    ) -> ReturnCode;
-
     ///
     ///    deflate compresses as much data as possible, and stops when the input
     ///  buffer becomes empty or the output buffer becomes full.  It may introduce

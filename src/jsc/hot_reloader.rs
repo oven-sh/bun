@@ -32,12 +32,6 @@ pub enum ImportWatcher {
     Watch(Box<Watcher>),
 }
 
-// Drift guard for the bun_watcher CYCLEBREAK `Loader` newtype: its `File`
-// constant must mirror `bun_ast::Loader::File` —
-// the watcher stores that value for auto-watched directories. This crate sees
-// both types, so the compile-time check lives here.
-const _: () = assert!(bun_watcher::Loader::File.0 == bun_ast::Loader::File as u8);
-
 impl ImportWatcher {
     /// Look up the cached fd (and `package_json` column) for `hash` under the
     /// watcher's mutex, snapshotting both before returning.
@@ -84,12 +78,10 @@ impl ImportWatcher {
     }
 
     #[inline]
-    pub fn add_file_by_path_slow(&mut self, file_path: &[u8], loader: bun_ast::Loader) -> bool {
-        // Note: bun_watcher::Loader is an opaque newtype over u8;
-        // wrap the bun_ast::Loader discriminant.
+    pub fn add_file_by_path_slow(&mut self, file_path: &[u8]) -> bool {
         match self {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => {
-                w.add_file_by_path_slow(file_path, bun_watcher::Loader(loader as u8))
+                w.add_file_by_path_slow(file_path)
             }
             ImportWatcher::None => true,
         }
@@ -101,7 +93,6 @@ impl ImportWatcher {
         fd: Fd,
         file_path: &[u8],
         hash: bun_watcher::HashType,
-        loader: bun_ast::Loader,
         dir_fd: Fd,
         // Note: bun_watcher::PackageJSON is an opaque forward-decl;
         // callers cast from `&bun_resolver::PackageJSON`.
@@ -113,7 +104,6 @@ impl ImportWatcher {
                     fd,
                     file_path,
                     hash,
-                    bun_watcher::Loader(loader as u8),
                     dir_fd,
                     package_json,
                 ),

@@ -92,13 +92,6 @@ unsafe extern "C" {
     pub fn gzerror(file: gzFile, errnum: *mut c_int) -> *const u8;
     pub fn adler32(adler: uLong, buf: *const Bytef, len: uInt) -> uLong;
     pub fn crc32(crc: uLong, buf: *const Bytef, len: uInt) -> uLong;
-    pub fn deflateInit_(
-        strm: z_streamp,
-        level: c_int,
-        version: *const c_char,
-        stream_size: c_int,
-    ) -> ReturnCode;
-    pub fn inflateInit_(strm: z_streamp, version: *const c_char, stream_size: c_int) -> ReturnCode;
     pub fn deflateInit2_(
         strm: z_streamp,
         level: c_int,

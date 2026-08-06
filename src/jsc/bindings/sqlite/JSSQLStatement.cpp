@@ -1554,7 +1554,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
                 SQLiteBindingsMap bindings { static_cast<uint16_t>(count > -1 ? count : 0), strict };
                 JSC::JSValue reb = rebindStatement(lexicalGlobalObject, bindingsAliveScope.value(), scope, db, versionDB, sql.stmt, bindings, safeIntegers, nullptr);
                 if (versionDB->handle() != db) [[unlikely]] {
-                    sql.stmt = nullptr; // close() during binding already finalized it via the sqlite3_next_stmt() sweep
+                    // close() during binding deferred sqlite3_close via close_v2;
+                    // finalizing sql.stmt on scope exit completes it.
                     if (!scope.exception())
                         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Database has closed"_s));
                     return {};
@@ -1861,34 +1862,36 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
         return JSValue::encode(jsUndefined());
     }
 
-    // close(false) keeps db.prepare() statements usable and defers sqlite3_close until they drain; everything else is finalized now.
-    WTF::HashSet<sqlite3_stmt*> kept;
+    // close(false) keeps db.prepare() statements usable and defers sqlite3_close until they drain; everything else bun owns is finalized now.
+    bool keptAny = false;
     for (auto* statement : versionDB->statements) {
         if (!statement->stmt)
             continue;
         if (!force && !statement->ownedByDatabase) {
-            kept.add(statement->stmt);
+            keptAny = true;
             continue;
         }
         sqlite3_finalize(statement->stmt);
         statement->stmt = nullptr;
         statement->finalizedByClose = true;
     }
-    for (sqlite3_stmt* stmt = sqlite3_next_stmt(db, nullptr); stmt;) {
-        sqlite3_stmt* next = sqlite3_next_stmt(db, stmt);
-        if (!kept.contains(stmt))
-            sqlite3_finalize(stmt);
-        stmt = next;
-    }
 
     versionDB->closed = true;
-    if (!kept.isEmpty()) {
+    if (keptAny) {
         return JSValue::encode(jsUndefined());
     }
 
+    // Statements bun doesn't track may still be live on the connection:
+    // virtual-table modules (e.g. FTS5) cache their own prepared statements
+    // and finalize them during vtab disconnect inside sqlite3_close*, and a
+    // re-entrant close() from a bound-parameter getter leaves db.run()'s
+    // transient statement alive on this stack. Never finalize those behind
+    // their owner's back; on SQLITE_BUSY, close_v2 defers the close until
+    // they drain.
     int statusCode = force ? sqlite3_close(db) : sqlite3_close_v2(db);
-    if (statusCode != SQLITE_OK && force) {
+    if (statusCode == SQLITE_BUSY) {
         sqlite3_close_v2(db);
+        statusCode = SQLITE_OK;
     }
     versionDB->db = nullptr;
 

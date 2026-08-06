@@ -26,33 +26,33 @@ for (const fixture of ["smoke-fixture.js", "heavy-fixture.js"]) {
   });
 }
 
-test.skipIf(!hasImages)("bun build --compile --compile-image writes <exe>.img and the exe restores from it with no env", async () => {
+test.skipIf(!hasImages)("bun build --compile --compile-image embeds the image; the single file restores from itself with no env", async () => {
   using dir = tempDir("bun-image-compile", {});
   const exe = join(String(dir), "heavy");
   const build = Bun.spawnSync({ cmd: [bunExe(), "build", "--compile", "--bytecode", "--format=esm", "--compile-image", join(import.meta.dir, "heavy-fixture.js"), "--outfile", exe], env: bunEnv, stderr: "pipe", stdout: "pipe" });
-  expect(build.stderr.toString() + build.stdout.toString()).toContain("[image] wrote");
-  expect(Bun.file(exe + ".img").size).toBeGreaterThan(1024 * 1024);
-  // No image env at all: the sibling .img is discovered and the process re-execs itself with what it needs.
-  await using proc = Bun.spawn({ cmd: [exe], env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH! }, stderr: "pipe", stdout: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("[image] restored");
-  expect(stdout).toContain("epoch 1");
-  expect(stdout).toContain("fetch -> hello from restored server");
-  expect(exitCode).toBe(0);
-  // Opt out.
+  const buildOut = build.stderr.toString() + build.stdout.toString();
+  expect(buildOut).toContain("[image] wrote");
+  expect(buildOut).toContain("embedded");
+  // Nothing beside the executable: the image lives in its __BUN/.bun section.
+  expect(require("fs").readdirSync(String(dir)).sort()).toEqual(["heavy"]);
+  for (const run of [1, 2]) {
+    await using proc = Bun.spawn({ cmd: [exe], env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH! }, stderr: "pipe", stdout: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("[image] restored");
+    expect(stdout).toContain("epoch 1");
+    expect(stdout).toContain("fetch -> hello from restored server");
+    expect(exitCode).toBe(0);
+  }
+  // Opt out boots normally.
   const plain = Bun.spawnSync({ cmd: [exe], env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, BUN_IMAGE: "0" }, stderr: "pipe", stdout: "pipe" });
   expect(plain.stdout.toString()).toContain("epoch 0");
   expect(plain.exitCode).toBe(0);
-  // Ship only the compressed image: first run inflates it into XDG_CACHE_HOME and restores from there.
-  expect(Bun.file(exe + ".img.zst").size).toBeGreaterThan(1024);
-  require("fs").unlinkSync(exe + ".img");
-  const cache = join(String(dir), "cache");
-  for (const run of [1, 2]) {
-    const z = Bun.spawnSync({ cmd: [exe], env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, XDG_CACHE_HOME: cache }, stderr: "pipe", stdout: "pipe" });
-    expect(z.stderr.toString()).toContain("[image] restored");
-    expect(z.stdout.toString()).toContain("epoch 1");
-    expect(z.exitCode).toBe(0);
-  }
-  expect(require("fs").readdirSync(join(cache, "bun", "images")).filter((f: string) => f.endsWith(".img")).length).toBe(1);
-}, 30_000); // a compile plus five process launches (two of them inflating the .zst)
-
+  // Debugging: an explicit image file still wins (BUN_IMAGE_KEEP_SIDECAR keeps <exe>.img next to it at build time).
+  const dbg = join(String(dir), "dbg");
+  const b2 = Bun.spawnSync({ cmd: [bunExe(), "build", "--compile", "--bytecode", "--format=esm", "--compile-image", join(import.meta.dir, "heavy-fixture.js"), "--outfile", dbg], env: { ...bunEnv, BUN_IMAGE_KEEP_SIDECAR: "1" }, stderr: "pipe", stdout: "pipe" });
+  expect(b2.exitCode).toBe(0);
+  expect(Bun.file(dbg + ".img").size).toBeGreaterThan(1024 * 1024);
+  const viaFile = Bun.spawnSync({ cmd: [dbg], env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, BUN_IMAGE_IN: dbg + ".img" }, stderr: "pipe", stdout: "pipe" });
+  expect(viaFile.stdout.toString()).toContain("epoch 1");
+  expect(viaFile.exitCode).toBe(0);
+}, 60_000);

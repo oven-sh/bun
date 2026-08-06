@@ -882,39 +882,49 @@ impl BuildCommand {
                     }
                 }
 
-                let result = match bun_standalone_module_graph::StandaloneModuleGraph::to_executable(
-                    compile_target,
-                    output_files,
-                    root_dir.fd,
-                    &opt_public_path,
-                    outfile,
-                    // SAFETY: `env` is a process-lifetime singleton.
-                    unsafe { &mut *env_ptr },
-                    opt_output_format,
-                    &ctx.bundler_options.windows,
-                    ctx.bundler_options
-                        .compile_exec_argv
-                        .as_deref()
-                        .unwrap_or(b""),
-                    ctx.bundler_options.compile_executable_path.as_deref(),
-                    {
-                        use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
-                        let mut flags = Flags::default();
-                        if !ctx.bundler_options.compile_autoload_dotenv {
-                            flags |= Flags::DISABLE_DEFAULT_ENV_FILES;
-                        }
-                        if !ctx.bundler_options.compile_autoload_bunfig {
-                            flags |= Flags::DISABLE_AUTOLOAD_BUNFIG;
-                        }
-                        if !ctx.bundler_options.compile_autoload_tsconfig {
-                            flags |= Flags::DISABLE_AUTOLOAD_TSCONFIG;
-                        }
-                        if !ctx.bundler_options.compile_autoload_package_json {
-                            flags |= Flags::DISABLE_AUTOLOAD_PACKAGE_JSON;
-                        }
-                        flags
-                    },
-                ) {
+                let compile_flags = {
+                    use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
+                    let mut flags = Flags::default();
+                    if !ctx.bundler_options.compile_autoload_dotenv {
+                        flags |= Flags::DISABLE_DEFAULT_ENV_FILES;
+                    }
+                    if !ctx.bundler_options.compile_autoload_bunfig {
+                        flags |= Flags::DISABLE_AUTOLOAD_BUNFIG;
+                    }
+                    if !ctx.bundler_options.compile_autoload_tsconfig {
+                        flags |= Flags::DISABLE_AUTOLOAD_TSCONFIG;
+                    }
+                    if !ctx.bundler_options.compile_autoload_package_json {
+                        flags |= Flags::DISABLE_AUTOLOAD_PACKAGE_JSON;
+                    }
+                    flags
+                };
+                // Emits the executable. Pass 1 serializes the graph (bytes captured in `serialized`); pass 2 (--compile-image) reuses those exact
+                // bytes with the heap image appended — the image holds pointers into that payload, so it must not be re-serialized.
+                let mut serialized: Vec<u8> = Vec::new();
+                let emit_executable =
+                    |prebuilt: Option<&[u8]>, serialized_out: Option<&mut Vec<u8>>| {
+                        bun_standalone_module_graph::StandaloneModuleGraph::to_executable(
+                            compile_target,
+                            output_files,
+                            root_dir.fd,
+                            &opt_public_path,
+                            outfile,
+                            // SAFETY: `env` is a process-lifetime singleton.
+                            unsafe { &mut *env_ptr },
+                            opt_output_format,
+                            &ctx.bundler_options.windows,
+                            ctx.bundler_options
+                                .compile_exec_argv
+                                .as_deref()
+                                .unwrap_or(b""),
+                            ctx.bundler_options.compile_executable_path.as_deref(),
+                            compile_flags,
+                            prebuilt,
+                            serialized_out,
+                        )
+                    };
+                let result = match emit_executable(None, Some(&mut serialized)) {
                     Ok(r) => r,
                     Err(err) => {
                         Output::print_errorln(format_args!(
@@ -939,7 +949,49 @@ impl BuildCommand {
                         ));
                         Global::exit(1);
                     }
-                    write_heap_image_by_running(root_dir.fd, outfile);
+                    // Pass 1 produced the executable; run it so the app snapshots itself, then re-emit with the image embedded.
+                    let img_path = write_heap_image_by_running(root_dir.fd, outfile);
+                    let img = match std::fs::read(&img_path) {
+                        Ok(img) => img,
+                        Err(e) => {
+                            Output::print_errorln(format_args!(
+                                "--compile-image: could not read {}: {}",
+                                img_path, e
+                            ));
+                            Global::exit(1);
+                        }
+                    };
+                    let Some(payload) = bun_standalone_module_graph::StandaloneModuleGraph::append_image_to_serialized(&serialized, &img) else {
+                        Output::print_errorln(format_args!("--compile-image: internal error (serialized graph has no trailer)"));
+                        Global::exit(1);
+                    };
+                    match emit_executable(Some(&payload), None) {
+                        Ok(
+                            bun_standalone_module_graph::StandaloneModuleGraph::CompileResult::Err(
+                                err,
+                            ),
+                        ) => {
+                            Output::print_errorln(format_args!("{}", bstr::BStr::new(err.slice())));
+                            Global::exit(1);
+                        }
+                        Err(err) => {
+                            Output::print_errorln(format_args!(
+                                "failed to embed heap image: {}",
+                                err.name()
+                            ));
+                            Global::exit(1);
+                        }
+                        Ok(_) => {
+                            Output::prettyln(format_args!(
+                                "<green>[image]</r> embedded {:.1} MB heap image into the executable",
+                                img.len() as f64 / 1048576.0
+                            ));
+                            if std::env::var_os("BUN_IMAGE_KEEP_SIDECAR").is_none() {
+                                let _ = std::fs::remove_file(&img_path);
+                                let _ = std::fs::remove_file(format!("{img_path}.zst"));
+                            }
+                        }
+                    }
                 }
 
                 // Write external sourcemap files next to the compiled executable.
@@ -1432,7 +1484,7 @@ pub(crate) fn collect_compile_assets(
 }
 
 /// `--compile-image`: run the freshly built executable with `BUN_IMAGE_OUT=<exe>.img`; the app snapshots itself once idle.
-fn write_heap_image_by_running(root_fd: bun_sys::Fd, outfile: &[u8]) {
+fn write_heap_image_by_running(root_fd: bun_sys::Fd, outfile: &[u8]) -> String {
     let mut exe: Vec<u8> = if outfile.first() == Some(&b'/') {
         outfile.to_vec()
     } else {
@@ -1467,6 +1519,7 @@ fn write_heap_image_by_running(root_fd: bun_sys::Fd, outfile: &[u8]) {
                 size as f64 / 1048576.0,
                 st.code().unwrap_or(-1)
             ));
+            img_str
         }
         Ok(st) => {
             Output::print_errorln(format_args!(

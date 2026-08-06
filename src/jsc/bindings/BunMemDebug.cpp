@@ -113,6 +113,11 @@ static std::vector<std::pair<uintptr_t, uintptr_t>> s_frozenRanges; // sorted [s
 static std::vector<uintptr_t> s_payloadPages; // sorted OS pages that held live malloc blocks (main heap) at freeze
 static std::map<uintptr_t, uint32_t> s_pageSizeClass; // page -> block size of (first) live block seen
 struct FrozenRun { uintptr_t start; size_t len; size_t fileOff; };
+// Image bytes may live at an offset inside a bigger file (embedded in the executable's __BUN/.bun section): all image-file reads/maps add this.
+static off_t s_imageBaseOff = 0;
+static ssize_t ipread(int fd, void* buf, size_t n, off_t off) { return ::pread(fd, buf, n, off + s_imageBaseOff); }
+static void* immap(void* addr, size_t len, int prot, int flags, int fd, off_t off) { return ::mmap(addr, len, prot, flags, fd, off + s_imageBaseOff); }
+
 static std::vector<FrozenRun> s_runs;
 static int s_snapFd = -1;
 static std::set<uintptr_t> s_profileCells; // cells changed during the "training" interaction
@@ -280,15 +285,44 @@ static bool siblingImageExists() // cheap pre-check (no inflate): is there an <e
     snprintf(p, sizeof p, "%s.img.zst", exe); return !access(p, R_OK);
 }
 
+
+extern "C" bool Bun__standaloneEmbeddedImage(const uint8_t** outPtr, size_t* outLen);
+static bool embeddedImageExists() { const char* off = getenv("BUN_IMAGE"); if (off && (!strcmp(off, "0") || !strcmp(off, "false"))) return false; const uint8_t* p; size_t n; return Bun__standaloneEmbeddedImage(&p, &n); }
+// "<own executable>@<file offset>" for an image embedded in the __BUN/.bun section (in-memory pointer -> segment -> file offset).
+static bool findEmbeddedImage(char* out, size_t cap)
+{
+    const char* off = getenv("BUN_IMAGE"); if (off && (!strcmp(off, "0") || !strcmp(off, "false"))) return false;
+    const uint8_t* p = nullptr; size_t n = 0; if (!Bun__standaloneEmbeddedImage(&p, &n)) return false;
+    char exe[4096]; int64_t fileOff = -1; uintptr_t a = (uintptr_t)p;
+#if OS(DARWIN)
+    uint32_t len = sizeof exe; if (_NSGetExecutablePath(exe, &len) != 0) return false;
+    const struct mach_header_64* mh = &_mh_execute_header; intptr_t slide = 0;
+    for (uint32_t i = 0; i < _dyld_image_count(); i++) if ((const struct mach_header_64*)_dyld_get_image_header(i) == mh) { slide = _dyld_get_image_vmaddr_slide(i); break; }
+    const uint8_t* lc = (const uint8_t*)(mh + 1);
+    for (uint32_t i = 0; i < mh->ncmds; i++) { const struct load_command* c = (const struct load_command*)lc; if (c->cmd == LC_SEGMENT_64) { const struct segment_command_64* sc = (const struct segment_command_64*)c; uintptr_t lo = sc->vmaddr + slide; if (a >= lo && a < lo + sc->vmsize && (a - lo) < sc->filesize) { fileOff = (int64_t)(sc->fileoff + (a - lo)); break; } } lc += c->cmdsize; }
+#elif OS(LINUX)
+    ssize_t r = readlink("/proc/self/exe", exe, sizeof exe - 1); if (r <= 0) return false; exe[r] = 0;
+    // ELF: elf::get_data() maps the appended payload from the file; its pointer is not inside a PT_LOAD. Ask the graph code for the file offset instead (TODO); unsupported for now.
+    (void)a; return false;
+#else
+    return false;
+#endif
+    if (fileOff < 0 || (fileOff & 16383)) { fprintf(stderr, "[image] embedded image is not page-aligned in the file (offset %lld); ignoring\n", (long long)fileOff); return false; }
+    snprintf(out, cap, "%s@%lld", exe, (long long)fileOff);
+    return true;
+}
+
 extern "C" void Bun__imageMaybeRestore()
 {
     // No setenv()/heap use in a process that is about to restore: environ would be reallocated into memory the image overlays.
-    bool wantImage = getenv("BUN_IMAGE_IN") || getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT") || siblingImageExists();
+    bool wantImage = getenv("BUN_IMAGE_IN") || getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT") || siblingImageExists() || embeddedImageExists();
     if (wantImage)
         reexecWithoutASLRIfSlid(); // returns only once we are the unslid process with the image env in place
     char path[4200] = "";
-    if (const char* in = getenv("BUN_IMAGE_IN")) snprintf(path, sizeof path, "%s", in);
-    else if (!getenv("BUN_IMAGE_OUT") && !getenv("CLAUDE_CODE_SNAPSHOT_OUT")) findSiblingImage(path, sizeof path) || (path[0] = 0);
+    if (const char* in = getenv("BUN_IMAGE_IN")) snprintf(path, sizeof path, "%s", in); // explicit file (debugging / dev loop)
+    else if (!getenv("BUN_IMAGE_OUT") && !getenv("CLAUDE_CODE_SNAPSHOT_OUT")) {
+        if (!findSiblingImage(path, sizeof path)) { path[0] = 0; findEmbeddedImage(path, sizeof path); } // sibling .img[.zst] (debugging), else the image embedded in this executable
+    }
     s_imageActive = path[0] || getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT");
     if (path[0])
         imageRestoreAndRun(path); // returns only if the image was declined (then we boot normally, still with image-compatible options so a rebuild can snapshot)
@@ -673,7 +707,7 @@ static void fileSnapshotHeap(JSC::VM& vm)
             // write pages to file at page-aligned offset, then map that file range back over the same addresses
             if (getenv("BUN_FILESNAP_NOREMAP")) { i = j; continue; }
             if (pwrite(fd, (void*)a, len, fileOff) != (ssize_t)len) { fprintf(stderr, "[filesnap] pwrite failed %d\n", errno); close(fd); return; }
-            void* m = mmap((void*)a, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, fileOff);
+            void* m = immap((void*)a, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, fileOff);
             if (m == MAP_FAILED) { fprintf(stderr, "[filesnap] mmap fixed failed at %p len %zu errno %d\n", (void*)a, len, errno); skipped++; }
             else { remapped += len; runs++; s_frozenRanges.push_back({ a, a + len }); s_runs.push_back({ a, len, fileOff }); }
             fileOff += len;
@@ -697,7 +731,7 @@ static void fileSnapshotHeap(JSC::VM& vm)
             while (j < extra.size() && extra[j] == extra[j - 1] + JSC::MarkedBlock::blockSize) j++;
             uintptr_t a = extra[i]; size_t len = (j - i) * JSC::MarkedBlock::blockSize;
             if (pwrite(fd, (void*)a, len, fileOff) == (ssize_t)len) {
-                void* m = mmap((void*)a, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, fileOff);
+                void* m = immap((void*)a, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, fileOff);
                 if (m != MAP_FAILED) { remapped += len; runs++; extraBytes += len; s_frozenRanges.push_back({ a, a + len }); s_runs.push_back({ a, len, fileOff }); }
                 fileOff += len;
             }
@@ -793,7 +827,7 @@ static void dumpDirtyMap(JSC::VM& vm)
                 bool dirty = (disp[i] & VM_PAGE_QUERY_PAGE_DIRTY) || (disp[i] & VM_PAGE_QUERY_PAGE_COPIED);
                 if (!dirty || !pageIn(s_payloadPages, a)) continue;
                 dirtyPayloadPages++;
-                if (pread(s_snapFd, orig.data(), pg, run.fileOff + i * pg) != (ssize_t)pg) continue;
+                if (ipread(s_snapFd, orig.data(), pg, run.fileOff + i * pg) != (ssize_t)pg) continue;
                 const uint8_t* cur = reinterpret_cast<const uint8_t*>(a);
                 bool any = false;
                 for (size_t off = 0; off < pg; off += 8) {
@@ -823,7 +857,7 @@ static void dumpDirtyMap(JSC::VM& vm)
                 // find file offset for page
                 auto r = std::upper_bound(s_runs.begin(), s_runs.end(), page, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
                 if (r == s_runs.begin()) continue; --r; if (page >= r->start + r->len) continue;
-                uint64_t o; if (pread(s_snapFd, &o, 8, r->fileOff + (a - r->start)) != 8) continue;
+                uint64_t o; if (ipread(s_snapFd, &o, 8, r->fileOff + (a - r->start)) != 8) continue;
                 if (memcmp(&o, (void*)a, 8)) { cntw++; if (first == SIZE_MAX) first = off; last = off; }
             }
             if (cntw == 1 && first == 0) onlyHeader8++; else if (cntw <= 4) small32++; else larger++;
@@ -831,7 +865,7 @@ static void dumpDirtyMap(JSC::VM& vm)
                 // signature: size class, first changed offset, before>after of that word
                 uintptr_t a = b + first; uintptr_t page = a & ~(pg - 1); uint64_t before = 0, after = *(uint64_t*)a;
                 auto r = std::upper_bound(s_runs.begin(), s_runs.end(), page, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
-                if (r != s_runs.begin()) { --r; if (page < r->start + r->len) pread(s_snapFd, &before, 8, r->fileOff + (a - r->start)); }
+                if (r != s_runs.begin()) { --r; if (page < r->start + r->len) ipread(s_snapFd, &before, 8, r->fileOff + (a - r->start)); }
                 char sig[160]; snprintf(sig, sizeof sig, "sz%u +%zu n%zu", sz, first, cntw);
                 auto& sc = smallSigs[sig]; sc.count++; if (sc.examples.size() < 3) { char ex[64]; snprintf(ex, sizeof ex, "%llx>%llx", (unsigned long long)before, (unsigned long long)after); sc.examples.push_back(ex); }
             }
@@ -853,7 +887,7 @@ static void dumpDirtyMap(JSC::VM& vm)
                 uintptr_t page = a & ~(pg - 1);
                 auto r = std::upper_bound(s_runs.begin(), s_runs.end(), page, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
                 if (r == s_runs.begin()) return false; --r; if (page >= r->start + r->len) return false;
-                return pread(s_snapFd, &out, 8, r->fileOff + (a - r->start)) == 8;
+                return ipread(s_snapFd, &out, 8, r->fileOff + (a - r->start)) == 8;
             };
             vm.heap.objectSpace().forEachBlock([&](JSC::MarkedBlock::Handle* h) {
                 if (!h->block().isImmortal()) return;
@@ -942,7 +976,7 @@ static void dumpDirtyMap(JSC::VM& vm)
                 uintptr_t page = a & ~(pg - 1);
                 auto r = std::upper_bound(s_runs.begin(), s_runs.end(), page, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
                 if (r == s_runs.begin()) return false; --r; if (page >= r->start + r->len) return false;
-                return pread(s_snapFd, &out, 8, r->fileOff + (a - r->start)) == 8;
+                return ipread(s_snapFd, &out, 8, r->fileOff + (a - r->start)) == 8;
             };
             char path[512]; snprintf(path, sizeof path, "%s/payload-owners.%d.tsv", s_dir, getpid());
             Ctx ctx { &fw, fopen(path, "w"), 0, 0 };
@@ -958,7 +992,7 @@ static void dumpDirtyMap(JSC::VM& vm)
                         size_t n = std::min(sizeof fbuf, size - base); uintptr_t a0 = addr + base; uintptr_t page = a0 & ~(uintptr_t)16383;
                         auto r = std::upper_bound(s_runs.begin(), s_runs.end(), page, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
                         if (r == s_runs.begin()) break; --r; if (a0 >= r->start + r->len) break; n = std::min<size_t>(n, r->start + r->len - a0);
-                        if (pread(s_snapFd, fbuf, n, r->fileOff + (a0 - r->start)) != (ssize_t)n) break;
+                        if (ipread(s_snapFd, fbuf, n, r->fileOff + (a0 - r->start)) != (ssize_t)n) break;
                         for (size_t off = 0; off + 8 <= n; off += 8) if (memcmp(fbuf + off, (void*)(a0 + off), 8)) { changedWords++; if (firstOff == SIZE_MAX) firstOff = base + off; }
                     }
                     c->n++; if (changedWords) c->changed++;
@@ -1091,7 +1125,7 @@ static void dumpMutatedImageObjects(JSC::VM& vm)
     auto fileBytesAt = [&](uintptr_t a, void* out, size_t n) -> bool {
         auto r = std::upper_bound(s_runs.begin(), s_runs.end(), a, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
         if (r == s_runs.begin()) return false; --r; if (a + n > r->start + r->len) return false;
-        return pread(s_snapFd, out, n, r->fileOff + (a - r->start)) == (ssize_t)n;
+        return ipread(s_snapFd, out, n, r->fileOff + (a - r->start)) == (ssize_t)n;
     };
     struct Agg { size_t objects = 0, headerChanged = 0, butterflyPtrChanged = 0, inlineChanged = 0, butterflyContentsChanged = 0; };
     std::map<std::string, Agg> byShape; size_t scanned = 0, changed = 0;
@@ -1167,7 +1201,7 @@ static void recleanFrozenPages(JSC::VM& vm)
             bool d = (disp[i] & VM_PAGE_QUERY_PAGE_DIRTY) || (disp[i] & VM_PAGE_QUERY_PAGE_COPIED);
             if (!d) { i++; continue; }
             dirty++;
-            if (pread(s_snapFd, orig.data(), pg, run.fileOff + i * pg) != (ssize_t)pg) { i++; continue; }
+            if (ipread(s_snapFd, orig.data(), pg, run.fileOff + i * pg) != (ssize_t)pg) { i++; continue; }
             if (memcmp((void*)a, orig.data(), pg)) {
                 // count nearly-identical (<=64 bytes differ) for information
                 size_t diff = 0; for (size_t off = 0; off < pg && diff <= 64; off += 8) if (memcmp((uint8_t*)a + off, orig.data() + off, 8)) diff += 8;
@@ -1196,11 +1230,11 @@ static void recleanFrozenPages(JSC::VM& vm)
                 uintptr_t b = run.start + j * pg;
                 bool dj = (disp[j] & VM_PAGE_QUERY_PAGE_DIRTY) || (disp[j] & VM_PAGE_QUERY_PAGE_COPIED);
                 if (!dj) break;
-                if (pread(s_snapFd, orig.data(), pg, run.fileOff + j * pg) != (ssize_t)pg || memcmp((void*)b, orig.data(), pg)) break;
+                if (ipread(s_snapFd, orig.data(), pg, run.fileOff + j * pg) != (ssize_t)pg || memcmp((void*)b, orig.data(), pg)) break;
                 dirty++; identical++; if (pageIn(s_cellPages, b)) cellIdentical++; else payloadIdentical++;
                 j++;
             }
-            if (mmap((void*)a, (j - i) * pg, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, s_snapFd, run.fileOff + i * pg) != MAP_FAILED)
+            if (immap((void*)a, (j - i) * pg, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, s_snapFd, run.fileOff + i * pg) != MAP_FAILED)
                 remapped += (j - i);
             i = j;
         }
@@ -1231,9 +1265,9 @@ extern "C" char** environ;
 static size_t platformLinkerOwnedRanges(uint64_t (*out)[2], size_t cap)
 {
     size_t n = 0; int fd = open("/proc/self/exe", O_RDONLY); if (fd < 0) return 0;
-    Elf64_Ehdr eh; if (pread(fd, &eh, sizeof eh, 0) != (ssize_t)sizeof eh || !eh.e_shnum) { close(fd); return 0; }
-    std::vector<Elf64_Shdr> sh(eh.e_shnum); pread(fd, sh.data(), eh.e_shnum * sizeof(Elf64_Shdr), eh.e_shoff);
-    std::vector<char> names(sh[eh.e_shstrndx].sh_size); pread(fd, names.data(), names.size(), sh[eh.e_shstrndx].sh_offset);
+    Elf64_Ehdr eh; if (ipread(fd, &eh, sizeof eh, 0) != (ssize_t)sizeof eh || !eh.e_shnum) { close(fd); return 0; }
+    std::vector<Elf64_Shdr> sh(eh.e_shnum); ipread(fd, sh.data(), eh.e_shnum * sizeof(Elf64_Shdr), eh.e_shoff);
+    std::vector<char> names(sh[eh.e_shstrndx].sh_size); ipread(fd, names.data(), names.size(), sh[eh.e_shstrndx].sh_offset);
     for (auto& sec : sh) {
         if (sec.sh_name >= names.size() || !sec.sh_addr) continue; const char* nm = names.data() + sec.sh_name;
         if (!strcmp(nm, ".got") || !strcmp(nm, ".got.plt") || !strcmp(nm, ".init_array") || !strcmp(nm, ".fini_array") || !strcmp(nm, ".preinit_array")) { if (n < cap) { out[n][0] = sec.sh_addr; out[n][1] = sec.sh_addr + sec.sh_size; n++; } }
@@ -1632,21 +1666,25 @@ static void imageDump(JSC::VM& vm, const char* path)
 static void imageRestoreAndRun(const char* path)
 {
 #if OS(DARWIN) || OS(LINUX)
-    int fd = open(path, O_RDONLY);
+    char filePath[4200]; snprintf(filePath, sizeof filePath, "%s", path);
+    s_imageBaseOff = 0;
+    if (char* at = strrchr(filePath, '@')) { char* end = nullptr; long long o = strtoll(at + 1, &end, 10); if (end && !*end && o > 0) { *at = 0; s_imageBaseOff = (off_t)o; } } // "<file>@<offset>": image embedded in a bigger file (our own executable)
+    int fd = open(filePath, O_RDONLY);
     if (fd < 0) { fprintf(stderr, "[image] cannot open %s\n", path); _exit(2); }
-    ImageHeader hdr; pread(fd, &hdr, sizeof hdr, 0);
+    ImageHeader hdr; ipread(fd, &hdr, sizeof hdr, 0);
+    if (getenv("BUN_IMAGE_VERBOSE")) fprintf(stderr, "[image] source %s base=%lld magic=%.7s nregions=%llu text=%llx libs=%llx build=%llx\n", filePath, (long long)s_imageBaseOff, hdr.magic, (unsigned long long)hdr.nregions, (unsigned long long)hdr.textBase, (unsigned long long)hdr.libsBase, (unsigned long long)hdr.spare[0]);
     if (memcmp(hdr.magic, "BUNIMG2", 8) || hdr.spare[0] != platformBuildId()) { fprintf(stderr, "[image] %s was not produced by this build of the executable; booting normally\n", path); close(fd); return; }
     if (hdr.textBase != platformTextBase()) { fprintf(stderr, "[image] ASLR slide differs (image text %llx vs ours %llx); booting normally\n", (unsigned long long)hdr.textBase, (unsigned long long)platformTextBase()); close(fd); return; }
     if (false) { fprintf(stderr, "[image] %s was produced by a different build of this executable; booting normally\n", path); close(fd); return; }
     // Extern-library fixup table. Storage is anonymous mmap, not heap: the allocator's memory is about to be overlaid by the image.
     bool haveFixups = false; int64_t* libDelta = nullptr; size_t nLibDelta = 0; ImageFixup* fixups = nullptr; size_t nFixups = 0;
     if (hdr.spare[1]) {
-        ImageFixupHeader fh; if (pread(fd, &fh, sizeof fh, hdr.spare[1]) == (ssize_t)sizeof fh && !memcmp(fh.magic, "BUNFIX0", 8) && fh.nlibs < 4096 && fh.nfixups < (1u << 24)) {
+        ImageFixupHeader fh; if (ipread(fd, &fh, sizeof fh, hdr.spare[1]) == (ssize_t)sizeof fh && !memcmp(fh.magic, "BUNFIX0", 8) && fh.nlibs < 4096 && fh.nfixups < (1u << 24)) {
             size_t bytes = (fh.nlibs * (sizeof(PlatformLib) + sizeof(int64_t)) + fh.nfixups * sizeof(ImageFixup) + 16383) & ~16383ull;
             uint8_t* buf = (uint8_t*)mmap(nullptr, bytes ? bytes : 16384, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
             PlatformLib* recorded = (PlatformLib*)buf; libDelta = (int64_t*)(recorded + fh.nlibs); fixups = (ImageFixup*)(libDelta + fh.nlibs); nLibDelta = fh.nlibs; nFixups = fh.nfixups;
-            pread(fd, recorded, fh.nlibs * sizeof(PlatformLib), hdr.spare[1] + sizeof fh);
-            pread(fd, fixups, fh.nfixups * sizeof(ImageFixup), hdr.spare[1] + sizeof fh + fh.nlibs * sizeof(PlatformLib));
+            ipread(fd, recorded, fh.nlibs * sizeof(PlatformLib), hdr.spare[1] + sizeof fh);
+            ipread(fd, fixups, fh.nfixups * sizeof(ImageFixup), hdr.spare[1] + sizeof fh + fh.nlibs * sizeof(PlatformLib));
             std::vector<PlatformLib> now = platformSystemLibs(); // heap use is fine up to here (before the overlay)
             haveFixups = true;
             for (size_t i = 0; i < fh.nlibs; i++) {
@@ -1666,12 +1704,13 @@ static void imageRestoreAndRun(const char* path)
     // No heap use from here until the overlay is done: with malloc routed to mimalloc, this process's heap sits at the same VA as the image's.
     if (hdr.nregions > 8192) { fprintf(stderr, "[image] too many regions\n"); _exit(2); }
     ImageRegion* regionsBuf = (ImageRegion*)mmap(nullptr, (hdr.nregions * sizeof(ImageRegion) + 16383) & ~16383ull, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0); // not heap, not __DATA: both get overlaid below
-    pread(fd, regionsBuf, hdr.nregions * sizeof(ImageRegion), sizeof(ImageHeader));
+    ipread(fd, regionsBuf, hdr.nregions * sizeof(ImageRegion), sizeof(ImageHeader));
     std::span<ImageRegion> regions(regionsBuf, hdr.nregions);
     { // this process's own (pre-overlay) allocator must not place anything where the image goes: push mimalloc's hint pointer above the image
         uint64_t top = 0; for (auto& r : regions) if (r.addr >= 0x20000000000ull && r.addr < 0x300000000000ull) top = std::max<uint64_t>(top, r.addr + r.len);
         if (top) mi_os_hint_floor((void*)(top + (1ull << 30)));
     }
+    const off_t imageBaseOff = s_imageBaseOff; // s_imageBaseOff lives in __DATA, which the overlay below rewrites with the builder's value
     size_t mapped = 0, copied = 0;
     struct DataSeg { uint64_t* dst; const uint64_t* src; size_t words; }; DataSeg dataSegs[16]; size_t nDataSegs = 0; // no heap here: the allocator's state is being overlaid
 #if OS(LINUX)
@@ -1690,7 +1729,7 @@ static void imageRestoreAndRun(const char* path)
         }
         if ((r.kind & 0xff) == 2) {
             void* buf = mmap(nullptr, r.len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
-            if (pread(fd, buf, r.len, r.fileOff) != (ssize_t)r.len) { fprintf(stderr, "[image] pread JIT failed errno %d\n", errno); _exit(3); }
+            if (ipread(fd, buf, r.len, r.fileOff) != (ssize_t)r.len) { fprintf(stderr, "[image] pread JIT failed errno %d\n", errno); _exit(3); }
             platformWriteJIT((void*)r.addr, buf, r.len);
             munmap(buf, r.len);
             copied += r.len;
@@ -1707,20 +1746,21 @@ static void imageRestoreAndRun(const char* path)
             // so nothing may call into libc between that copy and the extern-library fixups.
             if (mprotect((void*)r.addr, r.len, PROT_READ | PROT_WRITE)) { fprintf(stderr, "[image] mprotect __DATA %llx failed errno %d\n", r.addr, errno); _exit(3); }
             if (!useLibFixups) { // default: copy in place now (system libraries are at the recorded addresses thanks to the re-exec)
-                if (pread(fd, (void*)r.addr, r.len, r.fileOff) != (ssize_t)r.len) { fprintf(stderr, "[image] pread __DATA failed errno %d\n", errno); _exit(3); }
+                if (ipread(fd, (void*)r.addr, r.len, r.fileOff) != (ssize_t)r.len) { fprintf(stderr, "[image] pread __DATA failed errno %d\n", errno); _exit(3); }
+                s_imageBaseOff = imageBaseOff; // just overwritten along with the rest of our __DATA
                 copied += r.len; continue;
             }
             void* scratch = mmap(nullptr, r.len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
-            if (scratch == MAP_FAILED || pread(fd, scratch, r.len, r.fileOff) != (ssize_t)r.len) { fprintf(stderr, "[image] pread __DATA failed errno %d\n", errno); _exit(3); }
+            if (scratch == MAP_FAILED || ipread(fd, scratch, r.len, r.fileOff) != (ssize_t)r.len) { fprintf(stderr, "[image] pread __DATA failed errno %d\n", errno); _exit(3); }
             if (nDataSegs < 16) dataSegs[nDataSegs++] = { (uint64_t*)r.addr, (const uint64_t*)scratch, r.len / 8 }; copied += r.len;
             continue;
         } else {
-            void* m = mmap((void*)r.addr, r.len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, r.fileOff);
+            void* m = immap((void*)r.addr, r.len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, r.fileOff);
             if (m == MAP_FAILED) {
                 // e.g. a reservation with restrictive max_prot already sits there: deallocate the range and retry
                 int e1 = errno;
                 munmap((void*)r.addr, r.len);
-                m = mmap((void*)r.addr, r.len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, r.fileOff);
+                m = immap((void*)r.addr, r.len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, r.fileOff);
                 if (m == MAP_FAILED) { fprintf(stderr, "[image] mmap %llx+%llx (tag %llu) failed errno %d then %d — skipping\n", r.addr, r.len, r.kind >> 8, e1, errno); continue; }
             }
             mapped += r.len;
@@ -1797,6 +1837,7 @@ static void imageRestoreAndRun(const char* path)
         }
         if (useLibFixups) for (size_t k = 0; k < nFixups; k++) { ImageFixup& f = fixups[k]; bool linkerOwned = false; for (size_t q = 0; q < nLinkerRanges; q++) if (f.addr >= linkerRanges[q][0] && f.addr < linkerRanges[q][1]) { linkerOwned = true; break; } if (!linkerOwned && f.lib < nLibDelta && libDelta[f.lib]) *(volatile uint64_t*)f.addr += libDelta[f.lib]; }
         if (useLibFixups) *environSlot = savedEnviron;
+        *(volatile off_t*)&s_imageBaseOff = imageBaseOff;
     }
     for (size_t di = 0; di < nDataSegs; di++) munmap((void*)dataSegs[di].src, dataSegs[di].words * 8);
     if (useLibFixups && (verbose || nFixups)) fprintf(stderr, "[image] rebased %zu extern-library pointers\n", nFixups);

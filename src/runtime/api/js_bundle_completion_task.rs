@@ -413,6 +413,8 @@ impl JSBundleCompletionTask {
                 Some(&compile_options.executable_path.list)
             },
             flags,
+            None, // no prebuilt payload / embedded heap image via Bun.build()
+            None,
         ) {
             Ok(r) => r,
             Err(err) => {

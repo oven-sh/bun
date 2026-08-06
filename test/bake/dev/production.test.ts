@@ -594,4 +594,42 @@ export default function IndexPage() {
     // Verify NO JavaScript imports are included in the HTML
     expect(htmlContent).not.toContain('<script type="module"');
   });
+
+  test("css imported on the server gets browser-target processing", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-server-css", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      // Importing the stylesheet from a page puts it in the server graph, but
+      // the emitted CSS is still a browser asset, so selector downleveling for
+      // browser targets must apply.
+      "pages/index.tsx": `
+import "../styles.css";
+export default function IndexPage() {
+  return <div>Hello World</div>;
+}`,
+      "styles.css": `
+.box:fullscreen {
+  color: red;
+}`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    const { exitCode } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(exitCode).toBe(0);
+
+    const cssFiles = await Array.fromAsync(new Bun.Glob("**/*.css").scan(path.join(dir, "dist")));
+    expect(cssFiles).toHaveLength(1);
+    const css = await Bun.file(path.join(dir, "dist", cssFiles[0])).text();
+    expect(css).toContain(":-webkit-full-screen");
+    expect(css).toContain(":fullscreen");
+  });
 });

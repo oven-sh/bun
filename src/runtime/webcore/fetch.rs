@@ -485,8 +485,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // kept as raw `*mut Request` because the body re-borrows it
     // multiple times across long-lived option/init reads.
-    // `as_` (not `as_direct`) so a subclassed or expando'd Request still
-    // takes the internal-state path required by the fetch spec.
     let request: Option<*mut Request> = first_arg.as_::<Request>();
     // Helper macro: short-lived `&mut Request` reborrow of the optional pointer.
     macro_rules! request_mut {

@@ -286,6 +286,18 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\""
     ),
+    // Node's permission model. Hidden from `--help` until the fs scope covers
+    // every filesystem path (module loader, `Bun.file`, compile cache still
+    // bypass it); only `node:fs` and `net` are enforced today.
+    parse_param!("--permission"),
+    parse_param!("--allow-fs-read <STR>..."),
+    parse_param!("--allow-fs-write <STR>..."),
+    parse_param!("--allow-child-process"),
+    parse_param!("--allow-worker"),
+    parse_param!("--allow-addons"),
+    parse_param!("--allow-net"),
+    parse_param!("--allow-wasi"),
+    parse_param!("--allow-inspector"),
     parse_param!(
         "--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\""
     ),
@@ -1087,6 +1099,33 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             // used for disabling process.dlopen and
             // for disabling export condition "node-addons"
             opts.allow_addons = Some(false);
+        }
+
+        if args.flag(b"--permission") {
+            // Entry point + preloads are implicitly readable, but not for
+            // `--eval`/`--print`/REPL:
+            // https://github.com/nodejs/node/blob/v26.3.0/src/env.cc#L952
+            let mut implicit_read: Vec<&'static [u8]> = Vec::new();
+            let has_eval = args.option(b"--eval").is_some() || args.option(b"--print").is_some();
+            if !has_eval {
+                implicit_read.extend_from_slice(args.options(b"--preload"));
+                if let Some(entry) = args.positionals().first() {
+                    implicit_read.push(entry);
+                }
+            }
+            let mut fs_read: Vec<&'static [u8]> = args.options(b"--allow-fs-read").to_vec();
+            fs_read.append(&mut implicit_read);
+
+            crate::permission::init_from_cli(&crate::permission::CliGrants {
+                fs_read: &fs_read,
+                fs_write: args.options(b"--allow-fs-write"),
+                child: args.flag(b"--allow-child-process"),
+                worker: args.flag(b"--allow-worker"),
+                inspector: args.flag(b"--allow-inspector"),
+                wasi: args.flag(b"--allow-wasi"),
+                net: args.flag(b"--allow-net"),
+                addon: args.flag(b"--allow-addons"),
+            });
         }
 
         if let Some(unhandled_rejections) = args.option(b"--unhandled-rejections") {

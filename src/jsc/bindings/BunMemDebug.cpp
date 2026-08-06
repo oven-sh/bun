@@ -1716,6 +1716,7 @@ static void imageRestoreAndRun(const char* path)
         if (top) mi_os_hint_floor((void*)(top + (1ull << 30)));
     }
     const off_t imageBaseOff = s_imageBaseOff; // s_imageBaseOff lives in __DATA, which the overlay below rewrites with the builder's value
+    uint64_t hintFloorAfterOverlay = 0; { uint64_t top = 0; for (auto& r : regions) if (r.addr >= 0x20000000000ull && r.addr < 0x300000000000ull) top = std::max<uint64_t>(top, r.addr + r.len); hintFloorAfterOverlay = (top ? top : 0x20000000000ull) + (1ull << 30); }
     size_t mapped = 0, copied = 0;
     struct DataSeg { uint64_t* dst; const uint64_t* src; size_t words; }; DataSeg dataSegs[16]; size_t nDataSegs = 0; // no heap here: the allocator's state is being overlaid
 #if OS(LINUX)
@@ -1753,6 +1754,7 @@ static void imageRestoreAndRun(const char* path)
             if (!useLibFixups) { // default: copy in place now (system libraries are at the recorded addresses thanks to the re-exec)
                 if (ipread(fd, (void*)r.addr, r.len, r.fileOff) != (ssize_t)r.len) { fprintf(stderr, "[image] pread __DATA failed errno %d\n", errno); _exit(3); }
                 s_imageBaseOff = imageBaseOff; // just overwritten along with the rest of our __DATA
+                mi_os_hint_floor((void*)hintFloorAfterOverlay); // the builder's allocator hint pointer just arrived with __DATA; keep fresh OS memory above the image
                 copied += r.len; continue;
             }
             void* scratch = mmap(nullptr, r.len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
@@ -1844,6 +1846,7 @@ static void imageRestoreAndRun(const char* path)
         if (useLibFixups) for (size_t k = 0; k < nFixups; k++) { ImageFixup& f = fixups[k]; bool linkerOwned = false; for (size_t q = 0; q < nLinkerRanges; q++) if (f.addr >= linkerRanges[q][0] && f.addr < linkerRanges[q][1]) { linkerOwned = true; break; } if (!linkerOwned && f.lib < nLibDelta && libDelta[f.lib]) *(volatile uint64_t*)f.addr += libDelta[f.lib]; }
         if (useLibFixups) *environSlot = savedEnviron;
         *(volatile off_t*)&s_imageBaseOff = imageBaseOff;
+        mi_os_hint_floor((void*)hintFloorAfterOverlay);
     }
     for (size_t di = 0; di < nDataSegs; di++) munmap((void*)dataSegs[di].src, dataSegs[di].words * 8);
     if (useLibFixups && (verbose || nFixups)) fprintf(stderr, "[image] rebased %zu extern-library pointers\n", nFixups);

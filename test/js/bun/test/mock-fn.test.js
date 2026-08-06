@@ -1235,9 +1235,13 @@ describe("spyOn", () => {
       allow = false;
       expect(() => fn.mockRestore()).toThrow(TypeError);
       expect(target.m).toBe(fn);
+      // The failed restore must not have reset the spy: the still-installed
+      // mock keeps forwarding to the original until the retry succeeds.
+      expect(target.m()).toBe("orig");
       allow = true;
       fn.mockRestore();
       expect(target.m()).toBe("orig");
+      expect(target.m).not.toBe(fn);
 
       let armed = false;
       const target2 = { m: () => "orig" };

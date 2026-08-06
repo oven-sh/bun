@@ -698,6 +698,66 @@ describe("Bun.Terminal", () => {
 
       expect(drainCount).toBeGreaterThan(0);
     });
+
+    // After PTY EOF the wrapper used to be downgraded to a weak ref while
+    // buffered input the child never read was still flushing, so a GC in that
+    // window collected the wrapper together with the callbacks it roots: the
+    // pending drain dispatch was then lost (or, before a sweep, invoked a
+    // collected function). The wrapper must stay strongly held until the
+    // writer goes idle. Ten fresh processes, sequentially, because collection
+    // under conservative stack scanning is probabilistic per process (roughly
+    // half hit the window on an unfixed build; concurrent children skew the
+    // race uniformly, so sequential keeps the attempts independent). Each
+    // child bounds its wait at 20s and the loop stops at the first loss.
+    // Linux-only: the repro window depends on how the kernel drains PTY input
+    // after exit; the code under test is shared.
+    test.skipIf(!isLinux)(
+      "drain still fires when GC runs while unread input is buffered after the child exits",
+      async () => {
+        const childSrc = [
+          "const sleep = ms => new Promise(r => setTimeout(r, ms));",
+          "let sink;",
+          "function churn() { for (let i = 0; i < 500; i++) sink = { i, a: new Array(32).fill(i) }; }",
+          "let resolveDrain;",
+          "const drained = new Promise(r => (resolveDrain = r));",
+          "let proc = Bun.spawn(['sh', '-c', 'exit 0'], {",
+          "  terminal: { data() {}, exit() {}, drain() { resolveDrain('drain'); } },",
+          "});",
+          "const big = Buffer.alloc(65536, 97);",
+          "for (let i = 0; i < 16; i++) proc.terminal.write(big);",
+          "const exited = proc.exited;",
+          "proc = null;",
+          "await exited;",
+          "for (let i = 0; i < 4; i++) { churn(); await sleep(0); Bun.gc(true); }",
+          "const timer = setTimeout(() => resolveDrain('lost'), 20000);",
+          "const result = await drained;",
+          "clearTimeout(timer);",
+          "console.log(result);",
+        ].join("\n");
+
+        const run = async () => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "-e", childSrc],
+            env: bunEnv,
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          return { stdout: stdout.trim(), stderr, exitCode };
+        };
+
+        const results = [];
+        for (let i = 0; i < 10; i++) {
+          const r = await run();
+          results.push(r);
+          if (r.stdout !== "drain") break;
+        }
+        expect(results.map(r => r.stdout)).toEqual(Array(results.length).fill("drain"));
+        expect(results.map(r => r.stderr)).toEqual(Array(results.length).fill(""));
+        expect(results.map(r => r.exitCode)).toEqual(Array(results.length).fill(0));
+        expect(results.length).toBe(10);
+      },
+      90_000,
+    );
   });
 
   describe.concurrent("subprocess interaction", () => {

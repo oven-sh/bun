@@ -1033,3 +1033,33 @@ devTest("adjusting @imports of a failed stylesheet keeps the dev server alive", 
     await c.style(".other").color.expect.toBe("green");
   },
 });
+// A stylesheet can be a chunk entry and also @imported by another linked
+// stylesheet; a print failure in it fails both chunks. Fixing the shared file
+// must re-enqueue the other failed root too, not just its own chunk.
+devTest("stylesheet both linked and @imported recovers both chunks on one edit", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["main.css", "sub.css"],
+      body: "hello",
+    }),
+    "main.css": `@import "./sub.css";\n.main { color: red; }\n`,
+    "sub.css":
+      Array.from({ length: 30 }, (_, i) => `.x${i}:fullscreen {`).join("\n") +
+      "\ncolor: red;\n" +
+      Buffer.alloc(30, "}").toString() +
+      "\n",
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [
+        "main.css: error: Failed to generate CSS for this file (PrintError)",
+        "sub.css: error: Failed to generate CSS for this file (PrintError)",
+      ],
+    });
+    await c.expectReload(async () => {
+      await dev.write("sub.css", ".sub { color: blue; }\n", { dedent: false, errors: null });
+    });
+    await c.style(".sub").color.expect.toBe("#00f");
+    await c.style(".main").color.expect.toBe("red");
+  },
+});

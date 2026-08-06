@@ -1654,6 +1654,33 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         if !self.bundled_files.values()[index].is_hmr_root {
                             entry_points.append_js(owned_path, bake::Graph::Client)?;
                         }
+                        // A failed file may have failed dependents whose
+                        // failure is downstream of it (a css root importing a
+                        // failed css entry); re-enqueue them too.
+                        if self.bundled_files.values()[index].failed {
+                            let mut it = self.first_dep[index];
+                            while let Some(edge_index) = it {
+                                let entry = self.edges[edge_index.get() as usize];
+                                let dep = entry.dependency;
+                                it = entry.next_dependency;
+                                let (dep_is_css_root, dep_failed) = {
+                                    let f = &self.bundled_files.values()[dep.get() as usize];
+                                    (matches!(f.content, Content::CssRoot(_)), f.failed)
+                                };
+                                if !dep_is_css_root && !dep_failed {
+                                    continue;
+                                }
+                                self.stale_files.set(dep.get() as usize);
+                                let k = bun_ptr::RawSlice::new(
+                                    &*self.bundled_files.keys()[dep.get() as usize],
+                                );
+                                if dep_is_css_root {
+                                    entry_points.append_css(k.slice())?;
+                                } else {
+                                    entry_points.append_js(k.slice(), bake::Graph::Client)?;
+                                }
+                            }
+                        }
                     }
                 },
                 Side::Server => {

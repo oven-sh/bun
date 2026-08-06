@@ -935,7 +935,98 @@ describe("spyOn", () => {
     expect(fn).not.toHaveBeenCalled();
   });
 
+  test("mockRestore on an inherited method deletes the own shadow", () => {
+    class K {
+      m() {
+        return "proto-m";
+      }
+    }
+    const inst = new K();
+    expect(Object.getOwnPropertyDescriptor(inst, "m")).toBeUndefined();
+
+    const fn = spyOn(inst, "m");
+    expect(inst.m()).toBe("proto-m");
+    expect(fn).toHaveBeenCalledTimes(1);
+    fn.mockRestore();
+
+    // After restore, the instance should re-inherit from the prototype: no own property.
+    expect(Object.getOwnPropertyDescriptor(inst, "m")).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(inst, "m")).toBe(false);
+    expect(inst.m()).toBe("proto-m");
+
+    // A later prototype spy should be visible on the instance.
+    const protoSpy = spyOn(K.prototype, "m").mockReturnValue("spied");
+    expect(inst.m()).toBe("spied");
+    protoSpy.mockRestore();
+    expect(inst.m()).toBe("proto-m");
+  });
+
+  test("mockRestore preserves an own property that was present before spying", () => {
+    class K {
+      m() {
+        return "proto-m";
+      }
+    }
+    const inst = new K();
+    const own = function () {
+      return "own-m";
+    };
+    Object.defineProperty(inst, "m", { value: own, writable: true, enumerable: true, configurable: true });
+
+    const fn = spyOn(inst, "m");
+    expect(inst.m()).toBe("own-m");
+    fn.mockRestore();
+
+    expect(Object.getOwnPropertyDescriptor(inst, "m")).toEqual({
+      value: own,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    expect(inst.m()).toBe("own-m");
+  });
+
+  test("restoreAllMocks on an inherited spy deletes the own shadow", () => {
+    class K {
+      m() {
+        return "proto-m";
+      }
+    }
+    const inst = new K();
+    spyOn(inst, "m");
+    jest.restoreAllMocks();
+    expect(Object.getOwnPropertyDescriptor(inst, "m")).toBeUndefined();
+    expect(inst.m()).toBe("proto-m");
+  });
+
   if (isBun) {
+    // Jest's spyOn throws when the inherited descriptor is non-writable/non-configurable.
+    test("mockRestore on an inherited method with a non-configurable prototype descriptor", () => {
+      class K {
+        m() {
+          return "proto-m";
+        }
+      }
+      Object.freeze(K.prototype);
+      const inst = new K();
+      const fn = spyOn(inst, "m");
+      expect(inst.m()).toBe("proto-m");
+      expect(fn).toHaveBeenCalledTimes(1);
+      fn.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(inst, "m")).toBeUndefined();
+      expect(inst.m()).toBe("proto-m");
+    });
+
+    // Jest throws when spying on a property that does not exist anywhere; Bun allows it.
+    test("mockRestore on a missing property leaves no own property behind", () => {
+      const obj = {};
+      expect(Object.getOwnPropertyDescriptor(obj, "missing")).toBeUndefined();
+      const fn = spyOn(obj, "missing");
+      fn.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(obj, "missing")).toBeUndefined();
+      expect(Object.prototype.hasOwnProperty.call(obj, "missing")).toBe(false);
+    });
+
     // Jest doesn't allow spying on properties
     test("spyOn works on object", () => {
       var obj = { original: 42 };

@@ -302,6 +302,30 @@ describe("date/times return Temporal objects", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("deep dotted headers bundle without crashing", async () => {
+    // Dotted headers nest objects beyond safe recursion depth (the TOML
+    // parser builds them iteratively); the bundler's date/time lowering and
+    // the transform path's scan walk the tree iteratively too. A clean
+    // bundler error is acceptable; death by stack overflow is not.
+    using dir = tempDir("toml-deep-header", {
+      "deep.toml": "[" + Buffer.alloc(200_000, "a.").toString() + "a]\nd = 1979-05-27\n",
+    });
+    for (const args of [
+      ["build", "./deep.toml"],
+      ["build", "--no-bundle", "./deep.toml"],
+    ]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const exitCode = await proc.exited;
+      expect([0, 1]).toContain(exitCode);
+    }
+  });
+
   test("importing a TOML module with date/times throws when Temporal is disabled", async () => {
     // The import path converts the same way; the load must fail with the
     // TypeError, not crash.

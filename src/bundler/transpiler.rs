@@ -1915,6 +1915,32 @@ fn parse_data_loader<'a>(
             let properties: &mut [bun_ast::G::Property] = obj.properties.slice_mut();
             if !properties.is_empty() {
                 let n = properties.len();
+                // The var name replacing a `globalThis` key (see the mangle
+                // below) must not collide with another key, which could
+                // itself be named `globalThis_`.
+                let mangled_global_this: &[u8] = if contains_datetime {
+                    let mut candidate: Vec<u8> = b"globalThis_".to_vec();
+                    'grow: loop {
+                        for property in properties.iter_mut() {
+                            let key: &[u8] = property
+                                .key
+                                .as_mut()
+                                .expect("infallible: prop has key")
+                                .data
+                                .e_string_mut()
+                                .expect("infallible: variant checked")
+                                .slice(arena);
+                            if key == candidate {
+                                candidate.push(b'_');
+                                continue 'grow;
+                            }
+                        }
+                        break;
+                    }
+                    arena.alloc_slice_copy(&candidate)
+                } else {
+                    b"globalThis_"
+                };
                 // The loop below writes sparsely at index `i` and
                 // `continue`s on `"default"` / duplicate keys, so
                 // some slots are never assigned. In Rust an uninit
@@ -1979,7 +2005,7 @@ fn parse_data_loader<'a>(
                             // named `globalThis` would capture them. The named
                             // export keeps the original alias.
                             if contains_datetime && &*valid == b"globalThis" {
-                                bun_ast::StoreStr::new(b"globalThis_")
+                                bun_ast::StoreStr::new(mangled_global_this)
                             } else {
                                 // The identifier lives in the
                                 // per-parse arena. Arena-copy the
@@ -2087,17 +2113,32 @@ fn parse_data_loader<'a>(
 }
 
 /// Whether any value in a data-format AST is a TOML date/time literal.
-fn expr_contains_toml_datetime(expr: &bun_ast::Expr) -> bool {
-    match expr.data {
-        bun_ast::ExprData::EString(str) => str.toml_datetime.is_some(),
-        bun_ast::ExprData::EArray(arr) => arr.items.slice().iter().any(expr_contains_toml_datetime),
-        bun_ast::ExprData::EObject(obj) => obj
-            .properties
-            .slice()
-            .iter()
-            .any(|prop| prop.value.as_ref().is_some_and(expr_contains_toml_datetime)),
-        _ => false,
+/// Iterative: deep dotted TOML headers nest objects far beyond safe
+/// recursion depth.
+fn expr_contains_toml_datetime(root: &bun_ast::Expr) -> bool {
+    let mut work: Vec<bun_ast::ExprData> = vec![root.data];
+    while let Some(data) = work.pop() {
+        match data {
+            bun_ast::ExprData::EString(str) => {
+                if str.toml_datetime.is_some() {
+                    return true;
+                }
+            }
+            bun_ast::ExprData::EArray(arr) => {
+                work.extend(arr.items.slice().iter().map(|item| item.data));
+            }
+            bun_ast::ExprData::EObject(obj) => {
+                work.extend(
+                    obj.properties
+                        .slice()
+                        .iter()
+                        .filter_map(|prop| prop.value.as_ref().map(|value| value.data)),
+                );
+            }
+            _ => {}
+        }
     }
+    false
 }
 
 #[cold]

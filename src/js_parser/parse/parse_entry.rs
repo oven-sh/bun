@@ -612,14 +612,48 @@ impl<'a> Parser<'a> {
     }
 }
 
+/// A container queued by `lower_date_time_literals`' worklist.
+enum DateTimeLowerContainer {
+    Object(js_ast::StoreRef<E::Object>),
+    Array(js_ast::StoreRef<E::Array>),
+}
+
 /// Rewrites every `toml_datetime`-tagged `E::String` in `expr` (in place)
 /// into a `Temporal.<Class>.from("<text>")` call, declaring the unbound
 /// `Temporal` symbol on first use. The calls are pure-annotated so tree
-/// shaking may drop unused exports.
+/// shaking may drop unused exports. Iterative: deep dotted TOML headers nest
+/// objects far beyond safe recursion depth.
 fn lower_date_time_literals<'a>(
     p: &mut JavaScriptParser<'a>,
     expr: &mut Expr,
     temporal_ref: &mut Option<js_ast::Ref>,
+) -> Result<(), Error> {
+    let mut work: Vec<DateTimeLowerContainer> = Vec::new();
+    lower_one_date_time_literal(p, expr, temporal_ref, &mut work)?;
+    while let Some(container) = work.pop() {
+        match container {
+            DateTimeLowerContainer::Object(mut obj) => {
+                for property in obj.properties.slice_mut() {
+                    if let Some(value) = &mut property.value {
+                        lower_one_date_time_literal(p, value, temporal_ref, &mut work)?;
+                    }
+                }
+            }
+            DateTimeLowerContainer::Array(mut arr) => {
+                for item in arr.items.slice_mut() {
+                    lower_one_date_time_literal(p, item, temporal_ref, &mut work)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn lower_one_date_time_literal<'a>(
+    p: &mut JavaScriptParser<'a>,
+    expr: &mut Expr,
+    temporal_ref: &mut Option<js_ast::Ref>,
+    work: &mut Vec<DateTimeLowerContainer>,
 ) -> Result<(), Error> {
     match expr.data {
         js_ast::ExprData::EString(str) if str.toml_datetime.is_some() => {
@@ -672,18 +706,8 @@ fn lower_date_time_literals<'a>(
                 loc,
             );
         }
-        js_ast::ExprData::EArray(mut arr) => {
-            for item in arr.items.slice_mut() {
-                lower_date_time_literals(p, item, temporal_ref)?;
-            }
-        }
-        js_ast::ExprData::EObject(mut obj) => {
-            for property in obj.properties.slice_mut() {
-                if let Some(value) = &mut property.value {
-                    lower_date_time_literals(p, value, temporal_ref)?;
-                }
-            }
-        }
+        js_ast::ExprData::EArray(arr) => work.push(DateTimeLowerContainer::Array(arr)),
+        js_ast::ExprData::EObject(obj) => work.push(DateTimeLowerContainer::Object(obj)),
         _ => {}
     }
     Ok(())

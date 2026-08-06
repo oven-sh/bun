@@ -3232,12 +3232,10 @@ bool JSC__JSValue__asArrayBuffer(
 // common case and memory-safe in every case, at the cost of a transfer that
 // silently no-ops for as long as a borrowing op (zlib, fs, crypto, shell,
 // Bun.Image, SQL blob binds, ...) happens to be in flight over that buffer.
-//
-// JSType + static_cast, not dynamicDowncast: unpin runs from finalizers
-// during GC sweep, where JSCell::classInfo() (reached by every debug cast
-// assert) is forbidden. Same pattern as JSC::Weak<T>::get().
 static JSC::ArrayBuffer* arrayBufferImpl(JSC::JSValue value)
 {
+    // JSType + static_cast, not dynamicDowncast: finalizers unpin during GC
+    // sweep, where JSCell::classInfo() is forbidden (as in JSC::Weak<T>::get()).
     if (!value.isCell())
         return nullptr;
     JSC::JSCell* cell = value.asCell();

@@ -3136,9 +3136,9 @@ static JSValue maybe_uid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* gl
     return {};
 }
 
-static JSValue maybe_gid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* globalObject, JSValue value)
+static JSValue maybe_gid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* globalObject, JSValue value, WTF::StringView argName = "id"_s)
 {
-    if (!value.isNumber() && !value.isString()) return JSValue::decode(Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "id"_s, "number or string"_s, value));
+    if (!value.isNumber() && !value.isString()) return JSValue::decode(Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, argName, "number or string"_s, value));
     if (!value.isString()) return value;
 
     auto str = value.getString(globalObject);
@@ -3281,6 +3281,59 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObje
     if (result != 0) throwSystemError(scope, globalObject, "setgid"_s, errno);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsNumber(result));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto userValue = callFrame->argument(0);
+    auto extraGroupValue = callFrame->argument(1);
+
+    if (!userValue.isNumber() && !userValue.isString()) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "user"_s, "number or string"_s, userValue);
+    }
+
+    String usernameStr;
+    if (userValue.isString()) {
+        usernameStr = userValue.getString(globalObject);
+    } else {
+        uint32_t uid = 0;
+        Bun::V::validateInteger(scope, globalObject, userValue, "user"_s, jsNumber(0), jsNumber(std::numeric_limits<int32_t>::max()), &uid);
+        RETURN_IF_EXCEPTION(scope, {});
+        
+        struct passwd pwd;
+        struct passwd* pp = nullptr;
+        char buf[8192];
+        if (getpwuid_r(uid, &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
+            usernameStr = String::fromUTF8(pp->pw_name);
+        } else {
+            auto message = makeString("User identifier does not exist: "_s, userValue.toUInt32(globalObject));
+            scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+            return {};
+        }
+    }
+    RETURN_IF_EXCEPTION(scope, {});
+    auto usernameUtf8 = usernameStr.utf8();
+    auto username = usernameUtf8.data();
+
+    auto is_number = extraGroupValue.isNumber();
+    extraGroupValue = maybe_gid_by_name(scope, globalObject, extraGroupValue, "extraGroup"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    uint32_t extraGroup = 0;
+    if (is_number) Bun::V::validateInteger(scope, globalObject, extraGroupValue, "extraGroup"_s, jsNumber(0), jsNumber(std::numeric_limits<int32_t>::max()), &extraGroup);
+    if (!is_number) extraGroup = extraGroupValue.toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    int err = 0;
+    auto result = callWithoutThreadSuspension([&] { 
+        int res = initgroups(username, extraGroup);
+        if (res != 0) err = errno;
+        return res;
+    });
+    if (result != 0) throwSystemError(scope, globalObject, "initgroups"_s, err);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
 }
 
 #endif
@@ -4573,6 +4626,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   getgid                           Process_functiongetgid                              Function 0
   getgroups                        Process_functiongetgroups                           Function 0
   getuid                           Process_functiongetuid                              Function 0
+  initgroups                       Process_functioninitgroups                          Function 2
 
   setegid                          Process_functionsetegid                             Function 1
   seteuid                          Process_functionseteuid                             Function 1

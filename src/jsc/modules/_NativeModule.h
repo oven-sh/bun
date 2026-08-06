@@ -95,7 +95,7 @@
   [[maybe_unused]] const auto putNativeFn = [&](JSC::Identifier name, JSC::NativeFunction ptr) {      \
     JSC::JSFunction *value = JSC::JSFunction::create(                          \
         vm, globalObject, 1, name.string(), ptr,                               \
-        JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, ptr);         \
+        JSC::ImplementationVisibility::Public, JSC::NoIntrinsic);              \
     defaultObject->putDirect(vm, name, value);                                 \
     exportNames.append(name);                                                  \
     exportValues.append(value);                                                \

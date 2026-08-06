@@ -163,9 +163,6 @@ impl SSLConfigFromJs for SSLConfig {
             any = true;
         }
         if let Some(server_name) = generated.server_name.get() {
-            // Becomes the C string handed to SSL_set_tlsext_host_name / the SNI
-            // tree; an embedded NUL would silently truncate the name on the wire
-            // while JS-level checks see the full string.
             if server_name.to_utf8().slice().contains(&0) {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "\"serverName\" must not contain null bytes"

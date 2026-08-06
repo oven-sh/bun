@@ -716,18 +716,15 @@ impl Listener {
                 global.throw_invalid_arguments(format_args!("hostname pattern cannot be empty"))
             );
         }
-        // The C SNI tree truncates at the first NUL, so an embedded NUL would
-        // register a certificate under the truncated prefix.
         if server_name_bytes.contains(&0) {
             return Err(global.throw_invalid_arguments(format_args!(
                 "hostname pattern must not contain null bytes"
             )));
         }
-        // NUL-terminate for the C `const char*` parameter. `server_name_z`
-        // must outlive the remove_server_name/add_server_name calls below.
+        // `server_name_z` must outlive the remove_server_name/add_server_name
+        // calls below.
         let server_name_z = bun_core::ZBox::from_bytes(server_name_bytes);
-        // SAFETY: `server_name_z` is NUL-terminated and lives to end of scope.
-        let server_name = unsafe { core::ffi::CStr::from_ptr(server_name_z.as_ptr()) };
+        let server_name = server_name_z.as_zstr().as_cstr();
 
         let ListenerType::Uws(ls) = this.listener.get() else {
             return Ok(JSValue::UNDEFINED);

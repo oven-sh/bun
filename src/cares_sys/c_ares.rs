@@ -802,9 +802,6 @@ impl Channel {
         hints: &[AddrInfo_hints],
         ctx: &mut T,
     ) {
-        // Same contract as `resolve` below: a name that cannot round-trip
-        // through a C string (interior NUL truncates, overlong truncates at the
-        // buffer) is a bad name, not a shorter one.
         if host.len() >= 1023 || host.contains(&0) {
             // SAFETY: thunk handles the ARES_EBADNAME path.
             unsafe {
@@ -889,8 +886,6 @@ impl Channel {
         const BUF_SIZE: usize = 46;
         let mut addr_buf = [0u8; BUF_SIZE];
         let addr_ptr: *const c_char = 'brk: {
-            // Interior NUL: reject rather than truncate at `copy_nul_terminated`
-            // (a PTR lookup for "8.8.8.8\0evil" must not resolve "8.8.8.8").
             if ip_addr.is_empty() || ip_addr.len() >= BUF_SIZE || ip_addr.contains(&0) {
                 break 'brk ptr::null();
             }
@@ -1977,8 +1972,6 @@ pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
     const BUF_SIZE: usize = 128;
 
     let mut buf = [0u8; BUF_SIZE];
-    // An interior NUL would truncate at `copy_nul_terminated`, silently parsing
-    // only the prefix (e.g. "127.0.0.1\0evil.example.com" as "127.0.0.1").
     if addr.is_empty() || addr.len() >= BUF_SIZE || addr.contains(&0) {
         return -1;
     }

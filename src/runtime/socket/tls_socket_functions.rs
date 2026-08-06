@@ -331,8 +331,6 @@ pub(super) fn set_servername(
         .get_zig_string(global)?
         .to_owned_slice()
         .into_boxed_slice();
-    // SSL_set_tlsext_host_name reads a C string; an embedded NUL would
-    // silently truncate the SNI sent on the wire.
     if slice.contains(&0) {
         return Err(global.throw(format_args!("\"serverName\" must not contain null bytes")));
     }

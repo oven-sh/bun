@@ -72,8 +72,6 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
     ) -> JsResult<Option<Self>> {
         let hostname_str = bun_core::OwnedString::new(arguments[0].to_bun_string(global_object)?);
         {
-            // The connect path hands the hostname to getaddrinfo as a C string;
-            // an embedded NUL would silently resolve the truncated prefix.
             let hostname_utf8 = hostname_str.to_utf8_without_ref();
             if hostname_utf8.slice().contains(&0) {
                 return Err(global_object.throw_invalid_arguments(format_args!(

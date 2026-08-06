@@ -115,8 +115,6 @@ impl TlsConfig {
         }
         if let Some(v) = tls.get(global, "servername")?.filter(|v| v.is_string()) {
             let mut bytes = bun_core::String::from_js(v, global)?.to_utf8_bytes();
-            // Passed to lsquic as a C string; an embedded NUL would silently
-            // truncate the SNI sent on the wire.
             if bytes.contains(&0) {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "servername must not contain null bytes"

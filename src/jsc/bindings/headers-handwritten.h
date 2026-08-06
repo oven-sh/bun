@@ -307,7 +307,6 @@ extern "C" void Bun__WTFStringImpl__ref(WTF::StringImpl* impl);
 extern "C" void Bun__WTFStringImpl__destroy(WTF::StringImpl* impl);
 extern "C" bool BunString__fromJS(JSC::JSGlobalObject*, JSC::EncodedJSValue, BunString*);
 extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunString*);
-extern "C" void BunString__toWTFString(BunString*);
 
 namespace Bun {
 JSC::JSString* toJS(JSC::JSGlobalObject*, BunString);

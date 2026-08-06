@@ -100,8 +100,6 @@ pub enum Representation {
     Shortcut,
     /// git+ssh://git@domain/user/project.git#committish
     Sshurl,
-    /// ssh://domain/user/project.git#committish
-    Ssh,
     /// https://domain/user/project.git#committish
     Https,
     /// git://domain/user/project.git#committish

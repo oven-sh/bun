@@ -1494,7 +1494,7 @@ mod draft {
 
             while let Some(val) = iter.next()? {
                 if let Some(result) = val.get() {
-                    let registry = result.registry.dupe();
+                    let registry = result.registry.clone();
                     registry_map.scopes.put(&*result.scope, registry)?;
                 }
             }

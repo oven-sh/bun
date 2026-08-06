@@ -1,13 +1,10 @@
-// GENERATED: re-run peechy (src/api/schema.peechy) with .rs output
-// PORT STATUS: skipped — generated file (see PORTING.md §Don't translate)
-//
-// Minimal hand-stubbed `api` namespace so Context.rs / BundleEnums.rs
-// struct fields type-check. Full body arrives when peechy emits .rs.
+//! Option/config structs shared by the CLI, bunfig, bundler and runtime
+//! (`TransformOptions`, `BunInstall`, …) plus the wire types for the
+//! `Bun.serve` development-mode error page (`FallbackMessageContainer`).
 
-/// Schema writer specialised to a
-/// `Vec<u8>` sink — the only instantiation reachable from Rust today
-/// (`js_parser::runtime::Base64FallbackMessage::fmt`). The full generic shape
-/// arrives with the peechy-generated body.
+/// Binary writer for the dev-mode error page payload
+/// (`js_parser::runtime::Base64FallbackMessage::fmt`), decoded by
+/// `src/fallback.ts` in the browser.
 pub struct Writer<'a> {
     writable: &'a mut Vec<u8>,
 }
@@ -60,21 +57,6 @@ pub mod api {
     /// Canonical definition lives in bun_dotenv (lower tier).
     pub use bun_dotenv::DotEnvBehavior;
 
-    /// Open `enum(u8)` in the wire schema. Kept closed.
-    /// Variants PascalCased to match the only downstream writer
-    /// (`runtime/cli/Arguments.rs` → `api::ResolveMode::Lazy`).
-    #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-    pub enum ResolveMode {
-        #[default]
-        _none = 0,
-        Disable = 1,
-        Lazy = 2,
-        Dev = 3,
-        Bundle = 4,
-    }
-
-    /// Open `enum(u32)` in the wire schema. Kept closed. PascalCased.
     #[repr(u32)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum MessageLevel {
@@ -87,7 +69,6 @@ pub mod api {
         Debug = 5,
     }
 
-    /// `enum(u8)` (closed; not a peechy `smol`).
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum UnhandledRejections {
@@ -118,15 +99,8 @@ pub mod api {
             __ComptimeStringMap_UNHANDLED_REJECTIONS_MAP(());
     }
 
-    /// peechy `message TransformOptions`. Full field set.
-    ///
-    /// Type map (matches the convention block below):
-    ///   `?T`                  → `Option<T>`
-    ///   `[]const u8`          → `Box<[u8]>`
-    ///   `?[]const u8`         → `Option<Box<[u8]>>`
-    ///   `[]const []const u8`  → `Vec<Box<[u8]>>`
-    ///   `?[:0]const u8`       → `Option<Box<[u8]>>`   (sentinel re-derived
-    ///                            at use-site)
+    /// The CLI/bunfig-populated option bag that `BundleOptions::from_api`
+    /// projects into bundler options.
     ///
     /// `Default` is all-zero: every Option `None`, every slice empty, every
     /// scalar `0`/`false`.
@@ -139,11 +113,9 @@ pub mod api {
         pub jsx: Option<Jsx>,
         /// tsconfig_override
         pub tsconfig_override: Option<Box<[u8]>>,
-        /// resolve
-        pub resolve: Option<ResolveMode>,
         /// origin
         pub origin: Option<Box<[u8]>>,
-        /// absolute_working_dir — sentinel dropped (see type-map note above).
+        /// absolute_working_dir
         pub absolute_working_dir: Option<Box<[u8]>>,
         /// define
         pub define: Option<StringMap>,
@@ -231,16 +203,6 @@ pub mod api {
         pub email: Box<[u8]>,
     }
 
-    impl NpmRegistry {
-        /// Plain field-wise clone. PERF: could pack all five strings into one
-        /// contiguous allocation and reslice, but Rust can't hand back five
-        /// `Box<[u8]>` views into one buffer without leaking.
-        #[inline]
-        pub fn dupe(&self) -> NpmRegistry {
-            self.clone()
-        }
-    }
-
     /// Per-scope npm registry overrides, keyed by scope name.
     #[derive(Default)]
     pub struct NpmRegistryMap {
@@ -324,9 +286,6 @@ pub mod api {
         pub hoist: Option<bool>,
     }
 
-    /// Open `enum(u8)` in the wire schema. Generated body emits `_` open
-    /// variant; Rust side keeps it closed since callers exhaustively match
-    /// only the four named tags (see bundler/options.rs `SourceMapOption`).
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum SourceMapMode {
@@ -337,8 +296,6 @@ pub mod api {
         Linked,
     }
 
-    /// Open `enum(u8)` in the wire schema. Kept closed; `BundleEnums::Target::from`
-    /// guards the open tail with a `_ => Browser` arm.
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum Target {
@@ -352,21 +309,14 @@ pub mod api {
 
     impl Target {
         // PascalCase aliases — `runtime/cli/Arguments.rs` writes
-        // `api::Target::Bun` while the schema enum body keeps the peechy
-        // snake_case tags above.
+        // `api::Target::Bun` while the enum body keeps the snake_case tags
+        // that `bundle_enums.rs` matches on.
         pub const Browser: Self = Self::browser;
         pub const Node: Self = Self::node;
         pub const Bun: Self = Self::bun;
         pub const BunMacro: Self = Self::bun_macro;
     }
 
-    /// Alias: `runtime/cli/Arguments.rs` spells the schema type both ways.
-    pub type SourceMap = SourceMapMode;
-    /// Alias: `runtime/cli/Arguments.rs` spells the schema type both ways.
-    pub type Packages = PackagesMode;
-
-    /// Open `enum(u8)` in the wire schema, `_none = 254`. Kept closed;
-    /// `BundleEnums::Loader::from_api` guards the open tail with `_ => File`.
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum Loader {
@@ -428,23 +378,6 @@ pub mod api {
         }
     }
 
-    // ─── peechy batch 2: hand-expanded for downstream wfs ────────────────
-    // Jsx / JsxRuntime / StringMap / EnvConfig / LoadedEnvConfig /
-    // LoadedRouteConfig / RouteConfig / FrameworkEntryPoint{,Type,Map,Message} /
-    // PackagesMode / CssInJsBehavior / LoaderMap / LoadedFramework.
-    //
-    // String mapping (matches Context.rs convention — proc-lifetime borrows
-    // ported as owned heap):
-    //   `[]const u8`          → `Box<[u8]>`
-    //   `[]const []const u8`  → `Vec<Box<[u8]>>`  (or `Box<[Box<[u8]>]>` where
-    //                            downstream `.clone()` target requires it)
-    //
-    // Enum variant names are PascalCase (idiomatic Rust, matches downstream
-    // callers in bundler/options.rs + router/lib.rs); `_none` retained as the
-    // zero-tag default where the wire schema has it. Full peechy `.rs` emit
-    // will replace this block wholesale.
-
-    /// Open `enum(u8)` in the wire schema. Kept closed.
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum JsxRuntime {
@@ -487,26 +420,6 @@ pub mod api {
         pub loaders: Vec<Loader>,
     }
 
-    /// Fully-resolved env configuration (env prefix + defaults).
-    #[derive(Clone, Debug, Default)]
-    pub struct LoadedEnvConfig {
-        pub dotenv: DotEnvBehavior,
-        pub defaults: StringMap,
-        pub prefix: Box<[u8]>,
-    }
-
-    /// Open `enum(u8)` in the wire schema. Kept closed.
-    #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-    pub enum CssInJsBehavior {
-        #[default]
-        _none = 0,
-        Facade = 1,
-        FacadeOnimportcss = 2,
-        AutoOnimportcss = 3,
-    }
-
-    /// Open `enum(u8)` in the wire schema (no `_none`). Kept closed.
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum PackagesMode {
@@ -516,8 +429,9 @@ pub mod api {
     }
 
     // ── Fallback error-page wire types ──────────────────────────────────────
+    // Encoded by `Writer` above; the layout must stay in sync with the decoder
+    // in `src/api/schema.js` (bundled into `src/fallback.ts`).
 
-    /// Open `enum(u8)` in the wire schema.
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum FallbackStep {

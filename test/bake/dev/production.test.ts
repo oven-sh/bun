@@ -746,10 +746,13 @@ export default function IndexPage() {
       }),
     });
 
-    const { exitCode } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
       .cwd(dir)
       .env(bunEnv)
       .throws(false);
+    // A successful bake build still writes the experimental banner and
+    // progress lines to stderr, so assert on errors rather than emptiness.
+    expect(stderr.toString()).not.toContain("error:");
     expect(exitCode).toBe(0);
 
     const cssFiles = await Array.fromAsync(new Bun.Glob("**/*.css").scan(path.join(dir, "dist")));
@@ -765,5 +768,62 @@ export default function IndexPage() {
     expect(css).toMatch(/prefers-color-scheme:\s*dark/);
     expect(css).toContain("var(--buncss-light");
     expect(css).not.toContain("light-dark(");
+  });
+
+  test("css resolved through an onResolve plugin is bundled once", async () => {
+    // The plugin success arm creates the source index directly from the
+    // plugin's returned path; it must share that index across graphs like the
+    // built-in resolver paths do, or the client and SSR copies collide on one
+    // content-hashed output path.
+    const dir = await tempDirWithBakeDeps("bake-production-plugin-css", {
+      "src/index.tsx": `
+import path from "node:path";
+import type { BunPlugin } from "bun";
+const cssRedirect: BunPlugin = {
+  name: "css-redirect",
+  setup(build) {
+    build.onResolve({ filter: /^virtual-styles$/ }, () => ({
+      path: path.join(import.meta.dir, "../styles.css"),
+    }));
+  },
+};
+export default { app: { framework: "react", plugins: [cssRedirect] } };`,
+      "pages/index.tsx": `
+import "virtual-styles";
+import Client from "../components/Client";
+export default function IndexPage() {
+  return <div>Hello <Client /></div>;
+}`,
+      "components/Client.tsx": `
+"use client";
+import "virtual-styles";
+export default function Client() {
+  return <span>client</span>;
+}`,
+      "styles.css": `
+.box:fullscreen {
+  color: red;
+}`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).not.toContain("DuplicateOutputPath");
+    expect(exitCode).toBe(0);
+
+    const cssFiles = await Array.fromAsync(new Bun.Glob("**/*.css").scan(path.join(dir, "dist")));
+    expect(cssFiles).toHaveLength(1);
+    const css = await Bun.file(path.join(dir, "dist", cssFiles[0])).text();
+    expect(css).toContain(":-webkit-full-screen");
   });
 });

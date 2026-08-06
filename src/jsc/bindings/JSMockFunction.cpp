@@ -984,8 +984,6 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstruct, (JSGlobalObject * lexicalGloba
     JSValue result = JSValue::decode(jsMockFunctionCallImpl(lexicalGlobalObject, callframe, thisObject));
     RETURN_IF_EXCEPTION(scope, {});
 
-    // JSC requires a native [[Construct]] to return an object, so like JS `new`,
-    // a primitive result is replaced with the created `this`.
     if (result && result.isObject())
         return JSValue::encode(result);
     return JSValue::encode(thisObject);

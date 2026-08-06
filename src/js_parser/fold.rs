@@ -515,6 +515,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         || (p.options.bundle
                             && p.options.output_format == js_parser::options::Format::Cjs)
                     {
+                        if p.options.framework.is_none()
+                            && (p.options.target.is_bun() || p.options.target.is_node())
+                        {
+                            if name == b"dir" || name == b"dirname" {
+                                p.record_usage(p.dirname_ref);
+                                return Some(p.new_expr(
+                                    E::Identifier {
+                                        ref_: p.dirname_ref,
+                                        ..Default::default()
+                                    },
+                                    name_loc,
+                                ));
+                            } else if name == b"path" || name == b"filename" {
+                                p.record_usage(p.filename_ref);
+                                return Some(p.new_expr(
+                                    E::Identifier {
+                                        ref_: p.filename_ref,
+                                        ..Default::default()
+                                    },
+                                    name_loc,
+                                ));
+                            }
+                        }
+
                         if name == b"dir" || name == b"dirname" {
                             // Inline import.meta.dir
                             return Some(

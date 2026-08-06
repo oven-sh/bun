@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
-import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, nodeExe, tempDir, tmpdirSync } from "harness";
+import fs, { cpSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
 
 describe.concurrent(
@@ -186,12 +186,21 @@ console.log(utils());`,
       });
       const baseDir = baseDirPath + "";
 
+      // `--compile` bundles for Bun's runtime, so `__dirname`/`__filename`
+      // resolve to the compiled executable's virtual `$bunfs` path at runtime
+      // instead of the build machine's source path (#4216). `--bytecode
+      // --format=esm` additionally covers the module-record import.meta flag:
+      // the injected `import.meta.dir` is the only import.meta reference here,
+      // and cached bytecode only links it when the parser marks the module
+      // accordingly. (`--bytecode` alone would imply CJS and skip that path.)
       const { exited } = Bun.spawn({
         cmd: [
           bunExe(),
           "build",
           path.join(baseDir, "我/我.ts"),
           "--compile",
+          "--bytecode",
+          "--format=esm",
           "--outfile",
           path.join(baseDir, "exe.exe"),
         ],
@@ -211,8 +220,70 @@ console.log(utils());`,
       const text = await proc.stdout.text();
       await proc.exited;
 
-      expect(text).toContain(path.join(baseDir, "我") + "\n");
-      expect(text).toContain(path.join(baseDir, "我", "我.ts") + "\n");
+      const bunfsRoot = isWindows ? "B:\\~BUN\\root" : "/$bunfs/root";
+      expect(text).toBe(bunfsRoot + "\n" + path.join(bunfsRoot, "exe.exe") + "\n");
+
+      // The browser target has no runtime source for `__dirname`, so it still
+      // inlines the source path as a string literal. Exercise the UTF-8 path
+      // round-trip this test originally covered there.
+      await using browserBuild = Bun.spawn({
+        cmd: [bunExe(), "build", path.join(baseDir, "我/我.ts"), "--target=browser"],
+        env: bunEnv,
+        cwd: baseDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [browserOut, browserErr, browserExit] = await Promise.all([
+        browserBuild.stdout.text(),
+        browserBuild.stderr.text(),
+        browserBuild.exited,
+      ]);
+      expect(browserErr).not.toContain("error:");
+      expect(browserOut).toContain(JSON.stringify(path.join(baseDir, "我")));
+      expect(browserOut).toContain(JSON.stringify(path.join(baseDir, "我", "我.ts")));
+      expect(browserExit).toBe(0);
+    });
+
+    test("__dirname and __filename from the CJS wrapper in compiled executables", async () => {
+      using dir = tempDir("bun-build-dirname-cjs", {
+        "entry.ts": "console.log(__dirname); console.log(__filename);",
+      });
+      const base = String(dir);
+
+      // `--bytecode` without `--format` implies CJS output: no declaration is
+      // injected, so `__dirname`/`__filename` come from the module wrapper.
+      await using build = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          path.join(base, "entry.ts"),
+          "--compile",
+          "--bytecode",
+          "--outfile",
+          path.join(base, "exe.exe"),
+        ],
+        env: bunEnv,
+        cwd: base,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(buildErr).not.toContain("error:");
+      expect(buildExit).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [path.join(base, "exe.exe")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      // The wrapper params equal the standalone graph key, which is
+      // forward-slashed on every platform (`B:/~BUN/root`, not `B:\~BUN\root`).
+      const bunfsRoot = isWindows ? "B:/~BUN/root" : "/$bunfs/root";
+      expect(stdout).toBe(bunfsRoot + "\n" + bunfsRoot + "/exe.exe\n");
+      expect(exitCode).toBe(0);
     });
 
     test.skipIf(!isWindows)("should be able to handle pretty path when using pnpm +  #14685", async () => {
@@ -515,5 +586,169 @@ describe("CLI argument error messages", () => {
     expect(stderr).toContain('"FOO"');
     expect(stderr).toContain("key=value");
     expect(exitCode).toBe(1);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/4216
+describe.concurrent("__dirname/__filename resolve at runtime in bundled output", () => {
+  for (const target of ["bun", "node"] as const) {
+    // Node-target bundles run under a real `node` so the emitted
+    // `import.meta.dirname`/`filename` are exercised on the runtime they
+    // target, not just on Bun's implementation of them.
+    const missingNode = target === "node" && !nodeExe();
+
+    test.skipIf(missingNode)(`--target=${target}`, async () => {
+      using src = tempDir("dirname-4216-src", {
+        "nested/entry.js": `
+          const dep = require("./dep.cjs");
+          console.log(JSON.stringify({
+            dirname: __dirname,
+            filename: __filename,
+            depDirname: dep.dir,
+            depFilename: dep.file,
+          }));
+        `,
+        "nested/dep.cjs": `
+          module.exports = { dir: __dirname, file: __filename };
+        `,
+      });
+      const srcDir = String(src);
+
+      // Build into a subdirectory of the source dir.
+      await using build = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          join(srcDir, "nested/entry.js"),
+          "--target",
+          target,
+          "--outfile",
+          join(srcDir, "build/bundle.mjs"),
+        ],
+        env: bunEnv,
+        cwd: srcDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(buildStderr).not.toContain("error:");
+      expect(buildExit).toBe(0);
+
+      const bundleSource = await Bun.file(join(srcDir, "build/bundle.mjs")).text();
+      // The build machine's absolute source path must not appear in the output.
+      expect(bundleSource).not.toContain(join(srcDir, "nested"));
+
+      // Copy the bundle somewhere unrelated to the build directory and run it
+      // from there, so a hardcoded build-time path cannot accidentally resolve.
+      using runDir = tempDir("dirname-4216-run", {});
+      const runPath = join(String(runDir), "moved.mjs");
+      cpSync(join(srcDir, "build/bundle.mjs"), runPath);
+
+      await using proc = Bun.spawn({
+        cmd: [target === "node" ? nodeExe()! : bunExe(), runPath],
+        env: bunEnv,
+        cwd: String(runDir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const out = JSON.parse(stdout.trim());
+      // All four should point at the *runtime* bundle location, not the source
+      // tree. The wrapped CJS dep sees the same chunk-level `import.meta` as the
+      // entry, so its __dirname/__filename match.
+      expect(out).toEqual({
+        dirname: String(runDir),
+        filename: runPath,
+        depDirname: String(runDir),
+        depFilename: runPath,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test.skipIf(missingNode)(`--target=${target} --format=cjs`, async () => {
+      // Also reference `import.meta.dir`/`.path` so the test catches any
+      // divergence between them and `__dirname`/`__filename` in CJS output.
+      using src = tempDir("dirname-4216-cjs", {
+        "entry.js": `
+          console.log(JSON.stringify({
+            dirname: __dirname,
+            filename: __filename,
+            metaDir: import.meta.dir,
+            metaPath: import.meta.path,
+          }));
+        `,
+      });
+      const srcDir = String(src);
+
+      await using build = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          join(srcDir, "entry.js"),
+          "--target",
+          target,
+          "--format=cjs",
+          "--outfile",
+          join(srcDir, "bundle.cjs"),
+        ],
+        env: bunEnv,
+        cwd: srcDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(buildStderr).not.toContain("error:");
+      expect(buildExit).toBe(0);
+
+      // The output must not re-declare __dirname/__filename with the build path;
+      // the CJS wrapper (Bun's `@bun-cjs` or Node's native module wrapper)
+      // already provides them.
+      const bundleSource = await Bun.file(join(srcDir, "bundle.cjs")).text();
+      expect(bundleSource).not.toContain(srcDir);
+
+      using runDir = tempDir("dirname-4216-cjs-run", {});
+      const runPath = join(String(runDir), "moved.cjs");
+      cpSync(join(srcDir, "bundle.cjs"), runPath);
+
+      await using proc = Bun.spawn({
+        cmd: [target === "node" ? nodeExe()! : bunExe(), runPath],
+        env: bunEnv,
+        cwd: String(runDir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout.trim())).toEqual({
+        dirname: String(runDir),
+        filename: runPath,
+        metaDir: String(runDir),
+        metaPath: runPath,
+      });
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  // --target=browser has no runtime `import.meta.dir` equivalent, so it keeps
+  // the legacy behavior of inlining the build-time path as a string literal.
+  test.concurrent("--target=browser still inlines a string literal", async () => {
+    using src = tempDir("dirname-4216-browser", {
+      "entry.js": `console.log(__dirname, __filename);`,
+    });
+    const srcDir = String(src);
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", join(srcDir, "entry.js"), "--target", "browser"],
+      env: bunEnv,
+      cwd: srcDir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("var __dirname =");
+    expect(stdout).not.toContain("import.meta");
+    expect(exitCode).toBe(0);
   });
 });

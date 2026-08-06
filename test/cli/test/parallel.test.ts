@@ -1073,3 +1073,41 @@ test("--parallel --no-isolate: a worker keeps one global and module registry acr
   expect(shared.stderr).not.toContain("error:");
   expect(shared.exitCode).toBe(0);
 });
+
+test.concurrent("--parallel=max:N caps the auto-detected worker count", async () => {
+  using dir = tempDir("parallel-max", {
+    "a.test.js": `import {test,expect} from "bun:test"; test("a",()=>expect(1).toBe(1));`,
+  });
+  const workers = async (arg: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", arg],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    return Number(stdout.match(/(\d+)x PARALLEL/)?.[1]);
+  };
+
+  expect(await workers("--parallel=max:1")).toBe(1);
+  // A cap above the core count is a no-op: same as plain --parallel.
+  expect(await workers("--parallel=max:9999")).toBe(await workers("--parallel"));
+});
+
+test.concurrent.each(["--parallel=max:0", "--parallel=max:", "--parallel=max:abc"])("%s is rejected", async arg => {
+  using dir = tempDir("parallel-max-bad", {
+    "a.test.js": `import {test,expect} from "bun:test"; test("a",()=>expect(1).toBe(1));`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", arg],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain('--parallel expects a positive integer or "max:N"');
+  expect(exitCode).toBe(1);
+});

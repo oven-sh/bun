@@ -604,7 +604,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--no-isolate                     With --parallel: let each worker keep one global and module registry across the files it runs (faster; files can see each other's leftovers)."
     ),
     parse_param!(
-        "--parallel <NUMBER>?             Run test files in parallel using N worker processes. Implies --isolate. Defaults to CPU core count."
+        "--parallel <NUMBER>?             Run test files in parallel using N worker processes, or \"max:N\" for the CPU core count capped at N. Implies --isolate. Defaults to CPU core count."
     ),
     parse_param!(
         "--parallel-delay <NUMBER>        Milliseconds the first --parallel worker must be busy before spawning the rest. 0 spawns all immediately. Default 5."
@@ -1820,27 +1820,28 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     ctx.test_options.test_worker = args.flag(b"--test-worker");
 
     if let Some(parallel_str) = args.option(b"--parallel") {
-        let parsed: u32 = if !parallel_str.is_empty() {
-            match strings::parse_int::<u32>(parallel_str, 10) {
-                Ok(v) => v,
-                Err(_) => {
-                    bun_core::pretty_errorln!(
-                        "<red>error<r>: --parallel expects a positive integer, received \"{}\"",
-                        BStr::new(parallel_str)
-                    );
-                    Global::exit(1);
-                }
-            }
+        let cpu_count = u32::from(bun_core::get_thread_count().max(1));
+        let cap = parallel_str.strip_prefix(b"max:".as_slice());
+        let count_str = cap.unwrap_or(parallel_str);
+        let parsed: u32 = if !count_str.is_empty() {
+            strings::parse_int::<u32>(count_str, 10).unwrap_or(0)
+        } else if cap.is_some() {
+            0
         } else {
-            u32::from(bun_core::get_thread_count().max(1))
+            cpu_count
         };
         if parsed == 0 {
             bun_core::pretty_errorln!(
-                "<red>error<r>: --parallel expects a positive integer, received \"0\""
+                "<red>error<r>: --parallel expects a positive integer or \"max:N\", received \"{}\"",
+                BStr::new(parallel_str)
             );
             Global::exit(1);
         }
-        ctx.test_options.parallel = parsed;
+        ctx.test_options.parallel = if cap.is_some() {
+            parsed.min(cpu_count)
+        } else {
+            parsed
+        };
         ctx.test_options.isolate = !no_isolate;
     }
 

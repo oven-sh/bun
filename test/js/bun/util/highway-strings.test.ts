@@ -215,18 +215,30 @@ describe("highway byte-search kernels", () => {
     }
   });
 
-  it("Buffer.indexOf / lastIndexOf(byte) agree with the kernels", () => {
-    // Buffer.lastIndexOf(number) is served by highway_memrmem's single-byte path
-    // (LastIndexOfCharImpl); make sure the public API sees the same answers.
+  it("Buffer.indexOf / lastIndexOf / includes(byte) through the public API", () => {
+    // These go through JSBuffer.cpp's indexOfNumber (offset/end plumbing) into
+    // the same kernels; assert against the planted positions, not a Buffer
+    // method (which would be the code under test).
     for (const len of LENGTHS) {
       for (const pos of positions(len)) {
         const buf = Buffer.from(filler(len, 0));
+        const last = pos + 16 < len ? pos + 16 : pos;
         buf[pos] = 0x21;
-        if (pos + 16 < len) buf[pos + 16] = 0x21;
-        expect(buf.indexOf(0x21)).toBe(refIndexOf(buf, 0x21));
-        expect(buf.lastIndexOf(0x21)).toBe(refLastIndexOf(buf, 0x21));
-        expect(buf.includes(0x21)).toBe(true);
+        buf[last] = 0x21;
+        const at = `len=${len} pos=${pos} last=${last}`;
+        expect(buf.indexOf(0x21), at).toBe(pos);
+        expect(buf.lastIndexOf(0x21), at).toBe(last);
+        expect(buf.includes(0x21), at).toBe(true);
+        expect(buf.includes(0x22), at).toBe(false);
+        expect(buf.lastIndexOf(Buffer.from("!"), last), at).toBe(last);
+        if (last !== pos) {
+          // byteOffset plumbing: start just past the first hit / just before the last one.
+          expect(buf.indexOf(0x21, pos + 1), at).toBe(last);
+          expect(buf.lastIndexOf(0x21, last - 1), at).toBe(pos);
+        }
       }
     }
+    expect(Buffer.alloc(0).indexOf(1)).toBe(-1);
+    expect(Buffer.alloc(0).lastIndexOf(1)).toBe(-1);
   });
 });

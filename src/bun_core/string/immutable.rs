@@ -359,17 +359,23 @@ pub fn contains(self_: &[u8], str: &[u8]) -> bool {
     index_of(self_, str).is_some()
 }
 
+/// The kernels compare against at most this many set bytes per pass.
+const ANY_CHAR_SET_MAX: usize = 16;
+
 /// Index of the first byte in `slice` that appears in `chars` (SIMD via
 /// highway). Returns `usize` (unlike the `u32`-returning single-char
 /// scanners above) so callers can index with the result directly.
-/// `chars` is a set of at most 16 bytes.
 #[inline]
 pub fn index_of_any(slice: &[u8], chars: &[u8]) -> Option<usize> {
-    debug_assert!(chars.len() <= 16);
     match chars.len() {
         0 => None,
         1 => index_of_char_usize(slice, chars[0]),
-        _ => highway::index_of_any_char(slice, chars),
+        2..=ANY_CHAR_SET_MAX => highway::index_of_any_char(slice, chars),
+        // Larger sets (none today): one pass per 16-byte chunk, earliest hit wins.
+        _ => chars
+            .chunks(ANY_CHAR_SET_MAX)
+            .filter_map(|set| index_of_any(slice, set))
+            .min(),
     }
 }
 
@@ -381,15 +387,17 @@ pub fn index_of_any_pos(slice: &[u8], chars: &[u8], start_index: usize) -> Optio
     index_of_any(&slice[start_index..], chars).map(|i| i + start_index)
 }
 
-/// Index of the last byte in `slice` that appears in `chars` (a set of at most
-/// 16 bytes; SIMD via highway).
+/// Index of the last byte in `slice` that appears in `chars` (SIMD via highway).
 #[inline]
 pub fn last_index_of_any(slice: &[u8], chars: &[u8]) -> Option<usize> {
-    debug_assert!(chars.len() <= 16);
     match chars.len() {
         0 => None,
         1 => last_index_of_char(slice, chars[0]),
-        _ => highway::last_index_of_any_char(slice, chars),
+        2..=ANY_CHAR_SET_MAX => highway::last_index_of_any_char(slice, chars),
+        _ => chars
+            .chunks(ANY_CHAR_SET_MAX)
+            .filter_map(|set| last_index_of_any(slice, set))
+            .max(),
     }
 }
 

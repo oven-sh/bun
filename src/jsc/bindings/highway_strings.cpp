@@ -408,6 +408,8 @@ size_t LastIndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len,
     ASSERT(chars_len >= 2 && chars_len <= 16);
     D8 d;
     const size_t N = hn::Lanes(d);
+    // Callers split larger sets; clamp so a bad length can never overrun char_vecs.
+    chars_len = std::min(chars_len, size_t { 16 });
 
     size_t i = text_len;
 #if !HWY_HAVE_SCALABLE && !HWY_TARGET_IS_SVE

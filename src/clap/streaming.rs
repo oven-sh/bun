@@ -418,6 +418,8 @@ mod tests {
                         &diag.arg
                     };
                     let quoted = [b"'".as_slice(), captured, b"'"].concat();
+                    // Naive search: `cargo test -p bun_clap` does not link the
+                    // highway kernels behind `bun_core::strings::contains`.
                     assert!(
                         (0..expected.len()).any(|i| expected[i..].starts_with(&quoted)),
                         "expected message {:?} does not name captured arg {:?}",

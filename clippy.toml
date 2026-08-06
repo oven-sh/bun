@@ -39,7 +39,7 @@ disallowed-methods = [
   { path = "str::split_terminator", reason = "use bun_core::strings::split on .as_bytes() (highway SIMD)" },
   { path = "str::rsplit_terminator", reason = "use bun_core::strings on .as_bytes() (highway SIMD)" },
   { path = "str::split_inclusive", reason = "use bun_core::strings::index_of_char in a loop on .as_bytes() (highway SIMD)" },
-  { path = "str::lines", reason = "use bun_core::strings::split(bytes, b\"\\n\") (highway SIMD)" },
+  { path = "str::lines", reason = "use bun_core::strings::split(bytes, b\"\\n\") and strip a trailing b'\\r' per field (str::lines does) (highway SIMD)" },
   { path = "str::matches", reason = "use bun_core::strings on .as_bytes() (highway SIMD)" },
   { path = "str::rmatches", reason = "use bun_core::strings on .as_bytes() (highway SIMD)" },
   { path = "str::match_indices", reason = "use bun_core::strings on .as_bytes() (highway SIMD)" },

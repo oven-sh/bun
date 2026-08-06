@@ -861,8 +861,8 @@ impl<'a> JSXTag<'a> {
         // Certain identifiers are strings
         // <div
         // <button
-        // <Hello-:Button
-        if strings::contains(name, b"-:")
+        // <Hello-Button, <ns:button (any name containing '-' or ':')
+        if strings::contains_any(name, b"-:")
             || (p.lexer().token != T::TDot && name[0] >= b'a' && name[0] <= b'z')
         {
             return Ok(JSXTag {

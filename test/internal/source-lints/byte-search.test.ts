@@ -35,11 +35,11 @@ const root = path.resolve(import.meta.dir, "..", "..", "..");
 // read off each crate's Cargo.toml rather than guessed from its name.
 const hostOnly: string[] = [];
 for (const manifest of new Bun.Glob("src/*/Cargo.toml").scanSync({ cwd: root })) {
-  const dir = path.dirname(manifest);
+  const dir = path.dirname(manifest).replaceAll(path.sep, "/");
   const toml = await file(path.join(root, manifest)).text();
   if (/^\s*proc-macro\s*=\s*true\b/m.test(toml)) hostOnly.push(dir + "/");
   const build = /^\s*build\s*=\s*"([^"]+)"/m.exec(toml);
-  hostOnly.push(path.join(dir, build ? build[1] : "build.rs"));
+  hostOnly.push(path.posix.join(dir, build ? build[1] : "build.rs"));
 }
 const rustSources = globAllSources().rust.filter(abs => {
   if (!abs.endsWith(".rs")) return false;

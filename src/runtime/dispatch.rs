@@ -1355,6 +1355,14 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             unsafe { Bun__deleteEventLoopTask(task.ptr.cast::<CppTask>()) };
             true
         }
+        // Queue presence means the work-pool phase finished and the queue
+        // owned the job; parking it would strand the ctx's native resources.
+        task_tag::AnyTaskJob => {
+            // SAFETY: every queued AnyTaskJob payload is the live heap job
+            // created by `AnyTaskJob::create`; we own it once popped.
+            unsafe { bun_jsc::any_task_job::release_erased(task.ptr) };
+            true
+        }
         // Re-queued by the caller; the box stays reachable from the
         // static-rooted VM queue, because running these callbacks
         // is not generally safe at shutdown (e.g. `AsyncModule::on_done`,

@@ -1337,7 +1337,9 @@ describe("servernames containing NUL bytes", () => {
     socket.on("error", () => {});
     try {
       await once(socket, "connect");
-      expect(() => socket.setServername("localhost\0.example.invalid")).toThrow("must not contain null bytes");
+      expect(() => socket.setServername("localhost\0.example.invalid")).toThrow(
+        '"serverName" must not contain null bytes',
+      );
     } finally {
       socket.destroy();
       server.close();

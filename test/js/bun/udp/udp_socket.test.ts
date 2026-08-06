@@ -675,3 +675,16 @@ describe("hostnames containing NUL bytes", () => {
     expect(err?.message).toContain("must not contain null bytes");
   });
 });
+
+test.concurrent("bind hostname is coerced exactly once", async () => {
+  // `is_string` admits String objects; a stateful toString must not be able to
+  // show the validator a clean value and hand the bind a different one.
+  let calls = 0;
+  const host = new String("placeholder");
+  // @ts-expect-error deliberate override
+  host.toString = () => (++calls === 1 ? "127.0.0.1" : "127.0.0.1\0evil.example.invalid");
+  const socket = await udpSocket({ hostname: host as any, port: 0 });
+  const bound = socket.hostname;
+  socket.close();
+  expect({ calls, bound }).toEqual({ calls: 1, bound: "127.0.0.1" });
+});

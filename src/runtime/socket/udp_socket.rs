@@ -394,12 +394,16 @@ impl UDPSocketConfig {
                         "Expected \"hostname\" to be a string"
                     )));
                 }
-                if value.to_slice(global_this)?.slice().contains(&0) {
+                // Coerce once and validate the coerced bytes: `is_string`
+                // admits String objects, whose toString could return a
+                // different value on a repeated coercion.
+                let host_str = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
+                if host_str.to_utf8_without_ref().slice().contains(&0) {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "\"hostname\" must not contain null bytes"
                     )));
                 }
-                break 'brk value.to_bun_string(global_this)?;
+                break 'brk host_str.into_inner();
             } else {
                 break 'brk BunString::static_("0.0.0.0");
             }
@@ -487,17 +491,19 @@ impl UDPSocketConfig {
                 )));
             }
 
-            if connect_host_js.to_slice(global_this)?.slice().contains(&0) {
+            // Coerce once and validate the coerced bytes: `is_string` admits
+            // String objects, whose toString could return a different value on
+            // a repeated coercion.
+            let connect_host = bun_core::OwnedString::new(connect_host_js.to_bun_string(global_this)?);
+            if connect_host.to_utf8_without_ref().slice().contains(&0) {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "\"connect.hostname\" must not contain null bytes"
                 )));
             }
 
-            let connect_host = connect_host_js.to_bun_string(global_this)?;
-
             config.connect = Some(ConnectConfig {
                 port: connect_port as u16,
-                address: connect_host,
+                address: connect_host.into_inner(),
             });
         }
 
@@ -1871,9 +1877,7 @@ impl UDPSocket {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected 2 arguments")));
         }
 
-        // Coerce once and validate the coerced bytes: a second coercion of a
-        // non-string argument could observe a different value than the one
-        // that was checked.
+        // Coerce once; a repeated coercion could observe a different value.
         let str = bun_core::OwnedString::new(args[0].to_bun_string(global_this)?);
         {
             let host_utf8 = str.to_utf8_without_ref();

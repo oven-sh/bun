@@ -1121,14 +1121,6 @@ pub mod time {
     }
 }
 
-/// `bun.schema`. The full generated API types live in `bun_api` (tier-2);
-/// tier-0 cannot depend on that, so expose the one type tier-0 itself owns.
-pub mod schema {
-    pub mod api {
-        pub use crate::util::StringPointer;
-    }
-}
-
 pub use output as Output;
 
 // `crate::js_lexer` / `crate::js_printer` resolve to fmt.rs's local subsets.

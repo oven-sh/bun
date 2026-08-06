@@ -2401,7 +2401,6 @@ impl<'a> Transpiler<'a> {
         let opts = js_printer::Options {
             bundling: false,
             require_ref: Some(ast.require_ref),
-            css_import_behavior: self.options.css_import_behavior(),
             source_map_handler: source_map_context,
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,
@@ -2480,7 +2479,6 @@ impl<'a> Transpiler<'a> {
         let opts = js_printer::Options {
             bundling: false,
             require_ref: Some(ast.require_ref),
-            css_import_behavior: self.options.css_import_behavior(),
             source_map_handler: source_map_context,
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,

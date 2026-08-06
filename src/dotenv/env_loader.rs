@@ -37,7 +37,7 @@ pub trait DirEntryProbe {
 // is provided there — see src/resolver/lib.rs. No impl here; that would be a
 // dep-cycle.
 
-/// schema.peechy — `enum(u32)`. Canonical definition; re-exported as
+/// Canonical definition; re-exported as
 /// `bun_options_types::schema::api::DotEnvBehavior` for higher tiers.
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
@@ -54,8 +54,7 @@ pub enum DotEnvBehavior {
 #[allow(non_upper_case_globals)]
 impl DotEnvBehavior {
     // PascalCase aliases — downstream callers (bundler/options.rs, bundler/defines.rs,
-    // runtime/api/JSBundler.rs) name the variants both ways while the snake_case enum
-    // body above stays the schema ground truth.
+    // runtime/api/JSBundler.rs) name the variants both ways.
     pub const None: Self = Self::_none;
     pub const Disable: Self = Self::disable;
     pub const Prefix: Self = Self::prefix;

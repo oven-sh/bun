@@ -11,9 +11,6 @@ use bun_alloc::Arena; // = bumpalo::Bump
 use bun_collections::ArrayHashMap;
 use bun_core::Output;
 use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
-// peechy batch 2 landed: `bun_options_types::schema::api` now provides
-// {StringMap, DotEnvBehavior, SourceMapMode, TransformOptions}.
-// Alias as `bun_schema` so existing field paths resolve unchanged.
 use bun_core::{ZStr, strings};
 use bun_options_types::schema as bun_schema;
 use bun_paths::{self as paths, PathBuffer};

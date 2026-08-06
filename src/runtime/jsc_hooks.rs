@@ -387,9 +387,7 @@ unsafe fn init_runtime_state(
         // measurable on `bun -e ''` startup.
         let mut args = core::mem::take(&mut opts.transform_options);
         let preserve_symlinks = args.preserve_symlinks.unwrap_or(false);
-        // Inlined `configure_transform_options_for_bun_vm`:
         args.write = Some(false);
-        args.resolve = Some(api::ResolveMode::Lazy);
         args.target = Some(api::Target::Bun);
         // The arena lives on
         // `RuntimeState` (boxed above) so `deinit_runtime_state` reclaims it

@@ -5,14 +5,10 @@ use core::ptr::NonNull;
 
 use crate::JSValue;
 
-// Refcount contract (load-bearing): `ref()`/`unref()` calls must be balanced
-// in pairs; Drop is the release for the `init()` protect. In debug builds a
-// final `unref()` (ref_count 1 → 0) additionally frees the canary, zeroes
-// `raw`, and clears `_safety` so a subsequent Drop is a no-op. Release builds
-// have no ref_count, so an unref-used-as-release followed by Drop would
-// double-unprotect — callers must never use `unref()` as the release.
+// Drop is the release for the `init()` protect. In debug builds a heap
+// canary detects use-after-free of the handle itself.
 // (Audited 2026-06: the only user is test_runner/Collection.rs, which uses
-// `init` + Drop and never calls `ref`/`unref`.)
+// `init` + Drop.)
 
 #[cfg(debug_assertions)]
 macro_rules! enable_safety {
@@ -75,32 +71,6 @@ impl DeprecatedStrong {
 
     pub fn get(&self) -> JSValue {
         self.raw
-    }
-
-    pub fn unref(&mut self) {
-        self.raw.unprotect();
-        #[cfg(debug_assertions)]
-        if let Some(_safety) = &mut self._safety {
-            if _safety.ref_count == 1 {
-                // SAFETY: ptr was produced by heap::alloc in `init` and not yet freed.
-                unsafe {
-                    debug_assert!((*_safety.ptr.as_ptr()).raw.encoded() == 0xAEBCFA);
-                    (*_safety.ptr.as_ptr()).raw = JSValue::from_encoded(0xFFFFFF);
-                    // Free without running Drop on the sentinel (ManuallyDrop is repr(transparent)).
-                    drop(bun_core::heap::take(
-                        _safety
-                            .ptr
-                            .as_ptr()
-                            .cast::<ManuallyDrop<DeprecatedStrong>>(),
-                    ));
-                }
-                // Neutralize so Drop is a no-op (see top-of-file refcount contract).
-                self._safety = None;
-                self.raw = JSValue::ZERO;
-                return;
-            }
-            _safety.ref_count -= 1;
-        }
     }
 }
 

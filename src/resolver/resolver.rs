@@ -5135,8 +5135,7 @@ impl<'a> Resolver<'a> {
         r
     }
 
-    // nodeModulePathsForJS / Resolver__propForRequireMainPaths: see src/jsc/resolver_jsc.rs
-    // (exported to C++ only)
+    // nodeModulePathsForJS: see src/jsc/resolver_jsc.rs (exported to C++ only)
 
     // NOTE: `dir_info` is a `DirInfoRef` (matching spec `*DirInfo`) so
     // `load_index_with_extension` may re-borrow without aliasing the caller's `&mut`.

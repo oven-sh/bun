@@ -79,13 +79,6 @@ pub struct WindowsOptions {
     pub copyright: Option<Box<[u8]>>,
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum BundlePackage {
-    Always,
-    Never,
-}
-
 // ─── move-in: TYPE_ONLY from bun_bundler::options ─────────────────────────
 
 /// Set by the process environment to override the JSX configuration. When

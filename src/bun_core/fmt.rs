@@ -706,11 +706,6 @@ impl fmt::Display for Raw<'_> {
         f.write_str(unsafe { core::str::from_utf8_unchecked(self.0) })
     }
 }
-/// Shorthand constructor for [`Raw`]. Prefer [`s`] (same thing, shorter name).
-#[inline(always)]
-pub const fn raw(bytes: &[u8]) -> Raw<'_> {
-    Raw(bytes)
-}
 
 // Canonical `SliceCursor` / `buf_print` / `buf_print_len` live in T0
 // `bun_alloc` so that crate can use them too; re-exported here for the

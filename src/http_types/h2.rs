@@ -38,10 +38,6 @@ pub enum FrameType {
     HTTP_FRAME_WINDOW_UPDATE = 0x08,
     /// RFC 7540 §6.10: continues a header block fragment.
     HTTP_FRAME_CONTINUATION = 0x09,
-    /// <https://datatracker.ietf.org/doc/html/rfc7838#section-7.2>
-    HTTP_FRAME_ALTSVC = 0x0A,
-    /// <https://datatracker.ietf.org/doc/html/rfc8336#section-2>
-    HTTP_FRAME_ORIGIN = 0x0C,
 }
 
 #[repr(u8)]

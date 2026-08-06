@@ -249,7 +249,7 @@ impl ReadableStream {
         None
     }
 
-    pub fn done(&self, global_this: &JSGlobalObject) {
+    pub fn done(&self, _global_this: &JSGlobalObject) {
         // done is called when we are done consuming the stream
         // cancel actually mark the stream source as done
         // this will resolve any pending promises to done: true
@@ -262,7 +262,6 @@ impl ReadableStream {
             Source::Bytes(source) => unsafe { (*(*source).parent()).cancel() },
             _ => {}
         }
-        self.detach_if_possible(global_this);
     }
 
     pub fn cancel(&self, global_this: &JSGlobalObject) {
@@ -396,11 +395,6 @@ impl ReadableStream {
 
         NativeWireResult::NotNative
     }
-
-    /// Decrement Source ref count and detach the underlying stream if ref count is zero
-    /// be careful, this can invalidate the stream do not call this multiple times
-    /// this is meant to be called only once when we are done consuming the stream or from the ReadableStream.Strong.deinit
-    pub fn detach_if_possible(&self, _global: &JSGlobalObject) {}
 
     pub fn is_disturbed(&self, global_object: &JSGlobalObject) -> bool {
         is_disturbed_value(self.value, global_object)

@@ -90,8 +90,6 @@ const DEFLATE_TRAILER: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
 pub enum DecompressError {
     #[error("InflateFailed")]
     InflateFailed,
-    #[error("OutOfMemory")]
-    OutOfMemory,
     #[error("TooLarge")]
     TooLarge,
 }
@@ -100,8 +98,6 @@ pub enum DecompressError {
 pub enum CompressError {
     #[error("DeflateFailed")]
     DeflateFailed,
-    #[error("OutOfMemory")]
-    OutOfMemory,
 }
 
 impl PerMessageDeflate {

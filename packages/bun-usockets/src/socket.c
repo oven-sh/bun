@@ -409,13 +409,14 @@ struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned cha
 #endif
 }
 
-/* Re-arm writable for a backpressured write without resuming the read side of
- * a paused socket: us_poll_change sets absolute flags, so including READABLE
- * unconditionally would silently undo us_socket_pause mid-backpressure and
- * deliver data the caller asked to defer. */
+/* Re-arm writable for a backpressured write, preserving the current read
+ * interest: us_poll_change sets absolute flags, and read interest is only ever
+ * off because something dropped it deliberately - us_socket_pause, the
+ * half-open EOF branch (re-adding it would re-deliver EOF and fire on_end
+ * again), or low-priority parking. Forcing READABLE back on undid all three. */
 static void us_internal_rearm_writable(struct us_socket_t *s) {
     us_poll_change(&s->p, s->group->loop,
-                   LIBUS_SOCKET_WRITABLE | (s->flags.is_paused ? 0 : LIBUS_SOCKET_READABLE));
+                   LIBUS_SOCKET_WRITABLE | (us_poll_events(&s->p) & LIBUS_SOCKET_READABLE));
 }
 
 #ifndef _WIN32

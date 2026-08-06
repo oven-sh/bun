@@ -213,11 +213,13 @@ public:
             } else if (!keepCorked) {
                 this->uncork();
                 /* That uncork released our cork slot, so the cork() wrapper's
-                 * post-uncork close gate will not run. Outside the parser (an
-                 * async handler completing) no later onData gate runs either,
-                 * so close here; inside the parser, onData's post-parse gate
-                 * handles it once the buffer is fully consumed. */
-                if (!HttpContext<SSL>::fromSocket((us_socket_t *) this)->getSocketContextData()->flags.isParsingHttp
+                 * post-uncork close gate will not run. When THIS socket is the
+                 * one being parsed, onData's post-parse gate closes it once
+                 * the buffer is fully consumed; any other socket (an async
+                 * handler completing, possibly inside another socket's parse
+                 * window via a drained microtask) gets no later gate, so close
+                 * here. */
+                if (HttpContext<SSL>::fromSocket((us_socket_t *) this)->getSocketContextData()->parsingSocket != (us_socket_t *) this
                     && closeIfDoneAndMarked(httpResponseData)) {
                     return true;
                 }
@@ -278,8 +280,9 @@ public:
                 }  else if (!keepCorked) {
                     this->uncork();
                     /* Same as the chunked arm above: the cork slot is gone, so
-                     * run the close gate here when outside the parser. */
-                    if (!HttpContext<SSL>::fromSocket((us_socket_t *) this)->getSocketContextData()->flags.isParsingHttp) {
+                     * run the close gate here unless THIS socket is the one
+                     * being parsed (then onData's post-parse gate handles it). */
+                    if (HttpContext<SSL>::fromSocket((us_socket_t *) this)->getSocketContextData()->parsingSocket != (us_socket_t *) this) {
                         closeIfDoneAndMarked(httpResponseData);
                     }
                 }

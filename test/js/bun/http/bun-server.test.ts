@@ -810,6 +810,91 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     });
   });
 
+  test("a response completing inside another socket's parse window still closes its drained connection", async () => {
+    // internalEnd's post-uncork close gate must key on WHICH socket the
+    // parser is on, not the context-wide isParsingHttp bit: B's parked
+    // response below completes in the microtask drain inside A's onData
+    // dispatch (A resolves it), and B gets no later gate of its own. With the
+    // context-wide bit, B lingered until idleTimeout and stop() hung.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const releaseB = Promise.withResolvers();
+          const bHeld = Promise.withResolvers();
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            idleTimeout: 255,
+            async fetch(req) {
+              const path = new URL(req.url).pathname;
+              if (path === "/hold") {
+                bHeld.resolve();
+                await releaseB.promise;
+                return new Response("held");
+              }
+              if (path === "/poke") {
+                // B's completion runs in the microtask drain while A's
+                // socket is the one being parsed.
+                releaseB.resolve();
+                return new Response("poked");
+              }
+              return new Response("ok");
+            },
+          });
+          function dial() {
+            const c = net.connect(server.port, "127.0.0.1");
+            const state = { c, buf: "", closed: false };
+            c.on("data", d => (state.buf += d));
+            c.on("close", () => (state.closed = true));
+            c.on("error", () => {});
+            return new Promise((res, rej) => {
+              c.on("connect", () => res(state));
+              c.on("error", rej);
+            });
+          }
+          const b = await dial();
+          b.c.write("GET /hold HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          await bHeld.promise;
+          const a = await dial();
+          // Partial head: A is mid-request at the sweep, so it is spared and
+          // marked close-when-idle. Give the bytes a tick batch to arrive (a
+          // zero-byte connection would sit in the defer-accept queue and the
+          // sweep could not see it).
+          a.c.write("GET /poke HTTP/1.1\\r\\nHost: x\\r\\n");
+          for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r));
+          let resolved = false;
+          const stopped = server.stop(false).then(() => { resolved = true; });
+          await new Promise(r => setImmediate(r));
+          const resolvedEarly = resolved;
+          // Complete A's request; its dispatch resolves B inside A's parse
+          // window. Both responses must be delivered, then both connections
+          // close server-initiated and the drain promise resolves.
+          a.c.write("\\r\\n");
+          while (!a.closed || !b.closed) await new Promise(r => setImmediate(r));
+          await stopped;
+          console.log(JSON.stringify({
+            resolvedEarly,
+            aGotResponse: a.buf.includes("poked"),
+            bGotResponse: b.buf.includes("held"),
+            resolved,
+          }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
+      stderr: "",
+      out: { resolvedEarly: false, aGotResponse: true, bGotResponse: true, resolved: true },
+      exitCode: 0,
+    });
+  });
+
   test("closeIdleConnections() is a one-shot sweep that spares busy connections and keeps listening", async () => {
     await using proc = Bun.spawn({
       cmd: [

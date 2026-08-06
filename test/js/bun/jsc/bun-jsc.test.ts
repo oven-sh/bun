@@ -577,6 +577,12 @@ it("samplingProfilerStackTraces returns parsed traces and survives BUN_JSC_valid
   // stack-trace path.
   const script = `
     const jsc = require("bun:jsc");
+    try {
+      jsc.samplingProfilerStackTraces();
+      console.log("no-throw");
+    } catch (e) {
+      console.log("threw", e.message);
+    }
     jsc.startSamplingProfiler();
     let j = 0;
     for (let i = 0; i < 999999; i++) j += i % 7;
@@ -594,5 +600,9 @@ it("samplingProfilerStackTraces returns parsed traces and survives BUN_JSC_valid
     .split("\n")
     .map(line => line.trim())
     .filter(line => line.startsWith("This scope can throw") || line.startsWith("But the exception was unchecked"));
-  expect({ stdout, uncheckedScopes, exitCode }).toEqual({ stdout: "ok object true\n", uncheckedScopes: [], exitCode: 0 });
+  expect({ stdout, uncheckedScopes, exitCode }).toEqual({
+    stdout: "threw Sampling profiler was never started\nok object true\n",
+    uncheckedScopes: [],
+    exitCode: 0,
+  });
 });

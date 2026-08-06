@@ -49,7 +49,7 @@ static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject
     uint32_t size = std::min(impl.sizeAfterJoiningSetCookieHeader(), static_cast<uint32_t>(JSFinalObject::maxInlineCapacity));
     JSC::JSArray* array = constructEmptyArray(globalObject, nullptr, impl.size() * 2);
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSObject* obj = JSC::constructEmptyObject(globalObject, prototype, size);
+    JSC::JSObject* obj = size ? JSC::constructEmptyObject(globalObject, prototype, size) : JSC::constructEmptyObject(globalObject, prototype);
     RETURN_IF_EXCEPTION(scope, {});
 
     unsigned arrayI = 0;
@@ -495,7 +495,9 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
         size++;
     }
 
-    JSC::JSObject* headersObject = JSC::constructEmptyObject(globalObject, prototype, std::min(size, static_cast<size_t>(JSFinalObject::maxInlineCapacity)));
+    JSC::JSObject* headersObject = size
+        ? JSC::constructEmptyObject(globalObject, prototype, std::min(size, static_cast<size_t>(JSFinalObject::maxInlineCapacity)))
+        : JSC::constructEmptyObject(globalObject, prototype);
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSArray* array = constructEmptyArray(globalObject, nullptr, size * 2);
     RETURN_IF_EXCEPTION(scope, {});

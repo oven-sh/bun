@@ -490,9 +490,18 @@ export function windowsEnv(
       return internalEnv[p];
     },
     set(_, p, value) {
-      const k = String(p).toUpperCase();
+      let k = String(p);
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
       value = String(value); // If toString() throws, we want to avoid it existing in the envMapList
+      // setenv() semantics: NUL truncates key and value; empty or '='-bearing
+      // keys are dropped silently (node ignores the setenv EINVAL).
+      const keyNul = k.indexOf("\0");
+      if (keyNul !== -1) k = k.slice(0, keyNul);
+      if (k.length === 0 || k.indexOf("=") !== -1) return true;
+      const valNul = value.indexOf("\0");
+      if (valNul !== -1) value = value.slice(0, valNul);
+      p = k;
+      k = k.toUpperCase();
       // Track the key for enumeration if it isn't already there. Don't gate on
       // `k in internalEnv`: the proxy-related env-var accessors (HTTP_PROXY,
       // HTTPS_PROXY, NO_PROXY and lowercase variants) always exist on
@@ -528,12 +537,24 @@ export function windowsEnv(
       return typeof p !== "symbol" ? delete internalEnv[k] : false;
     },
     defineProperty(_, p, attributes) {
-      const k = String(p).toUpperCase();
+      let k = String(p);
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
+      const keyNul = k.indexOf("\0");
+      if (keyNul !== -1) k = k.slice(0, keyNul);
+      if (k.length === 0 || k.indexOf("=") !== -1) return true;
+      p = k;
+      k = k.toUpperCase();
+      let v: string | undefined;
+      if ("value" in attributes) {
+        v = String(attributes.value);
+        const valNul = v.indexOf("\0");
+        if (valNul !== -1) v = v.slice(0, valNul);
+        attributes = { ...attributes, value: v };
+      }
       if (!(k in internalEnv) && !envMapList.includes(p)) {
         envMapList.push(p);
       }
-      editWindowsEnvVar(k, internalEnv[k]);
+      if (v !== undefined) editWindowsEnvVar(k, v);
       return $Object.$defineProperty(internalEnv, k, attributes);
     },
     getOwnPropertyDescriptor(target, p) {

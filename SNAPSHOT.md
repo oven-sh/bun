@@ -79,7 +79,7 @@ First-writer attribution of dirtied *cell* pages over one turn (`BUN_IMAGE_TRAP=
 
 ## Startup
 
-Time to interactive prompt (pty, `ttfp.ts`): normal boot ~505 ms / 0.52 s CPU; restored from image **~100–110 ms / 0.10 s CPU** — including the ASLR re-exec, mapping the image, the ~16 MB data-segment copy, restore handlers and repaint.
+Time to interactive prompt (pty): normal boot ~505 ms / 0.52 s CPU. Restored from the sidecar/cache image ~100–110 ms; restored from the **single-file executable ~45 ms** warm (`tstamp.ts`: `[image] restored` line at ~36 ms incl. the ASLR re-exec and ~370 region `mmap`s; ~720 ms on a cold file cache). The mapping loop is not worth replacing with `mach_vm_remap` at these numbers.
 
 ## Interaction latency
 

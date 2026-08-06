@@ -554,37 +554,79 @@ describe("AbortSignal", () => {
     expect(result).toBe("completed successfully");
   });
 
-  test("a signal whose addEventListener throws does not leak the request", async () => {
+  test("a signal whose aborted getter throws still releases the granted lock", async () => {
+    // validateAbortSignal only checks that the property exists, so the
+    // throw first fires inside the deferred-grant microtask, after the
+    // grant was committed.
+    const error = new Error("aborted-boom");
+    await expect(
+      navigator.locks.request(
+        "aborted-getter-throws",
+        {
+          signal: {
+            get aborted() {
+              throw error;
+            },
+            throwIfAborted() {},
+            addEventListener() {},
+            removeEventListener() {},
+          } as any,
+        },
+        () => "never",
+      ),
+    ).rejects.toBe(error);
+    const available = await navigator.locks.request(
+      "aborted-getter-throws",
+      { ifAvailable: true },
+      lock => lock !== null,
+    );
+    expect(available).toBe(true);
+  });
+
+  test("failed or orphaned abort listener registrations do not leak the request", async () => {
     // The request's Strong on the abort listener and the listener's captured
-    // ref on the request form a cycle; a failure while registering the
-    // listener must not leave that cycle armed.
+    // ref on the request form a cycle; every terminal path must disarm it:
+    // a throwing addEventListener getter, a signal with no removeEventListener,
+    // and a stolen holder whose callback never settles.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
         const { heapStats } = require("bun:jsc");
-        function poisonSignal() {
-          return {
-            aborted: false,
-            throwIfAborted() {},
-            get addEventListener() { throw new Error("add-boom"); },
-          };
-        }
         let rejections = 0;
-        for (let i = 0; i < 2000; i++) {
+        for (let i = 0; i < 1500; i++) {
           try {
-            await navigator.locks.request("abort-leak", { signal: poisonSignal() }, () => {});
+            await navigator.locks.request("leak-add", { signal: {
+              aborted: false,
+              throwIfAborted() {},
+              get addEventListener() { throw new Error("add-boom"); },
+            } }, () => {});
           } catch {
             rejections++;
           }
+        }
+        for (let i = 0; i < 1500; i++) {
+          await navigator.locks.request("leak-remove", { signal: {
+            aborted: false,
+            throwIfAborted() {},
+            addEventListener() {},
+          } }, () => {});
+        }
+        for (let i = 0; i < 500; i++) {
+          const victim = navigator.locks
+            .request("leak-steal", { signal: new AbortController().signal }, () => new Promise(() => {}))
+            .catch(() => {});
+          await Promise.resolve(); // let the deferred grant start the callback
+          await navigator.locks.request("leak-steal", { steal: true }, () => {});
+          await victim;
         }
         await new Promise(r => setTimeout(r, 0));
         Bun.gc(true);
         Bun.gc(true);
         const promises = heapStats().objectTypeCounts.Promise ?? 0;
         console.log("rejections:", rejections);
-        console.log("promises:", promises < 1000 ? "collected" : "pinned: " + promises);
+        console.log("promises:", promises < 1500 ? "collected" : "pinned: " + promises);
         `,
       ],
       env: bunEnv,
@@ -592,7 +634,7 @@ describe("AbortSignal", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout).toBe("rejections: 2000\npromises: collected\n");
+    expect(stdout).toBe("rejections: 1500\npromises: collected\n");
     expect(exitCode).toBe(0);
   });
 });

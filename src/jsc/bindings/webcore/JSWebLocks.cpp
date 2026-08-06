@@ -412,6 +412,10 @@ static void removeAbortListener(Zig::GlobalObject* globalObject, WebLockRequest&
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* signal = request.signal.get();
     JSObject* listener = request.abortListener.get();
+    // Disarmed before any fallible call: every return below must break the
+    // cycle with the Ref the listener captures, and the stack locals keep
+    // both objects alive for the removeEventListener call.
+    request.abortListener.clear();
     JSValue removeFunction = signal->get(globalObject, Identifier::fromString(vm, "removeEventListener"_s));
     if (scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
@@ -425,7 +429,6 @@ static void removeAbortListener(Zig::GlobalObject* globalObject, WebLockRequest&
     args.append(listener);
     JSC::call(globalObject, removeFunction, callData, signal, args);
     (void)scope.tryClearException();
-    request.abortListener.clear();
 }
 
 // The callback (or the promise it returned) settled: drop the lock, publish
@@ -539,7 +542,16 @@ static bool handleGrantedRequest(Zig::GlobalObject* globalObject, WebLockRequest
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         JSValue abortedValue = request->signal.get()->get(globalObject, Identifier::fromString(vm, "aborted"_s));
-        RETURN_IF_EXCEPTION(scope, {});
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            // The grant is already committed, so a hostile aborted getter
+            // must still release it, like a synchronously-throwing callback.
+            JSValue error = exception->value();
+            if (!scope.tryClearException())
+                return {};
+            releaseAndSettle(globalObject, request.get(), error, true);
+            RETURN_IF_EXCEPTION(scope, {});
+            return JSValue::encode(jsUndefined());
+        }
         if (abortedValue.toBoolean(globalObject)) {
             // The promise was already rejected by the abort listener; release
             // the lock without running the callback. Node resolves its
@@ -576,6 +588,10 @@ bool dispatchWebLockEvent(Zig::GlobalObject* globalObject, int32_t type, uint64_
     case BunWebLocksRegistry::StolenEvent: {
         request->stolen = true;
         client.requests.remove(id);
+        // The stolen holder's callback may never settle, so releaseAndSettle
+        // (the usual disarm point) may never run for it.
+        removeAbortListener(globalObject, request.get());
+        RETURN_IF_EXCEPTION(scope, false);
         JSValue error = createDOMException(globalObject, ExceptionCode::AbortError, lockAbortedMessage);
         RETURN_IF_EXCEPTION(scope, false);
         publishLockRequestEnd(globalObject, request.get(), error);

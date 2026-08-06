@@ -69,6 +69,22 @@ describe("bundler", async () => {
         },
         run: { stdout: "shadowed 1979-05-27" },
       });
+      // The realistic collision: another module in the chunk imports a
+      // Temporal polyfill binding. The import gets renamed and the TOML
+      // module's calls still resolve to the native global.
+      itBundled("bun/loader-toml-datetime-imported-temporal-binding", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import { Temporal } from './polyfill.js';
+        import cfg from './config.toml';
+        console.write(Temporal.tag + " " + (cfg.ld instanceof globalThis.Temporal.PlainDate) + " " + cfg.ld.toString());
+      `,
+          "/polyfill.js": `export const Temporal = { tag: "polyfill" };`,
+          "/config.toml": `ld = 1979-05-27`,
+        },
+        run: { stdout: "polyfill true 1979-05-27" },
+      });
       // The transform path (--no-bundle) has no renamer, and a top-level TOML
       // key named Temporal becomes a module-scope var; the printed reference
       // goes through globalThis so that var cannot capture it.

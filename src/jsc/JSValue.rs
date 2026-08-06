@@ -655,20 +655,6 @@ impl JSValue {
     pub fn from_date_number(global: &JSGlobalObject, value: f64) -> JSValue {
         JSC__JSValue__dateInstanceFromNumber(global, value)
     }
-    /// A TOML date/time literal as the Temporal object of its kind (a
-    /// `bun_ast::E::TomlDateTimeKind` discriminant). `text` must be ASCII
-    /// that `Temporal.*.from` accepts verbatim.
-    pub fn from_toml_datetime_literal(
-        global: &JSGlobalObject,
-        text: &[u8],
-        kind: u8,
-    ) -> JsResult<JSValue> {
-        debug_assert!(text.is_ascii());
-        // SAFETY: `text` is a live slice for the duration of the call.
-        unsafe {
-            crate::cpp::Bun__Temporal__fromDateTimeLiteral(global, text.as_ptr(), text.len(), kind)
-        }
-    }
     #[track_caller]
     pub fn from_int64_no_truncate(global: &JSGlobalObject, i: i64) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || JSC__JSValue__fromInt64NoTruncate(global, i))

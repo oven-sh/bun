@@ -63,8 +63,7 @@ fn data_to_js_with_check(
         ExprData::EArrayJSON(e) => array_json_to_js(e, global, stack_check),
         ExprData::EString(e) => {
             if let Some(kind) = e.toml_datetime {
-                return JSValue::from_toml_datetime_literal(global, e.slice8(), kind as u8)
-                    .map_err(js_err);
+                return toml_datetime_to_js(global, e.slice8(), kind).map_err(js_err);
             }
             string_to_js(e, global)
         }
@@ -200,6 +199,25 @@ fn json_value_to_js(
         E::JsonValue::Object(o) => object_json_to_js(o.get(), global, stack_check)?,
         E::JsonValue::Array(a) => array_json_to_js(a.get(), global, stack_check)?,
     })
+}
+
+/// A TOML date/time literal as the Temporal object of its kind. `text` must
+/// be ASCII that `Temporal.*.from` accepts verbatim.
+pub fn toml_datetime_to_js(
+    global: &JSGlobalObject,
+    text: &[u8],
+    kind: E::TomlDateTimeKind,
+) -> bun_jsc::JsResult<JSValue> {
+    debug_assert!(text.is_ascii());
+    // SAFETY: `text` is a live slice for the duration of the call.
+    unsafe {
+        bun_jsc::cpp::Bun__Temporal__fromDateTimeLiteral(
+            global,
+            text.as_ptr(),
+            text.len(),
+            kind as u8,
+        )
+    }
 }
 
 fn utf8_bytes_to_js(bytes: &[u8], global: &JSGlobalObject) -> Result<JSValue, ToJSError> {

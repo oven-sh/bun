@@ -315,7 +315,7 @@ fn expr_to_js_with_check(
         ExprData::EString(str) => {
             let str = str.get();
             if let Some(kind) = str.toml_datetime {
-                return JSValue::from_toml_datetime_literal(global, str.slice8(), kind as u8);
+                return bun_js_parser_jsc::toml_datetime_to_js(global, str.slice8(), kind);
             }
             estring_to_js(str, global)
         }

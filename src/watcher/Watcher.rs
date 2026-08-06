@@ -845,9 +845,8 @@ impl Watcher {
         let res = self.add_file::<true>(fd, file_path, hash, loader, Fd::INVALID, None);
         match res {
             Ok(ownership) => {
-                // Another thread may have added the file between the
-                // `already_watched` check above and `add_file` taking the
-                // mutex; the descriptor opened here is then redundant.
+                // Not adopted (another thread won the add race); close the
+                // fd opened above.
                 if ownership == FdOwnership::Caller && fd.is_valid() {
                     let _ = bun_sys::close(fd);
                 }
@@ -877,12 +876,11 @@ impl Watcher {
         if let Some(index) = self.index_of(hash) {
             let mut ownership = FdOwnership::Caller;
             if feature_flags::ATOMIC_FILE_WATCHER && fd.is_valid() {
-                // Upgrade an entry inserted fd-less by `add_file_by_path_slow`
-                // (e.g. the `--hot` entrypoint) so the directory-event
-                // recovery in `hot_reloader` sees a valid descriptor for it.
-                // A valid stored fd is never replaced: it is owned by the
-                // watchlist until `flush_evictions`/shutdown closes it, and
-                // replacing it without closing leaked one fd per reload.
+                // Upgrade a path-only entry (`add_file_by_path_slow` inserts
+                // fd-less, e.g. the `--hot` entrypoint) so `hot_reloader`'s
+                // directory-event recovery sees a valid fd. A valid stored fd
+                // is never replaced: the watchlist owns it until eviction,
+                // and the old overwrite leaked it.
                 let fds = self.watchlist.items_fd_mut();
                 if !fds[index as usize].is_valid() {
                     fds[index as usize] = fd;

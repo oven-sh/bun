@@ -721,9 +721,8 @@ impl TranspilerJob {
         let import_watcher: Option<bun_ptr::ParentRef<ImportWatcher, bun_ptr::Mut>> =
             unsafe { bun_ptr::ParentRef::from_nullable_mut((*vm).bun_watcher.cast()) };
         if let Some(iw) = import_watcher {
-            // The file is always (re-)opened by path — never through the
-            // watchlist's stored fd; see `ImportWatcher::snapshot_package_json`
-            // for the EBADF/EISDIR race that reading a stored fd reopens.
+            // Never read through the watchlist's stored fd; see
+            // `ImportWatcher::snapshot_package_json`.
             package_json = iw.snapshot_package_json(hash);
         }
 

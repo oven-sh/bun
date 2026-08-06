@@ -2265,13 +2265,9 @@ fn transpile_source_code_inner(
                 let import_watcher: *mut bun_jsc::ImportWatcher =
                     unsafe { &*jsc_vm }.bun_watcher.cast();
                 if !import_watcher.is_null() {
-                    // SAFETY: non-null per check above. The file is always
-                    // (re-)opened by path — never through the watchlist's
-                    // stored fd; see `ImportWatcher::snapshot_package_json`
-                    // for the EBADF/EISDIR race (and the stale-inode reads
-                    // after an atomic `rename()` save) that reading a stored
-                    // fd reopens. `maybe_watch_file` below re-registers the
-                    // fresh fd with the watcher.
+                    // SAFETY: non-null per check above. Never read through the
+                    // watchlist's stored fd; see
+                    // `ImportWatcher::snapshot_package_json`.
                     let iw = unsafe { &*import_watcher };
                     package_json = iw.snapshot_package_json(hash);
                 }
@@ -3375,10 +3371,8 @@ fn transpile_source_code_inner(
                     ),
                     Ok(bun_watcher::FdOwnership::Watcher)
                 ) {
-                    // Close the fd we just opened on macOS (add_file failed,
-                    // or the file was already watched and kept its stored
-                    // descriptor); not a transpile failure (the user didn't
-                    // open it).
+                    // Not adopted (already watched, or add failed); close the
+                    // fd this arm opened.
                     if input_fd.is_valid() {
                         use bun_sys::FdExt as _;
                         input_fd.close();

@@ -1285,12 +1285,9 @@ impl AsyncModule {
             );
         }
 
-        // Note: the original parse already registered this file with the
-        // watcher (`maybe_watch_file` runs before the pending-imports
-        // enqueue), and the descriptor it read from is either owned by the
-        // watchlist or was closed by the transpile frame's fd guard — so
-        // there is nothing to re-register here, and `parse_result.input_fd`
-        // must not be used (the number may have been closed and recycled).
+        // No watcher registration here: `maybe_watch_file` already ran before
+        // the enqueue, and `parse_result.input_fd` may have been closed (and
+        // the number recycled) by the transpile frame's fd guard.
 
         // SAFETY: per-thread VM.
         if unsafe { (*jsc_vm).is_watcher_enabled() } {

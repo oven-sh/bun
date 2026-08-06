@@ -4385,8 +4385,7 @@ pub mod bv2_impl {
                                 Ok(bun_watcher::FdOwnership::Watcher)
                             ) && fd.is_valid()
                             {
-                                // Opened above just for the watcher; it
-                                // wasn't adopted (already watched or error).
+                                // Not adopted; close the fd opened above.
                                 let _ = bun_sys::close(fd);
                             }
                         }

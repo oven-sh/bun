@@ -42,18 +42,11 @@ impl ImportWatcher {
     /// Look up the `package_json` column for `hash` under the watcher's
     /// mutex.
     ///
-    /// Deliberately does NOT hand out the stored fd for re-reading the file.
-    /// The stored fd is owned by the watchlist and the watcher thread's
-    /// `flush_evictions` closes it under the mutex (a directory event for an
-    /// edited file evicts its entry, see `on_file_update`); a transpile that
-    /// snapshotted the number here would read from it *after* releasing the
-    /// mutex, surfacing as `EBADF reading "<path>"` — or `EISDIR` once a
-    /// resolver `openat` recycles the number — in
-    /// `transpiler.rs:read_file_with_allocator`
-    /// (watch-many-dirs.test.ts). A stored fd can also point at the
-    /// pre-rename inode after an atomic save and return stale contents.
-    /// Reloads open the file by path instead, and `Watcher::add_file` adopts
-    /// the fresh descriptor afterwards.
+    /// Deliberately does NOT hand out the stored fd: the watchlist owns it
+    /// and `flush_evictions` closes it concurrently, so a reader would hit
+    /// `EBADF`/`EISDIR` after the mutex is released (watch-many-dirs.test.ts)
+    /// or read the stale pre-rename inode after an atomic save. Reloads open
+    /// the file by path; `Watcher::add_file` adopts the fresh descriptor.
     pub fn snapshot_package_json(
         &self,
         hash: bun_watcher::HashType,

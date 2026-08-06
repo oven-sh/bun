@@ -117,11 +117,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject,
     )
         return JSC::JSValue::encode(jsEmptyString(vm));
 
-    if (!domain.is8Bit())
-        // this function is only for undoing punycode so its okay if utf-16 text makes it out unchanged.
-        return JSC::JSValue::encode(arg0);
-
-    domain.convertTo16Bit();
+    if (domain.is8Bit())
+        domain.convertTo16Bit();
 
     constexpr static int allowedNameToUnicodeErrors = UIDNA_ERROR_EMPTY_LABEL | UIDNA_ERROR_LABEL_TOO_LONG | UIDNA_ERROR_DOMAIN_NAME_TOO_LONG | UIDNA_ERROR_LEADING_HYPHEN | UIDNA_ERROR_TRAILING_HYPHEN | UIDNA_ERROR_HYPHEN_3_4;
     constexpr static int hostnameBufferLength = 2048;

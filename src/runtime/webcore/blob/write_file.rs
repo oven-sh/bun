@@ -927,7 +927,8 @@ mod windows_impl {
                     )
                 } {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    // `run_from_js_thread` already reported the failed settle.
+                    // The completion callback reported any failed settle;
+                    // JSTerminated is real termination, left pending.
                     WriteFileWindowsError::JSTerminated => {}
                 }
                 return;
@@ -941,7 +942,8 @@ mod windows_impl {
             if let Err(e) = unsafe { Self::do_write_loop(this, (*this).loop_()) } {
                 match e {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    // `run_from_js_thread` already reported the failed settle.
+                    // The completion callback reported any failed settle;
+                    // JSTerminated is real termination, left pending.
                     WriteFileWindowsError::JSTerminated => {}
                 }
             }
@@ -991,7 +993,8 @@ mod windows_impl {
                 // SAFETY: caller contract — `this` is live; `throw` consumes it.
                 match unsafe { Self::throw(this, err_) } {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    // `run_from_js_thread` already reported the failed settle.
+                    // The completion callback reported any failed settle;
+                    // JSTerminated is real termination, left pending.
                     WriteFileWindowsError::JSTerminated => {}
                 }
                 return;
@@ -1001,7 +1004,8 @@ mod windows_impl {
             if let Err(e) = unsafe { Self::open(this) } {
                 match e {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    // `run_from_js_thread` already reported the failed settle.
+                    // The completion callback reported any failed settle;
+                    // JSTerminated is real termination, left pending.
                     WriteFileWindowsError::JSTerminated => {}
                 }
             }
@@ -1009,7 +1013,7 @@ mod windows_impl {
 
         /// `ManagedTask`-shaped trampoline for [`on_mkdirp_complete`]: takes
         /// `*mut Self` and returns the event-loop `JsResult<()>` (always `Ok`;
-        /// a failed settle is reported inside `run_from_js_thread`).
+        /// a failed settle is reported inside the completion callback).
         fn on_mkdirp_complete_task(this: *mut WriteFileWindows) -> bun_event_loop::JsResult<()> {
             // SAFETY: `this` is the live Box-allocated `WriteFileWindows` whose
             // pointer was stashed in `on_mkdirp_complete_concurrent` below;
@@ -1063,7 +1067,8 @@ mod windows_impl {
                     )
                 } {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    // `run_from_js_thread` already reported the failed settle.
+                    // The completion callback reported any failed settle;
+                    // JSTerminated is real termination, left pending.
                     WriteFileWindowsError::JSTerminated => {}
                 }
                 return;
@@ -1075,7 +1080,8 @@ mod windows_impl {
             if let Err(e) = unsafe { Self::do_write_loop(this, (*this).loop_()) } {
                 match e {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    // `run_from_js_thread` already reported the failed settle.
+                    // The completion callback reported any failed settle;
+                    // JSTerminated is real termination, left pending.
                     WriteFileWindowsError::JSTerminated => {}
                 }
             }
@@ -1102,19 +1108,12 @@ mod windows_impl {
             // SAFETY: caller contract — `this` is live; copy out everything we
             // need before `deinit` frees the allocation.
             let (cb, cb_ctx) = unsafe { ((*this).on_complete_callback, (*this).on_complete_ctx) };
-            // SAFETY: caller contract — `this` is live; the VM-owned event
-            // loop (and its global) outlives the request.
-            let global = unsafe { (*(*this).event_loop).global_ref() };
 
             // SAFETY: caller contract — `this` is live.
             if let Some(err) = unsafe { (*this).to_system_error() } {
                 // SAFETY: caller contract — `this` is live; consumed here.
                 unsafe { Self::deinit(this) };
                 if let Err(e) = cb(cb_ctx, WriteFileResultType::Err(Box::new(err))) {
-                    // A failed settle leaves an exception pending on the VM;
-                    // report it so it cannot ride the tick into unrelated JS
-                    // (the error label erases Thrown, so probe the VM instead).
-                    global.report_active_exception_as_unhandled(jsc::JsError::Thrown);
                     return e.into();
                 }
             } else {
@@ -1123,8 +1122,6 @@ mod windows_impl {
                 // SAFETY: caller contract — `this` is live; consumed here.
                 unsafe { Self::deinit(this) };
                 if let Err(e) = cb(cb_ctx, WriteFileResultType::Result(wrote as SizeType)) {
-                    // See the error arm above.
-                    global.report_active_exception_as_unhandled(jsc::JsError::Thrown);
                     return e.into();
                 }
             }
@@ -1318,22 +1315,28 @@ impl WriteFilePromise {
         // SAFETY: GC-owned cell (kept alive below); scoped shared access.
         let value = unsafe { (*promise).to_js() };
         value.ensure_still_alive();
-        match count {
+        let settled = match count {
             WriteFileResultType::Err(err) => {
                 // SAFETY: GC-owned cell; the error build's shared borrow ends before the
                 // scoped exclusive `reject` borrow.
                 unsafe {
                     let err_js = err.to_error_instance_with_async_stack(global_this, &*promise);
-                    (*promise).reject(global_this, Ok(err_js))?;
+                    (*promise).reject(global_this, Ok(err_js))
                 }
             }
             WriteFileResultType::Result(wrote) => {
                 // SAFETY: GC-owned cell; exclusive borrow scoped to the call.
                 unsafe {
-                    (*promise)
-                        .resolve(global_this, JSValue::js_number_from_uint64(wrote as u64))?;
+                    (*promise).resolve(global_this, JSValue::js_number_from_uint64(wrote as u64))
                 }
             }
+        };
+        if settled.is_err() {
+            // The settle error label erases Thrown, so probe the VM: report a
+            // pending non-termination exception instead of letting the task
+            // channel treat it as termination, and keep real termination as
+            // the `Err` that unwinds the tick loop.
+            return jsc::task::report_error_or_terminate(global_this, jsc::JsError::Thrown);
         }
         Ok(())
     }

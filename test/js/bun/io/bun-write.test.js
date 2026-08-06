@@ -950,7 +950,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
   // `Object.prototype.then` accessor installed, mirroring the
   // prototype-pollution state fuzzer processes run in.
   it("write completions settle under Object.prototype.then pollution", async () => {
-    using dir = tempDir("bun-write-pollution", {});
+    using dir = tempDir("bun-write-pollution", { "src.txt": "copy me" });
     const fixture = `
       const fs = require("fs");
       const dir = ${JSON.stringify(String(dir))};
@@ -968,7 +968,6 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         },
       });
       const resp = await fetch("http://localhost:" + server.port + "/");
-      fs.writeFileSync(dir + "/src.txt", "copy me");
 
       Object.defineProperty(Object.prototype, "then", {
         configurable: true,

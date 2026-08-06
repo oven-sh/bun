@@ -30,7 +30,7 @@ pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
     for &token in SPECIAL_SYNTAX.iter() {
         let mut slice = potential_pattern;
         while !slice.is_empty() {
-            if let Some(idx) = slice.iter().position(|&b| b == token) {
+            if let Some(idx) = bun_core::strings::index_of_char_usize(slice, token) {
                 // Check for even number of backslashes preceding the
                 // token to know that it's not escaped
                 let mut i = idx;

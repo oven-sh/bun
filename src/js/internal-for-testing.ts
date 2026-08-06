@@ -23,6 +23,24 @@ export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) 
   2,
 );
 
+// Runtime-dispatched SIMD byte-search kernels (src/jsc/bindings/highway_strings.cpp)
+// behind `bun_core::strings`, driven directly so tests can sweep lengths and
+// alignments. Returns the kernel's raw result: an index (`haystack.length` =
+// not found), a count, or for memmem/memrmem the offset with -1 = not found.
+export const highwayStringsForTesting: (
+  op:
+    | "indexOfChar"
+    | "lastIndexOfChar"
+    | "indexOfNotChar"
+    | "countChar"
+    | "indexOfAny"
+    | "lastIndexOfAny"
+    | "memmem"
+    | "memrmem",
+  haystack: Uint8Array,
+  arg: number | Uint8Array,
+) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
+
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 
 export const patchInternals = {

@@ -386,7 +386,7 @@ impl DefineDataExt for DefineData {
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<DefineData, crate::Error> {
-        let mut key_splitter = key.split(|b| *b == b'.');
+        let mut key_splitter = strings::split(key, b".");
         while let Some(part) = key_splitter.next() {
             if !js_lexer::is_identifier(part) {
                 if strings::eql(part, key) {
@@ -414,7 +414,7 @@ impl DefineDataExt for DefineData {
         }
 
         // check for nested identifiers
-        let mut value_splitter = value_str.split(|b| *b == b'.');
+        let mut value_splitter = strings::split(value_str, b".");
         let mut is_ident = true;
 
         while let Some(part) = value_splitter.next() {

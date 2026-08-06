@@ -4,12 +4,41 @@
 unsafe extern "C" {
     fn highway_index_of_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
 
+    fn highway_last_index_of_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
+
+    fn highway_index_of_not_char(haystack: *const u8, haystack_len: usize, value: u8) -> usize;
+
+    fn highway_count_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
+
     fn highway_memmem(
         haystack: *const u8,
         haystack_len: usize,
         needle: *const u8,
         needle_len: usize,
     ) -> *const u8;
+
+    // These three return `usize::MAX` for not-found (the empty needle matches at
+    // 0 / `haystack_len` respectively).
+    fn highway_memrmem(
+        haystack: *const u8,
+        haystack_len: usize,
+        needle: *const u8,
+        needle_len: usize,
+    ) -> usize;
+
+    fn highway_memmem16(
+        haystack: *const u16,
+        haystack_len: usize,
+        needle: *const u16,
+        needle_len: usize,
+    ) -> usize;
+
+    fn highway_memrmem16(
+        haystack: *const u16,
+        haystack_len: usize,
+        needle: *const u16,
+        needle_len: usize,
+    ) -> usize;
 
     fn highway_index_of_interesting_character_in_string_literal(
         text: *const u8,
@@ -43,6 +72,13 @@ unsafe extern "C" {
     ) -> usize;
 
     fn highway_index_of_any_char(
+        text: *const u8,
+        text_len: usize,
+        chars: *const u8,
+        chars_len: usize,
+    ) -> usize;
+
+    fn highway_last_index_of_any_char(
         text: *const u8,
         text_len: usize,
         chars: *const u8,
@@ -113,22 +149,71 @@ unsafe extern "C" {
 // distinct hot leaf (e.g. `highway_index_of_newline_or_non_ascii` self-samples
 // in lint/create-vue benches).
 
+/// The single-byte kernels return `haystack_len` for "not found".
+#[inline(always)]
+fn found_at(result: usize, haystack_len: usize) -> Option<usize> {
+    if result == haystack_len {
+        None
+    } else {
+        Some(result)
+    }
+}
+
+/// The `mem*mem*` kernels return `usize::MAX` for "not found".
+#[inline(always)]
+fn match_at(result: usize) -> Option<usize> {
+    if result == usize::MAX {
+        None
+    } else {
+        Some(result)
+    }
+}
+
 #[inline(always)]
 pub fn index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
     if haystack.is_empty() {
         return None;
     }
-
     // SAFETY: haystack.ptr/len are a valid readable range.
     let result = unsafe { highway_index_of_char(haystack.as_ptr(), haystack.len(), needle) };
+    let found = found_at(result, haystack.len());
+    debug_assert!(found.is_none_or(|i| haystack[i] == needle));
+    found
+}
 
-    if result == haystack.len() {
+#[inline(always)]
+pub fn last_index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
+    if haystack.is_empty() {
         return None;
     }
+    // SAFETY: haystack.ptr/len are a valid readable range.
+    let result = unsafe { highway_last_index_of_char(haystack.as_ptr(), haystack.len(), needle) };
+    let found = found_at(result, haystack.len());
+    debug_assert!(found.is_none_or(|i| haystack[i] == needle));
+    found
+}
 
-    debug_assert!(haystack[result] == needle);
+/// Index of the first byte that is not `value` (i.e. the length of the leading
+/// run of `value`), or `None` if every byte is `value`.
+#[inline(always)]
+pub fn index_of_not_char(haystack: &[u8], value: u8) -> Option<usize> {
+    if haystack.is_empty() {
+        return None;
+    }
+    // SAFETY: haystack.ptr/len are a valid readable range.
+    let result = unsafe { highway_index_of_not_char(haystack.as_ptr(), haystack.len(), value) };
+    let found = found_at(result, haystack.len());
+    debug_assert!(found.is_none_or(|i| haystack[i] != value));
+    found
+}
 
-    Some(result)
+#[inline(always)]
+pub fn count_char(haystack: &[u8], needle: u8) -> usize {
+    if haystack.is_empty() {
+        return 0;
+    }
+    // SAFETY: haystack.ptr/len are a valid readable range.
+    unsafe { highway_count_char(haystack.as_ptr(), haystack.len(), needle) }
 }
 
 #[inline(always)]
@@ -154,6 +239,76 @@ pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         // SAFETY: highway_memmem returns a pointer within `haystack` on success.
         Some(unsafe { p.offset_from(haystack.as_ptr()) } as usize)
     }
+}
+
+/// Start index of the last occurrence of `needle` in `haystack`. An empty
+/// needle matches at `haystack.len()`.
+#[inline(always)]
+pub fn memrmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(haystack.len());
+    }
+    if haystack.len() < needle.len() {
+        return None;
+    }
+    // SAFETY: both (ptr,len) pairs are valid readable ranges.
+    let result = unsafe {
+        highway_memrmem(
+            haystack.as_ptr(),
+            haystack.len(),
+            needle.as_ptr(),
+            needle.len(),
+        )
+    };
+    let found = match_at(result);
+    debug_assert!(found.is_none_or(|i| haystack[i..].starts_with(needle)));
+    found
+}
+
+#[inline(always)]
+pub fn memmem16(haystack: &[u16], needle: &[u16]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    if haystack.len() < needle.len() {
+        return None;
+    }
+    // SAFETY: both (ptr,len) pairs are valid readable ranges (`&[u16]` is 2-byte aligned).
+    let result = unsafe {
+        highway_memmem16(
+            haystack.as_ptr(),
+            haystack.len(),
+            needle.as_ptr(),
+            needle.len(),
+        )
+    };
+    let found = match_at(result);
+    debug_assert!(found.is_none_or(|i| haystack[i..].starts_with(needle)));
+    found
+}
+
+/// Start index of the last occurrence of `needle`. An empty needle matches at
+/// `haystack.len()`.
+#[inline(always)]
+pub fn memrmem16(haystack: &[u16], needle: &[u16]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(haystack.len());
+    }
+    if haystack.len() < needle.len() {
+        return None;
+    }
+    // SAFETY: both (ptr,len) pairs are valid readable ranges (`&[u16]` is 2-byte aligned).
+    let result = unsafe {
+        highway_memrmem16(
+            haystack.as_ptr(),
+            haystack.len(),
+            needle.as_ptr(),
+            needle.len(),
+        )
+    };
+    let found = match_at(result);
+    debug_assert!(found.is_none_or(|i| haystack[i..].starts_with(needle)));
+    found
 }
 
 #[inline(always)]
@@ -327,6 +482,29 @@ pub fn index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
     }
 
     Some(result)
+}
+
+/// `chars.len()` must be in 2..=16 (single-byte callers use [`last_index_of_char`]).
+#[inline(always)]
+pub fn last_index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
+    debug_assert!(chars.len() >= 2 && chars.len() <= 16);
+    if haystack.is_empty() {
+        return None;
+    }
+
+    // SAFETY: haystack and chars ptr/len are valid readable ranges.
+    let result = unsafe {
+        highway_last_index_of_any_char(
+            haystack.as_ptr(),
+            haystack.len(),
+            chars.as_ptr(),
+            chars.len(),
+        )
+    };
+
+    let found = found_at(result, haystack.len());
+    debug_assert!(found.is_none_or(|i| chars.contains(&haystack[i])));
+    found
 }
 
 // `&[u16]` requires

@@ -862,7 +862,7 @@ impl<'a> JSXTag<'a> {
         // <div
         // <button
         // <Hello-:Button
-        if strings::contains_comptime(name, b"-:")
+        if strings::contains(name, b"-:")
             || (p.lexer().token != T::TDot && name[0] >= b'a' && name[0] <= b'z')
         {
             return Ok(JSXTag {

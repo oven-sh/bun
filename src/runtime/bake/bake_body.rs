@@ -1396,7 +1396,7 @@ pub(crate) use super::HmrRuntime;
 fn hmr_runtime_init(code: &'static ZStr) -> HmrRuntime {
     HmrRuntime {
         code,
-        line_count: u32::try_from(code.as_bytes().iter().filter(|&&b| b == b'\n').count()).unwrap(),
+        line_count: u32::try_from(strings::count_char(code.as_bytes(), b'\n')).unwrap(),
     }
 }
 

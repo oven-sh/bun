@@ -1588,7 +1588,9 @@ impl UDPSocket {
         };
         let mut addr = Address::from_ip(ip, port);
         if ip.is_ipv6() {
-            if let Some(percent) = address_slice[..bytes_len].iter().position(|&b| b == b'%') {
+            if let Some(percent) =
+                bun_core::strings::index_of_char_usize(&address_slice[..bytes_len], b'%')
+            {
                 if percent + 1 < bytes_len {
                     let iface_id: u32 = 'blk: {
                         #[cfg(windows)]

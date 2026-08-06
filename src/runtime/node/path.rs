@@ -280,9 +280,7 @@ fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
 
         // Translated from the following JS code:
         //   return StringPrototypeSlice(cwd, StringPrototypeIndexOf(cwd, '/'));
-        let index = normalized_cwd
-            .iter()
-            .position(|&b| b == T::from_u8(CHAR_FORWARD_SLASH));
+        let index = strings::index_of_scalar(normalized_cwd, T::from_u8(CHAR_FORWARD_SLASH));
         // Account for the -1 case of String#slice in JS land
         if let Some(_index) = index {
             return Ok(&mut normalized_cwd[_index..len]);
@@ -1643,7 +1641,7 @@ fn normalize_string_t<T: PathCharCwd, const PLATFORM: Platform>(
                     || buf[buf_size - 2] != T::from_u8(CHAR_DOT)
                 {
                     if buf_size > 2 {
-                        match buf[0..buf_size].iter().rposition(|&b| b == separator) {
+                        match strings::last_index_of_char_t(&buf[0..buf_size], separator) {
                             None => {
                                 buf_size = 0;
                                 last_segment_length = 0;
@@ -1653,18 +1651,20 @@ fn normalize_string_t<T: PathCharCwd, const PLATFORM: Platform>(
                                 // Translated from the following JS code:
                                 //   lastSegmentLength =
                                 //     res.length - 1 - StringPrototypeLastIndexOf(res, separator);
-                                last_segment_length =
-                                    match buf[0..buf_size].iter().rposition(|&b| b == separator) {
-                                        // Yes (>ლ), Node relies on the -1 result of
-                                        // StringPrototypeLastIndexOf(res, separator).
-                                        // A - -1 is a positive 1.
-                                        // So the code becomes
-                                        //   lastSegmentLength = res.length - 1 + 1;
-                                        // or
-                                        //   lastSegmentLength = res.length;
-                                        None => buf_size,
-                                        Some(sep) => buf_size - 1 - sep,
-                                    };
+                                last_segment_length = match strings::last_index_of_char_t(
+                                    &buf[0..buf_size],
+                                    separator,
+                                ) {
+                                    // Yes (>ლ), Node relies on the -1 result of
+                                    // StringPrototypeLastIndexOf(res, separator).
+                                    // A - -1 is a positive 1.
+                                    // So the code becomes
+                                    //   lastSegmentLength = res.length - 1 + 1;
+                                    // or
+                                    //   lastSegmentLength = res.length;
+                                    None => buf_size,
+                                    Some(sep) => buf_size - 1 - sep,
+                                };
                             }
                         }
                         last_slash = Some(i);

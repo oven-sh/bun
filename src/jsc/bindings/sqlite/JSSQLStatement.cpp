@@ -1783,9 +1783,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
     RETURN_IF_EXCEPTION(topExceptionScope, JSValue::encode(jsUndefined()));
     (void)topExceptionScope.tryClearException();
     if (path.find('\0') != WTF::notFound) [[unlikely]] {
-        // utf8().data() below is a C string, so an embedded NUL would
-        // silently truncate the path sqlite opens while db.filename keeps
-        // the full string.
         throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "The database path must not contain null bytes"_s));
         return {};
     }

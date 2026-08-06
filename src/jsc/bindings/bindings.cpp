@@ -47,6 +47,7 @@
 #include "JavaScriptCore/IteratorOperations.h"
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/JSArrayBuffer.h"
+#include "JavaScriptCore/JSDataView.h"
 #include "JavaScriptCore/JSArrayInlines.h"
 #include "JavaScriptCore/JSGlobalObjectInlines.h"
 #include "JavaScriptCore/JSFunction.h"
@@ -3231,12 +3232,31 @@ bool JSC__JSValue__asArrayBuffer(
 // common case and memory-safe in every case, at the cost of a transfer that
 // silently no-ops for as long as a borrowing op (zlib, fs, crypto, shell,
 // Bun.Image, SQL blob binds, ...) happens to be in flight over that buffer.
+//
+// JSType + static_cast instead of dynamicDowncast/possiblySharedBuffer():
+// unpin is reached from drop paths that can run inside a GC sweep (a Blob
+// store releasing a pinned path buffer in its finalizer), where
+// JSCell::classInfo() asserts. Same pattern as JSC::Weak<T>::get(). A pinned
+// view is always Wasteful/DataView (pinning materialized its buffer), so the
+// sweep-reachable branches below are plain field/butterfly reads.
 static JSC::ArrayBuffer* arrayBufferImpl(JSC::JSValue value)
 {
-    if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
-        return jb->impl();
-    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
+    if (!value.isCell())
+        return nullptr;
+    JSC::JSCell* cell = value.asCell();
+    JSC::JSType type = cell->type();
+    if (type == JSC::ArrayBufferType)
+        return static_cast<JSC::JSArrayBuffer*>(cell)->impl();
+    if (type == JSC::DataViewType)
+        return static_cast<JSC::JSDataView*>(cell)->possiblySharedBuffer();
+    if (JSC::isTypedArrayType(type)) {
+        auto* view = static_cast<JSC::JSArrayBufferView*>(cell);
+        if (JSC::isWastefulTypedArray(view->mode()))
+            return view->butterfly()->indexingHeader()->arrayBuffer();
+        // Fast/Oversize: materializes the buffer (allocates). Only reached at
+        // pin time, during a host call.
         return view->possiblySharedBuffer();
+    }
     return nullptr;
 }
 CPP_DECL bool JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)

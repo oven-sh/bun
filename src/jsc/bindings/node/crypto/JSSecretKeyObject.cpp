@@ -36,7 +36,7 @@ void setupSecretKeyObjectClassStructure(JSC::LazyClassStructure::Initializer& in
     auto* prototypeStructure = JSSecretKeyObjectPrototype::createStructure(init.vm, init.global, globalObject->KeyObjectPrototype());
     auto* prototype = JSSecretKeyObjectPrototype::create(init.vm, init.global, prototypeStructure);
 
-    auto* constructorStructure = JSSecretKeyObjectConstructor::createStructure(init.vm, init.global, init.global->functionPrototype());
+    auto* constructorStructure = JSSecretKeyObjectConstructor::createStructure(init.vm, init.global, globalObject->KeyObject());
     auto* constructor = JSSecretKeyObjectConstructor::create(init.vm, constructorStructure, prototype);
 
     auto* structure = JSSecretKeyObject::createStructure(init.vm, init.global, prototype);

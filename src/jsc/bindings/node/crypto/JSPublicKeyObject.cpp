@@ -1,6 +1,6 @@
 #include "JSPublicKeyObject.h"
 #include "JSPublicKeyObjectPrototype.h"
-#include "JSKeyObjectConstructor.h"
+#include "JSPublicKeyObjectConstructor.h"
 #include "DOMIsoSubspaces.h"
 #include "ZigGlobalObject.h"
 #include "ErrorCode.h"
@@ -28,8 +28,10 @@ void setupPublicKeyObjectClassStructure(JSC::LazyClassStructure::Initializer& in
     auto* prototypeStructure = JSPublicKeyObjectPrototype::createStructure(init.vm, init.global, asymmetricKeyObjectPrototype);
     auto* prototype = JSPublicKeyObjectPrototype::create(init.vm, init.global, prototypeStructure);
 
-    auto* constructorStructure = JSKeyObjectConstructor::createStructure(init.vm, init.global, init.global->functionPrototype());
-    auto* constructor = JSKeyObjectConstructor::create(init.vm, init.global, constructorStructure, prototype);
+    // Parent the constructor on KeyObject so statics (KeyObject.from) inherit, like
+    // Node's `class PublicKeyObject extends AsymmetricKeyObject extends KeyObject`.
+    auto* constructorStructure = JSPublicKeyObjectConstructor::createStructure(init.vm, init.global, globalObject->KeyObject());
+    auto* constructor = JSPublicKeyObjectConstructor::create(init.vm, constructorStructure, prototype);
 
     auto* structure = JSPublicKeyObject::createStructure(init.vm, init.global, prototype);
     init.setPrototype(prototype);

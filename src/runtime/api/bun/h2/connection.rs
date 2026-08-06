@@ -437,10 +437,8 @@ impl Connection {
             stream_id,
             &code.as_u32().to_be_bytes(),
         );
-        // Every RST_STREAM the engine writes is a reaction to an inbound frame (all callers are
-        // inbound handlers; application-initiated resets go through the embedder's own writer),
-        // so a client farming server-side resets (CVE-2025-8671 "MadeYouReset") drains the same
-        // bucket as one sending RST_STREAM itself.
+        // All callers are inbound handlers (application resets go through the embedder's own
+        // writer), so every engine-sent RST_STREAM is peer-caused and charged (CVE-2025-8671).
         self.note_stream_reset();
     }
 
@@ -603,9 +601,8 @@ impl Connection {
                 };
             }
             offset += total;
-            // A reset this frame caused may have emptied the stream-reset bucket; tearing down
-            // here (between frames) keeps the frame's own bookkeeping and dispatch ordering
-            // intact while bounding how much of a flooded batch is processed.
+            // Tear down an exhausted reset bucket between frames so the frame's own bookkeeping
+            // and dispatch ordering stay intact.
             if self.check_reset_flood(sink) {
                 return Feed {
                     consumed: offset,
@@ -844,14 +841,11 @@ impl Connection {
         self.obq_ack_pending = 0;
     }
 
-    /// Drain one token from the stream-reset bucket (nghttp2's stream_reset_ratelim): refills
-    /// `stream_reset_rate` per elapsed second, capped at `stream_reset_burst`. Charged for both
-    /// directions of the reset-flood class — peer-sent RST_STREAM (CVE-2023-44487 rapid reset)
-    /// and RST_STREAM this engine sends in reaction to inbound frames (CVE-2025-8671
-    /// "MadeYouReset": HEADERS then a frame that makes the server reset the stream, e.g.
-    /// WINDOW_UPDATE with a 0 increment, costs the attacker exactly as little). Exhaustion only
-    /// sets `reset_flood`; receive() tears the session down between frames (check_reset_flood)
-    /// so the current frame's stream-level bookkeeping and JS dispatch complete first.
+    /// Drain one token from the stream-reset bucket (nghttp2's stream_reset_ratelim; refills
+    /// `stream_reset_rate` per elapsed second, capped at `stream_reset_burst`). Charged for
+    /// peer-sent RST_STREAM (CVE-2023-44487 rapid reset) and for RST_STREAM this engine sends in
+    /// reaction to inbound frames (CVE-2025-8671 "MadeYouReset"). Exhaustion only sets
+    /// `reset_flood`; receive() tears the session down between frames (check_reset_flood).
     fn note_stream_reset(&mut self) {
         // nghttp2's session_update_stream_reset_ratelim is server-only. It also skips once a
         // GOAWAY has been locally submitted, but local_connection_error sets `terminated` so

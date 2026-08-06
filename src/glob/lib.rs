@@ -36,14 +36,14 @@ pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
                 // `slice`; a backslash run can't extend past its start (the
                 // byte before it is the previous, unescaped-or-not, token).
                 let mut i = idx;
-                let mut backslash_count: u16 = 0;
+                let mut escaped = false;
 
                 while i > 0 && slice[i - 1] == b'\\' {
-                    backslash_count += 1;
+                    escaped = !escaped;
                     i -= 1;
                 }
 
-                if backslash_count.is_multiple_of(2) {
+                if !escaped {
                     return true;
                 }
                 slice = &slice[idx + 1..];

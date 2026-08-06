@@ -500,7 +500,8 @@ test("verify rejects encoded argon2 hashes with cost parameters above the suppor
 
   // A cost field the decoder can't parse is rejected up front as well.
   const junkMemory = hashed.replace("$m=8,", "$m=8x,");
-  expect(() => password.verifySync("correct horse", junkMemory)).toThrow();
+  expect(() => password.verifySync("correct horse", junkMemory)).toThrow("InvalidEncoding");
+  await expect(password.verify("correct horse", junkMemory)).rejects.toThrow("InvalidEncoding");
 });
 
 test("verifySync reads the password buffer only after every argument has been coerced", () => {

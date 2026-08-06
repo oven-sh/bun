@@ -113,6 +113,13 @@ Three different things slide: (1) our own heap/JIT regions — never depended on
 
 The bugs behind the earlier Linux failures, all "restore-time code touched state that belongs to the other process": (1) the deferred (fixup-path) data-segment overlay ran after the fresh heap was created and wiped the allocator state it lived in → now runs right after the region loop; (2) mimalloc's inherited hint pointer could be invalid/inside WTF's OSAllocator window → persistent `hint_floor`, floor re-applied after the overlay, scan limited to mimalloc's range; (3) `VM::lastStackTop` was the builder's stack → refreshed inside adopt before anything allocates JS; (4) the ELF section reader used the image-offset `pread` wrapper on `/proc/self/exe` → no linker-owned ranges → GOT overwritten (embedded path only); (5) build identity on ELF = the `NT_GNU_BUILD_ID` note (headers change when the payload is appended).
 
+
+## Statics, once-tokens and CPU dispatch across a restore
+
+One process-wide restore epoch: the exported, unmangled `bun_image_epoch` (`u32`, defined in `bun_core::image`, bumped by the C++ restore sequence before any handler runs; `bun_core::image::epoch()` / `ImageOnce` on the Rust side, `VM::imageEpoch()` in JSC, plain `extern uint32_t bun_image_epoch` from vendored C). Rule for any lazily-initialised static that caches *process, OS or CPU* state (fds, ports, thread handles, env snapshots, page size/CPU count probes, SIMD dispatch): key the once-token on the epoch — `if (token != bun_image_epoch + 1) { init(); token = bun_image_epoch + 1; }` — instead of a bool. Statics that cache pure computation need nothing.
+
+CPU features: the image header records the build machine's feature word (x86: SSE3…AVX-512 subset bits from cpuid 1/7; arm64: `hw.optional.arm.FEAT_*` / `AT_HWCAP`); a restoring CPU must be a superset or the executable boots normally — so implementation choices latched in the image (Highway `ChosenTarget`, simdutf's active implementation, `OPENSSL_ia32cap_P`, zlib-ng's functable, libdeflate/zstd cpu flags) are always *valid*. At restore `imageReprobeCPUDispatch()` additionally re-detects Highway, simdutf and BoringSSL so a more capable CPU gets its best paths; zlib-ng/libdeflate/zstd keep the (valid) build-machine choice.
+
 ## Known gotchas
 
 - `static`/`call_once`/function-local statics and env reads cached at boot carry the *build* process's values.

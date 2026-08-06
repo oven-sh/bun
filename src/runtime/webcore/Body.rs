@@ -1112,7 +1112,7 @@ impl Value {
                 if fed.is_some() {
                     *new = Value::Used;
                 } else {
-                    readable.done(global);
+                    readable.done();
                 }
                 locked.readable.deinit();
             }

@@ -382,7 +382,6 @@ impl<const SSL: bool> WebSocket<SSL> {
             let error_code = match err {
                 websocket_deflate::Error::InflateFailed => ErrorCode::InvalidCompressedData,
                 websocket_deflate::Error::TooLarge => ErrorCode::MessageTooBig,
-                websocket_deflate::Error::OutOfMemory => ErrorCode::FailedToAllocateMemory,
             };
             drop(deflate_slot);
             self.terminate(error_code);

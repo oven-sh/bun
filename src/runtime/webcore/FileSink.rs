@@ -330,7 +330,7 @@ impl FileSink {
                             );
                             stream.cancel(global);
                         } else {
-                            stream.done(global);
+                            stream.done();
                         }
                     }
                 }
@@ -519,7 +519,7 @@ impl FileSink {
             if (*this).readable_stream.get_mut().has() {
                 if let Some(global) = (*this).js_global() {
                     if let Some(stream) = (*this).readable_stream.get().get(global) {
-                        stream.done(global);
+                        stream.done();
                     }
                 }
             }
@@ -1492,7 +1492,7 @@ impl FileSink {
     /// Does not ref or unref.
     fn handle_resolve_stream(&self, global_this: &JSGlobalObject) {
         if let Some(stream) = self.readable_stream.get().get(global_this).as_mut() {
-            stream.done(global_this);
+            stream.done();
         }
 
         if !self.done.get() {

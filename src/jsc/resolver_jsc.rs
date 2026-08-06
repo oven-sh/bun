@@ -21,14 +21,6 @@ fn node_module_paths_for_js(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
     Ok(node_module_paths_js_value(in_str.get(), global, false))
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> JSValue {
-    crate::mark_binding!();
-
-    let in_str = BunString::static_(b".");
-    node_module_paths_js_value(in_str, global, false)
-}
-
 // C++ callers pass `in_str` by value without transferring a ref:
 // `bun_core::String` is `Copy` with no `Drop` impl, so receiving it by value
 // never releases the caller's ref.

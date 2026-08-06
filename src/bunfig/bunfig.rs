@@ -889,57 +889,6 @@ impl<'a> Parser<'a> {
                     }
                     self.ctx.args.entry_points = names;
                 }
-
-                if let Some(expr) = _bun.get(b"packages") {
-                    self.expect(&expr, ExprTag::EObject)?;
-                    let object = expr.data.e_object().expect("infallible: variant checked");
-                    let properties = object.properties.slice();
-                    let mut valid_count: usize = 0;
-                    for prop in properties {
-                        if !matches!(
-                            prop.value
-                                .as_ref()
-                                .expect("infallible: prop has value")
-                                .data,
-                            ExprData::EBoolean(_)
-                        ) {
-                            continue;
-                        }
-                        valid_count += 1;
-                    }
-                    self.ctx.debug.package_bundle_map.reserve(
-                        valid_count.saturating_sub(self.ctx.debug.package_bundle_map.len()),
-                    );
-
-                    for prop in properties {
-                        let ExprData::EBoolean(b) = prop
-                            .value
-                            .as_ref()
-                            .expect("infallible: prop has value")
-                            .data
-                        else {
-                            continue;
-                        };
-                        let key_expr = prop.key.as_ref().expect("infallible: prop has key");
-                        let ExprData::EString(k) = &key_expr.data else {
-                            continue;
-                        };
-                        let path = estring_to_owned(k, self.bump);
-
-                        if !bun_resolver::is_package_path(&path) {
-                            self.add_error(key_expr.loc, b"Expected package name")?;
-                        }
-
-                        self.ctx.debug.package_bundle_map.insert(
-                            path,
-                            if b.value {
-                                bun_options_types::BundlePackage::Always
-                            } else {
-                                bun_options_types::BundlePackage::Never
-                            },
-                        );
-                    }
-                }
             }
         }
 

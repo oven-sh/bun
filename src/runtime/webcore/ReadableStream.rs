@@ -216,7 +216,7 @@ impl ReadableStream {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
                 let blobby = unsafe { &mut *blobby };
                 if let Some(blob) = blobby.to_any_blob(global_this) {
-                    self.done(global_this);
+                    self.done();
                     return Some(blob);
                 }
             }
@@ -228,7 +228,7 @@ impl ReadableStream {
                     let blob = Blob::init_with_store(store.clone(), global_this);
                     // it should be lazy, file shouldn't have opened yet.
                     debug_assert!(!blobby.started.get());
-                    self.done(global_this);
+                    self.done();
                     return Some(webcore::blob::Any::Blob(blob));
                 }
             }
@@ -238,7 +238,7 @@ impl ReadableStream {
                 // If we've received the complete body by the time this function is called
                 // we can avoid streaming it and convert it to a Blob
                 if let Some(blob) = bytes.to_any_blob() {
-                    self.done(global_this);
+                    self.done();
                     return Some(blob);
                 }
                 return None;
@@ -249,7 +249,7 @@ impl ReadableStream {
         None
     }
 
-    pub fn done(&self, global_this: &JSGlobalObject) {
+    pub fn done(&self) {
         // done is called when we are done consuming the stream
         // cancel actually mark the stream source as done
         // this will resolve any pending promises to done: true
@@ -262,7 +262,6 @@ impl ReadableStream {
             Source::Bytes(source) => unsafe { (*(*source).parent()).cancel() },
             _ => {}
         }
-        self.detach_if_possible(global_this);
     }
 
     pub fn cancel(&self, global_this: &JSGlobalObject) {
@@ -270,7 +269,7 @@ impl ReadableStream {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
         ReadableStream__cancel(self.value, global_this);
         // mark the stream source as done
-        self.done(global_this);
+        self.done();
     }
 
     /// Cancel the stream and forward `reason` verbatim to the underlying source's
@@ -280,7 +279,7 @@ impl ReadableStream {
     pub fn cancel_with_reason(&self, global_this: &JSGlobalObject, reason: JSValue) {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
         ReadableStream__cancelWithReason(self.value, global_this, reason);
-        self.done(global_this);
+        self.done();
     }
 
     pub fn abort(&self, global_this: &JSGlobalObject) {
@@ -291,7 +290,7 @@ impl ReadableStream {
     /// Like [`Self::cancel`] but pending reads reject with `reason` instead of resolving `{done: true}`.
     pub(crate) fn error(&self, global_this: &JSGlobalObject, reason: JSValue) {
         ReadableStream__error(self.value, global_this, reason);
-        self.done(global_this);
+        self.done();
     }
 
     pub(crate) fn force_detach(&self, global_object: &JSGlobalObject) {
@@ -396,11 +395,6 @@ impl ReadableStream {
 
         NativeWireResult::NotNative
     }
-
-    /// Decrement Source ref count and detach the underlying stream if ref count is zero
-    /// be careful, this can invalidate the stream do not call this multiple times
-    /// this is meant to be called only once when we are done consuming the stream or from the ReadableStream.Strong.deinit
-    pub fn detach_if_possible(&self, _global: &JSGlobalObject) {}
 
     pub fn is_disturbed(&self, global_object: &JSGlobalObject) -> bool {
         is_disturbed_value(self.value, global_object)

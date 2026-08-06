@@ -188,8 +188,6 @@ pub use bun_resolve_builtins::node_builtins::{
 // NODE_BUILTINS_MAP removed: dead — `is_node_builtin` (line 142) already delegates to
 // `bun_resolve_builtins::Alias::has`; no other reader. See node_builtins.rs header.
 
-pub use bun_options_types::BundlePackage;
-
 // Re-export of `bun_options_types::bundle_enums::ModuleType`.
 // Re-exported so `crate::options_impl::ModuleType` and `js_ast::parser::options::ModuleType`
 // (which also re-exports the BundleEnums def) are the *same* nominal type — kills the

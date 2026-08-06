@@ -1,4 +1,4 @@
-//! Hand-maintained; derived from `mime_type_list.txt`.
+//! Hand-maintained list of known MIME-type strings.
 //!
 //! PERF: a packed `enum(u14)` (length-group:7 + position:7)
 //! indexing into one contiguous byte blob would be 2 bytes/entry. This stand-in

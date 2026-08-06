@@ -6,13 +6,10 @@
 namespace Bun {
 
 // require.extensions & Module._extensions
-class JSCommonJSExtensions : public JSC::JSDestructibleObject {
+class JSCommonJSExtensions : public JSC::JSNonFinalObject {
 public:
-    using Base = JSC::JSDestructibleObject;
+    using Base = JSC::JSNonFinalObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut;
-    ~JSCommonJSExtensions();
-
-    WTF::Vector<JSC::WriteBarrier<JSC::Unknown>> m_registeredFunctions;
 
     static JSCommonJSExtensions* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
@@ -40,8 +37,6 @@ public:
     {
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
-
-    DECLARE_VISIT_CHILDREN;
 
 protected:
     static bool defineOwnProperty(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);

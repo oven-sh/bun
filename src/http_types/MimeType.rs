@@ -4,8 +4,7 @@ use bun_core::strings;
 
 // ───────────────────────────────────────────────────────────────────────────
 // `Table` (= `mime_type_list_enum::MimeTypeList`). Hand-maintained `&'static
-// str` newtype derived from `mime_type_list.txt`; see the note at the top of
-// `mime_type_list_enum.rs`.
+// str` newtype; see the note at the top of `mime_type_list_enum.rs`.
 // ───────────────────────────────────────────────────────────────────────────
 pub use super::mime_type_list_enum::MimeTypeList as Table;
 use bun_collections::StringHashMap;

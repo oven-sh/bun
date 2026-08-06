@@ -1494,17 +1494,6 @@ unsafe extern "C" fn Zig__GlobalObject__resolve(
     }
 }
 
-#[unsafe(no_mangle)]
-unsafe extern "C" fn Zig__GlobalObject__reportUncaughtException(
-    global: *const JSGlobalObject,
-    exception: *mut Exception,
-) -> JSValue {
-    crate::mark_binding();
-    // SAFETY: C++ passes valid non-null pointers.
-    unsafe { VirtualMachine::report_uncaught_exception(&*global, &*exception) }
-}
-
-// Safe wrapper used internally.
 #[inline]
 pub(crate) fn report_uncaught_exception(global: &JSGlobalObject, exception: &Exception) -> JSValue {
     crate::mark_binding();

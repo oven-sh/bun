@@ -2109,7 +2109,7 @@ where
             );
             this.sink.set(None);
             Self::destroy_sink(response_stream_ptr);
-            stream.done(global_this);
+            stream.done();
             this.response_body_readable_stream_ref
                 .with_mut(|s| s.deinit());
             this.end_stream(this.should_close_connection());
@@ -2190,7 +2190,7 @@ where
                         // NOTE: cleanup runs after handle_resolve_stream:
                         // body first, then the deferred cleanup.
                         this.handle_resolve_stream();
-                        stream.done(global_this);
+                        stream.done();
                         readable_ref.deinit();
                     }
                     jsc::PromiseResult::Rejected(err) => {
@@ -2913,7 +2913,7 @@ where
                 stream.value.ensure_still_alive();
                 resp.detach_readable_stream(global_this);
 
-                stream.done(global_this);
+                stream.done();
             }
 
             *resp.get_body_value() = Body::Value::Used;
@@ -3015,7 +3015,7 @@ where
             if let Some(stream) = resp.get_body_readable_stream(global_this) {
                 stream.value.ensure_still_alive();
                 resp.detach_readable_stream(global_this);
-                stream.done(global_this);
+                stream.done();
             }
 
             let body_value = resp.get_body_value();
@@ -3243,7 +3243,7 @@ where
                             debug_assert!(this.byte_stream.get().is_none());
                             if this.resp.get().is_none() {
                                 // we don't have a response, so we can discard the stream
-                                stream.done(global_this);
+                                stream.done();
                                 this.response_body_readable_stream_ref
                                     .with_mut(|s| s.deinit());
                                 return;

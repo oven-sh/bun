@@ -116,6 +116,11 @@ test("dead Rust symbols do not reappear", () => {
     ["src/jsc/bindings/BunObject+exports.h", /macro\(assetPrefix\)/],
     // bake: no_mangle export C++ never declared or called.
     ["src/runtime/bake/production.rs", /\bBakeProdSourceMap\b/],
+    // install_jsc: js2native landing pads for the removed npa/npmTag
+    // internal-for-testing exports, and the error codes only their dead
+    // RedisError match arms produced.
+    ["src/runtime/dispatch_js2native.rs", /\binstall_dependency_from_js\b/],
+    ["src/jsc/bindings/ErrorCode.ts", /\bERR_REDIS_INVALID_ARGUMENT\b/],
   ]);
 });
 

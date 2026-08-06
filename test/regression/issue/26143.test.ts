@@ -166,7 +166,7 @@ describe("issue #26143 - https GET request with body hangs", () => {
           },
           body: "{}",
         });
-      }).toThrow("fetch() request with GET/HEAD/OPTIONS method cannot have body.");
+      }).toThrow("fetch() request with GET/HEAD method cannot have body.");
     } finally {
       server.close();
     }

@@ -8,9 +8,9 @@ const ALLOW_TMPFILE: bool = false;
 // To be used with files
 // not folders!
 pub struct Tmpfile<'a> {
-    pub destination_dir: Fd,
+    pub(crate) destination_dir: Fd,
     // Caller-supplied tmp name, valid for the lifetime of the Tmpfile.
-    pub tmpfilename: &'a ZStr,
+    pub(crate) tmpfilename: &'a ZStr,
     pub fd: Fd,
     pub using_tmpfile: bool,
 }
@@ -63,7 +63,7 @@ impl<'a> Tmpfile<'a> {
         Ok(tmpfile)
     }
 
-    pub fn finish(&mut self, destname: &ZStr) -> Result<(), bun_core::Error> {
+    pub fn finish(&mut self, destname: &ZStr) -> crate::Result<()> {
         // ALLOW_TMPFILE = false dead branch — see `create()` note above.
         if ALLOW_TMPFILE && self.using_tmpfile {
             let mut retry = true;
@@ -80,7 +80,7 @@ impl<'a> Tmpfile<'a> {
                         let _ = crate::unlinkat(self.destination_dir, basename);
                         retry = false;
                     }
-                    Err(err) => return Err(err.into()),
+                    Err(err) => return Err(err),
                 }
             }
         }

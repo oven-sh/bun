@@ -42,12 +42,15 @@ public:
         HTTPSServerRequestContext,
         DebugHTTPServerRequestContext,
         DebugHTTPSServerRequestContext,
-        BodyValueBufferer,
         HTTPSServerH3RequestContext,
         DebugHTTPSServerH3RequestContext,
+        HTMLRewriterSuspension,
     };
 
-    static NativePromiseContext* create(JSC::VM& vm, JSC::Structure* structure, void* ctx, Tag tag);
+    // `held` is visited, so the reaction keeps it alive for as long as the
+    // Promise can settle (the HTMLRewriter suspension stores its Transform
+    // cell here). Pass the empty JSValue when nothing needs rooting.
+    static NativePromiseContext* create(JSC::VM& vm, JSC::Structure* structure, void* ctx, Tag tag, JSC::JSValue held);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     {
@@ -69,6 +72,7 @@ public:
     }
 
     DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
 
     static constexpr JSC::DestructionMode needsDestruction = JSC::DestructionMode::NeedsDestruction;
     static void destroy(JSC::JSCell* cell);
@@ -95,6 +99,7 @@ private:
     ~NativePromiseContext();
 
     WTF::CompactPointerTuple<NativePromiseContextPointee*, Tag> m_data;
+    JSC::WriteBarrier<JSC::Unknown> m_held;
 };
 
 } // namespace Bun

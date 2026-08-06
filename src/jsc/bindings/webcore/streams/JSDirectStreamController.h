@@ -37,6 +37,7 @@ public:
     // m_textAccumulator.visit(locker, visitor) inside ONE `Locker { cellLock() }` scope
     // taken by THIS visitChildrenImpl — cellLock() is non-recursive; see StreamQueue.h).
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -76,7 +77,7 @@ public:
     bool m_calledDone : 1 { false };
     // End-of-tick auto-flush (the JS-facing analogue of the HTTP sink's AutoFlusher):
     // armed by write() when data is buffered below the HWM while a consumer waits; the
-    // deferred task runs right after the current microtask drain and delivers it.
+    // process.nextTick job delivers it during the same microtask/nextTick drain.
     bool m_endOfTickFlushArmed : 1 { false };
     bool m_finalChunkArmed : 1 { false };
 

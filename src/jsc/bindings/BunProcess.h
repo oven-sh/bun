@@ -131,7 +131,6 @@ public:
     inline JSObject* bindingNatives() { return m_bindingNatives.getInitializedOnMainThread(this); }
 };
 
-bool isSignalName(WTF::String input);
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 
 } // namespace Bun

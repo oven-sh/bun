@@ -10,7 +10,6 @@ import {
   isWindows,
   readdirSorted,
   runBunInstall,
-  stderrForInstall,
 } from "harness";
 import { join, sep } from "path";
 
@@ -209,6 +208,95 @@ test.concurrent("trustedDependencies matches the resolved package name, not the 
   expect(out).not.toContain("Blocked");
   expect(await exists(join(packageDir, "node_modules", "esbuild", "what-bin.txt"))).toBeTrue();
   expect(await exited).toBe(0);
+});
+
+test.concurrent(
+  "trustedDependencies added on a later install still matches the resolved package name, not the dependency alias",
+  async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+
+    const dependencies = { "esbuild": "npm:uses-what-bin@1.0.0" };
+    await writeFile(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies }));
+
+    let { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    let err = await stderr.text();
+    let out = await stdout.text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("Blocked 1 postinstall");
+    expect(await exists(join(packageDir, "node_modules", "esbuild", "package.json"))).toBeTrue();
+    expect(await exists(join(packageDir, "node_modules", "esbuild", "what-bin.txt"))).toBeFalse();
+    expect(await exited).toBe(0);
+
+    await writeFile(
+      packageJson,
+      JSON.stringify({ name: "foo", version: "1.0.0", dependencies, trustedDependencies: ["esbuild"] }),
+    );
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await stderr.text();
+    out = await stdout.text();
+    expect(err).not.toContain("error:");
+    expect(await exists(join(packageDir, "node_modules", "esbuild", "what-bin.txt"))).toBeFalse();
+    expect(await exited).toBe(0);
+  },
+);
+
+test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a randomized name", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+      scripts: {
+        postinstall: `${bunExe()} -e 'await Bun.write("path.txt", String(process.env.PATH))'`,
+      },
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+
+  const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  const pathVar = await file(join(packageDir, "path.txt")).text();
+  const match = pathVar.match(/\.([0-9a-f]{1,16})-[0-9A-F]{1,16}\.node-gyp/);
+  expect(match).not.toBeNull();
+  const derived = BigInt("0x" + match![1]) ^ 12345n;
+  const nowNs = BigInt(Date.now()) * 1_000_000n;
+  const distance = derived > nowNs ? derived - nowNs : nowNs - derived;
+  expect(distance > 21_600_000_000_000n).toBe(true);
 });
 
 test.concurrent("default trusted dependencies require the canonical registry tarball URL", async () => {
@@ -1627,7 +1715,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      err = stderrForInstall(await stderr.text());
+      err = await stderr.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -1750,6 +1838,74 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await exists(join(packageDir, "build.node"))).toBeTrue();
     });
 
+    test("auto node-gyp script does not drop the package's own postinstall", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      // Local mock node-gyp so the injected `node-gyp rebuild` succeeds without
+      // touching the registry.
+      await mkdir(join(packageDir, "node-gyp-pkg"), { recursive: true });
+      await writeFile(
+        join(packageDir, "node-gyp-pkg", "package.json"),
+        JSON.stringify({
+          name: "node-gyp",
+          version: "1.0.0",
+          bin: { "node-gyp": "./node-gyp.js" },
+        }),
+      );
+      await writeFile(
+        join(packageDir, "node-gyp-pkg", "node-gyp.js"),
+        `#!/usr/bin/env node\nrequire("fs").writeFileSync("build.node", "built");\n`,
+      );
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "node-gyp": "file:./node-gyp-pkg",
+          },
+          scripts: {
+            postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall.txt', 'ran')"`,
+            prepare: `${bunExe()} -e "require('fs').writeFileSync('prepare.txt', 'ran')"`,
+            postprepare: `${bunExe()} -e "require('fs').writeFileSync('postprepare.txt', 'ran')"`,
+          },
+        }),
+      );
+      await writeFile(join(packageDir, "binding.gyp"), "");
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const err = await stderr.text();
+      const out = await stdout.text();
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(out).toContain("1 package installed");
+      expect({
+        // injected `node-gyp rebuild`
+        "build.node": await exists(join(packageDir, "build.node")),
+        // the package's own hooks must still run
+        "postinstall": await exists(join(packageDir, "postinstall.txt")),
+        "prepare": await exists(join(packageDir, "prepare.txt")),
+        "postprepare": await exists(join(packageDir, "postprepare.txt")),
+      }).toEqual({
+        "build.node": true,
+        "postinstall": true,
+        "prepare": true,
+        "postprepare": true,
+      });
+      expect(await exited).toBe(0);
+    });
+
     for (const script of ["install", "preinstall"]) {
       test(`does not add auto node-gyp script when ${script} script exists`, async () => {
         using ctx = await setupTest();
@@ -1868,7 +2024,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      err = stderrForInstall(await stderr.text());
+      err = await stderr.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -2137,7 +2293,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      err = stderrForInstall(await stderr.text());
+      err = await stderr.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -3027,7 +3183,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           });
 
-          let err = stderrForInstall(await stderr.text());
+          let err = await stderr.text();
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
@@ -3060,7 +3216,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           }));
 
-          err = stderrForInstall(await stderr.text());
+          err = await stderr.text();
           expect(err).not.toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
@@ -3096,7 +3252,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           });
 
-          const err = stderrForInstall(await stderr.text());
+          const err = await stderr.text();
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
@@ -3138,7 +3294,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           });
 
-          let err = stderrForInstall(await stderr.text());
+          let err = await stderr.text();
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
@@ -3227,7 +3383,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           env: testEnv,
         });
 
-        let err = stderrForInstall(await stderr.text());
+        let err = await stderr.text();
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
@@ -3262,7 +3418,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           env: testEnv,
         }));
 
-        err = stderrForInstall(await stderr.text());
+        err = await stderr.text();
         expect(err).not.toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
@@ -3302,7 +3458,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           env: testEnv,
         });
 
-        let err = stderrForInstall(await stderr.text());
+        let err = await stderr.text();
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
@@ -3349,7 +3505,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           env: testEnv,
         }));
 
-        err = stderrForInstall(await stderr.text());
+        err = await stderr.text();
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
@@ -3396,7 +3552,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           env: testEnv,
         });
 
-        let err = stderrForInstall(await stderr.text());
+        let err = await stderr.text();
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
@@ -3445,7 +3601,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           env: testEnv,
         }));
 
-        err = stderrForInstall(await stderr.text());
+        err = await stderr.text();
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
@@ -3493,7 +3649,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       env.PATH = originalPath;
 
-      let err = stderrForInstall(await stderr.text());
+      let err = await stderr.text();
       expect(err).toContain("No packages! Deleted empty lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -3534,7 +3690,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       env.PATH = originalPath;
 
-      let err = stderrForInstall(await stderr.text());
+      let err = await stderr.text();
       expect(err).toContain("No packages! Deleted empty lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -3566,7 +3722,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      let err = stderrForInstall(await stderr.text());
+      let err = await stderr.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
@@ -3596,7 +3752,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      err = stderrForInstall(await stderr.text());
+      err = await stderr.text();
       expect(err).toContain("bun pm untrusted");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
@@ -3649,7 +3805,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           });
 
-          let err = stderrForInstall(await stderr.text());
+          let err = await stderr.text();
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
@@ -3679,7 +3835,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           }));
 
-          err = stderrForInstall(await stderr.text());
+          err = await stderr.text();
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
           out = await stdout.text();
@@ -3706,7 +3862,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
               env: testEnv,
             }));
 
-            err = stderrForInstall(await stderr.text());
+            err = await stderr.text();
             expect(err).toContain("Saved lockfile");
             expect(err).not.toContain("not found");
             expect(err).not.toContain("error:");
@@ -3734,7 +3890,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           }));
 
-          err = stderrForInstall(await stderr.text());
+          err = await stderr.text();
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
@@ -3769,7 +3925,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           }));
 
-          err = stderrForInstall(await stderr.text());
+          err = await stderr.text();
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
@@ -3797,7 +3953,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           }));
 
-          err = stderrForInstall(await stderr.text());
+          err = await stderr.text();
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
           out = await stdout.text();
@@ -3915,7 +4071,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      const err = stderrForInstall(await stderr.text());
+      const err = await stderr.text();
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
       expect(splitErrLines(err)).toEqual([
@@ -3970,7 +4126,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      const err = stderrForInstall(await stderr.text());
+      const err = await stderr.text();
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
       expect(splitErrLines(err)).toEqual([

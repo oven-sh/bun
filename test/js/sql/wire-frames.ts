@@ -88,6 +88,27 @@ export function pgAuthenticationCleartextPassword(): Buffer {
   return buf;
 }
 
+// PostgreSQL FE/BE protocol §55.7 AuthenticationMD5Password: Byte1('R') Int32(12) Int32(5) Byte4(salt)
+export function pgAuthenticationMD5Password(salt: Buffer = Buffer.alloc(4, 0x61)): Buffer {
+  const buf = Buffer.alloc(13);
+  buf.write("R", 0);
+  buf.writeInt32BE(12, 1);
+  buf.writeInt32BE(5, 5);
+  salt.copy(buf, 9);
+  return buf;
+}
+
+// PostgreSQL FE/BE protocol §55.7 AuthenticationSASL: Byte1('R') Int32(len) Int32(10) (String mechanism)* Byte1(0)
+export function pgAuthenticationSASL(mechanisms: string[] = ["SCRAM-SHA-256"]): Buffer {
+  const body = Buffer.concat([pgInt32(10), ...mechanisms.map(m => pgCString(m)), Buffer.from([0])]);
+  return pgRaw("R", body);
+}
+
+// PostgreSQL FE/BE protocol §55.7 ParameterStatus: Byte1('S') Int32(len) String(name) String(value)
+export function pgParameterStatus(name: string, value: string): Buffer {
+  return pgRaw("S", Buffer.concat([pgCString(name), pgCString(value)]));
+}
+
 // PostgreSQL FE/BE protocol §55.7 ReadyForQuery: Byte1('Z') Int32(5) Byte1(status)
 export function pgReadyForQuery(status: "I" | "T" | "E" = "I"): Buffer {
   const buf = Buffer.alloc(6);
@@ -115,6 +136,16 @@ export function pgErrorResponse(fields: { S: string; C: string; M: string; [k: s
   }
   buf[o] = 0;
   return buf;
+}
+
+// PostgreSQL FE/BE protocol §55.7 ParameterStatus: Byte1('S') Int32(len) String(name) String(value)
+export function pgParameterStatus(name: string, value: string): Buffer {
+  return pgRaw("S", Buffer.concat([pgCString(name), pgCString(value)]));
+}
+
+// PostgreSQL FE/BE protocol §55.7 NotificationResponse: Byte1('A') Int32(len) Int32(pid) String(channel) String(payload)
+export function pgNotificationResponse(pid: number, channel: string, payload: string): Buffer {
+  return pgRaw("A", Buffer.concat([pgInt32(pid), pgCString(channel), pgCString(payload)]));
 }
 
 // PostgreSQL FE/BE protocol §55.7 generic backend message: Byte1(type) Int32(len = 4 + body.length) body
@@ -180,6 +211,39 @@ export function pgCopyData(data: Buffer): Buffer {
 // PostgreSQL FE/BE protocol §55.7 CopyDone: Byte1('c') Int32(4)
 export function pgCopyDone(): Buffer {
   return pgRaw("c", Buffer.alloc(0));
+}
+
+// PostgreSQL FE/BE protocol §55.7 ParseComplete: Byte1('1') Int32(4)
+export function pgParseComplete(): Buffer {
+  return pgRaw("1", Buffer.alloc(0));
+}
+
+// PostgreSQL FE/BE protocol §55.7 BindComplete: Byte1('2') Int32(4)
+export function pgBindComplete(): Buffer {
+  return pgRaw("2", Buffer.alloc(0));
+}
+
+// PostgreSQL FE/BE protocol §55.7 ParameterDescription: Byte1('t') Int32(len) Int16(nparams) Int32[nparams](typeOid)
+export function pgParameterDescription(typeOids: number[]): Buffer {
+  const body = Buffer.alloc(2 + 4 * typeOids.length);
+  body.writeInt16BE(typeOids.length, 0);
+  for (let i = 0; i < typeOids.length; i++) body.writeInt32BE(typeOids[i], 2 + 4 * i);
+  return pgRaw("t", body);
+}
+
+/**
+ * Drain complete PostgreSQL frontend messages from `buffered`, calling
+ * onMessage(type, body) for each; returns the leftover bytes. The very first
+ * frontend message (StartupMessage) has no type byte: feed it separately.
+ */
+export function pgReadFrontendMessages(buffered: Buffer, onMessage: (type: number, body: Buffer) => void): Buffer {
+  while (buffered.length >= 5) {
+    const len = buffered.readInt32BE(1);
+    if (buffered.length < 1 + len) break;
+    onMessage(buffered[0], buffered.subarray(5, 1 + len));
+    buffered = buffered.subarray(1 + len);
+  }
+  return buffered;
 }
 
 // PostgreSQL FE/BE protocol §55.7 DataRow: Byte1('D') Int32(len) Int16(ncols) per col: Int32(byteLen | -1) Byte[len]

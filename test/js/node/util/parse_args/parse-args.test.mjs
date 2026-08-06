@@ -1129,4 +1129,16 @@ describe("parseArgs extra tests", () => {
     expect(parseArgs({ allowPositionals: undefined })).toEqual({ values: { __proto__: null }, positionals: [] });
     expect(parseArgs({ allowPositionals: null })).toEqual({ values: { __proto__: null }, positionals: [] });
   });
+
+  test("classifies UTF-16 and Latin-1 positional tokens correctly", () => {
+    for (const p of ["x\u0100y", "x\u00e9y"]) {
+      expect(
+        parseArgs({
+          args: ["--flag", p, "-a"],
+          options: { flag: { type: "boolean" }, a: { type: "boolean", short: "a" } },
+          allowPositionals: true,
+        }),
+      ).toEqual({ values: { __proto__: null, flag: true, a: true }, positionals: [p] });
+    }
+  });
 });

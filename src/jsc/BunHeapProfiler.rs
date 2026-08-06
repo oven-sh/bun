@@ -1,6 +1,7 @@
-use bun_core::{Error, Output, Timespec, TimespecMockMode, err};
+use crate::CrateError as Error;
+use bun_core::{Output, Timespec, TimespecMockMode};
 use bun_core::{OwnedString, String as BunString};
-use bun_paths::{AutoAbsPath, PathBuffer, resolve_path};
+use bun_paths::{AutoAbsPathChecked, PathBuffer, resolve_path};
 use bun_sys::{self as sys, E, Fd, FdDirExt};
 
 use crate::VM;
@@ -21,7 +22,10 @@ unsafe extern "C" {
     safe fn Bun__generateHeapSnapshotV8(vm: &mut VM) -> BunString;
 }
 
-pub fn generate_and_write_profile(vm: &mut VM, config: &HeapProfilerConfig) -> Result<(), Error> {
+pub(crate) fn generate_and_write_profile(
+    vm: &mut VM,
+    config: &HeapProfilerConfig,
+) -> Result<(), Error> {
     // `defer profile_string.deref()` — `bun_core::String` is `Copy` (no Drop);
     // wrap the +1 ref from C++ in `OwnedString` so it's released on every exit path.
     let profile_string = OwnedString::new(if config.text_format {
@@ -38,8 +42,8 @@ pub fn generate_and_write_profile(vm: &mut VM, config: &HeapProfilerConfig) -> R
     // Freed by Drop on ZigStringSlice.
     let profile_slice = profile_string.to_utf8();
 
-    // Determine the output path using AutoAbsPath
-    let mut path_buf = AutoAbsPath::init_top_level_dir();
+    // dir/name are unbounded CLI input, so use the length-checked variant.
+    let mut path_buf = AutoAbsPathChecked::init_top_level_dir();
     // `defer path_buf.deinit()` — handled by Drop.
 
     build_output_path(&mut path_buf, config)?;
@@ -76,13 +80,13 @@ pub fn generate_and_write_profile(vm: &mut VM, config: &HeapProfilerConfig) -> R
                 let retry_result =
                     sys::File::write_file(Fd::cwd(), path_buf.slice_z(), profile_slice.slice());
                 if retry_result.is_err() {
-                    return Err(err!(WriteFailed));
+                    return Err(crate::CrateError::WriteFailed);
                 }
             } else {
-                return Err(err!(WriteFailed));
+                return Err(crate::CrateError::WriteFailed);
             }
         } else {
-            return Err(err!(WriteFailed));
+            return Err(crate::CrateError::WriteFailed);
         }
     }
 
@@ -95,7 +99,10 @@ pub fn generate_and_write_profile(vm: &mut VM, config: &HeapProfilerConfig) -> R
     Ok(())
 }
 
-fn build_output_path(path: &mut AutoAbsPath, config: &HeapProfilerConfig) -> Result<(), Error> {
+fn build_output_path(
+    path: &mut AutoAbsPathChecked,
+    config: &HeapProfilerConfig,
+) -> Result<(), Error> {
     // Generate filename
     let mut filename_buf = PathBuffer::uninit();
     let filename: &[u8] = if !config.name.is_empty() {
@@ -104,12 +111,9 @@ fn build_output_path(path: &mut AutoAbsPath, config: &HeapProfilerConfig) -> Res
         generate_default_filename(&mut filename_buf, config.text_format)?
     };
 
-    // Append directory if specified
     if !config.dir.is_empty() {
         path.append(config.dir)?;
     }
-
-    // Append filename
     path.append(filename)?;
     Ok(())
 }
@@ -145,7 +149,7 @@ fn generate_default_filename(buf: &mut PathBuffer, text_format: bool) -> Result<
         "Heap.{}.{}.{}",
         epoch_microseconds, pid, extension
     )
-    .map_err(|_| err!(NoSpaceLeft))?;
+    .map_err(|_| crate::CrateError::Sys(bun_errno::SystemErrno::ENOSPC))?;
     let remaining = cursor.len();
     let written = total - remaining;
     Ok(&buf.as_slice()[..written])

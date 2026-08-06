@@ -37,6 +37,7 @@ public:
     // visitChildrenImpl MUST visit ALL FOUR barriers: m_stream, m_arrayBufferSink,
     // m_capabilityPromise, m_closeFunction. No barrier container ⇒ no cellLock needed.
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

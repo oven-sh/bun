@@ -297,5 +297,3 @@ impl Metadata {
         }
     }
 }
-
-pub use crate::g::Class;

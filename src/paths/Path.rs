@@ -26,13 +26,6 @@ pub mod options {
     use super::*;
 
     #[derive(PartialEq, Eq, Clone, Copy, Debug)]
-    pub enum Unit {
-        U8,
-        U16,
-        Os,
-    }
-
-    #[derive(PartialEq, Eq, Clone, Copy, Debug)]
     pub enum Kind {
         Abs,
         Rel,
@@ -63,7 +56,7 @@ pub mod options {
         pub const REL: u8 = 1;
         pub const ANY: u8 = 2;
         #[inline(always)]
-        pub const fn from_u8(v: u8) -> Self {
+        pub(crate) const fn from_u8(v: u8) -> Self {
             match v {
                 0 => Self::Abs,
                 1 => Self::Rel,
@@ -75,9 +68,8 @@ pub mod options {
         pub const ANY: u8 = 0;
         pub const AUTO: u8 = 1;
         pub const POSIX: u8 = 2;
-        pub const WINDOWS: u8 = 3;
         #[inline(always)]
-        pub const fn from_u8(v: u8) -> Self {
+        pub(crate) const fn from_u8(v: u8) -> Self {
             match v {
                 1 => Self::Auto,
                 2 => Self::Posix,
@@ -88,6 +80,7 @@ pub mod options {
     }
     impl CheckLength {
         pub(crate) const ASSUME: u8 = 0;
+        pub(crate) const CHECK: u8 = 1;
         #[inline(always)]
         pub(crate) const fn from_u8(v: u8) -> Self {
             if v == 0 {
@@ -99,7 +92,7 @@ pub mod options {
     }
 
     impl PathSeparators {
-        pub const fn char(self) -> u8 {
+        pub(crate) const fn char(self) -> u8 {
             match self {
                 PathSeparators::Any => panic!("use the existing slash"),
                 PathSeparators::Auto => SEP,
@@ -122,9 +115,9 @@ pub mod options {
         MaxPathExceeded,
     }
 
-    impl From<Error> for bun_core::Error {
+    impl From<Error> for crate::Error {
         fn from(_e: Error) -> Self {
-            bun_core::err!("MaxPathExceeded")
+            crate::Error::MaxPathExceeded
         }
     }
 
@@ -373,12 +366,12 @@ pub(crate) struct Buf<U: PathUnit, const SEP_OPT: u8> {
 
 impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
     #[inline]
-    pub(crate) fn set_length(&mut self, new_len: usize) {
+    fn set_length(&mut self, new_len: usize) {
         self.len = new_len;
     }
 
     /// Append `characters` (same code-unit width as `U`), optionally prefixing a separator.
-    pub(crate) fn append(&mut self, characters: &[U], add_separator: bool) {
+    fn append(&mut self, characters: &[U], add_separator: bool) {
         let buf = U::buffer_as_mut_slice(&mut self.pooled);
         if add_separator {
             buf[self.len] = match PathSeparators::from_u8(SEP_OPT) {
@@ -409,7 +402,7 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
     }
 
     /// Append `characters` of the *other* code-unit width, transcoding into the buffer.
-    pub(crate) fn append_other(&mut self, characters: &[U::Other], add_separator: bool) {
+    fn append_other(&mut self, characters: &[U::Other], add_separator: bool) {
         let buf = U::buffer_as_mut_slice(&mut self.pooled);
         if add_separator {
             buf[self.len] = match PathSeparators::from_u8(SEP_OPT) {
@@ -589,6 +582,10 @@ pub type AbsPath<
 /// Absolute path with auto separator.
 pub type AutoAbsPath = Path<u8, { Kind::ABS }, { PathSeparators::AUTO }>;
 
+/// [`AutoAbsPath`] that returns `Err(MaxPathExceeded)` on overflow. Use for unbounded user input.
+pub type AutoAbsPathChecked =
+    Path<u8, { Kind::ABS }, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
+
 /// `RelPath(opts)` — forces `kind = .rel`.
 pub type RelPath<
     U = u8,
@@ -644,9 +641,9 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         };
 
         let mut this = Self::init();
-        // top_level_dir is &[u8]; `_buf_append_input` routes it through
+        // top_level_dir is &[u8]; `buf_append_input` routes it through
         // `append_other` (transcoding) when U == u16.
-        this._buf_append_input(trimmed, false);
+        this.buf_append_input(trimmed, false);
         this
     }
 
@@ -667,15 +664,15 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
 
         #[cfg(windows)]
         {
-            this._buf_append_input(crate::windows::long_path_prefix_for::<U>(), false);
+            this.buf_append_input(crate::windows::long_path_prefix_for::<U>(), false);
         }
 
-        this._buf_append_input(trimmed, false);
+        this.buf_append_input(trimmed, false);
 
         this
     }
 
-    pub fn init_fd_path(fd: Fd) -> Result<Self, bun_core::Error> {
+    pub fn init_fd_path(fd: Fd) -> crate::Result<Self> {
         match Kind::from_u8(KIND) {
             Kind::Abs => {}
             Kind::Rel => panic!("cannot create a relative path from getFdPath"),
@@ -707,9 +704,9 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     // FileNotFound (return_length==0 → -1) or
                     // NameTooLong (return_length>=buf.len → -2).
                     return Err(if n == -2 {
-                        bun_core::Error::intern("NameTooLong")
+                        crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
                     } else {
-                        bun_core::Error::intern("FileNotFound")
+                        crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
                     });
                 }
                 let wide = &wslice[..n as usize];
@@ -727,7 +724,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                 // `fd_path_raw` returns 0 on misc failure — do not swallow as
                 // an empty path; propagate an error.
                 if n <= 0 {
-                    return Err(bun_core::Error::from_errno(9)); // EBADF — fd_path_raw surfaces no errno
+                    return Err(crate::Error::Sys(bun_errno::SystemErrno::EBADF)); // EBADF — fd_path_raw surfaces no errno
                 }
                 let raw = &buf[..n as usize];
                 let trimmed = trim_input(TrimInputKind::Abs, raw);
@@ -744,9 +741,9 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                 // FileNotFound (return_length==0 → -1) or
                 // NameTooLong (return_length>=buf.len → -2).
                 return Err(if n == -2 {
-                    bun_core::Error::intern("NameTooLong")
+                    crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
                 } else {
-                    bun_core::Error::intern("FileNotFound")
+                    crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
                 });
             }
             let raw = &buf[..n as usize];
@@ -785,10 +782,10 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         let mut this = Self::init();
         #[cfg(windows)]
         {
-            this._buf_append_input(crate::windows::long_path_prefix_for::<U>(), false);
+            this.buf_append_input(crate::windows::long_path_prefix_for::<U>(), false);
         }
 
-        this._buf_append_input(trimmed, false);
+        this.buf_append_input(trimmed, false);
         Ok(this)
     }
 
@@ -819,11 +816,11 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         }
 
         let mut this = Self::init();
-        this._buf_append_input(trimmed, false);
+        this.buf_append_input(trimmed, false);
         Ok(this)
     }
 
-    pub fn is_absolute(&self) -> bool {
+    pub(crate) fn is_absolute(&self) -> bool {
         match Kind::from_u8(KIND) {
             // Rust can't compile-error on a const-generic value
             // without specialization; panic instead.
@@ -835,19 +832,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
 
     pub fn basename(&self) -> &[U] {
         basename_generic(self.slice())
-    }
-
-    pub fn basename_z(&mut self) -> &U::ZSlice {
-        let len = self._buf.len;
-        let buf = U::buffer_as_mut_slice(&mut self._buf.pooled);
-        buf[len] = U::from_u8(0);
-        let base_len = basename_generic(&buf[..len]).len();
-        // Index from the END of `buf[..len]`, not from `base.as_ptr()`, so that
-        // when `base_len == 0` the result points at `buf[len]` (the NUL just
-        // written) and the sentinel invariant holds.
-        // SAFETY: `base_len <= len`, `buf[len] == 0`, and `buf` outlives the
-        // returned borrow.
-        unsafe { U::zslice_from_raw(buf.as_ptr().add(len - base_len), base_len) }
     }
 
     pub fn dirname(&self) -> Option<&[U]> {
@@ -925,7 +909,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         self._buf.len
     }
 
-    pub(crate) fn clone(&self) -> Self {
+    fn clone(&self) -> Self {
         // match BufType::Pool
         let mut cloned = Self::init();
         let len = self._buf.len;
@@ -936,7 +920,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     }
 
     #[inline]
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self._buf.set_length(0);
     }
 
@@ -983,7 +967,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     }
                 }
 
-                self._buf_append_input(trimmed, needs_sep);
+                self.buf_append_input(trimmed, needs_sep);
             }
             Kind::Rel => {
                 debug_assert!(!is_input_absolute(input));
@@ -1000,7 +984,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     }
                 }
 
-                self._buf_append_input(trimmed, needs_sep);
+                self.buf_append_input(trimmed, needs_sep);
             }
             Kind::Any => {
                 let input_is_absolute = is_input_absolute(input);
@@ -1035,7 +1019,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     }
                 }
 
-                self._buf_append_input(trimmed, needs_sep);
+                self.buf_append_input(trimmed, needs_sep);
             }
         }
         Ok(())
@@ -1093,9 +1077,21 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             // `unsafe`) — the u8 impl is `fn(s) { s }`, the u16 default is
             // `unreachable!()` and is const-folded out in this monomorphisation.
             let parts_u8: &[&[u8]] = U::id_u8_slices(parts);
-            let joined = sep_dispatch!(join_abs_string_buf(cloned_slice, pooled, parts_u8));
+            let joined = if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
+                match sep_dispatch!(join_abs_string_buf_checked(cloned_slice, pooled, parts_u8)) {
+                    Some(j) => j,
+                    None => return Err(PathError::MaxPathExceeded),
+                }
+            } else {
+                sep_dispatch!(join_abs_string_buf(cloned_slice, pooled, parts_u8))
+            };
 
             let trimmed = trim_input(TrimInputKind::Abs, joined);
+            if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath
+                && trimmed.len() >= U::MAX_PATH
+            {
+                return Err(PathError::MaxPathExceeded);
+            }
             self._buf.len = trimmed.len();
         }
         Ok(())
@@ -1108,6 +1104,12 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             Kind::Any => {
                 debug_assert!(self.is_absolute());
             }
+        }
+
+        if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath
+            && self.len() + 1 + part.len() >= U::MAX_PATH
+        {
+            return Err(PathError::MaxPathExceeded);
         }
 
         // The four (C, U) arms are dispatched below via TypeId checks, which
@@ -1262,7 +1264,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
 
     /// Dispatch `Buf::append` / `Buf::append_other` based on whether the input
     /// element type matches `U`.
-    fn _buf_append_input<C: PathUnit>(&mut self, characters: &[C], add_separator: bool) {
+    fn buf_append_input<C: PathUnit>(&mut self, characters: &[C], add_separator: bool) {
         use core::any::TypeId;
         // Route via concrete `u8`/`u16` using the safe trait-dispatched
         // identity casts (`id_u8`/`id_from_u8` etc.) — each is the literal
@@ -1309,11 +1311,6 @@ pub struct ResetScope<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const 
     saved_len: usize,
 }
 
-impl<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
-    ResetScope<'a, U, KIND, SEP_OPT, CHECK>
-{
-}
-
 impl<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> core::ops::Deref
     for ResetScope<'a, U, KIND, SEP_OPT, CHECK>
 {
@@ -1347,7 +1344,7 @@ impl<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> Drop
 // the input element type, so they're hoisted to generics over `C: PathUnit`)
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) fn root_len<C: PathUnit>(input: &[C]) -> Option<usize> {
+fn root_len<C: PathUnit>(input: &[C]) -> Option<usize> {
     #[cfg(windows)]
     {
         if input.len() > 2

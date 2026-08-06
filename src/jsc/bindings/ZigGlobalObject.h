@@ -29,7 +29,6 @@ class SubtleCrypto;
 class EventTarget;
 class Performance;
 class JSBuiltinInternalFunctions;
-class JSStreamsRuntime;
 } // namespace WebCore
 
 namespace Bun {
@@ -38,6 +37,7 @@ class NapiHandleScopeImpl;
 class JSNextTickQueue;
 class Process;
 class SecureContextCache;
+class GCProfilerObserver;
 } // namespace Bun
 
 namespace v8 {
@@ -69,6 +69,7 @@ struct node_module;
 #include <node_api.h>
 #include "BakeAdditionsToGlobalObject.h"
 #include "WriteBarrierList.h"
+#include "streams/JSStreamsRuntime.h"
 
 namespace Bun {
 class JSCommonJSExtensions;
@@ -251,7 +252,15 @@ public:
     JSC::Structure* H3ResponseSinkStructure() const { return m_JSH3ResponseSinkClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* H3ResponseSink() { return m_JSH3ResponseSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue H3ResponseSinkPrototype() const { return m_JSH3ResponseSinkClassStructure.prototypeInitializedOnMainThread(this); }
+
+    JSC::Structure* FetchRequestBodySinkStructure() const { return m_JSFetchRequestBodySinkClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* FetchRequestBodySink() { return m_JSFetchRequestBodySinkClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue FetchRequestBodySinkPrototype() const { return m_JSFetchRequestBodySinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableNetworkSinkControllerPrototype() const { return m_JSFetchTaskletChunkedRequestControllerPrototype.getInitializedOnMainThread(this); }
+
+    JSC::Structure* HTMLRewriterSinkStructure() const { return m_JSHTMLRewriterSinkClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* HTMLRewriterSink() { return m_JSHTMLRewriterSinkClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue HTMLRewriterSinkPrototype() const { return m_JSHTMLRewriterSinkClassStructure.prototypeInitializedOnMainThread(this); }
 
     JSC::Structure* JSBufferListStructure() const { return m_JSBufferListClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* JSBufferList() { return m_JSBufferListClassStructure.constructorInitializedOnMainThread(this); }
@@ -260,6 +269,8 @@ public:
     JSC::Structure* JSStringDecoderStructure() const { return m_JSStringDecoderClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* JSStringDecoder() const { return m_JSStringDecoderClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue JSStringDecoderPrototype() const { return m_JSStringDecoderClassStructure.prototypeInitializedOnMainThread(this); }
+
+    JSC::JSObject* JSFFICStringConstructor() const { return m_JSFFICStringConstructor.getInitializedOnMainThread(this); }
 
     JSC::Structure* NodeVMScriptStructure() const { return m_NodeVMScriptClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* NodeVMScript() const { return m_NodeVMScriptClassStructure.constructorInitializedOnMainThread(this); }
@@ -273,7 +284,7 @@ public:
     JSC::JSObject* NodeVMSyntheticModule() const { return m_NodeVMSyntheticModuleClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NodeVMSyntheticModulePrototype() const { return m_NodeVMSyntheticModuleClassStructure.prototypeInitializedOnMainThread(this); }
 
-    WebCore::JSStreamsRuntime* streamsRuntime() const { return m_streamsRuntime.getInitializedOnMainThread(this); }
+    WebCore::JSStreamsRuntime* streamsRuntime() { return &m_streamsRuntime; }
     JSC::JSMap* requireMap() const { return m_requireMap.getInitializedOnMainThread(this); }
     // The JSC module loader registry is no longer a JS Map. Use
     // moduleLoader()->registryEntry(key) / moduleMap() / removeEntry(key) /
@@ -392,8 +403,8 @@ public:
         jsFunctionOnLoadObjectResultReject,
         Bun__TestScope__Describe2__bunTestThen,
         Bun__TestScope__Describe2__bunTestCatch,
-        Bun__BodyValueBufferer__onRejectStream,
-        Bun__BodyValueBufferer__onResolveStream,
+        Bun__HTMLRewriter__onHandlerResolve,
+        Bun__HTMLRewriter__onHandlerReject,
         Bun__onResolveEntryPointResult,
         Bun__onRejectEntryPointResult,
         Bun__NodeHTTPRequest__onResolve,
@@ -412,8 +423,14 @@ public:
         Bun__HTTPRequestContextDebugH3__onRejectStream,
         Bun__HTTPRequestContextDebugH3__onResolve,
         Bun__HTTPRequestContextDebugH3__onResolveStream,
+        Bun__FetchTasklet__onResolveRequestStream,
+        Bun__FetchTasklet__onRejectRequestStream,
+        Bun__S3UploadStream__onResolveStream,
+        Bun__S3UploadStream__onRejectStream,
+        Bun__HTMLRewriter__onResolveInputStream,
+        Bun__HTMLRewriter__onRejectInputStream,
     };
-    static constexpr size_t promiseFunctionsSize = 42;
+    static constexpr size_t promiseFunctionsSize = 48;
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
 
@@ -511,6 +528,9 @@ public:
     /* Supports getEnvironmentData() and setEnvironmentData(), and is cloned into newly-created */           \
     /* Workers. Initialized in createNodeWorkerThreadsBinding. */                                            \
     V(private, WriteBarrier<JSMap>, m_nodeWorkerEnvironmentData)                                             \
+    /* setupMainThreadPort's drain callback; run once by WebWorker__dispatchOnline */                        \
+    /* after entry-module evaluation. Stored here (not on globalThis) so user code can't clobber it. */      \
+    V(private, WriteBarrier<JSObject>, m_nodeWorkerEntryEvaluatedHook)                                       \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \
@@ -554,8 +574,17 @@ public:
     V(private, LazyClassStructure, m_JSHTTPSResponseSinkClassStructure)                                      \
     V(private, LazyClassStructure, m_JSNetworkSinkClassStructure)                                            \
     V(private, LazyClassStructure, m_JSH3ResponseSinkClassStructure)                                         \
+    V(private, LazyClassStructure, m_JSFetchRequestBodySinkClassStructure)                                   \
+    V(private, LazyClassStructure, m_JSHTMLRewriterSinkClassStructure)                                       \
                                                                                                              \
     V(private, LazyClassStructure, m_JSStringDecoderClassStructure)                                          \
+    V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSFFICStringConstructor)                              \
+    V(public, LazyClassStructure, m_JSDatabaseSyncClassStructure)                                            \
+    V(public, LazyClassStructure, m_JSStatementSyncClassStructure)                                           \
+    V(public, LazyClassStructure, m_JSStatementSyncIteratorClassStructure)                                   \
+    V(public, LazyClassStructure, m_JSNodeSqliteSessionClassStructure)                                       \
+    V(public, LazyClassStructure, m_JSNodeSqliteLimitsClassStructure)                                        \
+    V(public, LazyClassStructure, m_JSNodeSqliteTagStoreClassStructure)                                      \
     V(private, LazyClassStructure, m_NapiClassStructure)                                                     \
     V(private, LazyClassStructure, m_callSiteStructure)                                                      \
     V(public, LazyClassStructure, m_JSBufferClassStructure)                                                  \
@@ -574,6 +603,7 @@ public:
     V(public, LazyClassStructure, m_JSCipherClassStructure)                                                  \
     V(public, LazyClassStructure, m_JSKeyObjectClassStructure)                                               \
     V(public, LazyClassStructure, m_JSSecretKeyObjectClassStructure)                                         \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_JSAsymmetricKeyObjectPrototype)                        \
     V(public, LazyClassStructure, m_JSPublicKeyObjectClassStructure)                                         \
     V(public, LazyClassStructure, m_JSPrivateKeyObjectClassStructure)                                        \
     V(public, LazyClassStructure, m_JSMIMEParamsClassStructure)                                              \
@@ -594,7 +624,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeColorFunction)                    \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeNoColorFunction)                  \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_wasmStreamingConsumeStreamFunction)                 \
-    V(private, LazyPropertyOfGlobalObject<WebCore::JSStreamsRuntime>, m_streamsRuntime)                      \
+    V(private, WebCore::JSStreamsRuntime, m_streamsRuntime)                                                  \
     V(private, LazyPropertyOfGlobalObject<JSMap>, m_requireMap)                                              \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSArrayBufferControllerPrototype)                     \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSHTTPSResponseControllerPrototype)                   \
@@ -738,6 +768,8 @@ public:
 
     JSMap* nodeWorkerEnvironmentData() { return m_nodeWorkerEnvironmentData.get(); }
     void setNodeWorkerEnvironmentData(JSMap* data);
+    JSObject* nodeWorkerEntryEvaluatedHook() { return m_nodeWorkerEntryEvaluatedHook.get(); }
+    void setNodeWorkerEntryEvaluatedHook(JSObject* hook);
 
     Bun::CommonStrings& commonStrings() { return m_commonStrings; }
     Bun::Http2CommonStrings& http2CommonStrings() { return m_http2CommonStrings; }
@@ -764,10 +796,21 @@ public:
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
 
+    // node:crypto deprecation warnings are emitted at most once per realm, like Node, whose
+    // flags live in per-realm module state (lib/internal/crypto/keys.js). They must not be
+    // process-wide statics: each worker thread has its own realm and warns independently.
+    bool hasWarnedCryptoKeyDeprecation = false;
+    bool hasWarnedNonExtractableCryptoKeyDeprecation = false;
+
     // WeakGCMap<uint64_t, JSObject> — JS-level dedup of SecureContext by
     // config digest. WeakGCMap self-registers with the heap, so no
     // visitChildren wiring needed (and it must NOT keep its values alive).
     std::unique_ptr<Bun::SecureContextCache> m_secureContextCache;
+
+    // Backs node:v8's GCProfiler. Lazily created on first start(); its
+    // destructor detaches from the heap so a worker that exits mid-profile
+    // does not leave the observer registered.
+    std::unique_ptr<Bun::GCProfilerObserver> m_gcProfilerObserver;
 
     WTF::Vector<WTF::Ref<NapiEnv>> m_napiEnvs;
     Ref<NapiEnv> makeNapiEnv(const napi_module&);

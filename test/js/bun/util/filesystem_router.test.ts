@@ -352,6 +352,40 @@ it(".query works", () => {
   }
 });
 
+it(".query skips empty-key pairs instead of terminating the parse", () => {
+  const { dir } = make(["posts.tsx", "posts/[id].tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  // An empty-key pair ("=value") should be skipped, not treated as end-of-query.
+  // Previously "?=v&x=1&y=2" yielded {} and "?x=1&=v&y=2" dropped y.
+  for (const [current, expected] of [
+    ["/posts?x=1&y=2", { x: "1", y: "2" }],
+    ["/posts?=v&x=1&y=2", { x: "1", y: "2" }],
+    ["/posts?x=1&=v&y=2", { x: "1", y: "2" }],
+    ["/posts?x=1&y=2&=v", { x: "1", y: "2" }],
+    ["/posts?=v", {}],
+    ["/posts?=&x=1", { x: "1" }],
+    ["/posts?==&x=1", { x: "1" }],
+    ["/posts?=v&=w&x=1", { x: "1" }],
+    ["/posts?&&&x=1", { x: "1" }],
+    ["/posts?a=%20&=v&b=2", { a: " ", b: "2" }],
+  ] as const) {
+    expect({ input: current, query: router.match(current)!.query }).toEqual({ input: current, query: expected });
+  }
+
+  // Same scanner is used when path params are present (init_with_scanner path).
+  for (const [current, expected] of [
+    ["/posts/123?=v&x=1&y=2", { id: "123", x: "1", y: "2" }],
+    ["/posts/123?x=1&=v&y=2", { id: "123", x: "1", y: "2" }],
+  ] as const) {
+    expect({ input: current, query: router.match(current)!.query }).toEqual({ input: current, query: expected });
+  }
+});
+
 it("reload() works", () => {
   // set up the test
   const { dir } = make(["posts.tsx"]);
@@ -504,6 +538,7 @@ it("MatchedRoute.params does not leak", async () => {
   // garbage-collected. Use long segment values so any leak is large enough to
   // dominate RSS noise.
   const code = /* ts */ `
+    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
     const router = new Bun.FileSystemRouter({
       dir: ${JSON.stringify(path.join(String(dir), "pages"))},
       style: "nextjs",
@@ -515,11 +550,11 @@ it("MatchedRoute.params does not leak", async () => {
     // warm up
     for (let i = 0; i < 1000; i++) router.match(url).params;
     Bun.gc(true);
-    const before = process.memoryUsage.rss();
+    const before = rss();
 
     for (let i = 0; i < 30000; i++) router.match(url).params;
     Bun.gc(true);
-    const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+    const growthMB = (rss() - before) / 1024 / 1024;
     console.error("RSS growth: " + growthMB.toFixed(2) + "MB");
     // ASAN's quarantine retains freed allocations (default 256 MB) so RSS
     // deltas run far higher under bun-asan; widen the threshold there.
@@ -743,13 +778,44 @@ it("match() does not panic on a leading '?' or a path that percent-decodes to em
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
+  // These inputs do not start with '/', so they are not valid path strings and
+  // must not match any route (including the index route). The subprocess still
+  // proves the original invariant: no panic on degenerate input.
   expect(JSON.parse(stdout.trim())).toEqual({
-    "?": { name: "/", query: {} },
-    "?foo=bar": { name: "/", query: { foo: "bar" } },
-    "%PUBLIC_URL%": { name: "/", query: {} },
-    "%PUBLIC_URL%?x=1": { name: "/", query: { x: "1" } },
+    "?": null,
+    "?foo=bar": null,
+    "%PUBLIC_URL%": null,
+    "%PUBLIC_URL%?x=1": null,
   });
   expect(exitCode).toBe(0);
+});
+
+it("match() returns null when the path string does not start with '/'", () => {
+  const { dir } = make(["index.tsx", "top.tsx", "op.tsx", "sub/[id].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  // Control: '/'-prefixed inputs resolve.
+  expect(router.match("/top")?.name).toBe("/top");
+  expect(router.match("/op")?.name).toBe("/op");
+  expect(router.match("/sub/x")).toMatchObject({ name: "/sub/[id]", params: { id: "x" } });
+  expect(router.match("/")?.name).toBe("/");
+  expect(router.match("/?q=1")).toMatchObject({ name: "/", query: { q: "1" } });
+  expect(router.match("")?.name).toBe("/");
+
+  // URLPath::parse used to strip byte 0 unconditionally, so any single junk byte
+  // in the '/' position produced a match against the rest of the string.
+  for (const input of ["Xtop", " top", "\ttop", "\\top", ".top", "%58top", "%2Ftop"]) {
+    expect({ input, match: router.match(input) }).toEqual({ input, match: null });
+  }
+  // The bare name (no prefix at all) must not match either: previously "top"
+  // became "op" and matched the /op route.
+  expect(router.match("top")).toBeNull();
+  expect(router.match("ttop")).toBeNull();
+  // Dynamic routes were affected the same way.
+  expect(router.match("Xsub/x")).toBeNull();
+  expect(router.match("sub/x")).toBeNull();
+  // A leading '?' has no path component and must not fall through to index.
+  expect(router.match("?anything")).toBeNull();
 });
 
 it("reload() while Bun.build() resolves the same directory", async () => {
@@ -771,17 +837,26 @@ it("reload() while Bun.build() resolves the same directory", async () => {
         style: "nextjs",
         fileExtensions: [".tsx"],
       });
-      const builds = Array.from({ length: 4 }, () =>
-        Bun.build({ entrypoints, target: "bun", throw: false }),
-      );
+      // The first build completes with generation 0 and the bundle thread then
+      // bumps its generation, so every later build's resolver re-reads the
+      // directory listing in place. reload() iterates the same listing on the
+      // main thread, and that in-place re-read is what the reload loop races.
+      await Bun.build({ entrypoints, target: "bun", throw: false });
       let matches = 0;
-      for (let i = 0; i < 50; i++) {
-        router.reload();
-        const m = router.match("/p7");
-        if (m && m.filePath.endsWith("p7.tsx")) matches++;
+      let buildsOk = true;
+      for (let round = 0; round < 40; round++) {
+        const builds = Array.from({ length: 4 }, () =>
+          Bun.build({ entrypoints, target: "bun", throw: false }),
+        );
+        for (let i = 0; i < 50; i++) {
+          router.reload();
+          const m = router.match("/p7");
+          if (m && m.filePath.endsWith("p7.tsx")) matches++;
+        }
+        const results = await Promise.all(builds);
+        buildsOk &&= results.every(r => r.success);
       }
-      const results = await Promise.all(builds);
-      console.log("matches", matches, "builds-ok", results.every(r => r.success));
+      console.log("matches", matches, "builds-ok", buildsOk);
     `,
   };
   for (let i = 1; i <= 40; i++) {
@@ -798,8 +873,12 @@ it("reload() while Bun.build() resolves the same directory", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(normalizeBunSnapshot(stdout, String(dir))).toBe("matches 50 builds-ok true");
-  expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  expect({
+    stdout: normalizeBunSnapshot(stdout, String(dir)),
+    stderr: normalizeBunSnapshot(stderr, String(dir)),
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({ stdout: "matches 2000 builds-ok true", stderr: "", exitCode: 0, signalCode: null });
 }, 60_000);
 
 it("loads routes from a directory already cached by Bun.build()", async () => {
@@ -832,6 +911,119 @@ it("loads routes from a directory already cached by Bun.build()", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(normalizeBunSnapshot(stdout, String(dir))).toBe("/a /b /sub/c /b");
-  expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  expect({
+    stdout: normalizeBunSnapshot(stdout, String(dir)),
+    stderr: normalizeBunSnapshot(stderr, String(dir)),
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({ stdout: "/a /b /sub/c /b", stderr: "", exitCode: 0, signalCode: null });
 });
+
+it(".query drops a pair with a malformed percent escape without shifting later parameters", () => {
+  const { dir } = make(["posts.tsx", "shows/[id].tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  for (const [current, expected] of [
+    ["/posts?a=x%25zz&b=hello", { b: "hello" }],
+    ["/posts?a=xy%25zz&b=hello&c=3", { b: "hello", c: "3" }],
+    ["/posts?a=%25zz&b=hello", { b: "hello" }],
+    ["/shows/123?a=x%25zz&b=ok", { id: "123", b: "ok" }],
+    ["/shows/123?a=xy%25zz&b=ok&c=3", { id: "123", b: "ok", c: "3" }],
+  ] as const) {
+    expect({ input: current, query: router.match(current)!.query }).toEqual({ input: current, query: expected });
+  }
+});
+
+it(".query keeps the route parameter when a percent-encoded query name decodes to the same name", () => {
+  const { dir } = make(["posts/[id].tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  for (const [current, expected] of [
+    ["/posts/123?id=999", { id: "123" }],
+    ["/posts/123?%2569d=999", { id: "123" }],
+    ["/posts/123?%2569d=999&other=1", { id: "123", other: "1" }],
+    ["/posts/123?other=1&%2569d=999", { id: "123", other: "1" }],
+  ] as const) {
+    expect({ input: current, query: router.match(current)!.query }).toEqual({ input: current, query: expected });
+  }
+});
+
+it("match() returns null when the URL has fewer segments than a dynamic route requires", () => {
+  {
+    const { dir } = make(["[org]/settings/[id].tsx"]);
+    const router = new Bun.FileSystemRouter({
+      dir,
+      style: "nextjs",
+    });
+
+    expect(router.match("/acme/settings/x")).toMatchObject({
+      name: "/[org]/settings/[id]",
+      params: { org: "acme", id: "x" },
+    });
+    expect(router.match("/acme")).toBeNull();
+  }
+
+  {
+    const { dir } = make(["[team]/[...rest].tsx"]);
+    const router = new Bun.FileSystemRouter({
+      dir,
+      style: "nextjs",
+    });
+
+    expect(router.match("/acme/a/b")).toMatchObject({
+      name: "/[team]/[...rest]",
+      params: { team: "acme", rest: "a/b" },
+    });
+    expect(router.match("/acme")).toBeNull();
+  }
+});
+
+it.skipIf(isWindows || isMacOS)(
+  "src is computed for a route whose path is longer than the fast-path buffer",
+  async () => {
+    using dir = tempDir("fsr-long-route-src", {
+      "pages/keep.tsx": "export default 1;\n",
+    });
+
+    const code = /* ts */ `
+    const fs = require("fs");
+    const path = require("path");
+    const pagesDir = ${JSON.stringify(path.join(String(dir), "pages"))};
+    const seg = Buffer.alloc(200, "a").toString();
+    const relDir = Array.from({ length: 11 }, (_, i) => seg + i).join("/");
+    fs.mkdirSync(path.join(pagesDir, relDir), { recursive: true });
+    fs.writeFileSync(path.join(pagesDir, relDir, "leaf.tsx"), "export default 1;\\n");
+    const router = new Bun.FileSystemRouter({
+      dir: pagesDir,
+      style: "nextjs",
+      fileExtensions: [".tsx"],
+      assetPrefix: "/_next/static/",
+      origin: "https://example.com",
+    });
+    const m = router.match("/" + relDir + "/leaf");
+    if (!m) throw new Error("expected the deep route to match");
+    const expected = "https://example.com/_next/static/" + relDir + "/leaf.tsx";
+    if (m.src !== expected) throw new Error("unexpected src: " + JSON.stringify(m.src));
+    console.log("ok " + m.src.length);
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ok 2264");
+    expect(exitCode).toBe(0);
+  },
+);

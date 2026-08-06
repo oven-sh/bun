@@ -1,16 +1,4 @@
-//! `AnyTaskJob<C>` — the canonical "{WorkPool offload → AnyTask re-queue →
-//! JS-thread completion}" boilerplate. Each call site supplies only a `Ctx` impl of
-//! [`AnyTaskJobCtx`]; the heap allocation, intrusive `WorkPoolTask`/`AnyTask`
-//! wiring, `KeepAlive` ref/unref, and `is_shutting_down` guard live here.
-//!
-//! NOT for `Taskable`-tagged jobs (`AsyncFSTask`, `ConcurrentPromiseTask`,
-//! `WorkTask`) — those go through the central `TaskTag` dispatch table, not
-//! the type-erased `AnyTask` path, and would need a per-instantiation tag.
-
-use core::ffi::c_void;
-use core::ptr::NonNull;
-
-use bun_event_loop::AnyTask::AnyTask;
+use bun_event_loop::Task;
 use bun_io::KeepAlive;
 use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
 
@@ -39,20 +27,57 @@ pub trait AnyTaskJobCtx: Sized {
 
     /// JS-thread completion. Called once after `run` re-queues onto the event
     /// loop, unless the VM is already shutting down. Any `Err` is surfaced as
-    /// the `AnyTask` callback's result (i.e. propagated to the tick loop).
+    /// the completion callback's result (i.e. propagated to the tick loop).
     fn then(&mut self, global: &JSGlobalObject) -> JsResult<()>;
 }
 
-/// Heap-allocated `{WorkPoolTask, AnyTask, KeepAlive, ctx}` bundle. Created
-/// via [`Self::create`] / [`Self::create_and_schedule`]; freed in
+/// Heap-allocated offload job; created via [`AnyTaskJob::create`] and freed in
 /// `run_from_js` (or on `init` failure). `ctx` is `pub` so callers can read
 /// e.g. a `JSPromiseStrong` field after scheduling.
+#[repr(C)]
 pub struct AnyTaskJob<C> {
+    run_from_js_erased: fn(*mut ()) -> JsResult<()>,
+    release_erased: fn(*mut ()),
     vm: bun_ptr::BackRef<VirtualMachine>,
     task: WorkPoolTask,
-    any_task: AnyTask,
     poll: KeepAlive,
     pub ctx: C,
+}
+
+/// `task_tag::AnyTaskJob` dispatch entry: read the erased completion at the
+/// head of the allocation and call it with the whole-job pointer.
+///
+/// # Safety
+/// `ptr` must be a live `*mut AnyTaskJob<C>` (for some `C`) produced by
+/// [`AnyTaskJob::create`]; ownership transfers (the entry frees the job).
+pub unsafe fn dispatch_erased(ptr: *mut ()) -> JsResult<()> {
+    // SAFETY: `AnyTaskJob<C>` is `#[repr(C)]` with `run_from_js_erased`
+    // first; caller contract that `ptr` is such an allocation.
+    let entry = unsafe { *ptr.cast::<fn(*mut ()) -> JsResult<()>>() };
+    entry(ptr)
+}
+
+/// Free a queued job at VM shutdown without running its completion; the ctx
+/// `Drop` needs the still-live VM to release its JSC handles and resources.
+///
+/// # Safety
+/// `ptr` must be a live `*mut AnyTaskJob<C>` from [`AnyTaskJob::create`],
+/// popped from the event-loop queue (so it held exclusive ownership); frees it.
+pub unsafe fn release_erased(ptr: *mut ()) {
+    // SAFETY: `AnyTaskJob<C>` is `#[repr(C)]` with `release_erased` second;
+    // caller contract that `ptr` is such an allocation.
+    let entry = unsafe { *ptr.cast::<fn(*mut ())>().add(1) };
+    entry(ptr)
+}
+
+const _: () = assert!(core::mem::offset_of!(AnyTaskJob<()>, run_from_js_erased) == 0);
+const _: () = assert!(
+    core::mem::offset_of!(AnyTaskJob<()>, release_erased)
+        == core::mem::size_of::<fn(*mut ()) -> JsResult<()>>()
+);
+
+impl<C> bun_event_loop::Taskable for AnyTaskJob<C> {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AnyTaskJob;
 }
 
 bun_threading::intrusive_work_task!([C] AnyTaskJob<C>, task);
@@ -67,32 +92,23 @@ impl<C> Drop for AnyTaskJob<C> {
 }
 
 impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
-    /// Heap-allocate, wire the intrusive `WorkPoolTask`/`AnyTask`, and run
+    /// Heap-allocate, wire the intrusive `WorkPoolTask`, and run
     /// [`AnyTaskJobCtx::init`]. On `init` error the allocation is freed
     /// (running `Drop for C`). The returned pointer is owned by the caller
     /// until handed to [`Self::schedule`].
     pub fn create(global: &JSGlobalObject, ctx: C) -> JsResult<*mut Self> {
         let vm = bun_ptr::BackRef::new(global.bun_vm());
         let job = bun_core::heap::into_raw(Box::new(Self {
+            run_from_js_erased: |p| Self::run_from_js(p.cast::<Self>()),
+            release_erased: |p| Self::release(p.cast::<Self>()),
             vm,
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: Self::run_task,
             },
-            // Overwritten immediately below; `Default` provides a non-null
-            // sentinel callback (zeroed() is UB for the `fn` field).
-            any_task: AnyTask::default(),
             poll: KeepAlive::default(),
             ctx,
         }));
-        // SAFETY: `job` was just allocated and is exclusively owned here.
-        // Build the erased AnyTask directly with a non-capturing shim.
-        unsafe {
-            (*job).any_task = AnyTask {
-                ctx: NonNull::new(job.cast::<c_void>()),
-                callback: |p: *mut c_void| Self::run_from_js(p.cast::<Self>()).map_err(Into::into),
-            };
-        }
         // `ctx.init` may throw (e.g. CryptoJob<Scrypt>); on error, reclaim the
         // box so `Drop for C` releases any resources `ctx` already owns.
         let mut guard = scopeguard::guard(job, |job| {
@@ -112,10 +128,14 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
     /// `this` must be a live pointer returned by [`Self::create`] that has not
     /// yet been scheduled.
     pub unsafe fn schedule(this: *mut Self) {
-        // SAFETY: caller contract.
-        let this = unsafe { &mut *this };
-        this.poll.ref_(bun_io::js_vm_ctx());
-        WorkPool::schedule(&raw mut this.task);
+        // SAFETY: caller contract. `schedule` is a cross-thread handoff — a
+        // worker may run and free the job as soon as it's queued — so the
+        // pointer handed to the pool is derived from the raw `this` and nothing
+        // touches the job afterwards.
+        unsafe { (*this).poll.ref_(bun_io::js_vm_ctx()) };
+        // SAFETY: `this` is live; the pointer handed to the pool is derived
+        // from the raw `this` and nothing touches the job after the schedule.
+        WorkPool::schedule(unsafe { &raw mut (*this).task });
     }
 
     /// [`Self::create`] + [`Self::schedule`]. For callers that don't need to
@@ -144,20 +164,24 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         // `ConcurrentTask::create` heap-allocates a fresh task; the queue takes
         // ownership of it.
         vm.event_loop_shared()
-            .enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
+            .enqueue_task_concurrent(ConcurrentTask::create(Task::init(std::ptr::from_mut(job))));
     }
 
-    /// `AnyTask` callback — runs ON the JS thread. Reclaims the heap
-    /// allocation; `Drop for Self` (poll.unref) and `Drop for C` run on every
-    /// path.
     fn run_from_js(this: *mut Self) -> JsResult<()> {
         // SAFETY: `this` was produced by `heap::into_raw` in `create` and is
-        // uniquely owned here (the `AnyTask` fires exactly once).
+        // uniquely owned here (the task fires exactly once).
         let mut this = unsafe { bun_core::heap::take(this) };
         let vm = this.vm;
         if vm.is_shutting_down() {
             return Ok(());
         }
         this.ctx.then(vm.global())
+    }
+
+    /// [`release_erased`]'s monomorphic body.
+    fn release(this: *mut Self) {
+        // SAFETY: `this` was produced by `heap::into_raw` in `create`; the
+        // caller (the popped queue entry) held exclusive ownership.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }

@@ -37,7 +37,7 @@ enum VersionType {
 }
 
 impl VersionType {
-    pub(crate) fn from_string(str: &[u8]) -> Option<VersionType> {
+    fn from_string(str: &[u8]) -> Option<VersionType> {
         if str == b"patch" {
             return Some(VersionType::Patch);
         }
@@ -72,7 +72,7 @@ impl PmVersionCommand {
         pm: &mut PackageManager,
         positionals: &[&[u8]],
         original_cwd: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let package_json_dir = Self::find_package_dir(original_cwd)?;
 
         if positionals.len() <= 1 {

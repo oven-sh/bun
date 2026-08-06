@@ -74,14 +74,14 @@ pub enum CryptoHasher {
 impl CryptoHasher {
     // `pub const new = bun.TrivialNew(@This());`
     #[inline]
-    pub fn new(init: CryptoHasher) -> Box<CryptoHasher> {
+    pub(crate) fn new(init: CryptoHasher) -> Box<CryptoHasher> {
         Box::new(init)
     }
 
     // ── Extern: For using only CryptoHasherZig in c++ ──────────────────────
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__CryptoHasherExtern__getByName(
+    pub(crate) extern "C" fn Bun__CryptoHasherExtern__getByName(
         global: &JSGlobalObject,
         name_bytes: *const c_char,
         name_len: usize,
@@ -122,7 +122,7 @@ impl CryptoHasher {
     }
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__CryptoHasherExtern__getFromOther(
+    pub(crate) extern "C" fn Bun__CryptoHasherExtern__getFromOther(
         global: &JSGlobalObject,
         other_handle: &CryptoHasher,
     ) -> Option<Box<CryptoHasher>> {
@@ -149,7 +149,7 @@ impl CryptoHasher {
     /// `Bun__CryptoHasherExtern__getByName` / `getFromOther`, with ownership
     /// being returned to Rust (not yet destroyed).
     #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn Bun__CryptoHasherExtern__destroy(handle: *mut CryptoHasher) {
+    pub(crate) unsafe extern "C" fn Bun__CryptoHasherExtern__destroy(handle: *mut CryptoHasher) {
         // SAFETY: caller transfers ownership of a valid `Box<CryptoHasher>` raw
         // pointer previously returned to C++ (see `# Safety` above).
         drop(unsafe { Box::from_raw(handle) });
@@ -213,15 +213,14 @@ impl CryptoHasher {
     ///
     /// Hand-expanded `wrapInstanceMethod` decode for the parameter list
     /// `(*CryptoHasher, *JSGlobalObject, ?Node.StringOrBuffer)`.
-    pub fn digest(
+    pub(crate) fn digest(
         this: &Self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>();
+        let [arg] = callframe.arguments_as_array::<1>();
         // ?Node.StringOrBuffer (instance-method arm: empty/undefined/null → None)
-        let output: Option<StringOrBuffer> = if arguments.len > 0 {
-            let arg = arguments.ptr[0];
+        let output: Option<StringOrBuffer> = if callframe.arguments_count() > 0 {
             if !arg.is_empty_or_undefined_or_null() {
                 match StringOrBuffer::from_js(global, arg)? {
                     Some(v) => Some(v),
@@ -241,12 +240,12 @@ impl CryptoHasher {
 
     /// Hand-expanded static-method argument decode for the parameter list
     /// `(algorithm string, input, optional output buffer/encoding)`.
-    pub fn hash(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<3>();
+    pub(crate) fn hash(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let arguments = callframe.arguments();
         let mut i = 0usize;
         let mut next_eat = || {
-            if i < arguments.len {
-                let v = arguments.ptr[i];
+            if i < arguments.len() {
+                let v = arguments[i];
                 i += 1;
                 Some(v)
             } else {
@@ -265,23 +264,14 @@ impl CryptoHasher {
         };
 
         // Node.BlobOrStringOrBuffer
-        let input = {
-            let Some(arg) = next_eat() else {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
-                );
-            };
-            match BlobOrStringOrBuffer::from_js(global, arg)? {
-                Some(b) => b,
-                None => {
-                    return Err(global
-                        .throw_invalid_arguments(format_args!("expected blob, string or buffer")));
-                }
-            }
+        let Some(input_arg) = next_eat() else {
+            return Err(
+                global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
+            );
         };
 
         // ?Node.StringOrBuffer (static-method arm: only `undefined` → None)
-        let output: Option<StringOrBuffer> = match next_eat() {
+        let mut output: Option<StringOrBuffer> = match next_eat() {
             Some(arg) => match StringOrBuffer::from_js(global, arg)? {
                 Some(v) => Some(v),
                 None => {
@@ -296,6 +286,18 @@ impl CryptoHasher {
             None => None,
         };
 
+        let input = match BlobOrStringOrBuffer::from_js(global, input_arg)? {
+            Some(b) => b,
+            None => {
+                return Err(
+                    global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
+                );
+            }
+        };
+        if let Some(StringOrBuffer::Buffer(buffer)) = &mut output {
+            buffer.buffer = ArrayBuffer::from_typed_array(global, buffer.buffer.value);
+        }
+
         Self::hash_(global, algorithm, &input, output)
     }
 
@@ -306,7 +308,7 @@ impl CryptoHasher {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_byte_length(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_byte_length(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(JSValue::js_number(match this {
             CryptoHasher::Evp(inner) => inner.get().size() as f64,
             CryptoHasher::Hmac(inner) => match inner.get() {
@@ -318,7 +320,7 @@ impl CryptoHasher {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_algorithm(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_algorithm(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let tag: &'static [u8] = match this {
             CryptoHasher::Evp(inner) => inner.get().algorithm.tag_cstr().to_bytes(),
             CryptoHasher::Zig(inner) => inner.get().algorithm.tag_cstr().to_bytes(),
@@ -333,7 +335,7 @@ impl CryptoHasher {
     // `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
     // which cannot resolve to an associated fn inside an `impl` block. The shim
     // for this static prop getter is wired by `#[bun_jsc::JsClass]` codegen.
-    pub fn get_algorithms(
+    pub(crate) fn get_algorithms(
         global: &JSGlobalObject,
         _: JSValue,
         _: PropertyName,
@@ -417,7 +419,7 @@ impl CryptoHasher {
         }
     }
 
-    pub fn hash_(
+    pub(crate) fn hash_(
         global: &JSGlobalObject,
         algorithm: ZigString,
         input: &BlobOrStringOrBuffer,
@@ -466,18 +468,17 @@ impl CryptoHasher {
     // `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
     // which cannot resolve to an associated fn inside an `impl` block. The
     // constructor shim is wired by `#[bun_jsc::JsClass]` codegen.
-    pub fn constructor(
+    pub(crate) fn constructor(
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<Box<CryptoHasher>> {
-        let arguments = callframe.arguments_old::<2>();
-        if arguments.len == 0 {
+        let [algorithm_name, hmac_value] = callframe.arguments_as_array::<2>();
+        if callframe.arguments_count() == 0 {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Expected an algorithm name as an argument"
             )));
         }
 
-        let algorithm_name = arguments.ptr[0];
         if algorithm_name.is_empty_or_undefined_or_null() || !algorithm_name.is_string() {
             return Err(global.throw_invalid_arguments(format_args!("algorithm must be a string")));
         }
@@ -488,7 +489,6 @@ impl CryptoHasher {
             return Err(global.throw_invalid_arguments(format_args!("Invalid algorithm name")));
         }
 
-        let hmac_value = arguments.ptr[1];
         let mut hmac_key: Option<StringOrBuffer> = None;
         // `defer { if (hmac_key) |*key| key.deinit(); }` — handled by Drop on `hmac_key`.
 
@@ -560,37 +560,55 @@ impl CryptoHasher {
         Ok(CryptoHasher::new(init))
     }
 
-    pub fn getter(global: &JSGlobalObject, _: &JSObject) -> JSValue {
+    pub(crate) fn getter(global: &JSGlobalObject, _: &JSObject) -> JSValue {
         bun_jsc::codegen::js::get_constructor::<CryptoHasher>(global)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn update(
+    pub(crate) fn update(
         this: &Self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let this_value = callframe.this();
-        let arguments = callframe.arguments_old::<2>();
-        let input = arguments.ptr[0];
+        let [input, encoding_value] = callframe.arguments_as_array::<2>();
         if input.is_empty_or_undefined_or_null() {
             return Err(
                 global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
             );
         }
-        let encoding = arguments.ptr[1];
-        let buffer =
-            match BlobOrStringOrBuffer::from_js_with_encoding_value(global, input, encoding)? {
-                Some(b) => b,
-                None => {
-                    if !global.has_exception() {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "expected blob, string or buffer"
-                        )));
-                    }
-                    return Err(JsError::Thrown);
+        // Encoding only affects string inputs (same gate as JSHash.cpp); don't
+        // coerce it for Blob/Buffer inputs where it is ignored.
+        let encoding = if input.is_string() && encoding_value.is_cell() {
+            Encoding::from_js(encoding_value, global)?.unwrap_or(Encoding::Utf8)
+        } else {
+            Encoding::Utf8
+        };
+        if input.is_string_literal() && encoding == Encoding::Hex {
+            let length = input.to_js_string(global)?.length();
+            if length % 2 != 0 {
+                let actual = JSGlobalObject::inspect_for_error_message(global, encoding_value)?;
+                return Err(global
+                    .err(
+                        ErrorCode::INVALID_ARG_VALUE,
+                        format_args!(
+                            "The argument 'encoding' is invalid for data of length {}. Received {}",
+                            length, actual
+                        ),
+                    )
+                    .throw());
+            }
+        }
+        let buffer = match BlobOrStringOrBuffer::from_js_with_encoding(global, input, encoding)? {
+            Some(b) => b,
+            None => {
+                if !global.has_exception() {
+                    return Err(global
+                        .throw_invalid_arguments(format_args!("expected blob, string or buffer")));
                 }
-            };
+                return Err(JsError::Thrown);
+            }
+        };
         // `defer buffer.deinit()` — handled by Drop.
         if is_bun_file_blob(&buffer) {
             return Err(global.throw(format_args!(
@@ -633,7 +651,7 @@ impl CryptoHasher {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn copy(this: &Self, global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn copy(this: &Self, global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let copied: CryptoHasher = match this {
             CryptoHasher::Evp(inner) => CryptoHasher::Evp(Box::new(JsCell::new(
                 inner
@@ -665,7 +683,7 @@ impl CryptoHasher {
         Ok(copied.to_js(global))
     }
 
-    pub fn digest_(
+    pub(crate) fn digest_(
         this: &Self,
         global: &JSGlobalObject,
         output: Option<StringOrBuffer>,
@@ -788,14 +806,14 @@ impl CryptoHasher {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct CryptoHasherZig {
-    pub algorithm: evp::Algorithm,
-    pub state: Box<dyn Any>,
-    pub digest_length: u8,
+    pub(crate) algorithm: evp::Algorithm,
+    pub(crate) state: Box<dyn Any>,
+    pub(crate) digest_length: u8,
 }
 
 /// Trait for the non-BoringSSL hash algorithms used by `CryptoHasherZig`.
 /// Implemented for each algo in `zig_crypto_algos` below.
-pub trait ZigHashAlgo: Default + Clone + 'static {
+trait ZigHashAlgo: Default + Clone + 'static {
     const ALGORITHM: evp::Algorithm;
     /// Shake128→16, Shake256→32, else the algorithm's digest length.
     const DIGEST_LENGTH: u8;
@@ -884,7 +902,7 @@ macro_rules! for_each_zig_algo {
 }
 
 impl CryptoHasherZig {
-    pub fn hash_by_name(
+    pub(crate) fn hash_by_name(
         global: &JSGlobalObject,
         algorithm: &ZigString,
         input: &BlobOrStringOrBuffer,
@@ -1012,7 +1030,7 @@ impl CryptoHasherZig {
             .map(|inner| CryptoHasher::new(CryptoHasher::Zig(JsCell::new(inner))))
     }
 
-    pub fn init(name: &[u8]) -> Option<CryptoHasherZig> {
+    pub(crate) fn init(name: &[u8]) -> Option<CryptoHasherZig> {
         let algorithm = evp::lookup_ignore_case(name)?;
         macro_rules! arm {
             ($ty:ty, $alg:expr) => {
@@ -1174,17 +1192,8 @@ impl_static_hasher!(hashers::SHA512_256, "SHA512_256", JSSHA512_256, 32);
 // Copy flag → `Cell<bool>`.
 #[repr(C)]
 pub struct StaticCryptoHasher<H: StaticHasher> {
-    pub hashing: JsCell<H>,
-    pub digested: Cell<bool>,
-}
-
-impl<H: StaticHasher> Default for StaticCryptoHasher<H> {
-    fn default() -> Self {
-        Self {
-            hashing: JsCell::new(H::init()),
-            digested: Cell::new(false),
-        }
-    }
+    pub(crate) hashing: JsCell<H>,
+    pub(crate) digested: Cell<bool>,
 }
 
 impl<H: StaticHasher> StaticCryptoHasher<H> {
@@ -1192,15 +1201,14 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     ///
     /// Hand-expanded `wrapInstanceMethod` decode for the parameter list
     /// `(*ThisHasher, *JSGlobalObject, ?Node.StringOrBuffer)`.
-    pub fn digest(
+    pub(crate) fn digest(
         this: &Self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>();
+        let [arg] = callframe.arguments_as_array::<1>();
         // ?Node.StringOrBuffer (instance-method arm: empty/undefined/null → None)
-        let output: Option<StringOrBuffer> = if arguments.len > 0 {
-            let arg = arguments.ptr[0];
+        let output: Option<StringOrBuffer> = if callframe.arguments_count() > 0 {
             if !arg.is_empty_or_undefined_or_null() {
                 match StringOrBuffer::from_js(global, arg)? {
                     Some(v) => Some(v),
@@ -1222,12 +1230,12 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     ///
     /// Hand-expanded `wrapStaticMethod` decode for the parameter list
     /// `(*JSGlobalObject, Node.BlobOrStringOrBuffer, ?Node.StringOrBuffer)`.
-    pub fn hash(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
+    pub(crate) fn hash(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let arguments = callframe.arguments();
         let mut i = 0usize;
         let mut next_eat = || {
-            if i < arguments.len {
-                let v = arguments.ptr[i];
+            if i < arguments.len() {
+                let v = arguments[i];
                 i += 1;
                 Some(v)
             } else {
@@ -1236,23 +1244,14 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         };
 
         // Node.BlobOrStringOrBuffer
-        let input = {
-            let Some(arg) = next_eat() else {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
-                );
-            };
-            match BlobOrStringOrBuffer::from_js(global, arg)? {
-                Some(b) => b,
-                None => {
-                    return Err(global
-                        .throw_invalid_arguments(format_args!("expected blob, string or buffer")));
-                }
-            }
+        let Some(input_arg) = next_eat() else {
+            return Err(
+                global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
+            );
         };
 
         // ?Node.StringOrBuffer (static-method arm: only `undefined` → None)
-        let output: Option<StringOrBuffer> = match next_eat() {
+        let mut output: Option<StringOrBuffer> = match next_eat() {
             Some(arg) => match StringOrBuffer::from_js(global, arg)? {
                 Some(v) => Some(v),
                 None => {
@@ -1267,14 +1266,30 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             None => None,
         };
 
+        let input = match BlobOrStringOrBuffer::from_js(global, input_arg)? {
+            Some(b) => b,
+            None => {
+                return Err(
+                    global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
+                );
+            }
+        };
+        if let Some(StringOrBuffer::Buffer(buffer)) = &mut output {
+            buffer.buffer = ArrayBuffer::from_typed_array(global, buffer.buffer.value);
+        }
+
         Self::hash_(global, &input, output)
     }
 
-    pub fn get_byte_length(_this: &Self, _: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_byte_length(_this: &Self, _: &JSGlobalObject) -> JSValue {
         JSValue::js_number(H::DIGEST as f64)
     }
 
-    pub fn get_byte_length_static(_: &JSGlobalObject, _: JSValue, _: PropertyName) -> JSValue {
+    pub(crate) fn get_byte_length_static(
+        _: &JSGlobalObject,
+        _: JSValue,
+        _: PropertyName,
+    ) -> JSValue {
         JSValue::js_number(H::DIGEST as f64)
     }
 
@@ -1345,7 +1360,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         }
     }
 
-    pub fn hash_(
+    pub(crate) fn hash_(
         global: &JSGlobalObject,
         input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
@@ -1384,19 +1399,19 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     // `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
     // which cannot resolve to an associated fn inside an `impl` block. The
     // constructor shim is wired by per-monomorphization `#[bun_jsc::JsClass]` codegen.
-    pub fn constructor(_: &JSGlobalObject, _: &CallFrame) -> JsResult<Box<Self>> {
+    pub(crate) fn constructor(_: &JSGlobalObject, _: &CallFrame) -> JsResult<Box<Self>> {
         Ok(Box::new(Self {
             hashing: JsCell::new(H::init()),
             digested: Cell::new(false),
         }))
     }
 
-    pub fn getter(global: &JSGlobalObject, _: &JSObject) -> JSValue {
+    pub(crate) fn getter(global: &JSGlobalObject, _: &JSObject) -> JSValue {
         H::get_constructor(global)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn update(
+    pub(crate) fn update(
         this: &Self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1432,7 +1447,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         Ok(this_value)
     }
 
-    pub fn digest_(
+    pub(crate) fn digest_(
         this: &Self,
         global: &JSGlobalObject,
         output: Option<StringOrBuffer>,

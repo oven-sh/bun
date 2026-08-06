@@ -1,11 +1,9 @@
 //! Core AST node payload types and arena-slice helpers.
 #![allow(non_snake_case)]
 
-use core::fmt;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
-pub use bun_collections::VecExt as _VecExtReexport;
 use bun_collections::{ArrayHashMap, AutoContext, MultiArrayList, StringHashMap};
 use bun_core::Output;
 
@@ -66,14 +64,6 @@ impl<T> StoreRef<T> {
     #[inline]
     pub fn from_bump(r: &mut T) -> Self {
         StoreRef(NonNull::from(r))
-    }
-    /// Consume a `Box<T>` whose payload must outlive every Store reset.
-    /// Ownership transfers to the returned `StoreRef`; the allocation is
-    /// process-lifetime by design and is never dropped. Prefer `from_bump`
-    /// for arena-backed nodes.
-    #[inline]
-    pub fn from_box(b: Box<T>) -> Self {
-        StoreRef(bun_core::heap::into_raw_nn(b))
     }
     #[inline]
     pub const fn as_ptr(self) -> *mut T {
@@ -147,7 +137,7 @@ pub type BindingNodeIndex = Binding;
 // declarations / call sites that spell `ArenaStr` continue to compile.
 pub(crate) type ArenaStr = StoreStr;
 #[inline]
-pub(crate) const fn empty_arena_str() -> ArenaStr {
+const fn empty_arena_str() -> ArenaStr {
     StoreStr::EMPTY
 }
 // (former `empty_arena_slice_mut<T>()` removed — use `StoreSlice::<T>::EMPTY`.)
@@ -400,11 +390,6 @@ impl<T> StoreSlice<T> {
         self.ptr.as_ptr()
     }
 
-    #[inline]
-    pub const fn raw_len(self) -> u32 {
-        self.len
-    }
-
     /// Re-borrow as `&[T]`. Same safety contract as `StoreStr::slice` /
     /// `StoreRef::get`: the pointee lives until arena reset, which the caller
     /// must not cross. Takes `self` by value (Copy) so the returned borrow is
@@ -540,11 +525,10 @@ pub const NAMESPACE_EXPORT_PART_INDEX: u32 = 0;
 /// Slice that stores capacity and length in the same space as a regular slice.
 pub type ExprNodeList = Vec<Expr, bun_alloc::AstAlloc>;
 
-// Arena-owned `[Stmt]` / `[Binding]` views — see `StoreSlice<T>` doc above.
+// Arena-owned `[Stmt]` view — see `StoreSlice<T>` doc above.
 // A `PhantomData<&'arena ()>` can be added to `StoreSlice` later as a
 // one-struct change once `'arena` is threaded through `Expr`/`Stmt`/`Data`.
 pub type StmtNodeList = StoreSlice<Stmt>;
-pub type BindingNodeList = StoreSlice<Binding>;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug, strum::IntoStaticStr)]
@@ -643,13 +627,13 @@ impl SlotCounts {
 
 pub struct NameMinifier {
     pub head: Vec<u8>,
-    pub tail: Vec<u8>,
+    pub(crate) tail: Vec<u8>,
 }
 
 impl NameMinifier {
-    pub const DEFAULT_HEAD: &'static [u8] =
+    pub(crate) const DEFAULT_HEAD: &'static [u8] =
         b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$";
-    pub const DEFAULT_TAIL: &'static [u8] =
+    pub(crate) const DEFAULT_TAIL: &'static [u8] =
         b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$";
 
     pub fn init() -> NameMinifier {
@@ -785,7 +769,7 @@ impl Default for Span {
 /// to encode both a 64-bit pointer or a 64-bit float using 64 bits.
 #[derive(Copy, Clone)]
 pub struct InlinedEnumValue {
-    pub raw_data: u64,
+    pub(crate) raw_data: u64,
 }
 
 #[derive(Copy, Clone)]
@@ -820,19 +804,17 @@ impl InlinedEnumValue {
                 }
             },
         };
-        if cfg!(debug_assertions) {
-            debug_assert!(match encoded.decode() {
-                InlinedEnumValueDecoded::String(str_) => match decoded {
-                    InlinedEnumValueDecoded::String(orig) => core::ptr::eq(str_, orig),
-                    _ => false,
-                },
-                InlinedEnumValueDecoded::Number(num) => match decoded {
-                    InlinedEnumValueDecoded::Number(orig) =>
-                        num.to_bits() == Self::purify_nan(orig).to_bits(),
-                    _ => false,
-                },
-            });
-        }
+        debug_assert!(match encoded.decode() {
+            InlinedEnumValueDecoded::String(str_) => match decoded {
+                InlinedEnumValueDecoded::String(orig) => core::ptr::eq(str_, orig),
+                _ => false,
+            },
+            InlinedEnumValueDecoded::Number(num) => match decoded {
+                InlinedEnumValueDecoded::Number(orig) =>
+                    num.to_bits() == Self::purify_nan(orig).to_bits(),
+                _ => false,
+            },
+        });
         encoded
     }
 
@@ -908,7 +890,7 @@ pub struct DeclaredSymbol {
 }
 
 pub struct DeclaredSymbolList {
-    pub entries: MultiArrayList<DeclaredSymbol, bun_alloc::AstAlloc>,
+    pub(crate) entries: MultiArrayList<DeclaredSymbol, bun_alloc::AstAlloc>,
 }
 
 impl Default for DeclaredSymbolList {
@@ -957,7 +939,7 @@ impl DeclaredSymbolList {
         Ok(())
     }
 
-    pub fn append_list_assume_capacity(&mut self, other: &DeclaredSymbolList) {
+    pub(crate) fn append_list_assume_capacity(&mut self, other: &DeclaredSymbolList) {
         self.entries.append_list_assume_capacity(&other.entries);
     }
 
@@ -1050,9 +1032,6 @@ impl Default for Dependency {
 
 pub type DependencyList = bun_alloc::AstVec<Dependency>;
 
-pub type ExprList = Vec<Expr>;
-pub type StmtList = Vec<Stmt>;
-pub type BindingList = Vec<Binding>;
 // PERF: these may be arena-backed in callers; revisit with
 // bumpalo::collections::Vec if profiling shows churn.
 
@@ -1110,10 +1089,7 @@ pub type PartList<'a> = bun_alloc::ArenaVec<'a, Part>;
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PartTag {
     None,
-    JsxImport,
     Runtime,
-    CjsImports,
-    ReactFastRefresh,
     ReactCompiler,
     DirnameFilename,
     BunTest,
@@ -1242,13 +1218,6 @@ pub enum StrictModeKind {
     ImplicitStrictModeClass,
 }
 
-pub fn printmem(args: fmt::Arguments<'_>) {
-    // `defer Output.flush()` → executes after print; emulate ordering explicitly.
-    Output::init_test();
-    Output::print(args);
-    Output::flush();
-}
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ToJSError {
     #[strum(serialize = "Cannot convert argument type to JS")]
@@ -1262,62 +1231,6 @@ pub enum ToJSError {
 }
 bun_core::impl_tag_error!(ToJSError);
 
-bun_core::named_error_set!(ToJSError);
-
-/// Say you need to allocate a bunch of tiny arrays
-/// You could just do separate allocations for each, but that is slow
-/// With std.ArrayList, pointers invalidate on resize and that means it will crash.
-/// So a better idea is to batch up your allocations into one larger allocation
-/// and then just make all the arrays point to different parts of the larger allocation
-pub struct Batcher<T> {
-    pub head: StoreSlice<T>,
-}
-
-impl<T> Batcher<T> {
-    pub fn init(
-        bump: &bun_alloc::Arena,
-        count: usize,
-    ) -> core::result::Result<Self, bun_alloc::AllocError>
-    where
-        T: Default,
-    {
-        let all = bump.alloc_slice_fill_default(count);
-        Ok(Self {
-            head: StoreSlice::new_mut(all),
-        })
-    }
-
-    pub fn done(&mut self) {
-        debug_assert!(self.head.is_empty()); // count to init() was too large, overallocation
-    }
-
-    pub fn eat(&mut self, value: T) -> *mut T {
-        self.eat1(value).as_ptr().cast_mut()
-    }
-
-    pub fn eat1(&mut self, value: T) -> StoreSlice<T> {
-        // `head` has at least 1 element remaining (caller contract);
-        // `Batcher` holds the unique view of the allocation.
-        let head = self.head.slice_mut();
-        let (prev, rest) = head.split_at_mut(1);
-        prev[0] = value;
-        self.head = StoreSlice::new_mut(rest);
-        StoreSlice::new_mut(prev)
-    }
-
-    pub fn next<const N: usize>(&mut self, values: [T; N]) -> StoreSlice<T> {
-        // `head` has at least N elements remaining; see `eat1`.
-        let head = self.head.slice_mut();
-        let (prev, rest) = head.split_at_mut(N);
-        for (dst, src) in prev.iter_mut().zip(values) {
-            *dst = src;
-        }
-        self.head = StoreSlice::new_mut(rest);
-        StoreSlice::new_mut(prev)
-    }
-}
-pub type NewBatcher<T> = Batcher<T>;
-
 // ═════════════════════════════════════════════════════════════════════════
 // Symbols pulled DOWN from higher-tier
 // crates so lower-tier callers (css, interchange, js_parser itself) can
@@ -1327,9 +1240,9 @@ pub type NewBatcher<T> = Batcher<T>;
 // ─── from bun_jsc::math ─────────────────────────────────────────────────────
 pub mod math {
     /// `Number.MAX_SAFE_INTEGER` (2^53 - 1)
-    pub const MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
+    pub(crate) const MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
     /// `Number.MIN_SAFE_INTEGER` (-(2^53 - 1))
-    pub const MIN_SAFE_INTEGER: f64 = -9007199254740991.0;
+    pub(crate) const MIN_SAFE_INTEGER: f64 = -9007199254740991.0;
 
     unsafe extern "C" {
         // Pure FFI (value-type args, no pointers, no errno) → no caller preconditions.
@@ -1346,4 +1259,3 @@ pub mod math {
 // ─── from bun_bundler::v2::MangledProps ─────────────────────────────────────
 // LIFETIMES.tsv: value slices point into the parser arena → `StoreStr`
 // (arena-owned, no `'bump` cascade).
-pub type MangledProps = ArrayHashMap<Ref, StoreStr>;

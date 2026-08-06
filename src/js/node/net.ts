@@ -4182,9 +4182,7 @@ function isPipeName(s) {
   return typeof s === "string" && toNumber(s) === false;
 }
 
-// A non-abstract pipe path (leading NUL = abstract socket, Linux) with an
-// interior NUL would be silently truncated by the kernel; libuv's
-// uv_pipe_connect2/uv_pipe_bind2 reject it with EINVAL.
+// libuv rejects these with EINVAL; abstract names (leading NUL, Linux) are exempt.
 function pipePathHasInteriorNul(path: string): boolean {
   return path.charCodeAt(0) !== 0 && path.includes("\0");
 }

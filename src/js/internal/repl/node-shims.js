@@ -429,7 +429,6 @@ export default {
   Module: CJSModuleShim,
   // internal/modules/helpers
   addBuiltinLibsToObject,
-  getBuiltinLibs,
   makeRequireFunction,
   // internal/vm
   makeContextifyScript,

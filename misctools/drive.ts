@@ -13,7 +13,7 @@ const out: string[] = [];
 let buf = "";
 const env = has("--bare") ? { ...process.env, TERM: "xterm-256color", BUN_MEMDEBUG: process.cwd(), ...envs } : {
   ...process.env, TERM: "xterm-256color",
-  BUN_JSC_useGenerationalGC: process.env.GENGC ?? "1", BUN_JSC_useBaselineJIT: "0", BUN_JSC_useFTLJIT: "0", MIMALLOC_DETERMINISTIC_HINT: "1", BUN_IMAGE_JIT_ADDR: "0x3c0000000",
+  BUN_JSC_useGenerationalGC: process.env.GENGC ?? "1", BUN_JSC_useBaselineJIT: "0", BUN_JSC_useFTLJIT: "0", MIMALLOC_DETERMINISTIC_HINT: "1", BUN_IMAGE_JIT_ADDR: "0x3c0000000", ...(img ? { MIMALLOC_HINT_FLOOR: "0x21000000000" } : {}),
   BUN_MEMDEBUG: process.cwd(),
   ...(img ? { BUN_IMAGE_IN: img } : {}), ...envs,
 };

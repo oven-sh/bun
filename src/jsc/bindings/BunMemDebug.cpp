@@ -171,10 +171,10 @@ static void setImageEnvDefaults()
         return; // compiled executables configure the allocator/JIT/tiers from BUN_COMPILED before main: nothing to pass through the environment
 #endif
     setenv("MIMALLOC_DETERMINISTIC_HINT", "1", 0);
-    // Builder and restorer must not share heap addresses for their *own* early allocations: builders (whose heap becomes the image) allocate
-    // from 2.5TiB up, so a restoring process's ordinary early heap (mimalloc default 2TiB base) never sits where image regions get mapped.
-    if (getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT")) setenv("MIMALLOC_HINT_FLOOR", "0x28000000000", 0);
-    else unsetenv("MIMALLOC_HINT_FLOOR");
+    // Builder and restorer must not share addresses for their *own* early allocations: the builder's heap (the image) starts at mimalloc's
+    // default 2TiB base; a process that is going to restore starts its ordinary early heap 64GiB higher so it never sits where image regions go.
+    if (getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT")) unsetenv("MIMALLOC_HINT_FLOOR");
+    else setenv("MIMALLOC_HINT_FLOOR", "0x21000000000", 0);
     setenv("BUN_IMAGE_JIT_ADDR", "0x3c0000000", 0);
     setenv("BUN_JSC_useBaselineJIT", "0", 0);
     setenv("BUN_JSC_useFTLJIT", "0", 0);
@@ -187,7 +187,7 @@ static bool imageEnvIsSet()
     if (Bun__isCompiledExecutable() && !building) return true; // compiled executables configure allocator/JIT from BUN_COMPILED before main: nothing to inject
 #endif
     // (Linux: the pre-main allocator path for compiled executables still needs work — see SNAPSHOT.md — so keep injecting via one re-exec.)
-    return getenv("MIMALLOC_DETERMINISTIC_HINT") && getenv("BUN_IMAGE_JIT_ADDR") && (!building || getenv("MIMALLOC_HINT_FLOOR"));
+    return getenv("MIMALLOC_DETERMINISTIC_HINT") && getenv("BUN_IMAGE_JIT_ADDR") && (building || getenv("MIMALLOC_HINT_FLOOR"));
 }
 
 static void reexecWithoutASLRIfSlid()

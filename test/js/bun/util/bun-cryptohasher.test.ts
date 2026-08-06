@@ -196,7 +196,7 @@ describe("HMAC", () => {
       import { createHmac } from "node:crypto";
       const N = 1 << 20;
       const hmac = k => createHmac("sha256", k).update("payload").digest("hex");
-      const out = { second: [], first: [], gcKey: [] };
+      const out = { second: [], first: [], gcKey: [], errorOrder: null };
       for (let i = 0; i < 5; i++) {
         const key = new Uint8Array(N).fill(0x41);
         const orig = key.slice();
@@ -252,6 +252,20 @@ describe("HMAC", () => {
         const got = new Bun.CryptoHasher(alg, key).update("payload").digest("hex");
         out.gcKey.push({ calls, ok: got === hmac("secret-key") });
       }
+      // Error ordering: the key is coerced before the algorithm is validated,
+      // so a throwing key toString() wins over an unsupported algorithm.
+      {
+        const key = new String("secret-key");
+        key.toString = () => {
+          throw new Error("key conversion failed");
+        };
+        try {
+          new Bun.CryptoHasher("unsupported-algorithm", key);
+          out.errorOrder = "no throw";
+        } catch (e) {
+          out.errorOrder = e.message;
+        }
+      }
       console.log(JSON.stringify(out));
     `;
     await using proc = Bun.spawn({
@@ -280,6 +294,7 @@ describe("HMAC", () => {
         { calls: 1, ok: true },
         { calls: 1, ok: true },
       ],
+      errorOrder: "key conversion failed",
     });
     expect(exitCode).toBe(0);
 

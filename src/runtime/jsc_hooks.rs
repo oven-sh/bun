@@ -2114,7 +2114,7 @@ fn transpile_source_code_inner(
         && !(loader.is_java_script_like()
             || matches!(
                 loader,
-                L::Toml | L::Yaml | L::Json5 | L::Text | L::Json | L::Jsonc
+                L::Toml | L::Yaml | L::Json5 | L::Xml | L::Text | L::Json | L::Jsonc
             ))
     {
         return Ok(OwnedResolvedSource::from(ResolvedSource {
@@ -2138,6 +2138,7 @@ fn transpile_source_code_inner(
         | L::Toml
         | L::Yaml
         | L::Json5
+        | L::Xml
         | L::Text
         | L::Md => {
             // `bun_ast::ASTMemoryAllocator::Scope`.
@@ -2686,8 +2687,11 @@ fn transpile_source_code_inner(
                     }));
                 }
 
-                // JSON/TOML/YAML/JSON5: export as a JS object.
-                if matches!(loader, L::Json | L::Jsonc | L::Toml | L::Yaml | L::Json5) {
+                // JSON/TOML/YAML/JSON5/XML: export as a JS object.
+                if matches!(
+                    loader,
+                    L::Json | L::Jsonc | L::Toml | L::Yaml | L::Json5 | L::Xml
+                ) {
                     // SAFETY: `jsc_vm.global` is set during init and live for
                     // VM lifetime; `global_object` (if non-null) is the live
                     // per-thread global.
@@ -3849,6 +3853,7 @@ fn force_loader_from_api_u8(api_loader: u8) -> Option<Loader> {
         19 => Some(L::Yaml),
         20 => Some(L::Json5),
         21 => Some(L::Md),
+        22 => Some(L::Xml),
         // 254 = `_none`; everything else is open-tail.
         _ => None,
     }

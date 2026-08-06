@@ -2739,8 +2739,6 @@ fn transpile_source_code_inner(
                         };
                         match bun_js_parser_jsc::expr_to_js(&s_expr.value, global) {
                             Ok(v) => v,
-                            // Reachable: a deep document (e.g. TOML dotted keys)
-                            // overflows `expr_to_js`'s recursion guard.
                             Err(e) => {
                                 return Err(match e {
                                     bun_ast::ToJSError::JSError => bun_jsc::JsError::Thrown,

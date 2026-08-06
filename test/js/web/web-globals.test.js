@@ -255,14 +255,16 @@ it("crypto.randomUUID", () => {
 
   withoutAggressiveGC(() => {
     // check that the fast path works
-    for (let i = 0; i < 9000; i++) {
+    // (45,000 expect() calls don't fit in the test budget on debug builds, so
+    // check the predicate and call expect() on the first malformed UUID only)
+    let malformed;
+    for (let i = 0; i < 9000 && malformed === undefined; i++) {
       var uuid2 = crypto.randomUUID();
-      expect(uuid2.length).toBe(36);
-      expect(uuid2[8]).toBe("-");
-      expect(uuid2[13]).toBe("-");
-      expect(uuid2[18]).toBe("-");
-      expect(uuid2[23]).toBe("-");
+      if (uuid2.length !== 36 || uuid2[8] !== "-" || uuid2[13] !== "-" || uuid2[18] !== "-" || uuid2[23] !== "-") {
+        malformed = uuid2;
+      }
     }
+    expect(malformed).toBeUndefined();
   });
 });
 

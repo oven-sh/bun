@@ -1027,6 +1027,9 @@ devTest("adjusting @imports of a failed stylesheet keeps the dev server alive", 
       });
     }
 
+    // The previously applied style stays active while the chunk is broken.
+    await c.style(".fine").color.expect.toBe("red");
+
     // Fixing the child restyles the same page: both imports apply.
     await dev.write("child.css", ".visible { color: blue; }\n", { dedent: false });
     await c.style(".visible").color.expect.toBe("#00f");

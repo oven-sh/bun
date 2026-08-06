@@ -4626,15 +4626,14 @@ pub(super) fn finalize_bundle(
             }
             w_int!(i32, i32::try_from(i).expect("int cast"));
 
+            // SAFETY: statement-scoped read; no `&mut` into `*route_bundle` is live.
+            let route_has_failures = unsafe { (*route_bundle).server_state }
+                == route_bundle::State::PossibleBundlingFailures;
             // If no edges were changed, then it is impossible to
             // change the list of CSS files. A route with bundling failures
             // keeps its previous list: tracing it would drop the failed
             // chunk (css ids are path-stable, so recovery reuses them).
-            // SAFETY: statement-scoped read; no `&mut` into `*route_bundle` is live.
-            if had_adjusted_edges
-                && unsafe { (*route_bundle).server_state }
-                    != route_bundle::State::PossibleBundlingFailures
-            {
+            if had_adjusted_edges && !route_has_failures {
                 ctx.gts.clear();
                 dev.client_graph.current_css_files.clear();
                 // SAFETY: `trace_all_route_imports` does not mutate `route_bundles`;
@@ -4657,14 +4656,25 @@ pub(super) fn finalize_bundle(
     w_int!(i32, -1);
 
     let css_chunks = &*css_chunks_mut;
+    // A chunk that failed to print has no new content to send; leaving it
+    // out keeps the previously applied stylesheet until recovery.
+    let css_chunk_printed = |chunk: &bundler::chunk::Chunk| {
+        !chunk.compile_results_for_chunk.iter().any(|compile_result| {
+            matches!(
+                compile_result,
+                bundler::CompileResult::Css { result: Err(_), .. }
+            )
+        })
+    };
+    let printed_css_count = css_chunks.iter().filter(|c| css_chunk_printed(c)).count();
     if will_hear_hot_update {
-        if dev.client_graph.current_chunk_len > 0 || !css_chunks.is_empty() {
+        if dev.client_graph.current_chunk_len > 0 || printed_css_count > 0 {
             // Send CSS mutations
             dev.assets.reindex_if_needed()?;
-            w_int!(u32, u32::try_from(css_chunks.len()).expect("int cast"));
+            w_int!(u32, u32::try_from(printed_css_count).expect("int cast"));
             use bun_bundler::Graph::InputFileColumns as _;
             let sources = bv2.graph.input_files.items_source();
-            for chunk in css_chunks {
+            for chunk in css_chunks.iter().filter(|c| css_chunk_printed(c)) {
                 let key = sources[chunk.entry_point.source_index() as usize]
                     .path
                     .key_for_incremental_graph();

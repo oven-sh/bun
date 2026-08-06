@@ -569,6 +569,7 @@ describe("object loader with a throwing exports getter", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("failed: exports getter threw\n");
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   }
 

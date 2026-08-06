@@ -180,13 +180,12 @@ extern "C" bool Bun__heapImageMode() { return bun_is_compiled_executable() || ge
 static bool s_imageActive = false; // set once this process is building an image or has restored one (decided in Bun__imageMaybeRestore, before VM init)
 extern "C" bool Bun__heapImageActive() { return s_imageActive; }
 
+extern "C" bool Bun__isCompiledExecutable();
 static void setImageEnvDefaults()
 {
     bool building = getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT");
-#if OS(DARWIN)
     if (Bun__isCompiledExecutable() && !building)
-        return; // compiled executables configure the allocator/JIT/tiers from BUN_COMPILED before main: nothing to pass through the environment
-#endif
+        return; // compiled executables configure the allocator/JIT from BUN_COMPILED before main: nothing to pass through the environment
     setenv("MIMALLOC_DETERMINISTIC_HINT", "1", 0);
     // Builder and restorer must not share addresses for their *own* early allocations: the builder's heap (the image) starts at mimalloc's
     // default 2TiB base; a process that is going to restore starts its ordinary early heap 64GiB higher so it never sits where image regions go.
@@ -194,14 +193,10 @@ static void setImageEnvDefaults()
     else setenv("MIMALLOC_HINT_FLOOR", "0x21000000000", 0);
     setenv("BUN_IMAGE_JIT_ADDR", "0x3c0000000", 0);
 }
-extern "C" bool Bun__isCompiledExecutable();
 static bool imageEnvIsSet()
 {
     bool building = getenv("BUN_IMAGE_OUT") || getenv("CLAUDE_CODE_SNAPSHOT_OUT");
-#if OS(DARWIN)
     if (Bun__isCompiledExecutable() && !building) return true; // compiled executables configure allocator/JIT from BUN_COMPILED before main: nothing to inject
-#endif
-    // (Linux: the pre-main allocator path for compiled executables still needs work — see SNAPSHOT.md — so keep injecting via one re-exec.)
     return getenv("MIMALLOC_DETERMINISTIC_HINT") && getenv("BUN_IMAGE_JIT_ADDR") && (building || getenv("MIMALLOC_HINT_FLOOR"));
 }
 

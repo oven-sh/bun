@@ -138,11 +138,7 @@ extern "C" int bun_is_compiled_executable(void);
 #else
 extern int bun_is_compiled_executable(void);
 #endif
-#if defined(__APPLE__)
 #define bun_heap_image_mode (bun_is_compiled_executable())
-#else
-#define bun_heap_image_mode (0) /* Linux: pending (see Bun SNAPSHOT.md); env MIMALLOC_DETERMINISTIC_HINT drives it */
-#endif
 static mi_decl_cache_align _Atomic(uintptr_t) aligned_base; // = 0  (hint bump pointer; file scope so mi_os_hint_floor can move it)
 static _Atomic(uintptr_t) hint_floor; // = 0: lowest address hinted allocations may use (also where the pointer restarts when it wraps or is invalid)
 

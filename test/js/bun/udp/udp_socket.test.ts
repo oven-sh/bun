@@ -106,21 +106,26 @@ describe("udpSocket()", () => {
     expect(() => udpSocket({ port })).toThrow('Expected "port" to be an integer between 0 and 65535');
   });
 
-  test("send/sendMany reject ports that would wrap modulo 2^32", async () => {
+  test("send/sendMany reject out-of-range ports", async () => {
     const server = await udpSocket({ port: 0, hostname: "127.0.0.1" });
-    const client = await udpSocket({ port: 0, hostname: "127.0.0.1" });
     try {
-      // Under ToInt32, 2^32 + server.port wraps to exactly server.port, so
-      // this send() used to succeed and deliver the datagram there. The
-      // unwrapped value is out of range and must throw instead.
-      const wrapped = 2 ** 32 + server.port;
-      const message = 'Expected "port" to be an integer between 1 and 65535';
-      expect(() => client.send("boom", wrapped, "127.0.0.1")).toThrow(message);
-      expect(() => client.sendMany(["boom", wrapped, "127.0.0.1"])).toThrow(message);
-      expect(() => client.send("boom", 70000, "127.0.0.1")).toThrow(message);
-      expect(() => client.send("boom", 80.5, "127.0.0.1")).toThrow(message);
+      const client = await udpSocket({ port: 0, hostname: "127.0.0.1" });
+      try {
+        // Under ToInt32, 2^32 + server.port wraps to exactly server.port, so
+        // this send() used to succeed and deliver the datagram there. The
+        // unwrapped value is out of range and must throw instead.
+        const wrapped = 2 ** 32 + server.port;
+        const message = 'Expected "port" to be an integer between 1 and 65535';
+        expect(() => client.send("boom", wrapped, "127.0.0.1")).toThrow(message);
+        expect(() => client.sendMany(["boom", wrapped, "127.0.0.1"])).toThrow(message);
+        for (const port of [0, 70000, 80.5, NaN, Infinity]) {
+          expect(() => client.send("boom", port, "127.0.0.1")).toThrow(message);
+          expect(() => client.sendMany(["boom", port, "127.0.0.1"])).toThrow(message);
+        }
+      } finally {
+        client.close();
+      }
     } finally {
-      client.close();
       server.close();
     }
   });

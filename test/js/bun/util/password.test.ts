@@ -183,6 +183,25 @@ describe("hash", () => {
             memoryCost: 8.5,
           }),
         ).toThrow("Memory cost must be an integer between 8 and 4294967295");
+
+        // Non-finite values: NaN and -Infinity fail the lower-bound check,
+        // +Infinity fails the integer/upper-bound check.
+        for (const timeCost of [NaN, -Infinity]) {
+          expect(() => hash(placeholder, { algorithm: "argon2id", timeCost })).toThrow(
+            "Time cost must be greater than 0",
+          );
+        }
+        expect(() => hash(placeholder, { algorithm: "argon2id", timeCost: Infinity })).toThrow(
+          "Time cost must be an integer between 1 and 4294967295",
+        );
+        for (const memoryCost of [NaN, -Infinity]) {
+          expect(() => hash(placeholder, { algorithm: "argon2id", memoryCost })).toThrow(
+            "Memory cost must be at least 8",
+          );
+        }
+        expect(() => hash(placeholder, { algorithm: "argon2id", memoryCost: Infinity })).toThrow(
+          "Memory cost must be an integer between 8 and 4294967295",
+        );
       });
 
       test("coercion throwing doesn't crash", () => {

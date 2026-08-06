@@ -937,7 +937,7 @@ impl UDPSocket {
         let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
         if !this.parse_addr(
             global_this,
-            JSValue::js_number(0.0),
+            0,
             arguments[0],
             &mut addr,
         )? {
@@ -959,7 +959,7 @@ impl UDPSocket {
         let res = if arguments.len() > 1
             && this.parse_addr(
                 global_this,
-                JSValue::js_number(0.0),
+                0,
                 arguments[1],
                 &mut interface,
             )? {
@@ -1029,7 +1029,7 @@ impl UDPSocket {
         let mut source_addr: sockaddr_storage = bun_core::ffi::zeroed();
         if !this.parse_addr(
             global_this,
-            JSValue::js_number(0.0),
+            0,
             arguments[0],
             &mut source_addr,
         )? {
@@ -1045,7 +1045,7 @@ impl UDPSocket {
         let mut group_addr: sockaddr_storage = bun_core::ffi::zeroed();
         if !this.parse_addr(
             global_this,
-            JSValue::js_number(0.0),
+            0,
             arguments[1],
             &mut group_addr,
         )? {
@@ -1073,7 +1073,7 @@ impl UDPSocket {
         let res = if arguments.len() > 2
             && this.parse_addr(
                 global_this,
-                JSValue::js_number(0.0),
+                0,
                 arguments[2],
                 &mut interface,
             )? {
@@ -1158,7 +1158,7 @@ impl UDPSocket {
 
         if !this.parse_addr(
             global_this,
-            JSValue::js_number(0.0),
+            0,
             arguments[0],
             &mut addr,
         )? {
@@ -1252,8 +1252,8 @@ impl UDPSocket {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         // Iterating the input array can run arbitrary user JS: `iter.next()`'s
-        // slow path hits `JSObject.getIndex`, and `parseAddr` coerces the port
-        // (ToNumber) and address (`toBunString`). That JS can drop
+        // slow path hits `JSObject.getIndex`, and `parse_port`/`parse_addr`
+        // coerce the port (ToNumber) and address (`toBunString`). That JS can drop
         // the last reference to an earlier payload and force a GC, or detach
         // an earlier ArrayBuffer (`.transfer(n)` frees its backing store
         // synchronously), leaving borrowed pointers in `payloads[]` dangling
@@ -1397,7 +1397,8 @@ impl UDPSocket {
                 continue;
             }
             if i % 3 == 2 {
-                if !this.parse_addr(global_this, port, val, &mut addrs[slice_idx])? {
+                let port_num = Self::parse_port(global_this, port)?;
+                if !this.parse_addr(global_this, port_num, val, &mut addrs[slice_idx])? {
                     return Err(
                         global_this.throw_invalid_arguments(format_args!("Invalid address"))
                     );
@@ -1501,9 +1502,9 @@ impl UDPSocket {
             }
         };
 
-        // Resolve the destination before touching the payload. `parseAddr`
-        // coerces the port (ToNumber) and address (`toBunString`), which can
-        // run user JS that detaches the payload's ArrayBuffer
+        // Resolve the destination before touching the payload. `parse_port` and
+        // `parse_addr` coerce the port (ToNumber) and address (`toBunString`),
+        // which can run user JS that detaches the payload's ArrayBuffer
         // (`.transfer(n)`) or closes this socket. Doing this first means no
         // JSC safepoint sits between capturing `payload.ptr` and handing it
         // to `socket.send`, so a borrowed pointer cannot be freed out from
@@ -1511,7 +1512,8 @@ impl UDPSocket {
         let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
         let addr_ptr: *const c_void = 'brk: {
             if let Some(dest) = dst {
-                if !this.parse_addr(global_this, dest.port, dest.address, &mut addr)? {
+                let port = Self::parse_port(global_this, dest.port)?;
+                if !this.parse_addr(global_this, port, dest.address, &mut addr)? {
                     return Err(
                         global_this.throw_invalid_arguments(format_args!("Invalid address"))
                     );
@@ -1565,27 +1567,27 @@ impl UDPSocket {
         Ok(JSValue::from(res > 0))
     }
 
+    /// Destination port for `send`/`sendMany`, per Node's `validatePort`
+    /// (`allowZero: false`). ToNumber on the value can run user JS.
+    fn parse_port(global_this: &JSGlobalObject, port_val: JSValue) -> JsResult<u16> {
+        // Range-check as f64: ToInt32 would wrap e.g. 2^32 + 9 to 9.
+        let number = port_val.coerce_f64(global_this)?;
+        if number.fract() != 0.0 || !(1.0..=65535.0).contains(&number) {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "Expected \"port\" to be an integer between 1 and 65535"
+            )));
+        }
+        Ok(number as u16)
+    }
+
     fn parse_addr(
         &self,
         global_this: &JSGlobalObject,
-        port_val: JSValue,
+        port: u16,
         address_val: JSValue,
         storage: &mut sockaddr_storage,
     ) -> JsResult<bool> {
         let _ = self;
-        // Range-check as f64: ToInt32 would wrap e.g. 2^32 + 9 to 9. Port 0 is
-        // reserved for the membership/interface callers, which pass a literal 0.
-        let number = port_val.coerce_f64(global_this)?;
-        let port: u16 = if number == 0.0 {
-            0
-        } else if number.fract() != 0.0 || !(1.0..=65535.0).contains(&number) {
-            return Err(global_this.throw_invalid_arguments(format_args!(
-                "Expected \"port\" to be an integer between 1 and 65535"
-            )));
-        } else {
-            number as u16
-        };
-
         let str = bun_core::OwnedString::new(address_val.to_bun_string(global_this)?);
         let address_slice: Vec<u8> = str.to_owned_slice_z().into_vec_with_nul();
         let bytes_len = address_slice.len() - 1; // exclude trailing NUL

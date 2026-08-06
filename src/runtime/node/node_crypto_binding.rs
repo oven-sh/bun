@@ -3,6 +3,9 @@
 
 use core::ffi::{c_char, c_void};
 
+// The `rust-argon2` package exports its lib as crate name `argon2`; alias it
+// so it can't be confused with the `argon2` host fn below.
+use ::argon2 as rust_argon2;
 use bun_boringssl as boringssl;
 use bun_collections::CaseInsensitiveAsciiStringArrayHashMap;
 use bun_jsc::{
@@ -827,6 +830,30 @@ pub(crate) struct Scrypt {
     err: Option<u32>,
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// Argon2 (crypto.argon2 / crypto.argon2Sync)
+// ───────────────────────────────────────────────────────────────────────────
+
+/// One argon2 derivation. BoringSSL has no argon2, so this routes to the
+/// pure-Rust `rust-argon2` crate `Bun.password` already uses (pwhash.rs).
+///
+/// All inputs are copied out of JS at call time, so the work-pool half never
+/// touches JS memory (no protect/detach hazards); node copies async-job
+/// inputs the same way (`ToCopy` in crypto_argon2.cc).
+pub(crate) struct Argon2 {
+    message: Vec<u8>,
+    nonce: Vec<u8>,
+    secret: Vec<u8>,
+    associated_data: Vec<u8>,
+    parallelism: u32,
+    tag_length: u32,
+    memory: u32,
+    passes: u32,
+    variant: rust_argon2::Variant,
+    output: Vec<u8>,
+    failed: bool,
+}
+
 mod _impl {
     use super::*;
     use crate::node::util::validators;
@@ -1366,8 +1393,182 @@ mod _impl {
         Ok(buf)
     }
 
+    impl Argon2 {
+        /// Arguments arrive pre-validated from `checkArgon2()` in `crypto.ts`
+        /// (mirroring node's `lib/internal/crypto/argon2.js`); the checks here
+        /// only defend the internal binding itself.
+        fn from_js(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<(Self, JSValue)> {
+            fn copy_buffer_arg(
+                global: &JSGlobalObject,
+                value: JSValue,
+                name: &'static [u8],
+            ) -> JsResult<Vec<u8>> {
+                let Some(buf) = value.as_array_buffer(global) else {
+                    return Err(global.throw_invalid_argument_type_value(
+                        name,
+                        b"ArrayBuffer, Buffer, TypedArray, or DataView",
+                        value,
+                    ));
+                };
+                let bytes = buf.byte_slice();
+                let mut copy = Vec::new();
+                if copy.try_reserve_exact(bytes.len()).is_err() {
+                    return Err(global.throw_out_of_memory());
+                }
+                copy.extend_from_slice(bytes);
+                Ok(copy)
+            }
+
+            let [
+                message_value,
+                nonce_value,
+                parallelism_value,
+                tag_length_value,
+                memory_value,
+                passes_value,
+                secret_value,
+                associated_data_value,
+                variant_value,
+                callback,
+            ] = call_frame.arguments_as_array::<10>();
+
+            let parallelism = validators::validate_uint32(
+                global,
+                parallelism_value,
+                format_args!("parameters.parallelism"),
+                true,
+            )?;
+            let tag_length = validators::validate_uint32(
+                global,
+                tag_length_value,
+                format_args!("parameters.tagLength"),
+                true,
+            )?;
+            let memory = validators::validate_uint32(
+                global,
+                memory_value,
+                format_args!("parameters.memory"),
+                true,
+            )?;
+            let passes = validators::validate_uint32(
+                global,
+                passes_value,
+                format_args!("parameters.passes"),
+                true,
+            )?;
+            let variant = match validators::validate_uint32(
+                global,
+                variant_value,
+                format_args!("type"),
+                false,
+            )? {
+                0 => rust_argon2::Variant::Argon2d,
+                1 => rust_argon2::Variant::Argon2i,
+                2 => rust_argon2::Variant::Argon2id,
+                _ => {
+                    return Err(global.throw_invalid_argument_type_value(
+                        b"type",
+                        b"a supported argon2 type",
+                        variant_value,
+                    ));
+                }
+            };
+
+            let ctx = Argon2 {
+                message: copy_buffer_arg(global, message_value, b"message")?,
+                nonce: copy_buffer_arg(global, nonce_value, b"nonce")?,
+                secret: copy_buffer_arg(global, secret_value, b"secret")?,
+                associated_data: copy_buffer_arg(global, associated_data_value, b"associatedData")?,
+                parallelism,
+                tag_length,
+                memory,
+                passes,
+                variant,
+                output: Vec::new(),
+                failed: false,
+            };
+            Ok((ctx, callback))
+        }
+
+        fn run(&mut self) {
+            let config = rust_argon2::Config {
+                ad: &self.associated_data,
+                hash_length: self.tag_length,
+                lanes: self.parallelism,
+                mem_cost: self.memory,
+                secret: &self.secret,
+                // Lanes shape the memory layout (and the output) but are
+                // computed on the calling thread; never spawn threads from a
+                // work-pool worker. Matches pwhash.rs.
+                thread_mode: rust_argon2::ThreadMode::Sequential,
+                time_cost: self.passes,
+                variant: self.variant,
+                version: rust_argon2::Version::Version13,
+            };
+            match rust_argon2::hash_raw(&self.message, &self.nonce, &config) {
+                Ok(hash) => self.output = hash,
+                // `checkArgon2()` enforces node's parameter ranges, which are a
+                // superset of rust-argon2's own constraints, so this is
+                // unreachable through `node:crypto`; keep node's error message
+                // for the internal binding.
+                Err(_) => self.failed = true,
+            }
+        }
+    }
+
+    impl CryptoJobCtx for Argon2 {
+        fn init(&mut self, _global: &JSGlobalObject) -> JsResult<()> {
+            Ok(())
+        }
+
+        fn run_task(&mut self) {
+            self.run();
+        }
+
+        fn run_from_js(&mut self, global: &JSGlobalObject, callback: JSValue) {
+            let event_loop = global.bun_vm().event_loop_mut();
+            if self.failed {
+                let exception =
+                    global.create_error_instance(format_args!("Argon2 derivation failed"));
+                event_loop.run_callback(callback, global, JSValue::UNDEFINED, &[exception]);
+                return;
+            }
+            let output = core::mem::take(&mut self.output);
+            // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator).
+            let buf = JSValue::create_buffer(global, output.leak());
+            event_loop.run_callback(
+                callback,
+                global,
+                JSValue::UNDEFINED,
+                &[JSValue::UNDEFINED, buf],
+            );
+        }
+
+        fn deinit(&mut self) {}
+    }
+
+    #[bun_jsc::host_fn]
+    fn argon2(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let (ctx, callback) = Argon2::from_js(global, call_frame)?;
+        let _ = validators::validate_function(global, "callback", callback)?;
+        crypto_job_init_and_schedule(global, callback, ctx)?;
+        Ok(JSValue::UNDEFINED)
+    }
+
+    #[bun_jsc::host_fn]
+    fn argon2_sync(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let (mut ctx, _) = Argon2::from_js(global, call_frame)?;
+        ctx.run();
+        if ctx.failed {
+            let err = global.create_error_instance(format_args!("Argon2 derivation failed"));
+            return Err(global.throw_value(err));
+        }
+        // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator).
+        Ok(JSValue::create_buffer(global, ctx.output.leak()))
+    }
+
     pub(crate) fn create_node_crypto_binding_zig(global: &JSGlobalObject) -> JSValue {
-        let crypto = JSValue::create_empty_object(global, 15);
+        let crypto = JSValue::create_empty_object(global, 17);
 
         // `#[bun_jsc::host_fn]` emits a `__jsc_host_{name}` shim with the raw `JSHostFn` ABI;
         // pass that (not the safe-Rust body) to `JSFunction::create`.
@@ -1535,6 +1736,23 @@ mod _impl {
                 "scryptSync",
                 __jsc_host_scrypt_sync,
                 4,
+                Default::default(),
+            ),
+        );
+
+        crypto.put(
+            global,
+            b"argon2",
+            JSFunction::create(global, "argon2", __jsc_host_argon2, 10, Default::default()),
+        );
+        crypto.put(
+            global,
+            b"argon2Sync",
+            JSFunction::create(
+                global,
+                "argon2Sync",
+                __jsc_host_argon2_sync,
+                9,
                 Default::default(),
             ),
         );

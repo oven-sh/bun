@@ -110,6 +110,15 @@ export function getStdioWriteStream(
   stream._isStdio = true;
   stream.fd = fd;
 
+  // For `bun --hot`: drop any listeners user code attached on the previous
+  // load so a fresh module evaluation doesn't stack duplicate handlers
+  // (e.g. node:readline's 'resize' listener). Called from
+  // GlobalObject::reload(). There are no internal listeners to preserve on
+  // the write-side stdio streams. (#15027)
+  stream.$resetStdioForHotReload = function () {
+    stream.removeAllListeners();
+  };
+
   const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
   $assert(underlyingSink);
   return [stream, underlyingSink];
@@ -283,17 +292,15 @@ export function getStdinStream(
   }
   stream._read = triggerRead;
 
-  stream.on("resume", () => {
+  function onStreamResume() {
     if (stream.isPaused()) return; // fake resume
     $debug('on("resume");');
     own();
     stream._undestroy();
     stream_destroyed = false;
-  });
+  }
 
-  stream._readableState.reading = false;
-
-  stream.on("pause", () => {
+  function onStreamPause() {
     process.nextTick(() => {
       // Only disown if the stream is still paused (not resumed in the meantime)
       if (!stream.readableFlowing) {
@@ -301,20 +308,20 @@ export function getStdinStream(
         disown();
       }
     });
-  });
+  }
 
   // The stream is created with autoClose: false so autoDestroy is off; match
   // Node by destroying stdin once 'end' has emitted ('close' follows 'end').
-  stream.on("end", () => {
+  function onStreamEnd() {
     if (!stream_destroyed) {
       stream_destroyed = true;
       process.nextTick(() => {
         stream.destroy();
       });
     }
-  });
+  }
 
-  stream.on("close", () => {
+  function onStreamClose() {
     if (!stream_destroyed) {
       stream_destroyed = true;
       process.nextTick(() => {
@@ -322,7 +329,61 @@ export function getStdinStream(
         disown();
       });
     }
-  });
+  }
+
+  stream.on("resume", onStreamResume);
+  stream.on("pause", onStreamPause);
+  stream.on("end", onStreamEnd);
+  stream.on("close", onStreamClose);
+
+  stream._readableState.reading = false;
+
+  // For `bun --hot`: the process object (and this stream) survive module
+  // registry reloads. User code (e.g. node:readline) that attached 'data',
+  // 'keypress', etc. listeners on the previous load must be detached so the
+  // fresh module evaluation doesn't stack a second set of handlers on the
+  // same native fd. Called from GlobalObject::reload(). (#15027)
+  stream.$resetStdioForHotReload = function () {
+    disown();
+    // removeAllListeners() alone leaves the Readable's kDataListening bit
+    // set and schedules updateReadableListening() on the next tick, which
+    // would call self.resume() → own() and undo the disown() above. Use
+    // removeListener('data', fn) per listener so kDataListening is cleared,
+    // and pause() so kFlowing is cleared — otherwise any chunk pushed by an
+    // in-flight internalRead before the new load attaches its handler takes
+    // the addChunk fast path and is emitted to zero listeners instead of
+    // buffered. unpipe() also clears state.pipes so destinations from the
+    // previous load aren't pinned for the process lifetime.
+    // setRawMode(false) restores cooked mode: raw mode clears ISIG, and
+    // once the keypress handler that translated ^C is gone Ctrl+C would be
+    // dead if the new load doesn't re-enter raw mode itself.
+    if (stream.isRaw) stream.setRawMode?.(false);
+    // node:readline is cached in the InternalModuleRegistry and is NOT
+    // re-evaluated on reload, so its module-local KEYPRESS_DECODER symbol
+    // keeps pointing at the marker left on this stream.
+    // emitKeypressEvents() early-returns when it sees it, so it would never
+    // reinstall the 'data' → 'keypress' bridge we remove below and
+    // terminal-mode readline would go silent after a reload. Delete it so
+    // the next createInterface() wires keypress events up again. The
+    // escape-decoder generator is left alone: emitKeypressEvents()
+    // overwrites it unconditionally once the guard passes, and a pending
+    // escape-sequence timer from the previous load dereferences it, so
+    // deleting it would turn that timer into an uncaught TypeError.
+    for (const sym of Object.getOwnPropertySymbols(stream)) {
+      if (sym.description === "keypress-decoder") {
+        delete stream[sym];
+      }
+    }
+    stream.unpipe();
+    for (const fn of stream.listeners("data")) stream.removeListener("data", fn);
+    originalPause.$call(stream);
+    stream.removeAllListeners();
+    stream.on("resume", onStreamResume);
+    stream.on("pause", onStreamPause);
+    stream.on("end", onStreamEnd);
+    stream.on("close", onStreamClose);
+    stream._readableState.reading = false;
+  };
 
   return stream;
 }

@@ -523,8 +523,7 @@ pub(crate) fn braces(
     bun_string_jsc::to_js_array(global, &out_strings[..])
 }
 
-/// `Bun.which` hands its inputs to C-string syscalls, which stop at the first
-/// NUL. Reject interior NULs up front like `Bun.spawn` and `node:fs` do.
+/// The lookup's C-string syscalls stop at the first NUL; reject like `Bun.spawn` does.
 fn which_check_null_bytes(global_this: &JSGlobalObject, name: &str, slice: &[u8]) -> JsResult<()> {
     if strings::index_of_char(slice, 0).is_some() {
         return Err(global_this

@@ -4059,9 +4059,7 @@ impl<'a> Resolver<'a> {
             return Ok(None);
         }
 
-        // A path with an interior null byte cannot name a real directory.
-        // The open(2) below reads a C string, so it would open the path's
-        // prefix and cache the wrong directory's entries under the full key.
+        // A path with an interior NUL cannot exist; C-string open would truncate at the NUL.
         if strings::index_of_char(input_path, 0).is_some() {
             return Ok(None);
         }

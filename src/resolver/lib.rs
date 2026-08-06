@@ -1052,9 +1052,7 @@ pub mod fs {
 
         /// `open(path, O_DIRECTORY)`.
         pub(crate) fn open_dir(&self, unsafe_dir_string: &[u8]) -> crate::CrateResult<Fd> {
-            // A path with an interior NUL cannot name a real directory; the
-            // C-string open would act on the path's prefix and read the wrong
-            // directory. Report it as nonexistent instead.
+            // A path with an interior NUL cannot exist; C-string open would truncate at the NUL.
             if strings::index_of_char(unsafe_dir_string, 0).is_some() {
                 return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
             }

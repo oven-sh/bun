@@ -30,9 +30,7 @@ pub mod js_bundler {
 
     type OwnedString = MutableString;
 
-    /// Output-path options end up in C-string syscalls (mkdir/open), which
-    /// stop at the first NUL and write to the path's prefix while the build
-    /// reports the full string. Reject interior NULs at config parse.
+    /// Output paths reach C-string syscalls (mkdir/open) that stop at the first NUL; reject early.
     fn check_path_null_bytes(
         global_this: &JSGlobalObject,
         name: &str,

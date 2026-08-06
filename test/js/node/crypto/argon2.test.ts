@@ -358,9 +358,9 @@ describe("crypto.argon2", () => {
     new Uint8Array(sabNonce).fill(0x02);
 
     const parameters = { parallelism: 4, tagLength: 32, memory: 32, passes: 3 };
-    expect(
-      crypto.argon2Sync("argon2id", { ...parameters, message: sabMessage, nonce: sabNonce }).toString("hex"),
-    ).toBe(expected);
+    expect(crypto.argon2Sync("argon2id", { ...parameters, message: sabMessage, nonce: sabNonce }).toString("hex")).toBe(
+      expected,
+    );
     expect(
       crypto
         .argon2Sync("argon2id", {

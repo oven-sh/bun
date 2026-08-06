@@ -1331,8 +1331,19 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     // Note: re-derive owned key via `RawSlice` so
                     // `free_file_content` can borrow `&mut self`.
                     let key = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[idx]);
+                    let prior_css_root = match existing.content {
+                        Content::CssRoot(id) => Some(id),
+                        _ => None,
+                    };
                     self.free_file_content(key.slice(), &mut existing, FreeCssMode::UnrefCss);
-                    existing.kind = FileKind::Unknown;
+                    if let Some(id) = prior_css_root {
+                        // Keep css chunk entries routable as css roots (the
+                        // id is the path hash) so traces keep their slot.
+                        existing.kind = FileKind::Css;
+                        existing.content = Content::CssRoot(id);
+                    } else {
+                        existing.kind = FileKind::Unknown;
+                    }
                     self.bundled_files.values_mut()[idx] = existing;
                 } else {
                     self.bundled_files.values_mut()[idx] = File::default();

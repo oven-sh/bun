@@ -1215,3 +1215,33 @@ devTest("css parse error with an edge adjustment keeps the dev server alive", {
     await c.style(".fine").color.expect.toBe("red");
   },
 });
+// The resolution-failure path routes through insert_stale before
+// insert_failure; it must preserve CssRoot content the same way so the
+// retrace neither recurses into css children nor drops the slot.
+devTest("css resolution error with an edge adjustment keeps the dev server alive", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["main.css"],
+      scripts: ["index.ts"],
+      body: "hello",
+    }),
+    "index.ts": `import.meta.hot.accept();\n`,
+    "main.css": `@import "./child.css";\nbody { margin: 0; }\n`,
+    "child.css": `.fine { color: red; }\n`,
+    "b.css": `.b { color: green; }\n`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".fine").color.expect.toBe("red");
+    {
+      await using _batch = await dev.batchChanges({
+        errors: ['main.css:1:1: error: Could not resolve: "./missing.css"'],
+      });
+      await dev.write("main.css", `@import "./missing.css";\nbody { margin: 0; }\n`, { dedent: false });
+      await dev.write("index.ts", `import.meta.hot.accept();\nimport "./b.css";\n`, { dedent: false });
+    }
+    await c.style(".b").color.expect.toBe("green");
+    await dev.write("main.css", `@import "./child.css";\nbody { margin: 0; }\n`, { dedent: false });
+    await c.style(".fine").color.expect.toBe("red");
+  },
+});

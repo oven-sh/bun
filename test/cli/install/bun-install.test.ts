@@ -3311,9 +3311,8 @@ describe.concurrent("bun-install", () => {
         stderr: "pipe",
         env,
       });
-      const err = await stderr.text();
+      const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
       expect(err).toContain("Saved lockfile");
-      const out = await stdout.text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "",
@@ -3321,7 +3320,7 @@ describe.concurrent("bun-install", () => {
         "",
         "2 packages installed",
       ]);
-      expect(await exited).toBe(0);
+      expect(exitCode).toBe(0);
       expect(urls.sort()).toEqual([
         `${ctx.registry_url}bar`,
         `${ctx.registry_url}bar-0.0.2.tgz`,

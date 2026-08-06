@@ -389,8 +389,7 @@ public:
                     JSC::PropertyDescriptor descriptor(implValue, this->spyAttributes & ~SpyAttributeMask);
                     target->methodTable()->defineOwnProperty(target, globalObject(), this->spyIdentifier, descriptor, true);
                 }
-                // On failure keep the spy's state (including its implementation) so a retry
-                // can restore and the still-installed mock keeps behaving until then.
+                // Keep the spy's state on failure so mockRestore() can be retried.
                 RETURN_IF_EXCEPTION(scope, );
             } else if (auto index = parseIndex(this->spyIdentifier)) {
                 // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))

@@ -950,12 +950,13 @@ declare module "bun" {
    */
   namespace YAML {
     /**
-     * Parse a YAML string into a JavaScript value
+     * Parse a YAML string into a JavaScript value. Every alias (`*name`) of an anchored collection yields the
+     * same object, and an alias may refer to a collection that contains it, so the result can be cyclic.
      *
      * @category Utilities
      *
      * @param input The YAML string to parse
-     * @returns A JavaScript value
+     * @returns A JavaScript value, or an array of them for a multi-document stream
      *
      * @example
      * ```ts

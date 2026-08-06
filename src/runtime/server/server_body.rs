@@ -436,10 +436,11 @@ type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
 // `version`, enums emitted as `@tagName` strings).
 pub mod BunInfo {
     use bun_analytics::generate_header::generate_platform;
-    use bun_analytics::schema::analytics::{Architecture, OperatingSystem, Platform};
+    use bun_analytics::{OperatingSystem, Platform};
     use bun_ast::Loc;
     use bun_ast::e::EString;
     use bun_ast::{E, Expr, G};
+    use bun_core::Environment::Architecture;
     use bun_core::Global;
 
     pub(crate) struct BunInfo {
@@ -449,7 +450,6 @@ pub mod BunInfo {
 
     fn os_tag_name(os: OperatingSystem) -> &'static [u8] {
         match os {
-            OperatingSystem::None => b"_none",
             OperatingSystem::Linux => b"linux",
             OperatingSystem::Macos => b"macos",
             OperatingSystem::Windows => b"windows",
@@ -461,9 +461,9 @@ pub mod BunInfo {
 
     fn arch_tag_name(arch: Architecture) -> &'static [u8] {
         match arch {
-            Architecture::None => b"_none",
             Architecture::X64 => b"x64",
-            Architecture::Arm => b"arm",
+            Architecture::Arm64 => b"arm",
+            Architecture::Wasm => b"wasm",
         }
     }
 
@@ -492,7 +492,7 @@ pub mod BunInfo {
         // `JSON.toAST(allocator, BunInfo, info)` — hand-expanded:
         let platform_props = bun_alloc::AstAlloc::vec_from_iter([
             prop(b"os", str_expr(os_tag_name(info.platform.os))),
-            prop(b"arch", str_expr(arch_tag_name(info.platform.arch))),
+            prop(b"arch", str_expr(arch_tag_name(bun_core::Environment::ARCH))),
             prop(b"version", str_expr(info.platform.version)),
         ]);
         let platform_expr = Expr::init(

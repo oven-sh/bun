@@ -2337,13 +2337,19 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__unwrapBoxedPrimitive(JSGlobalObject
         return JSValue::encode(value);
     }
 
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSObject* object = asObject(value);
 
     if (object->inherits<NumberObject>()) {
-        return JSValue::encode(jsNumber(object->toNumber(globalObject)));
+        double number = object->toNumber(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsNumber(number));
     }
-    if (object->inherits<StringObject>())
-        return JSValue::encode(object->toString(globalObject));
+    if (object->inherits<StringObject>()) {
+        JSString* string = object->toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(string);
+    }
     if (object->inherits<BooleanObject>() || object->inherits<BigIntObject>())
         return JSValue::encode(uncheckedDowncast<JSWrapperObject>(object)->internalValue());
 

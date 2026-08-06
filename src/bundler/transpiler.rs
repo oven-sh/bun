@@ -1861,7 +1861,12 @@ fn parse_data_loader<'a>(
             Ok(e) => e,
             Err(_) => return None,
         },
-        options::Loader::Yaml => match bun_parsers::yaml::YAML::parse(source, log, arena) {
+        options::Loader::Yaml => match bun_parsers::yaml::YAML::parse(
+            source,
+            log,
+            arena,
+            bun_parsers::yaml::CyclicAliases::Reject,
+        ) {
             Ok(e) => e,
             Err(_) => return None,
         },
@@ -2401,7 +2406,6 @@ impl<'a> Transpiler<'a> {
         let opts = js_printer::Options {
             bundling: false,
             require_ref: Some(ast.require_ref),
-            css_import_behavior: self.options.css_import_behavior(),
             source_map_handler: source_map_context,
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,
@@ -2480,7 +2484,6 @@ impl<'a> Transpiler<'a> {
         let opts = js_printer::Options {
             bundling: false,
             require_ref: Some(ast.require_ref),
-            css_import_behavior: self.options.css_import_behavior(),
             source_map_handler: source_map_context,
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,
@@ -2773,6 +2776,7 @@ impl<'a> Transpiler<'a> {
             bun_ast::Stmt::data_store_reset();
             bun_ast::store_ast_alloc_heap::reset();
 
+            let errors_before = self.log().errors;
             let output_file = match self.build_with_resolve_result_eager(
                 &item,
                 import_path_format,
@@ -2780,7 +2784,26 @@ impl<'a> Transpiler<'a> {
                 None,
             ) {
                 Ok(Some(f)) => f,
-                Ok(None) | Err(_) => continue,
+                Ok(None) => continue,
+                Err(err) => {
+                    // Print errors (unlike parse errors) add nothing to the
+                    // log, and an unlogged failure exits 0 with no output.
+                    if self.log().errors == errors_before {
+                        let path: &[u8] = item.path_const().map(|p| p.text).unwrap_or(b"");
+                        let message: &str = match err {
+                            crate::Error::JsPrinter(js_printer::Error::StackOverflow) => {
+                                "Maximum call stack size exceeded while generating code for"
+                            }
+                            _ => "Failed to generate code for",
+                        };
+                        self.log_mut().add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!("{} \"{}\"", message, bstr::BStr::new(path)),
+                        );
+                    }
+                    continue;
+                }
             };
             self.output_files.push(output_file);
         }

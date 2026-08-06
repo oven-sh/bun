@@ -34,7 +34,7 @@ use bun_event_loop::{Task, task_tag};
 use bun_io::posix_event_loop::{FilePoll, Flags as PollFlag, poll_tag};
 
 use bun_event_loop::EventLoopTimer::{
-    EventLoopTimer, Tag as EventLoopTimerTag, TimerCallback, Timespec as ElTimespec,
+    EventLoopTimer, Tag as EventLoopTimerTag, Timespec as ElTimespec,
 };
 
 use bun_jsc::JSGlobalObject;
@@ -1052,13 +1052,6 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
             let internals = unsafe { core::ptr::addr_of_mut!((*container).internals) };
             // SAFETY: see TimeoutObject arm.
             unsafe { TimerObjectInternals::fire(internals, &*now, vm) };
-        }
-        // Spec `inline else` fallthrough: `container.callback(container)`.
-        EventLoopTimerTag::TimerCallback => {
-            timer_arm!(TimerCallback, event_loop_timer, |c, _now, _vm| ((*c)
-                .callback)(
-                c
-            ))
         }
         EventLoopTimerTag::WTFTimer => {
             timer_arm!(WTFTimer, event_loop_timer, |c, now, vm| WTFTimer::fire(

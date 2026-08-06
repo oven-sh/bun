@@ -387,9 +387,7 @@ unsafe fn init_runtime_state(
         // measurable on `bun -e ''` startup.
         let mut args = core::mem::take(&mut opts.transform_options);
         let preserve_symlinks = args.preserve_symlinks.unwrap_or(false);
-        // Inlined `configure_transform_options_for_bun_vm`:
         args.write = Some(false);
-        args.resolve = Some(api::ResolveMode::Lazy);
         args.target = Some(api::Target::Bun);
         // The arena lives on
         // `RuntimeState` (boxed above) so `deinit_runtime_state` reclaims it
@@ -2257,8 +2255,7 @@ fn transpile_source_code_inner(
             // consume this scope via `take_state()` and ship the box with the
             // arena.
             let ast_alloc_scope = bun_alloc::ast_alloc::ScopedAstAlloc::with_spill(arena_heap);
-            // ── Watcher fd / package_json lookup ────────────────────────────
-            let mut fd: Option<bun_sys::Fd> = None;
+            // ── Watcher package_json lookup ─────────────────────────────────
             let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
             {
                 // SAFETY: `bun_watcher` is the `*mut ImportWatcher`
@@ -2266,31 +2263,12 @@ fn transpile_source_code_inner(
                 let import_watcher: *mut bun_jsc::ImportWatcher =
                     unsafe { &*jsc_vm }.bun_watcher.cast();
                 if !import_watcher.is_null() {
-                    // SAFETY: non-null per check above. The watchlist *is*
-                    // mutated cross-thread (the watcher thread's
-                    // `flush_evictions` closes fds and `swap_remove`s), so
-                    // snapshot under the watcher mutex — see
-                    // `ImportWatcher::snapshot_fd_and_package_json` doc for
-                    // the EBADF race this closes.
+                    // SAFETY: non-null per check above. Never read through the
+                    // watchlist's stored fd; see
+                    // `ImportWatcher::snapshot_package_json`.
                     let iw = unsafe { &*import_watcher };
-                    (fd, package_json) = iw.snapshot_fd_and_package_json(hash);
+                    package_json = iw.snapshot_package_json(hash);
                 }
-            }
-
-            // Note / fix: never reuse the watcher's cached fd for the
-            // `--hot` entrypoint. An atomic `rename()` over the entrypoint (the
-            // common HMR save pattern) replaces its inode; the watcher entry
-            // still holds an fd to the now-unlinked old inode until the
-            // IN_DELETE_SELF event for it is processed and `flush_evictions`
-            // closes it. If a reload's transpile runs first (e.g. the
-            // directory-watch recovery in `hot_reloader` re-fired the reload
-            // before that file event landed under load), reading via the stale
-            // fd returns the OLD file contents — the reload "succeeds" with the
-            // wrong source and `bun --hot` hangs. Re-open the entrypoint by
-            // path so we always see the current inode; `maybe_watch_file` below
-            // re-registers the fresh fd with the watcher.
-            if is_main && fd.is_some() {
-                fd = None;
             }
 
             // ── RuntimeTranspilerCache ──────────────────────────────────────
@@ -2371,7 +2349,7 @@ fn transpile_source_code_inner(
                 }
             };
 
-            let mut should_close_input_file_fd = fd.is_none();
+            let mut should_close_input_file_fd = true;
 
             // Only JS-like loaders get the cjs/esm wrapper hint.
             let module_type_only_for_wrappables = match loader {
@@ -2530,7 +2508,7 @@ fn transpile_source_code_inner(
                     path: parse_path,
                     loader,
                     dirname_fd: bun_sys::Fd::INVALID,
-                    file_descriptor: fd,
+                    file_descriptor: None,
                     // SAFETY: `input_file_fd_ptr` points at this frame's
                     // `input_file_fd`; reborrow through the raw pointer so the
                     // `_fd_guard` scopeguard's tag is not invalidated by a
@@ -2737,12 +2715,23 @@ fn transpile_source_code_inner(
                             // `SExpr` part; anything else is a parser bug.
                             unreachable!("JSON/TOML/YAML parse result is always SExpr")
                         };
-                        bun_js_parser_jsc::expr_to_js(&s_expr.value, global).unwrap_or_else(|e| {
-                            bun_core::Output::panic(format_args!(
-                                "Unexpected JS error: {}",
-                                <&'static str>::from(e)
-                            ))
-                        })
+                        match bun_js_parser_jsc::expr_to_js(&s_expr.value, global) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                return Err(match e {
+                                    bun_ast::ToJSError::JSError => bun_jsc::JsError::Thrown,
+                                    bun_ast::ToJSError::JSTerminated => {
+                                        bun_jsc::JsError::Terminated
+                                    }
+                                    bun_ast::ToJSError::OutOfMemory => global.throw_out_of_memory(),
+                                    e => global.throw_error(
+                                        bun_jsc::CrateError::from(e),
+                                        "converting module to JavaScript",
+                                    ),
+                                }
+                                .into());
+                            }
+                        }
                     };
                     return Ok(OwnedResolvedSource::from(ResolvedSource {
                         specifier: input_specifier.dupe_ref(),
@@ -2948,24 +2937,16 @@ fn transpile_source_code_inner(
                     // AST's small `AstVec`s live in its inline bump chunk.
                     let ast_alloc_state = ast_alloc_scope.take_state();
                     // SAFETY: per fn contract — `jsc_vm` / `global_object` are the live
-                    // per-thread VM / global; `package_json` is the opaque watcher
-                    // forward-decl of `bun_resolver::package_json::PackageJSON`.
+                    // per-thread VM / global.
                     unsafe {
                         (*jsc_vm).modules.enqueue(
                             &*global_object,
                             bun_jsc::async_module::InitOpts {
                                 parse_result,
                                 path: *path,
-                                loader,
-                                fd,
-                                package_json: package_json.map(|p| {
-                                    &*core::ptr::from_ref(p)
-                                        .cast::<bun_resolver::package_json::PackageJSON>()
-                                }),
                                 promise_ptr: Some(promise_ptr),
                                 specifier,
                                 referrer,
-                                hash,
                                 arena,
                                 ast_alloc_state,
                             },
@@ -3377,20 +3358,19 @@ fn transpile_source_code_inner(
                 // type.
                 let watcher =
                     unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
-                if watcher
-                    .add_file::<true>(
+                if !matches!(
+                    watcher.add_file::<true>(
                         input_fd,
                         path.text,
                         hash,
                         loader,
                         bun_sys::Fd::INVALID,
                         None,
-                    )
-                    .is_err()
-                {
-                    // Close the fd we just opened on macOS;
-                    // not a transpile failure (the user didn't open it).
-                    #[cfg(target_os = "macos")]
+                    ),
+                    Ok(bun_watcher::FdOwnership::Watcher)
+                ) {
+                    // Not adopted (already watched, or add failed); close the
+                    // fd this arm opened.
                     if input_fd.is_valid() {
                         use bun_sys::FdExt as _;
                         input_fd.close();
@@ -3489,18 +3469,22 @@ fn maybe_watch_file(
     {
         return;
     }
-    *should_close_input_file_fd = false;
     // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
     // `is_watcher_enabled()`; cast recovers the concrete type.
     let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
-    let _ = watcher.add_file::<true>(
-        input_file_fd,
-        path.text,
-        hash,
-        loader,
-        bun_sys::Fd::INVALID,
-        package_json,
-    );
+    if matches!(
+        watcher.add_file::<true>(
+            input_file_fd,
+            path.text,
+            hash,
+            loader,
+            bun_sys::Fd::INVALID,
+            package_json,
+        ),
+        Ok(bun_watcher::FdOwnership::Watcher)
+    ) {
+        *should_close_input_file_fd = false;
+    }
 }
 
 // Generated `bun:sqlite` import shims.

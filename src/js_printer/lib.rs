@@ -51,8 +51,6 @@ use bun_ast::ImportRecordFlags;
 
 use bun_sourcemap as SourceMap;
 
-pub use bun_options_types::schema::api::CssInJsBehavior;
-
 // ──────────────────────────────────────────────────────────────────────────
 // renamer — defined in `renamer.rs`. The five former leak sites
 // have been replaced with `bumpalo::Bump`-backed allocation (PORTING.md §Forbidden);
@@ -1087,7 +1085,6 @@ pub struct Options<'a> {
     pub indent: Indentation,
     // allocator dropped — global mimalloc (this is an AST crate but Options.allocator is the global default)
     pub source_map_handler: Option<SourceMapHandler<'a>>,
-    pub css_import_behavior: CssInJsBehavior,
     pub target: bun_ast::Target,
 
     pub runtime_transpiler_cache: Option<RuntimeTranspilerCacheRef>,
@@ -1164,7 +1161,6 @@ impl<'a> Default for Options<'a> {
             hmr_ref: Ref::NONE,
             indent: Indentation::default(),
             source_map_handler: None,
-            css_import_behavior: CssInJsBehavior::Facade,
             target: bun_ast::Target::Browser,
             runtime_transpiler_cache: None,
             module_info: None,

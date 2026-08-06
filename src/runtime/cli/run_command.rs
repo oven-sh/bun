@@ -960,7 +960,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // Dummy transpiler so we can load .env.
         let mut args = ctx.args.clone();
         args.write = Some(false);
-        args.resolve = Some(api::ResolveMode::Lazy);
         args.target = Some(api::Target::Bun);
         let mut bundle = Transpiler::init(runner_arena(), ctx.log, args, None)?;
         bundle.run_env_loader(bundle.options.env.disable_default_env_files)?;

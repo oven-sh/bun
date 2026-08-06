@@ -343,6 +343,31 @@ describe("new Request(request) copies internal state without calling getters", (
     expect(await new Request(input).text()).toBe("st");
   });
 
+  test("a Bun.serve request's lazily materialized url is copied, not read via getter", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        let hits = 0;
+        Object.defineProperty(req, "url", {
+          get() {
+            hits++;
+            return "http://127.0.0.1:9/from-getter";
+          },
+        });
+        const copy = new Request(req, { method: "POST" });
+        const single = new Request(req);
+        return Response.json({ hits, url: copy.url, method: copy.method, single: single.url });
+      },
+    });
+    const res = await fetch(`http://localhost:${server.port}/real-path`);
+    expect(await res.json()).toEqual({
+      hits: 0,
+      url: `http://localhost:${server.port}/real-path`,
+      method: "POST",
+      single: `http://localhost:${server.port}/real-path`,
+    });
+  });
+
   test("a Request passed as init (second argument) keeps dictionary getter semantics", () => {
     let getterHits = 0;
     const asInit = new Request("http://localhost/original", { method: "PUT" });

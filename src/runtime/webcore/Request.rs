@@ -1233,6 +1233,9 @@ impl Request {
                         // the dictionary fallbacks below from running JS
                         // getters against the input.
                         if !fields.contains(Fields::Url) {
+                            // A Bun.serve request materializes its URL lazily
+                            // from the request context.
+                            let _ = request.ensure_url();
                             let url = request.url.get();
                             if !url.is_empty() {
                                 req.url.set(url.dupe_ref());

@@ -57,6 +57,7 @@ import fs, {
 } from "node:fs";
 import * as os from "node:os";
 import path, { dirname, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { inspect, promisify } from "node:util";
 
 import _promises, { type FileHandle } from "node:fs/promises";
@@ -3092,6 +3093,50 @@ describe("rmdirSync", () => {
 });
 
 describe("createReadStream", () => {
+  // https://github.com/oven-sh/bun/issues/4840
+  it("accepts a Buffer path", async () => {
+    const dir = tmpdirSync();
+    const file = join(dir, "buffer-path-read.txt");
+    writeFileSync(file, "hello from buffer path");
+    const bufPath = Buffer.from(file);
+
+    const stream = createReadStream(bufPath);
+    expect(Buffer.isBuffer(stream.path)).toBe(true);
+    expect(stream.path).toEqual(bufPath);
+
+    const { promise, resolve, reject } = Promise.withResolvers();
+    let data = "";
+    stream.on("data", chunk => (data += chunk));
+    stream.on("end", resolve);
+    stream.on("error", reject);
+    await promise;
+    expect(data).toBe("hello from buffer path");
+  });
+
+  it("accepts a URL path", async () => {
+    const dir = tmpdirSync();
+    const file = join(dir, "url-path-read.txt");
+    writeFileSync(file, "hello from url path");
+
+    const stream = createReadStream(pathToFileURL(file));
+    expect(typeof stream.path).toBe("string");
+
+    const { promise, resolve, reject } = Promise.withResolvers();
+    let data = "";
+    stream.on("data", chunk => (data += chunk));
+    stream.on("end", resolve);
+    stream.on("error", reject);
+    await promise;
+    expect(data).toBe("hello from url path");
+  });
+
+  it("rejects invalid path types", () => {
+    expect(() => createReadStream(123 as any)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    expect(() => createReadStream(Buffer.from("a\0b"))).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+  });
+
   it("works (1 chunk)", async () => {
     return await new Promise((resolve, reject) => {
       var stream = createReadStream(import.meta.dir + "/readFileSync.txt", {});
@@ -3635,6 +3680,25 @@ describe("fs.ReadStream", () => {
 });
 
 describe("createWriteStream", () => {
+  // https://github.com/oven-sh/bun/issues/4840
+  it("accepts a Buffer path", async () => {
+    const dir = tmpdirSync();
+    const file = join(dir, "buffer-path-write.txt");
+    const bufPath = Buffer.from(file);
+
+    const stream = createWriteStream(bufPath);
+    expect(Buffer.isBuffer(stream.path)).toBe(true);
+    expect(stream.path).toEqual(bufPath);
+
+    const { promise, resolve, reject } = Promise.withResolvers();
+    stream.on("finish", resolve);
+    stream.on("error", reject);
+    stream.write("written via buffer path");
+    stream.end();
+    await promise;
+    expect(readFileSync(file, "utf8")).toBe("written via buffer path");
+  });
+
   it.todoIf(isBroken && isWindows)("simple write stream finishes", async () => {
     const streamPath = join(tmpdirSync(), "create-write-stream.txt");
     const { promise: done, resolve, reject } = Promise.withResolvers();

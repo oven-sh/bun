@@ -1074,6 +1074,48 @@ describe("spyOn", () => {
       expect(arr[14]()).toBe(456);
       expect(fn).not.toHaveBeenCalled();
     });
+
+    // The engine serves a function's `prototype` property specially, so it cannot be
+    // replaced with a getter/setter spy; historically this crashed the process.
+    test("spyOn on a function's prototype property throws instead of crashing", () => {
+      function Foo() {}
+      expect(() => spyOn(Foo, "prototype")).toThrow(
+        "Cannot spy on the `prototype` property because it is not a function",
+      );
+      // the function is left untouched
+      expect(Object.keys(Foo.prototype)).toEqual([]);
+      expect(new Foo()).toBeInstanceOf(Foo);
+
+      class K {
+        m() {
+          return 42;
+        }
+      }
+      expect(() => spyOn(K, "prototype")).toThrow(
+        "Cannot spy on the `prototype` property because it is not a function",
+      );
+      expect(new K().m()).toBe(42);
+
+      // arrow functions have no prototype property at all
+      const arrow = () => {};
+      expect(() => spyOn(arrow, "prototype")).toThrow(
+        "Cannot spy on the `prototype` property because it is not a function",
+      );
+    });
+
+    test("spyOn still works when a function's prototype is itself a function", () => {
+      function Bar() {}
+      Bar.prototype = function original() {
+        return 7;
+      };
+      const fn = spyOn(Bar, "prototype");
+      expect(Bar.prototype).toBe(fn);
+      expect(Bar.prototype()).toBe(7);
+      expect(fn).toHaveBeenCalledTimes(1);
+      fn.mockRestore();
+      expect(Bar.prototype()).toBe(7);
+      expect(fn).not.toHaveBeenCalled();
+    });
   }
 
   // spyOn does not work with getters/setters yet.

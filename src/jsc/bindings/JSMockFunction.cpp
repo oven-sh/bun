@@ -1555,6 +1555,14 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
 
             pushImpl(mock, globalObject, JSMockImplementation::Kind::Call, value);
         } else {
+            // JSFunction::getOwnPropertySlot serves `prototype` straight from property storage,
+            // ignoring the Accessor attribute, so a GetterSetter installed here would escape to
+            // script as a raw cell. Refuse, like Jest.
+            if (propertyKey == vm.propertyNames->prototype && object->inherits<JSC::JSFunction>()) {
+                throwVMError(globalObject, scope, "Cannot spy on the `prototype` property because it is not a function"_s);
+                return {};
+            }
+
             if (hasValue)
                 attributes = slot.attributes();
 

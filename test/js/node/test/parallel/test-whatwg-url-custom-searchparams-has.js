@@ -12,14 +12,14 @@ const assert = require('assert');
   }, {
     code: 'ERR_INVALID_THIS',
     name: 'TypeError',
-    message: 'Can only call URLSearchParams.has on instances of URLSearchParams',
+    message: 'Value of "this" must be of type URLSearchParams'
   });
   assert.throws(() => {
     params.has();
   }, {
     code: 'ERR_MISSING_ARGS',
     name: 'TypeError',
-    message: 'Not enough arguments'
+    message: 'The "name" argument must be specified'
   });
 
   const obj = {

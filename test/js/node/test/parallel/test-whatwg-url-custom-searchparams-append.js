@@ -12,14 +12,14 @@ const assert = require('assert');
   }, {
     code: 'ERR_INVALID_THIS',
     name: 'TypeError',
-    message: 'Can only call URLSearchParams.append on instances of URLSearchParams',
+    message: 'Value of "this" must be of type URLSearchParams'
   });
   assert.throws(() => {
     params.append('a');
   }, {
     code: 'ERR_MISSING_ARGS',
     name: 'TypeError',
-    message: 'Not enough arguments'
+    message: 'The "name" and "value" arguments must be specified'
   });
 
   const obj = {

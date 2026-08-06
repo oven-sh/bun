@@ -11,7 +11,7 @@ const assert = require('assert');
 ].forEach((i) => {
   assert.throws(() => Reflect.apply(URL.prototype[i], [], {}), {
     name: 'TypeError',
-    message: /Can only call URL\.[a-zA-Z]+ on instances of URL/
+    message: /Value of "this" must be of type URL/
   });
 });
 

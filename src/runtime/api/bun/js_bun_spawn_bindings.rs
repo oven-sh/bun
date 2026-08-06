@@ -519,9 +519,9 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                     }
                     **abort_signal = Some(sig.ref_());
                 } else {
-                    return Err(global_this.throw_invalid_argument_type_value(
+                    return Err(global_this.throw_invalid_argument_type_list(
                         b"signal",
-                        b"AbortSignal",
+                        &[b"AbortSignal"],
                         signal_val,
                     ));
                 }

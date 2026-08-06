@@ -2357,10 +2357,16 @@ mod posix_impl {
                 //   EPERM:      seccomp filter rejects statx (libseccomp < 2.3.3,
                 //               docker < 18.04, various CI sandboxes)
                 //   EINVAL:     old Android builds
-                if matches!(
+                //   EBADF (OHOS): OHOS's statx(2) rejects socket-backed fds
+                //               with EBADF even for a perfectly valid socket fd
+                //               (verified on-device); fold into the fallback —
+                //               a genuinely bad fd still gets EBADF from the
+                //               plain fstat in statx_fallback.
+                let is_fallback_errno = matches!(
                     errno,
                     Some(E::ENOSYS | E::EOPNOTSUPP | E::EPERM | E::EINVAL)
-                ) {
+                ) || (cfg!(target_env = "ohos") && errno == Some(E::EBADF));
+                if is_fallback_errno {
                     SUPPORTS_STATX_ON_LINUX.store(false, Ordering::Relaxed);
                     return statx_fallback(fd, path, flags);
                 }

@@ -75,6 +75,8 @@
 #if OS(LINUX)
 #include <sys/personality.h>
 #include <sys/auxv.h>
+#include <link.h>
+#include <elf.h>
 #include <dirent.h>
 #include <ucontext.h>
 #endif
@@ -1385,7 +1387,6 @@ static uint64_t platformBuildId() // FNV-1a over the start of .text + its extent
 struct PlatformLib { uint64_t base, end, nameHash; };
 static uint64_t fnv1a(const char* p) { uint64_t h = 1469598103934665603ull; for (; *p; p++) { h ^= (uint8_t)*p; h *= 1099511628211ull; } return h; }
 #if OS(LINUX)
-#include <link.h>
 static std::vector<PlatformLib> platformSystemLibs()
 {
     std::vector<PlatformLib> libs;

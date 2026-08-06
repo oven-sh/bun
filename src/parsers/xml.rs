@@ -761,7 +761,8 @@ impl<'a, 'log> Scanner<'a, 'log> {
     }
 
     /// Appends `&name;` for a reference that is kept rather than expanded.
-    fn push_reference(buf: &mut ArenaVec<'a, u8>, name: &[u8]) {
+    fn push_reference(buf: &mut ArenaVec<'a, u8>, name: &[u8], is_ascii: &mut bool) {
+        *is_ascii &= name.is_ascii();
         buf.push(b'&');
         buf.extend_from_slice(name);
         buf.push(b';');
@@ -1125,7 +1126,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                             Resolved::Text(text) => {
                                 self.push_frame(text, FrameKind::Literal, (name, false), ref_pos)?
                             }
-                            Resolved::Unexpanded => Self::push_reference(b, name),
+                            Resolved::Unexpanded => Self::push_reference(b, name, &mut is_ascii),
                         }
                     }
                 }
@@ -1226,7 +1227,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                     } else {
                         let name = self
                             .scan_reference_name("Expected an entity name after '&' but found")?;
-                        Self::push_reference(&mut buf, name);
+                        Self::push_reference(&mut buf, name, &mut is_ascii);
                     }
                 }
                 b'\r' if self.in_document() => {
@@ -2079,7 +2080,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                             Resolved::Text(text) => {
                                 self.push_frame(text, FrameKind::Content, (name, false), ref_pos)?
                             }
-                            Resolved::Unexpanded => Self::push_reference(b, name),
+                            Resolved::Unexpanded => Self::push_reference(b, name, &mut is_ascii),
                         }
                         start = self.pos;
                     }
@@ -2553,6 +2554,14 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
         }
     }
 
+    /// Nesting too deep to recurse into. The message is for the module
+    /// loader's log; `Bun.XML.parse` throws a `RangeError` regardless.
+    fn stack_overflow(&mut self) -> PErr {
+        let pos = self.scanner.here();
+        let _ = self.scanner.err(pos, "Nesting is too deep");
+        PErr::StackOverflow
+    }
+
     // ── document ───────────────────────────────────────────────────────────
 
     /// `document ::= prolog element Misc*` (§2.1 [1]).
@@ -2793,7 +2802,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
     /// particle already scanned; nested groups recurse.
     fn parse_children(&mut self, first: CpItem) -> PResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
-            return Err(PErr::StackOverflow);
+            return Err(self.stack_overflow());
         }
         let mut item = first;
         let mut separator: Option<bool> = None; // Some(true): '|', Some(false): ','
@@ -2890,7 +2899,7 @@ impl<'a, 'log, S: Sink<'a>> Parser<'a, 'log, S> {
     /// was empty) content up to the matching end tag.
     fn parse_element(&mut self, name: &'a [u8], pos: usize, frame: u32) -> PResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
-            return Err(PErr::StackOverflow);
+            return Err(self.stack_overflow());
         }
         let loc = self.scanner.loc(pos);
         let empty = self.parse_attributes(name)?;

@@ -21,7 +21,9 @@ const small = `<?xml version="1.0" encoding="UTF-8"?>
 
 // An S3 ListObjectsV2-style response.
 function listing(count) {
-  const parts = [`<?xml version="1.0" encoding="UTF-8"?>\n<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">\n  <Name>bucket</Name>\n  <Prefix/>\n  <KeyCount>${count}</KeyCount>\n  <MaxKeys>1000</MaxKeys>\n  <IsTruncated>false</IsTruncated>\n`];
+  const parts = [
+    `<?xml version="1.0" encoding="UTF-8"?>\n<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">\n  <Name>bucket</Name>\n  <Prefix/>\n  <KeyCount>${count}</KeyCount>\n  <MaxKeys>1000</MaxKeys>\n  <IsTruncated>false</IsTruncated>\n`,
+  ];
   for (let i = 0; i < count; i++) {
     parts.push(`  <Contents>
     <Key>photos/2024/${i.toString(16)}/image_${i}.jpg</Key>
@@ -37,7 +39,9 @@ function listing(count) {
 
 // An Atom-feed-style document with mixed content and CDATA.
 function feed(count) {
-  const parts = [`<?xml version="1.0" encoding="utf-8"?>\n<feed xmlns="http://www.w3.org/2005/Atom">\n  <title>Example Feed</title>\n  <updated>2024-01-13T18:30:02Z</updated>\n`];
+  const parts = [
+    `<?xml version="1.0" encoding="utf-8"?>\n<feed xmlns="http://www.w3.org/2005/Atom">\n  <title>Example Feed</title>\n  <updated>2024-01-13T18:30:02Z</updated>\n`,
+  ];
   for (let i = 0; i < count; i++) {
     parts.push(`  <entry>
     <title type="html">Post number ${i} &amp; other &lt;things&gt;</title>
@@ -82,12 +86,15 @@ for (const [label, doc] of [
 
 // -- stringify --
 
-const object = isBun ? Bun.XML.parse(large) : fxp.parse(large);
+// Each serializer gets the object its own parser produced ("@" vs "@_"
+// attribute keys), so both do the same work.
+const bunObject = isBun ? Bun.XML.parse(large) : undefined;
+const fxpObject = fxp.parse(large);
 const builder = new XMLBuilder({ ignoreAttributes: false });
 
 group(`stringify S3 listing`, () => {
-  if (isBun) bench("Bun.XML.stringify", () => Bun.XML.stringify(object));
-  bench("fast-xml-parser XMLBuilder", () => builder.build(object));
+  if (isBun) bench("Bun.XML.stringify", () => Bun.XML.stringify(bunObject));
+  bench("fast-xml-parser XMLBuilder", () => builder.build(fxpObject));
 });
 
 await run();

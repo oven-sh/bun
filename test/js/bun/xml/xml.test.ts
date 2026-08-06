@@ -716,7 +716,8 @@ describe("XML.stringify", () => {
     expect(() => XML.stringify({})).toThrow("must have one key naming the root element");
     expect(() => XML.stringify({ "@a": "1" })).toThrow("can only contain the root element");
     expect(() => XML.stringify({ "#text": "1" })).toThrow("can only contain the root element");
-    expect(() => XML.stringify({ a: { b: { toString: () => "no" } } as any })).not.toThrow();
+    // In element position an object is an element; its function-valued keys are skipped.
+    expect(XML.stringify({ a: { b: { toString: () => "no" } } as any })).toBe("<a><b/></a>");
     expect(() => XML.stringify({ a: { "@b": { toString: () => "no" } } as any })).toThrow("an attribute value must be");
     expect(() => XML.stringify({ a: Symbol("s") as any })).toThrow("must have one key");
     const circular: any = { a: { b: {} } };
@@ -795,10 +796,13 @@ describe("XML.stringify", () => {
   });
 
   test("deep values are a catchable error", () => {
+    // Must overflow on every build: release frames are far smaller than
+    // debug/ASAN ones, so use a depth no native stack survives.
     const depth = 1_000_000;
     let deep: any = "x";
     for (let i = 0; i < depth; i++) deep = { a: deep };
     expect(() => XML.stringify(deep)).toThrow(RangeError);
+    deep = undefined;
     let node: any = { name: "a", children: ["x"] };
     for (let i = 0; i < depth; i++) node = { name: "a", children: [node] };
     expect(() => XML.stringify(node)).toThrow(RangeError);

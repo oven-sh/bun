@@ -50,6 +50,7 @@ describe("Bun.Transpiler still accepts data-format loaders", () => {
     const out = t.transformSync(`<a b="1"><c>x</c></a>`, "xml");
     expect(out).toContain("export default");
     expect(out).toContain('"@b": "1"');
+    expect(out).toContain('c: "x"');
   });
 
   test("text", () => {

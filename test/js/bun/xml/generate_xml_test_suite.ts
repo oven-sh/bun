@@ -146,7 +146,7 @@ for (const { describe, catalog, base } of COLLECTIONS) {
       skippedEdition++;
       continue;
     }
-    if (/^pr-xml-/.test(attrs.ID)) {
+    if (base === "japanese/" && /^pr-xml-/.test(attrs.ID)) {
       skippedBig++;
       continue;
     }
@@ -632,12 +632,14 @@ execFileSync(
 );
 if (checkMode) {
   const fresh = readFileSync(outPath, "utf8");
-  rmSync(outPath);
   const committed = readFileSync(committedPath, "utf8");
   if (fresh !== committed) {
-    console.error(`MISMATCH: ${committedPath} is stale; regenerate it.`);
+    console.error(
+      `MISMATCH: ${committedPath} is stale; regenerate it (fresh output kept at ${outPath} for comparison).`,
+    );
     process.exit(1);
   }
+  rmSync(outPath);
   console.log(`OK: ${committedPath} is up to date.`);
 } else {
   console.log(

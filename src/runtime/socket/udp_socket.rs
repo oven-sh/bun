@@ -490,7 +490,8 @@ impl UDPSocketConfig {
             }
 
             // Coerce once; a repeated coercion could observe a different value.
-            let connect_host = bun_core::OwnedString::new(connect_host_js.to_bun_string(global_this)?);
+            let connect_host =
+                bun_core::OwnedString::new(connect_host_js.to_bun_string(global_this)?);
             if connect_host.to_utf8_without_ref().slice().contains(&0) {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "\"connect.hostname\" must not contain null bytes"

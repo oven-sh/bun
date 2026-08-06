@@ -1861,7 +1861,12 @@ fn parse_data_loader<'a>(
             Ok(e) => e,
             Err(_) => return None,
         },
-        options::Loader::Yaml => match bun_parsers::yaml::YAML::parse(source, log, arena) {
+        options::Loader::Yaml => match bun_parsers::yaml::YAML::parse(
+            source,
+            log,
+            arena,
+            bun_parsers::yaml::AliasCycles::Reject,
+        ) {
             Ok(e) => e,
             Err(_) => return None,
         },

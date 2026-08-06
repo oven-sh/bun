@@ -1325,9 +1325,7 @@ describe("servernames containing NUL bytes", () => {
     const server = tls.createServer(COMMON_CERT_);
     await once(server.listen(0, "127.0.0.1"), "listening");
     try {
-      expect(() => server.addContext("a.example.invalid\0evil", COMMON_CERT_)).toThrow(
-        "must not contain null bytes",
-      );
+      expect(() => server.addContext("a.example.invalid\0evil", COMMON_CERT_)).toThrow("must not contain null bytes");
     } finally {
       server.close();
     }

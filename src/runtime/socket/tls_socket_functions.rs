@@ -334,9 +334,7 @@ pub(super) fn set_servername(
     // SSL_set_tlsext_host_name reads a C string; an embedded NUL would
     // silently truncate the SNI sent on the wire.
     if slice.contains(&0) {
-        return Err(global.throw(format_args!(
-            "\"serverName\" must not contain null bytes"
-        )));
+        return Err(global.throw(format_args!("\"serverName\" must not contain null bytes")));
     }
     // Drop replaces the old value.
     this.server_name.set(Some(slice));

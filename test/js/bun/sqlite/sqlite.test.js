@@ -1818,6 +1818,22 @@ it("close() does not crash with FTS5 virtual tables (#37044)", async () => {
   expect(exitCode).toBe(0);
 });
 
+it("close() releases an FTS5 database file once the last prepare() statement is finalized (#37044)", () => {
+  using dir = tempDir("sqlite-close-unlink-fts5", {});
+  const file = path.join(String(dir), "x.sqlite");
+  const db = new Database(file);
+  db.exec("CREATE VIRTUAL TABLE t USING fts5(a)");
+  // FTS5 caches internal prepared statements on the connection; they must not
+  // keep the deferred close from ever happening.
+  db.query("SELECT rowid FROM t WHERE t MATCH 'x'").all();
+  const stmt = db.prepare("SELECT 1");
+  db.close();
+  stmt.finalize();
+  // On Windows rmSync throws EBUSY if the handle stayed open past the last finalize.
+  rmSync(file);
+  expect(existsSync(file)).toBe(false);
+});
+
 it("should dispose even if a prepared statement is still live", () => {
   let prepared;
   expect(() => {

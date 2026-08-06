@@ -230,11 +230,8 @@ public:
             sqlite3_close_v2(std::exchange(db, nullptr));
     }
 
-    void closeIfDrained()
-    {
-        if (closed && db && !sqlite3_next_stmt(db, nullptr))
-            closeHandle();
-    }
+    // Defined after JSSQLStatement: needs its definition to inspect `stmt`.
+    void closeIfDrained();
 
     void release()
     {
@@ -3005,3 +3002,17 @@ JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject)
 }
 
 } // namespace WebCore
+
+// Drained means every statement bun tracks is finalized. Statements sqlite3
+// still knows about (virtual-table modules' cached statements) don't count:
+// sqlite3_close_v2 finalizes them via vtab disconnect.
+void VersionSqlite3::closeIfDrained()
+{
+    if (!closed || !db)
+        return;
+    for (auto* statement : statements) {
+        if (statement->stmt)
+            return;
+    }
+    closeHandle();
+}

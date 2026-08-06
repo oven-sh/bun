@@ -25,7 +25,6 @@
 
 #include "JSSubtleCrypto.h"
 
-#include "DOMPromiseProxy.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "JSCryptoKey.h"
@@ -73,33 +72,6 @@
 
 namespace WebCore {
 using namespace JSC;
-
-String convertEnumerationToString(SubtleCrypto::KeyFormat enumerationValue)
-{
-    static const NeverDestroyed<String> values[] = {
-        MAKE_STATIC_STRING_IMPL("raw"),
-        MAKE_STATIC_STRING_IMPL("spki"),
-        MAKE_STATIC_STRING_IMPL("pkcs8"),
-        MAKE_STATIC_STRING_IMPL("jwk"),
-        MAKE_STATIC_STRING_IMPL("raw-secret"),
-        MAKE_STATIC_STRING_IMPL("raw-public"),
-        MAKE_STATIC_STRING_IMPL("raw-seed"),
-    };
-    static_assert(static_cast<size_t>(SubtleCrypto::KeyFormat::Raw) == 0, "SubtleCrypto::KeyFormat::Raw is not 0 as expected");
-    static_assert(static_cast<size_t>(SubtleCrypto::KeyFormat::Spki) == 1, "SubtleCrypto::KeyFormat::Spki is not 1 as expected");
-    static_assert(static_cast<size_t>(SubtleCrypto::KeyFormat::Pkcs8) == 2, "SubtleCrypto::KeyFormat::Pkcs8 is not 2 as expected");
-    static_assert(static_cast<size_t>(SubtleCrypto::KeyFormat::Jwk) == 3, "SubtleCrypto::KeyFormat::Jwk is not 3 as expected");
-    static_assert(static_cast<size_t>(SubtleCrypto::KeyFormat::RawSecret) == 4, "SubtleCrypto::KeyFormat::RawSecret is not 4 as expected");
-    static_assert(static_cast<size_t>(SubtleCrypto::KeyFormat::RawPublic) == 5, "SubtleCrypto::KeyFormat::RawPublic is not 5 as expected");
-    static_assert(static_cast<size_t>(SubtleCrypto::KeyFormat::RawSeed) == 6, "SubtleCrypto::KeyFormat::RawSeed is not 6 as expected");
-    ASSERT(static_cast<size_t>(enumerationValue) < std::size(values));
-    return values[static_cast<size_t>(enumerationValue)];
-}
-
-template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject, SubtleCrypto::KeyFormat enumerationValue)
-{
-    return jsStringWithCache(lexicalGlobalObject.vm(), convertEnumerationToString(enumerationValue));
-}
 
 static std::optional<SubtleCrypto::KeyFormat> parseKeyFormatFromString(const String& stringValue)
 {
@@ -903,13 +875,6 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, SubtleCrypto& impl)
 {
     return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-SubtleCrypto* JSSubtleCrypto::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSSubtleCrypto>(value))
-        return &wrapper->wrapped();
-    return nullptr;
 }
 
 }

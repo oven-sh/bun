@@ -813,7 +813,7 @@ pub struct CryptoHasherZig {
 
 /// Trait for the non-BoringSSL hash algorithms used by `CryptoHasherZig`.
 /// Implemented for each algo in `zig_crypto_algos` below.
-pub trait ZigHashAlgo: Default + Clone + 'static {
+trait ZigHashAlgo: Default + Clone + 'static {
     const ALGORITHM: evp::Algorithm;
     /// Shake128→16, Shake256→32, else the algorithm's digest length.
     const DIGEST_LENGTH: u8;
@@ -1194,15 +1194,6 @@ impl_static_hasher!(hashers::SHA512_256, "SHA512_256", JSSHA512_256, 32);
 pub struct StaticCryptoHasher<H: StaticHasher> {
     pub(crate) hashing: JsCell<H>,
     pub(crate) digested: Cell<bool>,
-}
-
-impl<H: StaticHasher> Default for StaticCryptoHasher<H> {
-    fn default() -> Self {
-        Self {
-            hashing: JsCell::new(H::init()),
-            digested: Cell::new(false),
-        }
-    }
 }
 
 impl<H: StaticHasher> StaticCryptoHasher<H> {

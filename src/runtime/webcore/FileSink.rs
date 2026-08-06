@@ -925,8 +925,10 @@ impl FileSink {
     }
 
     pub fn finalize(&mut self) {
-        // `.classes.ts` finalize — see PORTING.md §JSC. Runs during lazy sweep;
-        // must not touch live JS cells.
+        // Called from (a) `~JSFileSink` during lazy sweep, and (b) synchronously
+        // from `${name}__doClose` (prototype `.close()`). Must satisfy both
+        // contexts: no touching live JS cells (sweep), and no tearing down
+        // state that in-flight IO still needs (close).
 
         // Shutdown never unwinds the writer: the loop stops ticking, so the
         // `onWrite`/`onClose`/EOF callbacks that balance these refs can no
@@ -960,9 +962,8 @@ impl FileSink {
         // belongs to the wrapper it's about to be stored in, so no extra
         // `ref_()` there. Callers that allocate via `init`/`create` and then
         // `to_js()` must `deref()` once to release init's +1 (see
-        // `Blob::get_writer`).
-        self.readable_stream.set(readable_stream::Strong::default());
-        self.pending.set(streams::WritablePending::default());
+        // `Blob::get_writer`). `pending`/`readable_stream` are left for
+        // `deinit` (Box drop) since in-flight IO may still need them.
         self.js_sink_ref.with_mut(|r| r.deinit());
         // SAFETY: `&mut self` carries write provenance over the whole
         // allocation; this is the last use of `self` in `finalize`.
@@ -1130,13 +1131,13 @@ impl FileSink {
     /// and the caller must hold the last reference.
     unsafe fn deinit(this: *mut FileSink) {
         LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
-        // SAFETY: caller contract — `this` is valid and uniquely owned.
-        let self_ = unsafe { &mut *this };
         // pending/readable_stream/js_sink_ref are dropped by Box drop below.
-        if let Some(global) = self_.js_global() {
+        // SAFETY: caller contract — `this` is valid and uniquely owned; scoped shared access.
+        if let Some(global) = unsafe { (*this).js_global() } {
             // SAFETY: `bun_vm()` is non-null when `js_global()` returned Some.
             let vm = global.bun_vm().as_mut();
-            AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self_, vm);
+            // SAFETY: as above — shared borrow scoped to the unregister call.
+            AutoFlusher::unregister_deferred_microtask_with_type::<Self>(unsafe { &*this }, vm);
         }
         // SAFETY: `this` was produced by `heap::alloc` in the constructors.
         drop(unsafe { bun_core::heap::take(this) });
@@ -1547,50 +1548,18 @@ impl FileSink {
         self.readable_stream
             .set(readable_stream::Strong::init(*stream, global_this));
 
-        // Native ByteStream fast-path: wire SinkHandle directly, skip the JS pump.
-        if let Some(byte_stream) = stream.ptr.bytes() {
-            if byte_stream.sink.get().is_none() {
-                self.source
-                    .set(streams::SourceHandle::ByteStream(byte_stream));
-                byte_stream
-                    .sink
-                    .set(webcore::SinkHandle::FileSink(bun_ptr::BackRef::new_mut(
-                        self,
-                    )));
-                byte_stream.sink_paused.set(false);
-                stream.lock_native(global_this);
-                byte_stream.signal_consumer_attached();
-
-                if let Some(err) = byte_stream.take_pending_error() {
-                    byte_stream.sink.set(webcore::SinkHandle::None);
-                    self.end_from_stream(Some(err));
-                    return JSValue::UNDEFINED;
-                }
-
-                let buffered = byte_stream.drain();
-                let has_last = byte_stream.has_received_last_chunk.get();
-                if !buffered.is_empty() {
-                    let chunk = if has_last {
-                        streams::Result::OwnedAndDone(buffered)
-                    } else {
-                        streams::Result::Owned(buffered)
-                    };
-                    match self.write(&chunk) {
-                        streams::Writable::Backpressure(_) => byte_stream.sink_paused.set(true),
-                        streams::Writable::Done | streams::Writable::Err(_) => {
-                            byte_stream.sink.set(webcore::SinkHandle::None);
-                            self.source.set(streams::SourceHandle::None);
-                            let _ = self.end(None);
-                            return JSValue::UNDEFINED;
-                        }
-                        _ => {}
-                    }
-                }
-                if has_last {
-                    byte_stream.sink.set(webcore::SinkHandle::None);
-                    self.source.set(streams::SourceHandle::None);
-                    let _ = self.end(None);
-                } else {
+        // Native ByteStream/FileReader fast-path: wire the SinkHandle
+        // directly, skipping the JS pump.
+        match stream.wire_native_sink(
+            global_this,
+            webcore::SinkHandle::FileSink(bun_ptr::BackRef::new(&*self)),
+            JSValue::UNDEFINED,
+            |src| self.source.set(src),
+        ) {
+            readable_stream::NativeWireResult::Wired => {
+                // A synchronous producer may have driven `end_from_stream`
+                // (clears `source`) inline; no keepalive then.
+                if !matches!(self.source.get(), streams::SourceHandle::None) {
                     self.writer
                         .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
                     if !self.must_be_kept_alive_until_eof.get() {
@@ -1600,14 +1569,28 @@ impl FileSink {
                 }
                 return JSValue::UNDEFINED;
             }
-            // sink already attached: fall through to the JS pump.
+            readable_stream::NativeWireResult::EndedInline(err) => {
+                self.source.set(streams::SourceHandle::None);
+                match err {
+                    Some(err) => self.end_from_stream(Some(err)),
+                    None => {
+                        let _ = self.end(None);
+                    }
+                }
+                return JSValue::UNDEFINED;
+            }
+            readable_stream::NativeWireResult::NotNative => {}
         }
 
         // No per-wrapper +1 for the controller (only the transient `_guard`
         // above): the JS builtins always call `controller.end()`/`.close()`
         // (`${controller}__end/close` → `controller->detach()` → m_sinkPtr=null)
         // before GC, so the controller's dtor never reaches `finalize`.
-        let promise_result = JSSink::assign_to_stream(global_this, stream.value, self);
+        let promise_result = JSSink::assign_to_stream(
+            global_this,
+            stream.value,
+            core::ptr::NonNull::from(&mut *self),
+        );
 
         if let Some(err) = promise_result.to_error() {
             self.readable_stream.set(readable_stream::Strong::default());

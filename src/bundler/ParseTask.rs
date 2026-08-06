@@ -110,10 +110,9 @@ pub struct ParseTask {
     pub(crate) module_type: options::ModuleType,
     pub(crate) emit_decorator_metadata: bool,
     pub(crate) experimental_decorators: bool,
-    /// BACKREF (LIFETIMES.tsv) — written through in
-    /// `on_complete`. `None` only in the `default()` placeholder; every
-    /// scheduled task has it set via `init` / `bundle_v2.rs` write-sites.
+    pub(crate) use_define_for_class_fields: bool,
     pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>>>,
+    pub completion_ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
     // Borrows package_json (resolver arena); valid for the bundle pass.
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
@@ -132,7 +131,7 @@ pub enum ParseTaskStage {
 /// The information returned to the Bundler thread when a parse finishes.
 pub(crate) struct Result {
     pub(crate) task: EventLoop::Task,
-    pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>>,
+    pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>,
     pub(crate) value: ResultValue,
     pub(crate) watcher_data: WatcherData,
     /// This is used for native onBeforeParsePlugins to store
@@ -249,7 +248,8 @@ impl ParseTask {
         let ctx_ref = unsafe { bun_ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) };
         let known_target = ctx_ref.get().transpiler().options.target;
         ParseTask {
-            ctx: Some(ctx_ref),
+            ctx: Some(ctx_ref.shared()),
+            completion_ctx: Some(ctx_ref),
             path: resolve_result.path_pair.primary,
             contents_or_fd: ContentsOrFd::Fd {
                 dir: resolve_result.dirname_fd,
@@ -264,6 +264,7 @@ impl ParseTask {
             module_type: resolve_result.module_type,
             emit_decorator_metadata: resolve_result.flags.emit_decorator_metadata(),
             experimental_decorators: resolve_result.flags.experimental_decorators(),
+            use_define_for_class_fields: resolve_result.flags.use_define_for_class_fields(),
             package_version,
             package_name,
             known_target,
@@ -297,6 +298,7 @@ impl Default for ParseTask {
     fn default() -> Self {
         ParseTask {
             ctx: None,
+            completion_ctx: None,
             path: Fs::Path::init(b""),
             secondary_path_for_commonjs_interop: None,
             contents_or_fd: ContentsOrFd::Contents(b""),
@@ -319,6 +321,7 @@ impl Default for ParseTask {
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false,
             experimental_decorators: false,
+            use_define_for_class_fields: true,
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
@@ -530,6 +533,7 @@ pub mod parse_worker {
 
         let parse_task = ParseTask {
             ctx: None,
+            completion_ctx: None,
             path: Fs::Path::init_with_namespace(b"runtime", b"bun:runtime"),
             side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
             jsx: options::jsx::Pragma {
@@ -556,6 +560,7 @@ pub mod parse_worker {
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false,
             experimental_decorators: false,
+            use_define_for_class_fields: true,
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
@@ -858,7 +863,7 @@ pub mod parse_worker {
                     source,
                     Some(b"text/plain"),
                     None,
-                    topts.compile_to_standalone_html,
+                    topts.compile_mode.is_standalone_html(),
                 );
                 return Ok(ast);
             }
@@ -899,7 +904,7 @@ pub mod parse_worker {
                     source,
                     Some(b"text/html"),
                     None,
-                    topts.compile_to_standalone_html,
+                    topts.compile_mode.is_standalone_html(),
                 );
                 return Ok(ast);
             }
@@ -1318,7 +1323,7 @@ pub mod parse_worker {
                     source,
                     None,
                     Some(unique_key),
-                    topts.compile_to_standalone_html,
+                    topts.compile_mode.is_standalone_html(),
                 );
                 return Ok(ast);
             }
@@ -2437,6 +2442,7 @@ pub mod parse_worker {
         opts.features.minify_identifiers = topts.minify_identifiers;
         opts.features.minify_keep_names = topts.keep_names;
         opts.features.minify_whitespace = topts.minify_whitespace;
+        opts.use_define_for_class_fields = task.use_define_for_class_fields;
         opts.features.emit_decorator_metadata = task.emit_decorator_metadata;
         // emitDecoratorMetadata implies legacy/experimental decorators, as it only
         // makes sense with TypeScript's legacy decorator system (reflect-metadata).
@@ -2767,7 +2773,7 @@ pub mod parse_worker {
         };
 
         let result = Box::new(Result {
-            ctx: this.ctx.expect("ParseTask.ctx unset"),
+            ctx: this.completion_ctx.expect("ParseTask.completion_ctx unset"),
             task: EventLoop::Task::default(),
             value,
             // `ExternalFreeFunction`

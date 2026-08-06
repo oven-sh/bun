@@ -274,6 +274,7 @@ CPP_DECL JSC::EncodedJSValue JSC__JSValue__keys(JSC::JSGlobalObject* arg0, JSC::
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__values(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue arg1);
 CPP_DECL void JSC__JSValue__push(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL void JSC__JSValue__put(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, const ZigString* arg2, JSC::EncodedJSValue JSValue3);
+CPP_DECL void JSC__JSValue__putNonEnumerable(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, const ZigString* arg2, JSC::EncodedJSValue JSValue3);
 CPP_DECL void JSC__JSValue__putIndex(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, uint32_t arg2, JSC::EncodedJSValue JSValue3);
 CPP_DECL void JSC__JSValue__putRecord(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, ZigString* arg2, ZigString* arg3, size_t arg4);
 CPP_DECL bool JSC__JSValue__strictDeepEquals(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* arg2);
@@ -588,6 +589,23 @@ ZIG_DECL void FetchRequestBodySink__updateRef(void* arg0, bool arg1);
 BUN_DECLARE_HOST_FUNCTION(FetchRequestBodySink__write);
 #endif
 
+CPP_DECL JSC::EncodedJSValue HTMLRewriterSink__assignToStream(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1, void* arg2, void** arg3);
+CPP_DECL JSC::EncodedJSValue HTMLRewriterSink__createObject(JSC::JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
+CPP_DECL void* HTMLRewriterSink__fromJS(JSC::EncodedJSValue JSValue1);
+
+#ifdef __cplusplus
+
+ZIG_DECL JSC::EncodedJSValue HTMLRewriterSink__close(JSC::JSGlobalObject* arg0, void* arg1);
+BUN_DECLARE_HOST_FUNCTION(HTMLRewriterSink__construct);
+BUN_DECLARE_HOST_FUNCTION(HTMLRewriterSink__end);
+ZIG_DECL JSC::EncodedJSValue SYSV_ABI HTMLRewriterSink__endWithSink(void* arg0, JSC::JSGlobalObject* arg1);
+ZIG_DECL void HTMLRewriterSink__finalize(void* arg0);
+BUN_DECLARE_HOST_FUNCTION(HTMLRewriterSink__flush);
+BUN_DECLARE_HOST_FUNCTION(HTMLRewriterSink__start);
+ZIG_DECL void HTMLRewriterSink__updateRef(void* arg0, bool arg1);
+BUN_DECLARE_HOST_FUNCTION(HTMLRewriterSink__write);
+#endif
+
 #ifdef __cplusplus
 
 ZIG_DECL void Bun__WebSocketHTTPClient__cancel(WebSocketHTTPClient* arg0);
@@ -762,13 +780,13 @@ BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugTLS__onResolveStream);
 
 #endif
 
-#pragma mark - Bun__BodyValueBufferer
+#pragma mark - Bun__HTMLRewriter
 
 
 #ifdef __cplusplus
 
-BUN_DECLARE_HOST_FUNCTION(Bun__BodyValueBufferer__onRejectStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__BodyValueBufferer__onResolveStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTMLRewriter__onHandlerResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTMLRewriter__onHandlerReject);
 
 #endif
 
@@ -807,6 +825,9 @@ BUN_DECLARE_HOST_FUNCTION(Bun__FetchTasklet__onRejectRequestStream);
 
 BUN_DECLARE_HOST_FUNCTION(Bun__S3UploadStream__onResolveStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__S3UploadStream__onRejectStream);
+
+BUN_DECLARE_HOST_FUNCTION(Bun__HTMLRewriter__onResolveInputStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTMLRewriter__onRejectInputStream);
 
 
 #endif

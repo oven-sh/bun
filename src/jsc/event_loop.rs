@@ -23,7 +23,6 @@ use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 // Re-exports (thin re-exports of sibling/neighbor modules — do NOT inline
 // bodies). Kept so downstream `bun_jsc::event_loop::Foo` paths resolve.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_event_loop::AnyTask;
 pub use bun_event_loop::AnyTaskWithExtraContext;
 pub use bun_event_loop::ConcurrentTask::{
     self, ConcurrentTask as ConcurrentTaskItem, Queue as ConcurrentQueue,
@@ -147,6 +146,22 @@ mod drain_result {
 // the microtask queue through it is interior mutation invisible to Rust.
 unsafe extern "C" {
     safe fn JSC__JSGlobalObject__drainMicrotasks(global: &JSGlobalObject) -> u8;
+}
+
+impl JSGlobalObject {
+    /// Run one microtask checkpoint: `process.nextTick` callbacks, then the
+    /// JSC microtask queue, and nothing else. No timers, no I/O, no deferred
+    /// tasks, so this cannot re-enter the event loop.
+    ///
+    /// `Err` means JS was terminated; a termination exception is left pending.
+    pub fn drain_microtasks_and_next_ticks(&self) -> Result<(), JsTerminated> {
+        jsc::mark_binding();
+        match JSC__JSGlobalObject__drainMicrotasks(self) {
+            drain_result::SUCCESS => Ok(()),
+            drain_result::JS_TERMINATED => Err(JsTerminated::JSTerminated),
+            _ => unreachable!(),
+        }
+    }
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
@@ -513,8 +528,9 @@ impl EventLoop {
                 let _ = unsafe { bun_core::heap::take(dest) };
             }
 
-            // SAFETY: `task` is non-null (checked above) and owned by this batch.
-            let task_ref = unsafe { &mut *task };
+            // SAFETY: `task` is non-null (checked above) and owned by this
+            // batch; only shared reads follow (`auto_delete`, the `task` copy).
+            let task_ref = unsafe { &*task };
             if task_ref.auto_delete() {
                 to_destroy = Some(task);
             }
@@ -727,9 +743,9 @@ impl EventLoop {
     ///
     /// Tags `__bun_release_task_at_shutdown` doesn't claim are likewise
     /// re-queued so they remain reachable from the static-rooted VM box (the
-    /// pre-`532a5411961b` state). Consuming them silently here unhooked that
-    /// root and surfaced the boxes as direct leaks (e.g. `AnyTaskJob<_>`); the
-    /// definer can't safely dispatch every `AnyTask` callback at shutdown.
+    /// pre-`532a5411961b` state). Consuming them without freeing unhooked that
+    /// root and surfaced the boxes as direct leaks; the definer can't safely
+    /// dispatch every erased callback at shutdown.
     pub fn release_queued_tasks_for_shutdown(&mut self) {
         self.drop_concurrent_cpp_tasks();
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
@@ -752,7 +768,7 @@ impl EventLoop {
         // Free (don't run — running could re-enter the dying VM) queued
         // ManagedTask boxes. Other tags are left in place: they were re-queued
         // by `release_queued_tasks_for_shutdown` because their callback can't
-        // be no-op-dispatched safely (`AnyTask` callbacks call into JS) and
+        // be no-op-dispatched safely (some callbacks call into JS) and
         // their box may be aliased by the originator. Keeping them in
         // `self.tasks` (a field of the static-rooted `VirtualMachine` box that
         // is never `dealloc`'d) leaves the chain reachable to LSan — the same
@@ -858,9 +874,9 @@ impl EventLoop {
             // this would only occur if we were recursively running tickImmediateTasks.
             bun_core::hint::cold();
             // SAFETY: as above.
-            let r = unsafe { &mut *this };
-            let next = core::mem::take(&mut r.next_immediate_tasks);
-            r.immediate_tasks.extend_from_slice(&next);
+            let next = core::mem::take(unsafe { &mut (*this).next_immediate_tasks });
+            // SAFETY: as above.
+            unsafe { (*this).immediate_tasks.extend_from_slice(&next) };
         }
 
         if to_run_now.capacity() > 1024 * 128 {
@@ -1102,29 +1118,35 @@ impl EventLoop {
 
     pub fn tick_possibly_forever(&mut self) {
         let loop_ptr = self.usockets_loop();
-        // SAFETY: usockets_loop() returns a live uws loop for the VM lifetime.
-        let loop_ = unsafe { &mut *loop_ptr };
 
         #[cfg(unix)]
         {
             let pending_unref = self.vm_ref().take_pending_unref();
             if pending_unref > 0 {
-                loop_.unref_count(pending_unref);
+                // SAFETY: usockets_loop() returns a live uws loop for the VM
+                // lifetime; borrow scoped to this call.
+                unsafe { (*loop_ptr).unref_count(pending_unref) };
             }
         }
 
-        if !loop_.is_active() {
-            self.hold_forever_poll(loop_);
+        // SAFETY: as above.
+        if !unsafe { (*loop_ptr).is_active() } {
+            // SAFETY: as above; `hold_forever_poll` does not re-enter the loop.
+            self.hold_forever_poll(unsafe { &mut *loop_ptr });
         }
 
         self.process_gc_timer();
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
         // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
-        loop_.tick_with_timeout(
-            Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
-            uws::NOW_NS_UNKNOWN,
-        );
+        // SAFETY: as above — the tick runs loop callbacks that reach the loop
+        // themselves, so the exclusive borrow is scoped to this call only.
+        unsafe {
+            (*loop_ptr).tick_with_timeout(
+                Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
+                uws::NOW_NS_UNKNOWN,
+            )
+        };
 
         self.vm_ref().as_mut().on_after_event_loop();
         self.tick_concurrent();
@@ -1201,19 +1223,6 @@ extern "C" fn noop_forever_timer(_: *mut uws::Timer) {
     // do nothing
 }
 
-// HOST_EXPORT(Bun__EventLoop__runCallback1, c)
-pub fn event_loop_run_callback1(
-    global: &JSGlobalObject,
-    callback: JSValue,
-    this_value: JSValue,
-    arg0: JSValue,
-) {
-    global
-        .bun_vm()
-        .event_loop_mut()
-        .run_callback(callback, global, this_value, &[arg0]);
-}
-
 // HOST_EXPORT(Bun__EventLoop__runCallback2, c)
 pub fn event_loop_run_callback2(
     global: &JSGlobalObject,
@@ -1226,23 +1235,6 @@ pub fn event_loop_run_callback2(
         .bun_vm()
         .event_loop_mut()
         .run_callback(callback, global, this_value, &[arg0, arg1]);
-}
-
-// HOST_EXPORT(Bun__EventLoop__runCallback3, c)
-pub fn event_loop_run_callback3(
-    global: &JSGlobalObject,
-    callback: JSValue,
-    this_value: JSValue,
-    arg0: JSValue,
-    arg1: JSValue,
-    arg2: JSValue,
-) {
-    global.bun_vm().event_loop_mut().run_callback(
-        callback,
-        global,
-        this_value,
-        &[arg0, arg1, arg2],
-    );
 }
 
 // HOST_EXPORT(Bun__EventLoop__enter, c)

@@ -27,8 +27,6 @@ fn loop_sub_active(loop_: &mut Loop, value: u32) {
     loop_.active = loop_.active.saturating_sub(value);
 }
 
-bun_core::declare_scope!(KeepAlive, visible);
-
 #[cfg(not(windows))]
 use bun_sys::syslog;
 
@@ -208,7 +206,6 @@ pub enum PollTag {
     BufferedReader,
     DnsResolver,
     GetAddrInfoRequest,
-    Request,
     Process,
     ShellBufferedWriter,
     TerminalPoll,
@@ -231,7 +228,6 @@ pub mod poll_tag {
     pub const BUFFERED_READER: PollTag = PollTag::BufferedReader;
     pub const DNS_RESOLVER: PollTag = PollTag::DnsResolver;
     pub const GET_ADDR_INFO_REQUEST: PollTag = PollTag::GetAddrInfoRequest;
-    pub const REQUEST: PollTag = PollTag::Request;
     pub const PROCESS: PollTag = PollTag::Process;
     pub const SHELL_BUFFERED_WRITER: PollTag = PollTag::ShellBufferedWriter;
     pub const TERMINAL_POLL: PollTag = PollTag::TerminalPoll;
@@ -556,15 +552,6 @@ impl FilePoll {
             fd
         );
         poll
-    }
-
-    /// Allow a poll to keep the process alive.
-    pub fn ref_(&mut self, event_loop_ctx: EventLoopCtx) {
-        if self.flags.contains(Flags::Closed) {
-            return;
-        }
-        syslog!("ref");
-        self.enable_keeping_process_alive(event_loop_ctx);
     }
 
     pub fn register(&mut self, loop_: &mut Loop, flag: Flags, one_shot: bool) -> sys::Result<()> {

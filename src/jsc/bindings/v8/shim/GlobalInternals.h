@@ -2,6 +2,7 @@
 
 #include "BunClientData.h"
 #include <wtf/HashMap.h>
+#include <wtf/Vector.h>
 
 #include "../V8Isolate.h"
 #include "Oddball.h"
@@ -82,6 +83,14 @@ public:
 
     void setCurrentHandleScope(HandleScope* handleScope) { m_currentHandleScope = handleScope; }
 
+    WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>>& gcPrologueCallbacks() { return m_gcPrologueCallbacks; }
+    WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>>& gcEpilogueCallbacks() { return m_gcEpilogueCallbacks; }
+    WTF::Vector<std::pair<NearHeapLimitCallback, void*>>& nearHeapLimitCallbacks() { return m_nearHeapLimitCallbacks; }
+
+    // MakeWeak/ClearWeak bookkeeping: global-handle slot (in globalHandles()) to
+    // the parameter passed to MakeWeak.
+    WTF::HashMap<uintptr_t*, void*>& weakHandleParameters() { return m_weakHandleParameters; }
+
     Isolate* isolate() { return &m_isolate; }
 
     DECLARE_INFO;
@@ -99,6 +108,11 @@ private:
     HandleScope* m_currentHandleScope;
     WTF::HashMap<void*, EscapeReservation> m_escapeReservations;
     JSC::LazyProperty<GlobalInternals, HandleScopeBuffer> m_globalHandles;
+
+    WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>> m_gcPrologueCallbacks;
+    WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>> m_gcEpilogueCallbacks;
+    WTF::Vector<std::pair<NearHeapLimitCallback, void*>> m_nearHeapLimitCallbacks;
+    WTF::HashMap<uintptr_t*, void*> m_weakHandleParameters;
 
     Oddball m_undefinedValue;
     Oddball m_nullValue;

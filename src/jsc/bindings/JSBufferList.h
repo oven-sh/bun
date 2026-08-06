@@ -45,7 +45,6 @@ public:
     }
 
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
-    static void destroy(JSCell*) {}
 
     inline size_t length() { return m_deque.size(); }
     void push(JSC::VM& vm, JSC::JSValue v)
@@ -152,8 +151,6 @@ public:
     {
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
-
-    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSBufferListPrototype* prototype);
 
     // Must be defined for each specialization class.
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);

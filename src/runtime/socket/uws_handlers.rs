@@ -19,10 +19,10 @@ use bun_uws_sys::vtable::Handler as VHandler;
 use bun_uws_sys::{CloseCode, us_bun_verify_error_t, us_socket_t};
 
 use crate::api;
+use crate::ipc as IPC;
 use crate::valkey_jsc::js_valkey;
 use bun_http_jsc::websocket_client;
 use bun_http_jsc::websocket_client::websocket_upgrade_client;
-use bun_jsc::ipc as IPC;
 use bun_sql_jsc::mysql;
 use bun_sql_jsc::postgres;
 
@@ -455,7 +455,7 @@ where
 /// In Rust the "separate namespace" becomes a trait `NsSocketEvents` whose
 /// methods take `&mut Owner` as the first parameter; each driver's
 /// `SocketHandler<SSL>` zero-sized type implements it.
-pub trait NsSocketEvents<Owner, const SSL: bool> {
+trait NsSocketEvents<Owner, const SSL: bool> {
     fn on_open(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
         Ok(())
     }
@@ -719,27 +719,27 @@ impl VHandler for SpawnIPC {
 
     fn on_open(_ext: &mut Self::Ext, _s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {}
     fn on_data(ext: &mut Self::Ext, s: *mut us_socket_t, data: &[u8]) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = ext.owner_ref() else { return };
         IpcH::on_data(this, IpcS::from(s), data);
     }
     fn on_fd(ext: &mut Self::Ext, s: *mut us_socket_t, fd: c_int) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = ext.owner_ref() else { return };
         IpcH::on_fd(this, IpcS::from(s), fd);
     }
     fn on_writable(ext: &mut Self::Ext, s: *mut us_socket_t) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = ext.owner_ref() else { return };
         IpcH::on_writable(this, IpcS::from(s));
     }
     fn on_close(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = ext.owner_ref() else { return };
         IpcH::on_close(this, IpcS::from(s), code, reason);
     }
     fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = ext.owner_ref() else { return };
         IpcH::on_timeout(this, IpcS::from(s));
     }
     fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = ext.owner_ref() else { return };
         IpcH::on_end(this, IpcS::from(s));
     }
 }

@@ -117,7 +117,7 @@ impl Drop for HeadersRef {
 pub(crate) struct BodyAbortListener {
     signal: AbortSignalRef,
     /// `Response` owns `Box<Self>`, so a ref-counted pointer here would cycle.
-    response: bun_ptr::ParentRef<Response>,
+    response: bun_ptr::ParentRef<Response, bun_ptr::Mut>,
     global: GlobalRef,
 }
 
@@ -137,9 +137,16 @@ impl BodyAbortListener {
             response.get_body_value(),
             BodyValue::Used | BodyValue::Error(_) | BodyValue::Null | BodyValue::Empty
         ) {
-            if let Some(readable) = response.get_body_readable_stream(&global) {
-                readable.value.ensure_still_alive();
-                readable.error(&global, reason);
+            // Not `get_body_readable_stream`: its `js_ref()` path reads a raw
+            // JSValue to a wrapper that may be unmarked but not yet swept,
+            // reaching a `NewSource` box the source cell's (PreciseAllocation)
+            // destructor already freed. `Locked.readable` is a real `JSC::Weak`
+            // on the stream and reads `None` exactly when the box is gone.
+            if let BodyValue::Locked(locked) = response.get_body_value() {
+                if let Some(readable) = locked.readable.get(&global) {
+                    readable.value.ensure_still_alive();
+                    readable.error(&global, reason);
+                }
             }
             let err = BodyValueError::JSValue(bun_jsc::strong::Optional::create(reason, &global));
             // R-2: re-derive after `error()` ran JS.
@@ -398,6 +405,20 @@ impl Response {
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn get_init_headers_mut(&self) -> Option<&mut FetchHeaders> {
         self.init_mut().headers.as_deref_mut()
+    }
+
+    /// Deep-copy this response's init headers (if any) into a fresh
+    /// `HeadersRef`. Centralises the `FetchHeaders::clone_this` +
+    /// `HeadersRef::adopt` pair so callers stay `unsafe`-free.
+    #[inline]
+    pub(crate) fn clone_init_headers(
+        &self,
+        global: &JSGlobalObject,
+    ) -> JsResult<Option<HeadersRef>> {
+        match self.init_mut().headers.as_ref() {
+            Some(headers) => headers.clone_this(global),
+            None => Ok(None),
+        }
     }
 
     #[inline]
@@ -1418,7 +1439,8 @@ impl Init {
                 // SAFETY: `as_direct` returned a live `*mut Request` owned by the
                 // JS wrapper cell; the wrapper is rooted by `response_init` for
                 // the duration of this call, so no GC can finalize it here.
-                let req = unsafe { &mut *req };
+                // Everything touched is `&self`.
+                let req = unsafe { &*req };
                 if let Some(headers) = req.get_fetch_headers_unless_empty() {
                     result.headers = headers.clone_this(global_this)?;
                 }

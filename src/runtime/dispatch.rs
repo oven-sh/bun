@@ -24,7 +24,6 @@
 #[path = "dispatch_js2native.rs"]
 pub mod js2native;
 
-use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::ManagedTask::ManagedTask;
 use bun_event_loop::{Task, task_tag};
 
@@ -191,8 +190,7 @@ pub(crate) enum RunTaskResult {
 // Keeping `run_task` out-of-line lets `tick_queue_with_count` stay a tight
 // drain-loop wrapper (front-clustered via `src/startup.order`), and the cold
 // Shell*/Bake* clusters are further hoisted into [`run_task_cold`] so this
-// function's hot residue (AnyTask/ManagedTask/CppTask + fs/napi) fits in 1-2
-// pages.
+// hot dispatcher stays off their pages.
 #[inline(never)]
 pub(crate) fn run_task(
     task: Task,
@@ -251,13 +249,116 @@ pub(crate) fn run_task(
     // eligible, so const patterns work directly.
     match task.tag {
         // ── erased-callback tasks (low-tier types — real) ────────────────
-        task_tag::AnyTask => {
-            let any = cast!(AnyTask);
-            // `bun_event_loop::ErasedJsError` carries the discriminant; recover
-            // the real `JsError` so `Terminated` short-circuits correctly.
-            if let Err(err) = any.run() {
+        task_tag::AnyTaskJob => {
+            // SAFETY: §Dispatch — `task.ptr` is a live heap `AnyTaskJob<C>`
+            // enqueued by `AnyTaskJob::run_task`; the erased entry frees it.
+            if let Err(err) = unsafe { bun_jsc::any_task_job::dispatch_erased(task.ptr) } {
+                report_error_or_terminate(global, err)?;
+            }
+        }
+        task_tag::SendQueueDeferred => {
+            // SAFETY: §Dispatch — the queued pointer is the SendQueue root and
+            // the task owns a ref for its duration; `run_deferred` releases it.
+            unsafe { crate::ipc::SendQueue::run_deferred(cast_ptr!(crate::ipc::SendQueue)) };
+        }
+        task_tag::AsyncModule => {
+            // SAFETY: `AsyncModule::done` boxed it; the arm consumes the box.
+            bun_jsc::async_module::AsyncModule::on_done(unsafe {
+                bun_core::heap::take(cast_ptr!(bun_jsc::async_module::AsyncModule))
+            });
+        }
+        task_tag::BundleV2PluginResolve => {
+            // SAFETY: tag identifies pointee — a live `Resolve` owned by the
+            // plugin dispatch chain.
+            unsafe { &mut *cast_ptr!(bun_bundler::bundle_v2::api::JSBundler::Resolve) }
+                .run_on_js_thread();
+        }
+        task_tag::BundleV2PluginLoad => {
+            // SAFETY: tag identifies pointee — a live `Load` owned by the plugin
+            // dispatch chain.
+            unsafe { &mut *cast_ptr!(bun_bundler::bundle_v2::api::JSBundler::Load) }
+                .run_on_js_thread();
+        }
+        task_tag::JSBundleCompletionTask => {
+            if let Err(err) =
+                crate::api::js_bundle_completion_task::JSBundleCompletionTask::on_complete_anytask(
+                    cast_ptr!(crate::api::js_bundle_completion_task::JSBundleCompletionTask),
+                )
+            {
                 report_error_or_terminate(global, bun_jsc::JsError::from(err))?;
             }
+        }
+        task_tag::FetchTaskletPromiseSettle => {
+            // SAFETY: boxed at the fetch completion site; the arm consumes it.
+            let holder = unsafe {
+                bun_core::heap::take(cast_ptr!(
+                    crate::webcore::fetch::fetch_tasklet::FetchTaskletPromiseSettle
+                ))
+            };
+            holder.run()?;
+        }
+        task_tag::FileResponseStreamEof => {
+            let stream = cast_ptr!(crate::server::FileResponseStream);
+            // SAFETY: tag identifies pointee; `on_read_chunk` took a ref for
+            // this task at enqueue time which this guard adopts.
+            let _pin =
+                unsafe { bun_ptr::ScopedRef::<crate::server::FileResponseStream>::adopt(stream) };
+            // SAFETY: `stream` is live for this call (pinned above).
+            unsafe { (*stream).on_reader_done() };
+        }
+        task_tag::DuplexUpgradeContext => {
+            // SAFETY: tag identifies pointee; `run_event` may free the context,
+            // so it takes the raw pointer (no `&mut` at this boundary).
+            unsafe {
+                crate::socket::DuplexUpgradeContext::run_event(cast_ptr!(
+                    crate::socket::DuplexUpgradeContext
+                ))
+            };
+        }
+        #[cfg(windows)]
+        task_tag::WindowsNamedPipeContext => {
+            // Same shape as `DuplexUpgradeContext`: may free the context.
+            // SAFETY: tag identifies the pointee; the queue owns it until here.
+            unsafe {
+                crate::socket::WindowsNamedPipeContext::run_event(cast_ptr!(
+                    crate::socket::WindowsNamedPipeContext
+                ))
+            };
+        }
+        #[cfg(windows)]
+        task_tag::GetAddrInfoLibuvComplete => {
+            // SAFETY: boxed in `on_raw_libuv_complete`; the arm consumes it.
+            unsafe { bun_core::heap::take(cast_ptr!(crate::dns_jsc::LibuvCompleteHolder)) }.run();
+        }
+        task_tag::ValkeyDeferredClose => {
+            // SAFETY: boxed at the enqueue site; the arm consumes it.
+            unsafe {
+                bun_core::heap::take(cast_ptr!(crate::valkey_jsc::js_valkey::ValkeyDeferredClose))
+            }
+            .run();
+        }
+        task_tag::StatWatcherTimerUpdate => {
+            // SAFETY: boxed in `schedule_timer_update`; the arm consumes it.
+            unsafe {
+                bun_core::heap::take(cast_ptr!(
+                    crate::node::node_fs_stat_watcher::StatWatcherTimerUpdate
+                ))
+            }
+            .run();
+        }
+        task_tag::PasswordHashResult => {
+            crate::crypto::password_object::PasswordResult::<crate::crypto::password_object::HashOp>::run_from_js(
+                cast_ptr!(crate::crypto::password_object::PasswordResult<crate::crypto::password_object::HashOp>),
+            )?;
+        }
+        task_tag::PasswordVerifyResult => {
+            crate::crypto::password_object::PasswordResult::<
+                crate::crypto::password_object::VerifyOp,
+            >::run_from_js(cast_ptr!(
+                crate::crypto::password_object::PasswordResult<
+                    crate::crypto::password_object::VerifyOp,
+                >
+            ))?;
         }
         task_tag::ManagedTask => {
             // SAFETY: `task.ptr` was produced by `heap::alloc` in `ManagedTask::new`
@@ -403,6 +504,9 @@ pub(crate) fn run_task(
         task_tag::NativeZlib => compression_arm!(NativeZlib),
         task_tag::NativeBrotli => compression_arm!(NativeBrotli),
         task_tag::NativeZstd => compression_arm!(NativeZstd),
+        task_tag::CompressionStreamCoderTask => {
+            run_then_destroy!(work crate::webcore::compression_stream_coder::CompressionStreamCoderTask)
+        }
 
         // ── process / signals ────────────────────────────────────────────
         task_tag::ProcessWaiterThreadTask => {
@@ -481,8 +585,7 @@ pub(crate) fn run_task(
 /// Shell* / Bake* (and, when they land, Install*) tags are never seen during
 /// `bun <file>` startup or the `dot` benchmark, but their per-arm bodies pull
 /// in `bun_shell` / `bun_bake` call sites that LLVM otherwise interleaves with
-/// the hot AnyTask/ManagedTask/CppTask jump table. Splitting them behind a
-/// `#[cold]` boundary lets lld place this whole cluster after the
+/// the hot arms. The `#[cold]` boundary lets lld place this whole cluster after the
 /// front-clustered startup window (see `src/startup.order`).
 ///
 /// Returns `()` — none of the cold arms can fail or early-return; the caller
@@ -587,7 +690,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 96,
+    task_tag::COUNT == 111,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -677,8 +780,10 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
     match owner.tag() {
         poll_tag::BUFFERED_READER => poll_arm!(bun_io::BufferedReader, |h| {
             // SAFETY: tag matched, so `owner.ptr` is a live `*mut BufferedReader`
-            // set at `FilePoll::init`; exclusive for this dispatch.
-            unsafe { bun_io::BufferedReader::on_poll(&mut *h, size_or_offset as isize, hup) }
+            // set at `FilePoll::init`. Passed raw: `on_poll`'s read loops run
+            // user JS that can re-enter the reader, so no `&mut` may span the
+            // dispatch.
+            unsafe { bun_io::BufferedReader::on_poll(h, size_or_offset as isize, hup) }
         }),
         poll_tag::PROCESS => {
             // Bypass `owner_as!` (which yields `&mut`) — `Process` may be freed
@@ -728,23 +833,12 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
         poll_tag::GET_ADDR_INFO_REQUEST => {
             #[cfg(target_os = "macos")]
             {
-                let loader = owner.ptr.cast::<crate::dns_jsc::GetAddrInfoRequest>();
-                get_addr_info_request::BackendLibInfo::on_machport_change(loader);
+                let shared = owner.ptr.cast::<crate::dns_jsc::dns_sd::SharedConnection>();
+                crate::dns_jsc::dns_sd::SharedConnection::on_readable(shared);
             }
             #[cfg(not(target_os = "macos"))]
             {
-                debug_assert!(false, "GetAddrInfoRequest poll on non-mac");
-            }
-        }
-        poll_tag::REQUEST => {
-            #[cfg(target_os = "macos")]
-            {
-                let req = owner.ptr.cast::<crate::dns_jsc::internal::Request>();
-                crate::dns_jsc::internal::MacAsyncDNS::on_machport_change(req);
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                debug_assert!(false, "InternalDNSRequest poll on non-mac");
+                debug_assert!(false, "dns_sd SharedConnection poll on non-mac");
             }
         }
         poll_tag::TERMINAL_POLL => poll_arm!(TerminalPoll),
@@ -752,8 +846,8 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
         poll_tag::LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER => {
             poll_arm!(bun_io::BufferedReader, |h| {
                 // SAFETY: tag matched, so `owner.ptr` is a live `*mut BufferedReader`
-                // set at `FilePoll::init`; exclusive for this dispatch.
-                unsafe { bun_io::BufferedReader::on_poll(&mut *h, size_or_offset as isize, hup) }
+                // set at `FilePoll::init`. Passed raw (see BUFFERED_READER above).
+                unsafe { bun_io::BufferedReader::on_poll(h, size_or_offset as isize, hup) }
             })
         }
 
@@ -1000,6 +1094,22 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
             timer_arm!(UpgradedDuplex, event_loop_timer, |c, _now, _vm| (*c)
                 .on_timeout())
         }
+        EventLoopTimerTag::DnsSdConnection => {
+            #[cfg(target_os = "macos")]
+            {
+                timer_arm!(
+                    crate::dns_jsc::dns_sd::SharedConnection,
+                    early_out_timer,
+                    |c, _now, _vm| crate::dns_jsc::dns_sd::SharedConnection::on_early_out(c)
+                )
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                if cfg!(debug_assertions) {
+                    unreachable!("DnsSdConnection timer on non-macOS");
+                }
+            }
+        }
         // R-2: shared deref — `check_timeouts` re-enters via `ares_process_fd`.
         EventLoopTimerTag::DNSResolver => {
             timer_arm!(DNSResolver, event_loop_timer, |c, now, vm| {
@@ -1172,6 +1282,24 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             FetchTasklet::deref(task.ptr.cast::<FetchTasklet>());
             true
         }
+        task_tag::SendQueueDeferred => {
+            // SAFETY: `task.ptr` is the SendQueue root queued with a held ref.
+            unsafe {
+                crate::ipc::SendQueue::release_deferred_unrun(
+                    task.ptr.cast::<crate::ipc::SendQueue>(),
+                )
+            };
+            true
+        }
+        task_tag::FileResponseStreamEof => {
+            // SAFETY: `on_read_chunk` took a ref for the queued task; adopt it.
+            drop(unsafe {
+                bun_ptr::ScopedRef::<crate::server::FileResponseStream>::adopt(
+                    task.ptr.cast::<crate::server::FileResponseStream>(),
+                )
+            });
+            true
+        }
         // `AsyncFSTask`s are `Box::leak`'d in `create()` and freed by
         // `destroy()` (called from `run_from_js_thread`'s scopeguard).
         // `destroy()` resets `JSPromiseStrong` (touches the StrongRootBlock list)
@@ -1227,8 +1355,16 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             unsafe { Bun__deleteEventLoopTask(task.ptr.cast::<CppTask>()) };
             true
         }
+        // Queue presence means the work-pool phase finished and the queue
+        // owned the job; parking it would strand the ctx's native resources.
+        task_tag::AnyTaskJob => {
+            // SAFETY: every queued AnyTaskJob payload is the live heap job
+            // created by `AnyTaskJob::create`; we own it once popped.
+            unsafe { bun_jsc::any_task_job::release_erased(task.ptr) };
+            true
+        }
         // Re-queued by the caller; the box stays reachable from the
-        // static-rooted VM. Dispatching the type-erased `AnyTask` callback
+        // static-rooted VM queue, because running these callbacks
         // is not generally safe at shutdown (e.g. `AsyncModule::on_done`,
         // `dns::Holder::run` call straight into JS).
         _ => false,

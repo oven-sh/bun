@@ -412,37 +412,8 @@ void JSErrorEvent::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-// #if ENABLE(BINDING_INTEGRITY)
-// #if PLATFORM(WIN)
-// #pragma warning(disable : 4483)
-// extern "C" {
-// extern void (*const __identifier("??_7ErrorEvent@WebCore@@6B@")[])();
-// }
-// #else
-// extern "C" {
-// extern void* _ZTVN7WebCore10ErrorEventE[];
-// }
-// #endif
-// #endif
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<ErrorEvent>&& impl)
 {
-
-    //     if constexpr (std::is_polymorphic_v<ErrorEvent>) {
-    // #if ENABLE(BINDING_INTEGRITY)
-    //         // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-    // #if PLATFORM(WIN)
-    //         void* expectedVTablePointer = __identifier("??_7ErrorEvent@WebCore@@6B@");
-    // #else
-    //         // void* expectedVTablePointer = &_ZTVN7WebCore10ErrorEventE[2];
-    // #endif
-
-    //         // If you hit this assertion you either have a use after free bug, or
-    //         // ErrorEvent has subclasses. If ErrorEvent has subclasses that get passed
-    //         // to toJS() we currently require ErrorEvent you to opt out of binding hardening
-    //         // by adding the SkipVTableValidation attribute to the interface IDL definition
-    //         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-    // #endif
     return createWrapper<ErrorEvent>(globalObject, WTF::move(impl));
 }
 

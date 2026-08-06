@@ -1392,6 +1392,25 @@ nativeTests.test_threadsafe_function_orphan_leak = async () => {
   }
 };
 
+// When napi_create_threadsafe_function is given no JS func, the call_js
+// callback receives a null js_callback (addons test `if (js_callback != NULL)`).
+nativeTests.test_tsfn_null_js_callback_driver = async () => {
+  nativeTests.test_tsfn_null_js_callback();
+  for (let i = 0; i < 1000; i++) {
+    if (nativeTests.test_tsfn_null_js_callback_ran()) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  nativeTests.test_tsfn_null_js_callback_result();
+};
+
+// napi_reference_ref on a reference whose referent has been collected must
+// return 0 (and leave the count at 0) instead of incrementing.
+nativeTests.test_reference_ref_after_collect_driver = async gc => {
+  const ext = nativeTests.test_create_weak_ref_for_gc();
+  await gcUntil(() => nativeTests.test_weak_ref_is_collected(gc, ext));
+  nativeTests.test_reference_ref_after_collect(gc, ext);
+};
+
 // Microtasks queued by one threadsafe-function callback must be drained before
 // the next callback in the same dispatch, and not before the first one.
 nativeTests.test_threadsafe_function_microtask_order = async () => {

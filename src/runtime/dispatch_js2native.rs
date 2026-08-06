@@ -40,9 +40,6 @@ pub use bun_jsc::bindgen_test::get_bindgen_test_functions as jsc_bindgen_test_ge
 pub use bun_jsc::counters::create_counters_object as jsc_counters_create_counters_object;
 pub use bun_jsc::event_loop::get_active_tasks as jsc_event_loop_get_active_tasks;
 pub use bun_jsc::virtual_machine_exports::Bun__setSyntheticAllocationLimitForTesting as jsc_virtual_machine_exports_bun__set_synthetic_allocation_limit_for_testing;
-// `emit_handle_ipc_message` is implemented in this crate (`ipc_host.rs`)
-// because it dereferences `Subprocess`, a runtime type.
-pub(crate) use crate::ipc_host::emit_handle_ipc_message as jsc_ipc_emit_handle_ipc_message;
 
 pub use bun_jsc::bun_string_jsc::js_escape_reg_exp as string_escape_reg_exp_js_escape_reg_exp;
 pub use bun_jsc::bun_string_jsc::js_escape_reg_exp_for_package_name_matching as string_escape_reg_exp_js_escape_reg_exp_for_package_name_matching;

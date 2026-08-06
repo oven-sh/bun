@@ -74,12 +74,15 @@ describe.concurrent("security scanner workspaces", () => {
 
     await Bun.write(
       join(dir, "bunfig.toml"),
-      `[install]
-cache.disable = true
-registry = "${registryUrl}/"
-
-[install.security]
-scanner = "./scanner.js"`,
+      Bun.TOML.stringify({
+        install: {
+          cache: { disable: true },
+          registry: `${registryUrl}/`,
+          security: {
+            scanner: "./scanner.js",
+          },
+        },
+      }),
     );
 
     await using proc = Bun.spawn({
@@ -149,13 +152,16 @@ scanner = "./scanner.js"`,
 
     await Bun.write(
       join(dir, "bunfig.toml"),
-      `[install]
-cache.disable = true
-linker = "hoisted"
-registry = "${registryUrl}/"
-
-[install.security]
-scanner = "./scanner.js"`,
+      Bun.TOML.stringify({
+        install: {
+          cache: { disable: true },
+          linker: "hoisted",
+          registry: `${registryUrl}/`,
+          security: {
+            scanner: "./scanner.js",
+          },
+        },
+      }),
     );
 
     await using proc = Bun.spawn({
@@ -223,13 +229,16 @@ scanner = "./scanner.js"`,
 
     await Bun.write(
       join(dir, "bunfig.toml"),
-      `[install]
-cache.disable = true
-linker = "isolated"
-registry = "${registryUrl}/"
-
-[install.security]
-scanner = "./scanner.js"`,
+      Bun.TOML.stringify({
+        install: {
+          cache: { disable: true },
+          linker: "isolated",
+          registry: `${registryUrl}/`,
+          security: {
+            scanner: "./scanner.js",
+          },
+        },
+      }),
     );
 
     await using proc = Bun.spawn({

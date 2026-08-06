@@ -1234,13 +1234,6 @@ void WebSocket::didReceiveMessage(String&& message)
         return;
     }
 
-    // if (InspectorInstrumentation::hasFrontends()) [[unlikely]] {
-    //     if (auto* inspector = m_channel->channelInspector()) {
-    //         auto utf8Message = message.utf8();
-    //         inspector->didReceiveWebSocketFrame(WebSocketChannelInspector::createFrame(utf8Message.dataAsUInt8Ptr(), utf8Message.length(), WebSocketFrame::OpCode::OpCodeText));
-    //     }
-    // }
-
     if (this->hasEventListeners("message"_s)) {
         // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
         this->incPendingActivityCount();
@@ -1425,7 +1418,6 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
     if (m_state == CLOSED)
         return;
     const bool wasConnecting = m_state == CONNECTING;
-    m_state = CLOSED;
 
     // Native callback: state transitioned, hand off the close code.
     // Covers both connect-failure (didFailWithErrorCode →
@@ -1434,19 +1426,33 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
     // (disablePendingActivity) is the caller's job — didFailWithErrorCode
     // posts it after the switch.
     if (m_native.onClose) {
+        m_state = CLOSED;
         m_native.onClose(m_native.ctx, code);
         return;
     }
 
+    // Spec: queue a task to set CLOSED and fire the close event. The caller
+    // has already cleared m_connectedWebSocketKind, so move to CLOSING now
+    // to keep send()/ping()/pong() out of sendWebSocketData() with no kind.
+    m_state = CLOSING;
     if (auto* context = scriptExecutionContext()) {
+        const bool dispatchError = wasConnecting && isConnectionError;
         this->incPendingActivityCount();
-        if (wasConnecting && isConnectionError) {
-            auto eventInit = createErrorEventInit(*this, reason, context->jsGlobalObject());
-            dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
-        }
-        // https://html.spec.whatwg.org/multipage/web-sockets.html#feedback-from-the-protocol:concept-websocket-closed, we should synchronously fire a close event.
-        dispatchEvent(CloseEvent::create(wasClean == CleanStatus::Clean, code, reason));
-        this->decPendingActivityCount();
+        context->postTask([code, dispatchError, reason = WTF::move(reason), clean = wasClean == CleanStatus::Clean, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            if (protectedThis->m_state == CLOSED) {
+                protectedThis->decPendingActivityCount();
+                return;
+            }
+            protectedThis->m_state = CLOSED;
+            if (dispatchError) {
+                auto eventInit = createErrorEventInit(protectedThis, reason, context.jsGlobalObject());
+                protectedThis->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
+            }
+            protectedThis->dispatchEvent(CloseEvent::create(clean, code, reason));
+            protectedThis->decPendingActivityCount();
+        });
+    } else {
+        m_state = CLOSED;
     }
 }
 
@@ -1468,19 +1474,7 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
         return;
 
     // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, unhandledBufferedAmount, closingHandshakeCompletion, code, reason] {
-    // if (!m_channel)
-    //     return;
-
-    // if (InspectorInstrumentation::hasFrontends()) [[unlikely]] {
-    //     if (auto* inspector = m_channel->channelInspector()) {
-    //         WebSocketFrame closingFrame(WebSocketFrame::OpCodeClose, true, false, false);
-    //         inspector->didReceiveWebSocketFrame(closingFrame);
-    //         inspector->didCloseWebSocket();
-    //     }
-    // }
-
     bool wasClean = m_state == CLOSING && !unhandledBufferedAmount && code != 0; // WebSocketChannel::CloseEventCodeAbnormalClosure;
-    m_state = CLOSED;
     m_bufferedAmount = unhandledBufferedAmount;
     ASSERT(scriptExecutionContext());
     this->m_connectedWebSocketKind = ConnectedWebSocketKind::None;
@@ -1492,6 +1486,7 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
     // but the count should balance for the ASSERT below and any future
     // consumer of hasPendingActivity().
     if (m_native.onClose) {
+        m_state = CLOSED;
         m_native.onClose(m_native.ctx, code);
         disablePendingActivity();
         return;
@@ -1501,26 +1496,26 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
     // so we just call decPendingActivityCount() after dispatching the event
     ASSERT(m_pendingActivityCount > 0);
 
-    if (this->hasEventListeners("close"_s)) {
-        this->dispatchEvent(CloseEvent::create(wasClean, code, reason));
-
-        // we deinit if possible in the next tick
-        if (auto* context = scriptExecutionContext()) {
-            context->postTask([this, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-                ASSERT(scriptExecutionContext());
+    // Spec: queue a task to set CLOSED and fire the close event (#15665: this
+    // is reached synchronously from ws.close()). Kind is already None above,
+    // so move to CLOSING now to keep send()/ping()/pong() out of
+    // sendWebSocketData() with no kind until the task runs.
+    m_state = CLOSING;
+    if (auto* context = scriptExecutionContext()) {
+        context->postTask([code, wasClean, reason, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            ASSERT(protectedThis->scriptExecutionContext());
+            if (protectedThis->m_state == CLOSED) {
                 protectedThis->disablePendingActivity();
-            });
-            return;
-        }
-    } else if (auto* context = scriptExecutionContext()) {
-        context->postTask([this, code, wasClean, reason, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-            ASSERT(scriptExecutionContext());
+                return;
+            }
+            protectedThis->m_state = CLOSED;
             protectedThis->dispatchEvent(CloseEvent::create(wasClean, code, reason));
             protectedThis->disablePendingActivity();
         });
         return;
     }
 
+    m_state = CLOSED;
     this->disablePendingActivity();
 }
 
@@ -1718,7 +1713,7 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
     }
     }
 
-    // didReceiveClose already set m_state = CLOSED. The connect() ref
+    // didReceiveClose has queued the CLOSED transition. The connect() ref
     // kept us alive across the switch (including across the native
     // onClose callback dropping its RefPtr); release it from a task so
     // the caller's stack frame unwinds first. ContextDestructionObserver

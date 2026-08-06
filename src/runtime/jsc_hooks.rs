@@ -32,7 +32,7 @@ use bun_jsc::module_loader::{
 };
 use bun_jsc::resolved_source::OwnedResolvedSource;
 use bun_jsc::virtual_machine::{
-    InitOptions, RuntimeHooks, RuntimeState as OpaqueRuntimeState, VirtualMachine,
+    InitOptions, ResolveMode, RuntimeHooks, RuntimeState as OpaqueRuntimeState, VirtualMachine,
 };
 use bun_jsc::{
     AnyPromise, ErrorCode, ErrorableResolvedSource, ErrorableString, JSGlobalObject,
@@ -1338,7 +1338,7 @@ fn load_standalone_sourcemap(
 /// # Safety
 /// `global` is the live VM global; called on the JS thread inside an
 /// `event_loop.enter()` scope.
-unsafe fn handle_ipc_internal_child(global: *mut JSGlobalObject, data: JSValue) {
+pub(crate) unsafe fn handle_ipc_internal_child(global: *mut JSGlobalObject, data: JSValue) {
     // SAFETY: per fn contract.
     let global = unsafe { &*global };
     // Spec discards a JS exception here (`catch |err| switch (err) {
@@ -1356,7 +1356,7 @@ unsafe fn handle_ipc_internal_child(global: *mut JSGlobalObject, data: JSValue) 
 /// `IPCInstance.handleIPCClose`.
 ///
 /// Called on the JS thread (the `CHILD_SINGLETON` static is JS-thread-only).
-fn ipc_child_singleton_deinit() {
+pub(crate) fn ipc_child_singleton_deinit() {
     // `InternalMsgHolder`'s owned fields (`Strong`s, map, `Vec`) all impl
     // `Drop`; taking the `Option` runs them.
     // SAFETY: JS-thread-only mutable static (see `child_singleton()` doc).
@@ -1467,8 +1467,6 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     has_blob_url,
     body_mixin_get_blob,
     process_exit,
-    handle_ipc_internal_child,
-    ipc_child_singleton_deinit,
     console_on_before_print,
     console_print_runtime_object,
     load_standalone_sourcemap,
@@ -1627,6 +1625,8 @@ fn close_dns_for_terminate() {
     if let Some(gd) = unsafe { &(*state).global_dns_data }.get() {
         gd.resolver.close_channel_for_terminate();
     }
+    #[cfg(target_os = "macos")]
+    crate::dns_jsc::dns_sd::SharedConnection::close_for_terminate();
 }
 
 pub(crate) fn close_isolation_handles(vm: &mut VirtualMachine) {
@@ -1675,23 +1675,30 @@ pub(crate) fn close_isolation_handles(vm: &mut VirtualMachine) {
     }
 }
 
-/// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent)`.
+/// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent, next_test_id)`.
 /// When `TestReporter.enable` arrives after test
 /// collection has started, walk the already-discovered scope tree, assign
 /// debugger test IDs, and emit `reportTestFoundWithLocation` for each.
+/// Returns `next_test_id` advanced past every ID assigned (the caller writes
+/// it back into `TestReporterAgent::next_test_id`).
 ///
 /// # Safety
 /// `agent` is a live C++ `Inspector::TestReporterAgent::Handle*` (just stored
 /// into `debugger.test_reporter_agent.handle` by the caller). Called on the JS
 /// thread.
-unsafe fn retroactively_report_discovered_tests(agent: *mut bun_jsc::debugger::TestReporterHandle) {
+unsafe fn retroactively_report_discovered_tests(
+    agent: *mut bun_jsc::debugger::TestReporterHandle,
+    next_test_id: i32,
+) -> i32 {
     use crate::test_runner::bun_test::{DescribeScope, Phase, TestScheduleEntry};
     use crate::test_runner::jest::Jest;
     use bun_jsc::debugger::{TestReporterHandle, TestType};
 
-    let Some(runner) = Jest::runner() else { return };
+    let Some(runner) = Jest::runner() else {
+        return next_test_id;
+    };
     let Some(active_file) = runner.bun_test_root.active_file.as_ref() else {
-        return;
+        return next_test_id;
     };
     // SAFETY: single-threaded; `active_file` keeps the cell alive for this call.
     let active_file = unsafe { &mut *active_file.as_ptr() };
@@ -1700,7 +1707,7 @@ unsafe fn retroactively_report_discovered_tests(agent: *mut bun_jsc::debugger::T
     // discovered).
     match active_file.phase {
         Phase::Collection | Phase::Execution => {}
-        Phase::Done => return,
+        Phase::Done => return next_test_id,
     }
 
     // Get the file path for source location info.
@@ -1710,8 +1717,7 @@ unsafe fn retroactively_report_discovered_tests(agent: *mut bun_jsc::debugger::T
         .text();
     let mut source_url = bun_core::String::init(file_path);
 
-    // Track the maximum ID we assign.
-    let mut max_id: i32 = 0;
+    let mut max_id: i32 = next_test_id;
 
     // Recursively report all discovered tests starting from root scope.
     retroactively_report_scope(
@@ -1722,9 +1728,7 @@ unsafe fn retroactively_report_discovered_tests(agent: *mut bun_jsc::debugger::T
         &mut source_url,
     );
 
-    // A debug-only log of `max_id` was dropped here: `scoped_log!` only accepts
-    // an ident, so it can't name the scoped-logger static in `bun_jsc::debugger`.
-    let _ = max_id;
+    return max_id;
 
     fn retroactively_report_scope(
         agent: *mut TestReporterHandle,
@@ -2542,6 +2546,10 @@ fn transpile_source_code_inner(
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     experimental_decorators: unsafe {
                         (*jsc_vm).transpiler.options.experimental_decorators
+                    },
+                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                    use_define_for_class_fields: unsafe {
+                        (*jsc_vm).transpiler.options.use_define_for_class_fields
                     },
                     virtual_source,
                     dont_bundle_twice: true,
@@ -5079,9 +5087,8 @@ unsafe fn resolve_hook(
     specifier: bun_core::String,
     source: bun_core::String,
     query_string: *mut bun_core::String,
-    is_esm: bool,
+    mode: ResolveMode,
     is_a_file_path: bool,
-    is_user_require_resolve: bool,
 ) -> bool {
     use bun_ast::Target;
     use bun_jsc::ResolveMessage;
@@ -5103,13 +5110,7 @@ unsafe fn resolve_hook(
     if is_a_file_path && specifier.length() > MAX_SPECIFIER_LEN {
         let specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
-        let import_kind = if is_esm {
-            ImportKind::Stmt
-        } else if is_user_require_resolve {
-            ImportKind::RequireResolve
-        } else {
-            ImportKind::Require
-        };
+        let import_kind = mode.import_kind();
         let printed = ResolveMessage::fmt(
             specifier_utf8.slice(),
             source_utf8.slice(),
@@ -5164,10 +5165,10 @@ unsafe fn resolve_hook(
     }
 
     // Hardcoded builtin alias fast path. For
-    // `require.resolve("fs")` (`is_user_require_resolve && node_builtin`) Node
-    // returns the bare specifier as-is, not the canonical `node:fs`.
+    // `require.resolve("fs")` (`RequireResolve && node_builtin`) Node returns
+    // the bare specifier as-is, not the canonical `node:fs`.
     if let Some(hardcoded) = Alias::get(specifier_utf8.slice(), Target::Bun, AliasCfg::default()) {
-        let path = if is_user_require_resolve && hardcoded.node_builtin {
+        let path = if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
             specifier.dupe_ref()
         } else {
             bun_core::String::init(hardcoded.path.as_bytes())
@@ -5230,7 +5231,7 @@ unsafe fn resolve_hook(
             vm,
             specifier_utf8.slice(),
             normalize_source(source_utf8.slice()),
-            is_esm,
+            mode.is_esm(),
             is_a_file_path,
             &mut result_path,
             &mut result_query,
@@ -5245,13 +5246,7 @@ unsafe fn resolve_hook(
                 }
             }
 
-            let import_kind = if is_esm {
-                ImportKind::Stmt
-            } else if is_user_require_resolve {
-                ImportKind::RequireResolve
-            } else {
-                ImportKind::Require
-            };
+            let import_kind = mode.import_kind();
 
             let printed = ResolveMessage::fmt(
                 specifier_utf8.slice(),

@@ -96,7 +96,7 @@ use bun_core::Mutex;
 /// sha256(region, service, secret))`. The lock owns the data — the mutex
 /// wraps both `cache` and `date`.
 #[derive(Default)]
-pub struct AWSSignatureCache(Mutex<AWSSignatureCacheInner>);
+struct AWSSignatureCache(Mutex<AWSSignatureCacheInner>);
 
 #[derive(Default)]
 struct AWSSignatureCacheInner {
@@ -258,9 +258,6 @@ impl S3Credentials {
             + self.endpoint.len()
             + self.bucket.len()
     }
-
-    // `hash_const` DELETED — dead code (no callers). If
-    // resurrected: `bun_wyhash::hash_ascii_lowercase(0, acl)`.
 
     pub fn dupe(&self) -> IntrusiveRc<S3Credentials> {
         IntrusiveRc::new(S3Credentials {

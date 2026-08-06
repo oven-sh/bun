@@ -161,6 +161,8 @@ pub struct TSConfigJSON {
 
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
+    /// `None` = unset (keeps native [[Define]] class-field semantics).
+    pub use_define_for_class_fields: Option<bool>,
 }
 
 impl Default for TSConfigJSON {
@@ -176,6 +178,7 @@ impl Default for TSConfigJSON {
             preserve_imports_not_used_as_values: Some(false),
             emit_decorator_metadata: false,
             experimental_decorators: false,
+            use_define_for_class_fields: None,
         }
     }
 }
@@ -371,6 +374,7 @@ impl TSConfigJSON {
             let mut base_url_v: Option<&bun_ast::E::JsonValue> = None;
             let mut emit_decorator_metadata_v: Option<&bun_ast::E::JsonValue> = None;
             let mut experimental_decorators_v: Option<&bun_ast::E::JsonValue> = None;
+            let mut use_define_for_class_fields_v: Option<&bun_ast::E::JsonValue> = None;
             let mut jsx_factory_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
             let mut jsx_fragment_factory_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
             let mut jsx_v: Option<&bun_ast::E::JsonValue> = None;
@@ -390,6 +394,9 @@ impl TSConfigJSON {
                         }
                         b"experimentalDecorators" if experimental_decorators_v.is_none() => {
                             experimental_decorators_v = Some(value)
+                        }
+                        b"useDefineForClassFields" if use_define_for_class_fields_v.is_none() => {
+                            use_define_for_class_fields_v = Some(value)
                         }
                         b"jsxFactory" if jsx_factory_v.is_none() => {
                             jsx_factory_v = Some((value, loc))
@@ -433,6 +440,11 @@ impl TSConfigJSON {
             // Parse "experimentalDecorators"
             if let Some(&bun_ast::E::JsonValue::Boolean(val)) = experimental_decorators_v {
                 result.experimental_decorators = val;
+            }
+
+            // Parse "useDefineForClassFields"
+            if let Some(&bun_ast::E::JsonValue::Boolean(val)) = use_define_for_class_fields_v {
+                result.use_define_for_class_fields = Some(val);
             }
 
             // Parse "jsxFactory"

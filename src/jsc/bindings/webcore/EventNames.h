@@ -23,8 +23,6 @@
 
 // #include "ThreadGlobalData.h"
 #include "EventTarget.h"
-#include <array>
-#include <functional>
 #include <wtf/text/AtomString.h>
 
 namespace WebCore {
@@ -67,16 +65,9 @@ public:
     // FIXME: Inelegant to call these both event names and event types.
     // We should choose one term and stick to it.
     bool isWheelEventType(const AtomString& eventType) const;
-    bool isGestureEventType(const AtomString& eventType) const;
-    bool isTouchRelatedEventType(const AtomString& eventType, EventTarget&) const;
-    bool isTouchScrollBlockingEventType(const AtomString& eventType) const;
 #if ENABLE(GAMEPAD)
     bool isGamepadEventType(const AtomString& eventType) const;
 #endif
-
-    std::array<std::reference_wrapper<const AtomString>, 0> touchRelatedEventNames() const;
-    std::array<std::reference_wrapper<const AtomString>, 0> extendedTouchRelatedEventNames() const;
-    std::array<std::reference_wrapper<const AtomString>, 0> gestureEventNames() const;
 
 private:
     EventNames(); // Private to prevent accidental call to EventNames() instead of eventNames().
@@ -87,54 +78,9 @@ private:
 
 const EventNames& eventNames();
 
-inline bool EventNames::isGestureEventType(const AtomString& eventType) const
-{
-    return false; // eventType == gesturestartEvent || eventType == gesturechangeEvent || eventType == gestureendEvent;
-}
-
-inline bool EventNames::isTouchScrollBlockingEventType(const AtomString& eventType) const
-{
-    return false;
-}
-
-inline bool EventNames::isTouchRelatedEventType(const AtomString& eventType, EventTarget& target) const
-{
-    return false;
-}
-
 inline bool EventNames::isWheelEventType(const AtomString& eventType) const
 {
     return false;
 }
-
-inline std::array<std::reference_wrapper<const AtomString>, 0> EventNames::touchRelatedEventNames() const
-{
-    return { {} };
-}
-
-inline std::array<std::reference_wrapper<const AtomString>, 0> EventNames::extendedTouchRelatedEventNames() const
-{
-    return { {} };
-}
-
-inline std::array<std::reference_wrapper<const AtomString>, 0> EventNames::gestureEventNames() const
-{
-    return { {} };
-}
-
-// inline std::array<std::reference_wrapper<const AtomString>, 13> EventNames::touchRelatedEventNames() const
-// {
-//     return { { touchstartEvent, touchmoveEvent, touchendEvent, touchcancelEvent, touchforcechangeEvent, pointeroverEvent, pointerenterEvent, pointerdownEvent, pointermoveEvent, pointerupEvent, pointeroutEvent, pointerleaveEvent, pointercancelEvent } };
-// }
-
-// inline std::array<std::reference_wrapper<const AtomString>, 16> EventNames::extendedTouchRelatedEventNames() const
-// {
-//     return { { touchstartEvent, touchmoveEvent, touchendEvent, touchcancelEvent, touchforcechangeEvent, pointeroverEvent, pointerenterEvent, pointerdownEvent, pointermoveEvent, pointerupEvent, pointeroutEvent, pointerleaveEvent, pointercancelEvent, mousedownEvent, mousemoveEvent, mouseupEvent } };
-// }
-
-// inline std::array<std::reference_wrapper<const AtomString>, 3> EventNames::gestureEventNames() const
-// {
-//     return { { gesturestartEvent, gesturechangeEvent, gestureendEvent } };
-// }
 
 } // namespace WebCore

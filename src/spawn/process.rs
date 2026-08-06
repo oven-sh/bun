@@ -273,14 +273,17 @@ impl Process {
     ) {
         // SAFETY: caller contract — adopts the queued +1 ref.
         let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
-        // SAFETY: `_g` keeps `this` live for this block.
-        let self_ = unsafe { &mut *this };
-        if let Poller::WaiterThread(waiter) = &mut self_.poller {
-            let ctx = event_loop_handle_to_ctx(self_.event_loop);
-            waiter.unref(ctx);
-            self_.poller = Poller::Detached;
+        // SAFETY: `_g` keeps `this` live; `&mut` scoped to the poller unref.
+        unsafe {
+            if let Poller::WaiterThread(waiter) = &mut (*this).poller {
+                let ctx = event_loop_handle_to_ctx((*this).event_loop);
+                waiter.unref(ctx);
+                (*this).poller = Poller::Detached;
+            }
         }
-        self_.on_wait_pid(waitpid_result, rusage);
+        // SAFETY: `_g` keeps `this` live; `&mut` scoped to this call (which
+        // can fire the JS exit handler).
+        unsafe { (*this).on_wait_pid(waitpid_result, rusage) };
     }
 
     /// # Safety
@@ -404,18 +407,25 @@ impl Process {
                 core::ptr::NonNull::new(poll).expect("FilePoll::init returns a live hive slot"),
             );
             // SAFETY: poll is live; exclusive on this thread (event loop).
-            let fd = unsafe { &mut *poll };
-            fd.enable_keeping_process_alive(ctx);
+            // Borrow scoped to the call.
+            unsafe { (*poll).enable_keeping_process_alive(ctx) };
 
-            // SAFETY: `platform_event_loop` returns the live uws loop.
-            let loop_ = unsafe { &mut *self.event_loop.platform_event_loop() };
-            match fd.register(loop_, bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT) {
+            // SAFETY: poll is live and `platform_event_loop` returns the live
+            // uws loop; both `&mut`s are scoped to the `register` call.
+            match unsafe {
+                (*poll).register(
+                    &mut *self.event_loop.platform_event_loop(),
+                    bun_io::PollKind::Process,
+                    PROCESS_POLL_ONE_SHOT,
+                )
+            } {
                 Ok(()) => {
                     self.ref_();
                     Ok(())
                 }
                 Err(err) => {
-                    fd.disable_keeping_process_alive(ctx);
+                    // SAFETY: poll is live; borrow scoped to the call.
+                    unsafe { (*poll).disable_keeping_process_alive(ctx) };
                     Err(err)
                 }
             }
@@ -438,9 +448,13 @@ impl Process {
         }
 
         if let Some(fd) = self.poller.fd_poll_mut() {
-            // SAFETY: `platform_event_loop` returns the live uws loop.
-            let loop_ = unsafe { &mut *self.event_loop.platform_event_loop() };
-            let maybe = fd.register(loop_, bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT);
+            // SAFETY: `platform_event_loop` returns the live uws loop; borrow
+            // scoped to the `register` call.
+            let maybe = fd.register(
+                unsafe { &mut *self.event_loop.platform_event_loop() },
+                bun_io::PollKind::Process,
+                PROCESS_POLL_ONE_SHOT,
+            );
             if maybe.is_ok() {
                 self.ref_();
             }
@@ -918,7 +932,7 @@ pub mod waiter_thread_posix {
         pub(crate) js_process: ProcessQueue,
     }
 
-    pub type ProcessQueue = NewQueue<Process>;
+    type ProcessQueue = NewQueue<Process>;
 
     pub struct NewQueue<T: 'static> {
         pub(crate) queue: ConcurrentQueue<T>,
@@ -1076,11 +1090,12 @@ pub mod waiter_thread_posix {
         }
 
         pub(crate) fn loop_(&self) {
-            // SAFETY: the dedicated waiter thread is the only caller of
-            // `loop_` and the only code path that touches `active`; producers
-            // (`append`) only touch `self.queue`. No other `&mut` to this Vec
-            // can exist concurrently.
-            let active = unsafe { &mut *self.active.get() };
+            // The dedicated waiter thread is the only caller of `loop_` and
+            // the only code path that touches `active`; producers (`append`)
+            // only touch `self.queue`. Move the Vec out and work on it by
+            // value so no reference into the cell spans the loop body.
+            // SAFETY: sole accessor per above; the swap cannot race or alias.
+            let mut active = unsafe { core::ptr::replace(self.active.get(), Vec::new()) };
             {
                 let batch = self.queue.pop_batch();
                 active.reserve(batch.count);
@@ -1165,6 +1180,11 @@ pub mod waiter_thread_posix {
                     i += 1;
                 }
             }
+
+            // Put the (possibly reallocated) Vec back; the placeholder left by
+            // the swap above is empty and allocation-free.
+            // SAFETY: sole accessor per the comment at the top of this fn.
+            unsafe { *self.active.get() = active };
         }
     }
 
@@ -2282,7 +2302,7 @@ mod spawn_process_body {
             pub(crate) err: bun_sys::E,
             pub(crate) context: *mut SyncWindowsProcess,
             pub(crate) on_done_callback:
-                fn(*mut SyncWindowsProcess, OutFd, Vec<Box<[u8]>>, bun_sys::E),
+                fn(&mut SyncWindowsProcess, OutFd, Vec<Box<[u8]>>, bun_sys::E),
             pub(crate) tag: OutFd,
         }
 
@@ -2389,25 +2409,28 @@ mod spawn_process_body {
                     !this.is_null(),
                     "Expected SyncWindowsPipeReader to have data"
                 );
-                // SAFETY: this is valid until we destroy it below
-                let this_ref = unsafe { &mut *this };
-                let context = this_ref.context;
+                // SAFETY: this was heap-allocated in start(); libuv is done
+                // with the handle once the close callback fires, so reclaim
+                // ownership here.
+                let mut this = unsafe { bun_core::heap::take(this) };
+                let context = this.context;
                 // Move ownership of the chunk allocations out *before* dropping
                 // `this`, otherwise the callback would observe freed buffers.
                 // The chunk allocations survive to be freed later by
                 // `flatten_owned_chunks`.
-                let chunks: Vec<Box<[u8]>> = core::mem::take(&mut this_ref.chunks);
-                let err = if this_ref.err == bun_sys::E::CANCELED {
+                let chunks: Vec<Box<[u8]>> = core::mem::take(&mut this.chunks);
+                let err = if this.err == bun_sys::E::CANCELED {
                     bun_sys::E::SUCCESS
                 } else {
-                    this_ref.err
+                    this.err
                 };
-                let tag = this_ref.tag;
-                let on_done_callback = this_ref.on_done_callback;
-                // bun.default_allocator.destroy(this)
-                // SAFETY: this was heap-allocated in start(); reclaim and drop
-                drop(unsafe { bun_core::heap::take(this) });
-                on_done_callback(context, tag, chunks, err);
+                let tag = this.tag;
+                let on_done_callback = this.on_done_callback;
+                drop(this);
+                // SAFETY: `context` is the live `SyncWindowsProcess` that owns
+                // this reader (set in `spawn_windows_with_pipes`); the callback
+                // is non-reentrant field writes only.
+                on_done_callback(unsafe { &mut *context }, tag, chunks, err);
             }
 
             pub(crate) fn start(self: Box<Self>) -> Maybe<()> {
@@ -2504,21 +2527,19 @@ mod spawn_process_body {
             }
 
             pub(crate) fn on_reader_done(
-                this: *mut SyncWindowsProcess,
+                &mut self,
                 tag: OutFd,
                 chunks: Vec<Box<[u8]>>,
                 err: bun_sys::E,
             ) {
-                // SAFETY: this is valid (back-ref from SyncWindowsPipeReader)
-                let this = unsafe { &mut *this };
                 match tag {
-                    OutFd::Stderr => this.stderr = chunks,
-                    OutFd::Stdout => this.stdout = chunks,
+                    OutFd::Stderr => self.stderr = chunks,
+                    OutFd::Stdout => self.stdout = chunks,
                 }
                 if err != bun_sys::E::SUCCESS {
-                    this.err = err;
+                    self.err = err;
                 }
-                this.waiting_count -= 1;
+                self.waiting_count -= 1;
             }
         }
 

@@ -129,14 +129,14 @@ impl OutputFileList {
         // module_info is generated for ESM bytecode in --compile builds
         let module_info_count: usize = if c.options.generate_bytecode_cache
             && c.options.output_format == Format::Esm
-            && c.options.compile
+            && c.options.compile_mode.is_executable()
         {
             bytecode_count
         } else {
             0
         };
 
-        let additional_output_files_count: usize = if c.options.compile_to_standalone_html {
+        let additional_output_files_count: usize = if c.options.compile_mode.is_standalone_html() {
             0
         } else {
             parse_graph.additional_output_files.len()

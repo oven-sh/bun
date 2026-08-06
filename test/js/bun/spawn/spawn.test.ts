@@ -1252,6 +1252,7 @@ it.skipIf(isWindows)("leaves a caller-supplied stdout fd open when stdin stream 
     fstatSync(fd);
     writeSync(fd, "still-open");
     closeSync(fd);
+    Bun.gc(true);
     console.log(message);
     process.exit(0);
   `;
@@ -1261,6 +1262,7 @@ it.skipIf(isWindows)("leaves a caller-supplied stdout fd open when stdin stream 
     stdio: ["ignore", "pipe", "pipe"],
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   expect(stdout.trim()).toBe("pull unavailable");
   expect(readFileSync(file, "utf8")).toContain("still-open");
   expect(exitCode).toBe(0);
@@ -1293,6 +1295,7 @@ it.skipIf(isWindows)("leaves a Bun.file(fd) stdout open when stdin stream setup 
     fstatSync(fd);
     writeSync(fd, "still-open");
     closeSync(fd);
+    Bun.gc(true);
     console.log(message);
     process.exit(0);
   `;

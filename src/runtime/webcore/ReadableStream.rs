@@ -18,44 +18,49 @@ pub struct ReadableStream {
     pub ptr: Source,
 }
 
+/// Outcome of [`ReadableStream::wire_native_sink`].
+pub enum NativeWireResult {
+    /// The sink was installed on the native source; the source will call
+    /// `SinkHandle::end` itself when it's done.
+    Wired,
+    /// Not a native source (no `Bytes`/`File` backing, or it already has a
+    /// sink). Fall through to the JS-pump path.
+    NotNative,
+    /// The source was already done or errored. The sink was not left
+    /// installed; the caller runs its own end-of-stream handling.
+    EndedInline(Option<streams::StreamError>),
+}
+
 // ─── ReadableStream::Strong ──────────────────────────────────────────────────
 
 /// A `ReadableStream` handle for [`crate::webcore::body::PendingValue`] and the
-/// producers that feed it. `held` roots the stream as a GC root; `weak` stores
-/// the same JSValue after the owning wrapper's traced `m_stream` slot has taken
-/// ownership, so readers of `Locked.readable` keep working without the handle
-/// pinning the stream (and its captured async context) past the wrapper's
-/// lifetime.
-pub struct Strong {
-    held: bun_jsc::strong::Optional, // jsc.Strong.Optional = .empty
-    weak: JSValue,
+/// producers that feed it.
+#[derive(Default)]
+pub enum Strong {
+    #[default]
+    Empty,
+    /// GC-roots the stream.
+    Held(bun_jsc::Strong),
+    /// After [`Self::downgrade`]: the owning wrapper's `m_stream` `WriteBarrier`
+    /// roots the stream; observed through a real `JSC::Weak` so readers see
+    /// `None` once the stream (and its `Box<NewSource<_>>`) is collected.
+    Weak(bun_jsc::Weak<()>),
 }
 
 /// Re-export under the qualified name callers expect.
 pub type ReadableStreamStrong = Strong;
 
-impl Default for Strong {
-    fn default() -> Self {
-        Self {
-            held: bun_jsc::strong::Optional::empty(),
-            weak: JSValue::ZERO,
-        }
-    }
-}
-
 impl Strong {
     fn value(&self) -> Option<JSValue> {
-        self.held.get().or_else(|| {
-            if self.weak.is_empty() {
-                None
-            } else {
-                Some(self.weak)
-            }
-        })
+        match self {
+            Self::Empty => None,
+            Self::Held(s) => Some(s.get()),
+            Self::Weak(w) => w.get(),
+        }
     }
 
     pub(crate) fn has(&mut self) -> bool {
-        self.held.has() || !self.weak.is_empty()
+        self.value().is_some()
     }
 
     pub(crate) fn is_disturbed(&self, global: &JSGlobalObject) -> bool {
@@ -66,25 +71,20 @@ impl Strong {
     }
 
     pub(crate) fn init(this: ReadableStream, global: &JSGlobalObject) -> Strong {
-        Strong {
-            held: bun_jsc::strong::Optional::create(this.value, global),
-            weak: JSValue::ZERO,
-        }
+        Self::Held(bun_jsc::Strong::create(this.value, global))
     }
 
-    /// Release the GC root while keeping the JSValue readable for native
-    /// consumers. Caller must keep the stream alive elsewhere (the owning
-    /// `Request`/`Response` wrapper's `m_stream` `WriteBarrier` slot).
-    pub(crate) fn downgrade(&mut self) {
-        if let Some(value) = self.held.get() {
-            self.weak = value;
-            self.held.deinit();
+    /// Release the GC root while keeping the stream readable via `Weak`. The
+    /// owning wrapper's `m_stream` `WriteBarrier` keeps the stream alive from
+    /// here.
+    pub(crate) fn downgrade(&mut self, global: &JSGlobalObject) {
+        if let Self::Held(s) = self {
+            *self = Self::Weak(bun_jsc::Weak::create_passive(s.get(), global));
         }
     }
 
     pub(crate) fn deinit(&mut self) {
-        self.held.deinit();
-        self.weak = JSValue::ZERO;
+        *self = Self::Empty;
     }
 
     pub(crate) fn get(&self, global: &JSGlobalObject) -> Option<ReadableStream> {
@@ -95,17 +95,16 @@ impl Strong {
         None
     }
 
-    // deinit: body only calls held.deinit() → handled by Drop on bun_jsc::Strong.
-
     pub(crate) fn tee(&mut self, global: &JSGlobalObject) -> JsResult<Option<ReadableStream>> {
         if let Some(stream) = self.get(global) {
             let Some((first, second)) = stream.tee(global)? else {
                 return Ok(None);
             };
-            if self.held.has() {
-                self.held.set(global, first.value);
-            } else {
-                self.weak = first.value;
+            match self {
+                Self::Held(s) => s.set(global, first.value),
+                Self::Weak(_) | Self::Empty => {
+                    *self = Self::Weak(bun_jsc::Weak::create_passive(first.value, global))
+                }
             }
             return Ok(Some(second));
         }
@@ -306,6 +305,96 @@ impl ReadableStream {
     /// after `readStreamIntoSink` acquires a reader.
     pub fn lock_native(&self, global_object: &JSGlobalObject) {
         ReadableStream__lockNative(self.value, global_object);
+    }
+
+    /// Wire `sink` directly to this stream's native `ByteStream`/`FileReader`
+    /// source, skipping the JS pump. `set_source` is called with the matching
+    /// [`SourceHandle`](streams::SourceHandle) before the source is driven;
+    /// the source's `sinkOwner` slot is pointed at `owner_cell` (`owner`
+    /// belongs to the producer side). See [`NativeWireResult`] for caller
+    /// obligations.
+    pub fn wire_native_sink(
+        &self,
+        global: &JSGlobalObject,
+        sink: webcore::SinkHandle,
+        owner_cell: JSValue,
+        set_source: impl FnOnce(streams::SourceHandle),
+    ) -> NativeWireResult {
+        use streams::{SourceHandle, Start, StreamError, StreamResult, Writable};
+        use webcore::SinkHandle;
+
+        if let Some(byte_stream) = self.ptr.bytes() {
+            if byte_stream.sink.get().is_none() {
+                set_source(SourceHandle::ByteStream(byte_stream));
+                byte_stream.parent_const().set_sink_owner(owner_cell);
+                byte_stream.sink.set(sink);
+                byte_stream.sink_paused.set(false);
+                self.lock_native(global);
+                byte_stream.signal_consumer_attached();
+
+                if let Some(err) = byte_stream.take_pending_error() {
+                    byte_stream.sink.set(SinkHandle::None);
+                    return NativeWireResult::EndedInline(Some(err));
+                }
+
+                let buffered = byte_stream.take_buffer();
+                let had_last = byte_stream.has_received_last_chunk.get();
+                if !buffered.is_empty() {
+                    let chunk = if had_last {
+                        StreamResult::OwnedAndDone(buffered)
+                    } else {
+                        StreamResult::Owned(buffered)
+                    };
+                    match sink.write(&chunk) {
+                        Writable::Backpressure(_) => byte_stream.sink_paused.set(true),
+                        Writable::Done | Writable::Err(_) => {
+                            byte_stream.sink.set(SinkHandle::None);
+                            return NativeWireResult::EndedInline(None);
+                        }
+                        _ => {}
+                    }
+                }
+                if had_last {
+                    byte_stream.sink.set(SinkHandle::None);
+                    return NativeWireResult::EndedInline(None);
+                }
+                // Wake the producer after the older bytes are in the sink;
+                // any synchronous output routes through `on_data`.
+                if !byte_stream.sink_paused.get() {
+                    byte_stream.signal_drained();
+                }
+                return NativeWireResult::Wired;
+            }
+        }
+
+        if let Some(file_reader) = self.ptr.file() {
+            if !file_reader.done.get() && file_reader.sink.get().is_none() {
+                match file_reader.start_for_sink(global) {
+                    Some(Start::Err(e)) => {
+                        use bun_sys_jsc::SystemErrorJsc;
+                        let err_js = e.to_system_error().to_error_instance(global);
+                        err_js.ensure_still_alive();
+                        return NativeWireResult::EndedInline(Some(StreamError::JSValue(
+                            jsc::strong::Optional::create(err_js, global),
+                        )));
+                    }
+                    Some(Start::OwnedAndDone(bytes)) => {
+                        let _ = sink.write(&StreamResult::OwnedAndDone(bytes));
+                        return NativeWireResult::EndedInline(None);
+                    }
+                    Some(_) | None => {}
+                }
+                set_source(SourceHandle::FileReader(file_reader));
+                file_reader.parent_const().set_sink_owner(owner_cell);
+                file_reader.sink.set(sink);
+                file_reader.sink_paused.set(true);
+                self.lock_native(global);
+                file_reader.pull_into_sink();
+                return NativeWireResult::Wired;
+            }
+        }
+
+        NativeWireResult::NotNative
     }
 
     /// Decrement Source ref count and detach the underlying stream if ref count is zero
@@ -668,6 +757,10 @@ pub trait SourceContext: Sized {
     fn js_on_close_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
     /// `js_${NAME}InternalReadableStreamSource::on_close_callback_get_cached`
     fn js_on_close_callback_get_cached(this: JSValue) -> Option<JSValue>;
+    /// `js_${NAME}InternalReadableStreamSource::owner_set_cached`
+    fn js_owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
+    /// `js_${NAME}InternalReadableStreamSource::sink_owner_set_cached`
+    fn js_sink_owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
 
     fn on_start(&mut self) -> streams::Start;
     fn on_pull(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result;
@@ -787,6 +880,8 @@ pub(crate) trait NewSourceCodegen {
     fn on_drain_callback_get_cached(this: JSValue) -> Option<JSValue>;
     fn on_close_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
     fn on_close_callback_get_cached(this: JSValue) -> Option<JSValue>;
+    fn owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
+    fn sink_owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
 }
 
 /// Binds the `SourceContext::js_*` accessors to the codegen'd
@@ -841,6 +936,22 @@ macro_rules! source_context_codegen {
         ) -> Option<$crate::webcore::jsc::JSValue> {
             $crate::generated_classes::$gen::on_close_callback_get_cached(this)
         }
+        #[inline]
+        fn js_owner_set_cached(
+            this: $crate::webcore::jsc::JSValue,
+            global: &$crate::webcore::jsc::JSGlobalObject,
+            value: $crate::webcore::jsc::JSValue,
+        ) {
+            $crate::generated_classes::$gen::owner_set_cached(this, global, value)
+        }
+        #[inline]
+        fn js_sink_owner_set_cached(
+            this: $crate::webcore::jsc::JSValue,
+            global: &$crate::webcore::jsc::JSGlobalObject,
+            value: $crate::webcore::jsc::JSValue,
+        ) {
+            $crate::generated_classes::$gen::sink_owner_set_cached(this, global, value)
+        }
     };
 }
 
@@ -869,6 +980,12 @@ impl<C: SourceContext> NewSourceCodegen for NewSource<C> {
     fn on_close_callback_get_cached(this: JSValue) -> Option<JSValue> {
         C::js_on_close_callback_get_cached(this)
     }
+    fn owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
+        C::js_owner_set_cached(this, global, value)
+    }
+    fn sink_owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
+        C::js_sink_owner_set_cached(this, global, value)
+    }
 }
 
 // Enforce the layout invariant `from_js`/`Source` rely on.
@@ -877,6 +994,23 @@ const _: () = assert!(core::mem::offset_of!(NewSource<ByteStream>, context) == 0
 const _: () = assert!(core::mem::offset_of!(NewSource<FileReader>, context) == 0);
 
 impl<C: SourceContext> NewSource<C> {
+    /// Point the `owner` slot at the GC cell of the peer producing into this
+    /// source (its `producer` backref), so rooting the source roots the
+    /// producer. `JSValue::UNDEFINED` clears; no-op without a JS wrapper.
+    pub fn set_owner(&self, value: JSValue) {
+        if let Some(this) = self.this_jsvalue.try_get() {
+            <Self as NewSourceCodegen>::owner_set_cached(this, self.global_this(), value);
+        }
+    }
+
+    /// Same as [`Self::set_owner`] for the `sinkOwner` slot: roots the peer
+    /// this source pipes into (its `sink` backref).
+    pub fn set_sink_owner(&self, value: JSValue) {
+        if let Some(this) = self.this_jsvalue.try_get() {
+            <Self as NewSourceCodegen>::sink_owner_set_cached(this, self.global_this(), value);
+        }
+    }
+
     /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global_this`
     /// back-pointer. `global_this` is stored from a live `&JSGlobalObject` at
     /// construction (or reassigned in `start()` from a fresh live one); the

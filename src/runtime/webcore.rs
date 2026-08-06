@@ -13,6 +13,8 @@ pub mod bake_response;
 pub mod byte_blob_loader;
 #[path = "webcore/ByteStream.rs"]
 pub mod byte_stream;
+#[path = "webcore/CompressionStreamCoder.rs"]
+pub mod compression_stream_coder;
 #[path = "webcore/CookieMap.rs"]
 pub mod cookie_map;
 #[path = "webcore/Crypto.rs"]
@@ -240,11 +242,7 @@ pub use request::Request;
 
 #[path = "webcore/ReadableStream.rs"]
 pub mod readable_stream;
-pub use readable_stream::{
-    NewSource as ReadableStreamNewSource, ReadableStream, ReadableStreamStrong,
-    Source as ReadableStreamSource, SourceContext as ReadableStreamSourceContext,
-    Tag as ReadableStreamTag,
-};
+pub use readable_stream::ReadableStream;
 
 #[path = "webcore/FileReader.rs"]
 pub mod file_reader;
@@ -355,17 +353,19 @@ pub enum PathOrFileDescriptor {
 // ─── SinkHandle ──────────────────────────────────────────────────────────────
 // Held by ByteStream; dispatches write()/end() to the native sink.
 
-pub type SinkWriteFn = fn(ctx: *mut core::ffi::c_void, data: &streams::Result) -> streams::Writable;
-
 #[derive(Copy, Clone, Default)]
 pub enum SinkHandle {
     #[default]
     None,
     ServerResponse(crate::server::AnyRequestContext),
-    FetchRequestBody(bun_ptr::BackRef<fetch::FetchRequestBodySink>),
-    S3Upload(bun_ptr::BackRef<streams::NetworkSink>),
+    FetchRequestBody(bun_ptr::BackRef<fetch::FetchRequestBodySink, bun_ptr::Mut>),
+    S3Upload(bun_ptr::BackRef<streams::NetworkSink, bun_ptr::Mut>),
     FileSink(bun_ptr::BackRef<file_sink::FileSink>),
-    ValueBufferer(*mut core::ffi::c_void, SinkWriteFn),
+    HTMLRewriter(bun_ptr::BackRef<crate::api::html_rewriter::RewriterPipe>),
+    HttpResponse(bun_ptr::BackRef<streams::HTTPResponseSink, bun_ptr::Mut>),
+    HttpsResponse(bun_ptr::BackRef<streams::HTTPSResponseSink, bun_ptr::Mut>),
+    H3Response(bun_ptr::BackRef<streams::H3ResponseSink, bun_ptr::Mut>),
+    ArrayBuffer(bun_ptr::BackRef<sink::ArrayBufferSink, bun_ptr::Mut>),
 }
 
 impl SinkHandle {
@@ -390,7 +390,15 @@ impl SinkHandle {
             // SAFETY: live backref; ByteStream clears sink before free.
             SinkHandle::S3Upload(mut p) => unsafe { p.get_mut() }.write(data),
             SinkHandle::FileSink(p) => p.write(data),
-            SinkHandle::ValueBufferer(ctx, write) => write(ctx, data),
+            SinkHandle::HTMLRewriter(p) => p.write(data),
+            // SAFETY: live backref; transform detaches before the JSSink is finalized.
+            SinkHandle::HttpResponse(mut p) => unsafe { p.get_mut() }.write(data),
+            // SAFETY: live backref; transform detaches before the JSSink is finalized.
+            SinkHandle::HttpsResponse(mut p) => unsafe { p.get_mut() }.write(data),
+            // SAFETY: live backref; transform detaches before the JSSink is finalized.
+            SinkHandle::H3Response(mut p) => unsafe { p.get_mut() }.write(data),
+            // SAFETY: live backref; transform detaches before the JSSink is finalized.
+            SinkHandle::ArrayBuffer(mut p) => unsafe { p.get_mut() }.write(data),
         }
     }
 
@@ -406,11 +414,11 @@ impl SinkHandle {
             // Raw-ptr dispatch: may re-borrow and free the sink (see its doc).
             SinkHandle::S3Upload(p) => streams::NetworkSink::end_from_stream(p.as_ptr(), err),
             SinkHandle::FileSink(p) => p.end_from_stream(err),
-            SinkHandle::ValueBufferer(ctx, write) => {
-                if let Some(e) = err {
-                    let _ = write(ctx, &streams::Result::Err(e));
-                }
-            }
+            SinkHandle::HTMLRewriter(p) => p.end_from_stream(err),
+            SinkHandle::HttpResponse(_) => {}
+            SinkHandle::HttpsResponse(_) => {}
+            SinkHandle::H3Response(_) => {}
+            SinkHandle::ArrayBuffer(_) => {}
         }
     }
 }

@@ -1,6 +1,6 @@
 import { randomUUIDv7, SQL } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { tempDir } from "harness";
+import { isDebug, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -2014,7 +2014,9 @@ describe("Memory and resource management", () => {
 
     await sql`CREATE TABLE stmt_test (id INTEGER PRIMARY KEY, value TEXT)`;
 
-    const iterations = 10000;
+    // Debug+ASAN builds run 10-100x slower; 10k awaited inserts blow the
+    // default test timeout there.
+    const iterations = isDebug ? 1000 : 10000;
 
     for (let i = 0; i < iterations; i++) {
       await sql`INSERT INTO stmt_test (id, value) VALUES (${i}, ${"test" + i})`;
@@ -5401,5 +5403,22 @@ describe("Unicode & Encoding Fuzzing Tests", () => {
       expect(result[0].text_data).toBe(text);
       expect(Buffer.from(result[0].blob_data).toString()).toBe(text);
     }
+  });
+});
+
+describe("filenames with embedded null bytes", () => {
+  test("are rejected instead of truncated at the null byte", async () => {
+    using dir = tempDir("sql-nul-path", {});
+    await using sql = new SQL({ adapter: "sqlite", filename: join(String(dir), "db3\0zz.sqlite") });
+    let error: Error | null = null;
+    try {
+      await sql`select 1`;
+    } catch (e) {
+      error = e as Error;
+    }
+    expect(error).not.toBeNull();
+    expect(error!.message).toContain("The database path must not contain null bytes");
+    // Without the guard, sqlite silently created the truncated path "db3".
+    expect(existsSync(join(String(dir), "db3"))).toBe(false);
   });
 });

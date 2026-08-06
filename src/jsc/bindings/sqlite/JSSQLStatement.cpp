@@ -1413,6 +1413,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
     auto extensionString = extension.toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
+    if (extensionString.find('\0') != WTF::notFound) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "The extension path must not contain null bytes"_s));
+        return {};
+    }
+
     sqlite3* db = versionDB->handle();
     if (!db) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Can't do this on a closed database"_s));
@@ -1777,6 +1782,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
     String path = pathValue.toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(topExceptionScope, JSValue::encode(jsUndefined()));
     (void)topExceptionScope.tryClearException();
+    if (path.find('\0') != WTF::notFound) [[unlikely]] {
+        // utf8().data() below is a C string, so an embedded NUL would
+        // silently truncate the path sqlite opens while db.filename keeps
+        // the full string.
+        throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "The database path must not contain null bytes"_s));
+        return {};
+    }
     int openFlags = DEFAULT_SQLITE_FLAGS;
     if (callFrame->argumentCount() > 1) {
         JSValue flags = callFrame->argument(1);

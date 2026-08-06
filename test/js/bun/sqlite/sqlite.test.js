@@ -2575,3 +2575,41 @@ it("exec/run with an embedded NUL byte in the SQL string does not hang", async (
     exitCode: 0,
   });
 });
+
+describe("paths with embedded null bytes", () => {
+  it("new Database() rejects them instead of truncating at the null byte", () => {
+    using dir = tempDir("sqlite-nul-path", {});
+    expect(() => new Database(path.join(String(dir), "db1\0zz.sqlite"))).toThrow(
+      "The database path must not contain null bytes",
+    );
+    // Without the guard, sqlite silently created the truncated path "db1".
+    expect(readdirSync(String(dir))).toEqual([]);
+  });
+
+  it("cannot open a different file than the one the JS string names", () => {
+    using dir = tempDir("sqlite-nul-suffix", {});
+    const real = path.join(String(dir), "real.sqlite");
+    {
+      const db = new Database(real);
+      db.run("CREATE TABLE s (v TEXT)");
+      db.run("INSERT INTO s VALUES ('secret')");
+      db.close();
+    }
+    // Without the guard, this opened real.sqlite even though the JS string
+    // ends with ".tmp".
+    expect(() => new Database(real + "\0.tmp", { readonly: true })).toThrow(
+      "The database path must not contain null bytes",
+    );
+  });
+
+  it("loadExtension() rejects them", () => {
+    const db = new Database(":memory:");
+    try {
+      expect(() => db.loadExtension("does-not-exist\0.so")).toThrow(
+        "The extension path must not contain null bytes",
+      );
+    } finally {
+      db.close();
+    }
+  });
+});

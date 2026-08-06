@@ -3137,9 +3137,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
       });
     }
   } else if (address.includes("\0") && address.charCodeAt(0) !== 0) {
-    // Match libuv (uv_pipe_connect2): a non-abstract path with an interior NUL
-    // would be silently truncated at the NUL by the kernel and connect a
-    // different socket.
+    // Interior NUL in a non-abstract path: EINVAL, as libuv's uv_pipe_connect2.
     err = UV_EINVAL;
   } else {
     const req: any = {};
@@ -3843,10 +3841,8 @@ Server.prototype[kRealListen] = function (
   // semantics itself, so the server option is consumed in JS only.
   if (path) {
     if (path.includes("\0") && path.charCodeAt(0) !== 0) {
-      // Match libuv (uv_pipe_bind2): a non-abstract path with an interior NUL
-      // would be silently truncated at the NUL by the kernel and bind a
-      // different socket. formatListenError rewrites this into Node's
-      // "listen EINVAL: invalid argument <path>".
+      // Interior NUL in a non-abstract path: EINVAL, as libuv's uv_pipe_bind2;
+      // formatListenError rewrites this into Node's listen error message.
       const err: any = new Error();
       err.code = "EINVAL";
       err.errno = UV_EINVAL;

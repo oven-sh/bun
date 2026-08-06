@@ -1,10 +1,5 @@
 // This file contains functions used for the CommonJS module loader
 
-$getter;
-export function main() {
-  return $requireMap.$get(Bun.main);
-}
-
 // This function is bound when constructing instances of CommonJSModule
 $visibility = "Private";
 export function require(this: JSCommonJSModule, _: string) {

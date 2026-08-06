@@ -25,6 +25,8 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(functionJSCommonJSModule_compile);
 
+JSC::JSValue resolveMainCommonJSModule(Zig::GlobalObject* globalObject);
+
 void populateESMExports(
     JSC::JSGlobalObject* globalObject,
     JSC::JSValue result,

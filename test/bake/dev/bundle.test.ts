@@ -865,3 +865,74 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
   },
 });
+// A TOML dotted header builds an object nested arbitrarily deep without
+// recursing in the parser, so the printer's recursion guard is the first thing
+// to hit it. The failed part used to join the incremental graph as empty code
+// (imports from it were silently undefined); debug builds crashed on an assert
+// in finalizeBundle instead.
+devTest("module that fails to print becomes a per-file error instead of an empty module", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import config from "./deep.toml";
+      console.log("value: " + config.d);
+    `,
+    "deep.toml": "[" + Buffer.alloc(200_000, "a.").toString() + "a]\nd = 1\n",
+  },
+  async test(dev) {
+    const printError = "deep.toml: error: Maximum call stack size exceeded while generating code for this file";
+
+    await using c = await dev.client("/", {
+      errors: [printError],
+    });
+
+    // The dev server must survive the failed bundle and recover once the
+    // file becomes printable. `errors: null` skips the overlay check: the
+    // error page is being replaced by the reload at that moment.
+    await c.expectReload(async () => {
+      await dev.write("deep.toml", "d = 1\n", { dedent: false, errors: null });
+    });
+    await c.expectMessage("value: 1");
+
+    // Re-introduce the failure on an already-bundled file (hot update path).
+    // The loaded route reloads into the error page.
+    await c.expectReload(async () => {
+      await dev.write("deep.toml", "[" + Buffer.alloc(200_000, "a.").toString() + "a]\nd = 2\n", {
+        dedent: false,
+        errors: null,
+      });
+    });
+    // The client's reload triggered the re-bundle; this request settles with it.
+    const errorPage = await dev.fetch("/");
+    expect(errorPage.status).toBe(500);
+    expect(await errorPage.text()).toContain("Build Failed");
+    await c.expectErrorOverlay([printError]);
+
+    await c.expectReload(async () => {
+      await dev.write("deep.toml", "d = 3\n", { dedent: false, errors: null });
+    });
+    await c.expectMessage("value: 3");
+  },
+});
+devTest("server module that fails to print becomes a per-file error", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import config from "../deep.toml";
+      export default function (req, meta) {
+        return new Response("value: " + config.d);
+      }
+    `,
+    "deep.toml": "[" + Buffer.alloc(200_000, "a.").toString() + "a]\nd = 1\n",
+  },
+  async test(dev) {
+    const errorPage = await dev.fetch("/");
+    expect(errorPage.status).toBe(500);
+    expect(await errorPage.text()).toContain("Build Failed");
+
+    await dev.write("deep.toml", "d = 1\n", { dedent: false });
+    await dev.fetch("/").equals("value: 1");
+  },
+});

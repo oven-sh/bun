@@ -3988,6 +3988,47 @@ pub(super) fn finalize_bundle(
         .zip(js_chunk.compile_results_for_chunk.iter())
     {
         let index = part_range.source_index;
+        // A part that failed to print (e.g. the printer's recursion guard
+        // tripped on a deeply nested AST) must not enter the incremental
+        // graph as empty code. Route it through the same per-file failure
+        // path as a parse error so the error overlay reports it and the
+        // file rebuilds once edited.
+        if let bundler::CompileResult::Javascript {
+            result: bun_js_printer::PrintResult::Err(err),
+            ..
+        } = compile_result
+        {
+            let source = &ctx.sources[index.get() as usize];
+            let mut log = Log::init();
+            match err {
+                bun_js_printer::Error::StackOverflow => log.add_error(
+                    Some(source),
+                    bun_ast::Loc::EMPTY,
+                    "Maximum call stack size exceeded while generating code for this file",
+                ),
+                err => log.add_error_fmt(
+                    Some(source),
+                    bun_ast::Loc::EMPTY,
+                    format_args!("Failed to generate code for this file ({})", err.name()),
+                ),
+            }
+            let abs_path = source.path.key_for_incremental_graph();
+            match targets[index.get() as usize].bake_graph() {
+                bake::Graph::Client => dev.client_graph.insert_failure(
+                    incremental_graph::InsertFailureKey::AbsPath(abs_path),
+                    &log,
+                    false,
+                )?,
+                graph @ (bake::Graph::Server | bake::Graph::Ssr) => {
+                    dev.server_graph.insert_failure(
+                        incremental_graph::InsertFailureKey::AbsPath(abs_path),
+                        &log,
+                        graph == bake::Graph::Ssr,
+                    )?
+                }
+            }
+            continue;
+        }
         let source_map: bun_sourcemap::Chunk = match compile_result.source_map_chunk() {
             Some(c) => c.clone(),
             None => 'brk: {
@@ -4204,7 +4245,23 @@ pub(super) fn finalize_bundle(
     // Pass 2, update the graph's edges by performing import diffing on each
     // changed file, removing dependencies. This pass also flags what routes
     // have been modified.
-    for part_range in js_chunk.content.javascript().parts_in_chunk_in_order.iter() {
+    for (part_range, compile_result) in js_chunk
+        .content
+        .javascript()
+        .parts_in_chunk_in_order
+        .iter()
+        .zip(js_chunk.compile_results_for_chunk.iter())
+    {
+        // Pass 1 skipped failed parts, so they have no resolved file index.
+        if matches!(
+            compile_result,
+            bundler::CompileResult::Javascript {
+                result: bun_js_printer::PrintResult::Err(_),
+                ..
+            }
+        ) {
+            continue;
+        }
         match targets[part_range.source_index.get() as usize].bake_graph() {
             bake::Graph::Server | bake::Graph::Ssr => dev.server_graph.process_chunk_dependencies(
                 &mut ctx,

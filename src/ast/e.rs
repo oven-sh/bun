@@ -1583,10 +1583,8 @@ pub struct Spread {
 // `data` (the only field needing a static relocation) at offset 0; `align(8)`
 // keeps the struct itself 8-aligned. `EString` is arena-stored (never inline
 // in `Expr`), so this does not affect `Expr` size.
-/// Which of the four TOML date/time kinds a tagged `EString` literal is, and
-/// the Temporal class it materializes as. Discriminants cross the FFI
-/// boundary (`Bun__Temporal__fromDateTimeLiteral`) — keep them in sync with
-/// the C++ switch.
+/// Discriminants are shared with the C++ switch in
+/// `Bun__Temporal__fromDateTimeLiteral`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum TomlDateTimeKind {
@@ -1629,11 +1627,10 @@ pub struct EString {
     pub rope_len: u32,
     pub prefer_template: bool,
     pub is_utf16: bool,
-    /// Set only by the TOML parser, on a date/time literal whose `data` is
-    /// the (ASCII, pre-validated) source text. The TOML AST never enters the
-    /// JS visit/transform passes; the sinks that materialize or print it
-    /// (`expr_to_js`, `data_to_js`, `to_lazy_export_ast`, the printer) check
-    /// this tag and produce a Temporal value instead of a string.
+    /// Set only by the TOML parser on a date/time literal (`data` is its
+    /// ASCII source text). The TOML AST never enters the JS visit passes;
+    /// the sinks that materialize or print it check this tag and produce a
+    /// Temporal value instead of a string.
     pub toml_datetime: Option<TomlDateTimeKind>,
 }
 // Also exported as `String`; `EString` avoids colliding with bun_core::String.
@@ -1708,9 +1705,8 @@ impl EString {
         }
     }
 
-    /// A TOML date/time literal: `data` is its ASCII source text (fractional
-    /// seconds pre-truncated to the 9 digits Temporal carries), accepted
-    /// verbatim by `Temporal.*.from`.
+    /// A TOML date/time literal; `data` must be ASCII text `Temporal.*.from`
+    /// accepts verbatim.
     pub fn init_toml_datetime(data: &[u8], kind: TomlDateTimeKind) -> Self {
         Self {
             data: Str::new(data),

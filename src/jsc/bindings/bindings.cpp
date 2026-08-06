@@ -5843,18 +5843,17 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double Bun__gregorianDateTimeToMSInZone(JSC::
     return static_cast<double>(r->epochMilliseconds());
 }
 
-// Materializes a parsed date/time literal as a Temporal object, through the
-// same paths `Temporal.*.from(string)` takes. `kind` mirrors the Rust
-// `bun_ast::E::DateTimeKind` discriminants. `text` is ASCII, pre-validated by
-// the producing parser, and within Temporal's 9-digit fraction limit.
+// Materializes a date/time literal as a Temporal object through the same
+// paths `Temporal.*.from(string)` takes. `kind` mirrors the Rust
+// `bun_ast::E::TomlDateTimeKind` discriminants.
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] EncodedJSValue Bun__Temporal__fromDateTimeLiteral(JSC::JSGlobalObject* globalObject, const uint8_t* text, size_t len, uint8_t kind)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // The Temporal structures on the global object only exist when the
+    // option is on; reaching for them would crash.
     if (!JSC::Options::useTemporal()) [[unlikely]] {
-        // The Temporal structures on the global object only exist when the
-        // option is on; reaching for them would crash.
         JSC::throwTypeError(globalObject, scope, "Date/time values require Temporal, which is disabled in this process"_s);
         return {};
     }
@@ -5885,9 +5884,9 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] EncodedJSValue Bun__Temporal__fromDateT
 }
 
 // Classifies a JSValue as one of the Temporal object types, or 0 for
-// everything else. The discriminants are shared with `TOMLObject.rs`:
-// 1 Instant, 2 PlainDateTime, 3 PlainDate, 4 PlainTime, 5 ZonedDateTime,
-// 6 PlainYearMonth, 7 PlainMonthDay, 8 Duration (1-4 mirror `DateTimeKind`).
+// everything else. Discriminants are shared with `TOMLObject.rs`: 1 Instant,
+// 2 PlainDateTime, 3 PlainDate, 4 PlainTime, 5 ZonedDateTime,
+// 6 PlainYearMonth, 7 PlainMonthDay, 8 Duration.
 extern "C" [[ZIG_EXPORT(nothrow)]] uint8_t Bun__JSValue__temporalObjectType(JSC::EncodedJSValue encodedValue)
 {
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
@@ -5917,12 +5916,10 @@ extern "C" [[ZIG_EXPORT(nothrow)]] uint8_t Bun__JSValue__temporalObjectType(JSC:
     return 0;
 }
 
-// Formats a Temporal object (`temporalType` from
-// `Bun__JSValue__temporalObjectType`, 1-5 only) as a TOML date/time literal
-// into `buf`. Returns the length written, or -1 if it cannot fit. The ISO
-// fields are formatted directly so no `[u-ca=...]` calendar annotation is
-// emitted (the ISO date itself is what TOML can carry); a ZonedDateTime
-// emits its offset form, dropping the `[Time/Zone]` annotation.
+// Formats a Temporal object (`temporalType` 1-5 from the classifier above)
+// as a TOML date/time literal into `buf`; returns the length written, or -1
+// if it cannot fit. The ISO fields are formatted directly, dropping the
+// `[u-ca=...]` and `[Time/Zone]` annotations TOML cannot carry.
 extern "C" [[ZIG_EXPORT(check_slow)]] int32_t Bun__Temporal__toTOMLDateTime(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, uint8_t temporalType, uint8_t* buf, size_t bufLen)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -5952,9 +5949,8 @@ extern "C" [[ZIG_EXPORT(check_slow)]] int32_t Bun__Temporal__toTOMLDateTime(JSC:
         std::optional<int64_t> offsetNs = zoned->getOffsetNanoseconds(globalObject);
         RETURN_IF_EXCEPTION(scope, -1);
         ASSERT(offsetNs);
-        // TOML offsets are `HH:MM` only; a historic sub-minute offset
-        // (e.g. pre-1972 Africa/Monrovia) falls back to the equivalent
-        // UTC instant rather than emitting an offset TOML cannot parse.
+        // TOML offsets are `HH:MM` only; a historic sub-minute offset falls
+        // back to the equivalent UTC instant.
         if (offsetNs && *offsetNs % 60000000000ll != 0)
             offsetNs = std::nullopt;
         string = JSC::TemporalCore::instantToString(zoned->exactTime(), offsetNs, autoPrecision);

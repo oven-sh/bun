@@ -488,11 +488,8 @@ impl Stringifier {
         Ok(())
     }
 
-    /// A Temporal object as the TOML date/time literal of its type: `Instant`
-    /// and `ZonedDateTime` emit offset date-times (the latter dropping its
-    /// time-zone annotation), `PlainDateTime`/`PlainDate`/`PlainTime` their
-    /// local forms. `PlainYearMonth`/`PlainMonthDay`/`Duration` have no TOML
-    /// representation and throw.
+    /// A Temporal object as the TOML date/time literal of its type;
+    /// `PlainYearMonth`/`PlainMonthDay`/`Duration` have no TOML form and throw.
     fn append_temporal(
         &mut self,
         global: &JSGlobalObject,
@@ -568,12 +565,10 @@ impl Stringifier {
     }
 }
 
-/// The `Bun__Temporal__toTOMLDateTime` discriminant for `ZonedDateTime`, the
-/// last Temporal type with a TOML representation (1-5; 6-8 have none).
+/// The last discriminant with a TOML representation (1-5; 6-8 have none).
 const TEMPORAL_ZONED_DATE_TIME: u8 = 5;
 
-/// Classifies `value` via `Bun__JSValue__temporalObjectType`: 0 for anything
-/// that is not a Temporal object, else the 1-8 discriminant
+/// 0 for anything that is not a Temporal object, else the 1-8 discriminant
 /// `temporal_type_name` describes.
 fn temporal_object_type(value: JSValue) -> u8 {
     jsc::cpp::Bun__JSValue__temporalObjectType(value)

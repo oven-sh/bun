@@ -2739,9 +2739,8 @@ fn transpile_source_code_inner(
                         };
                         match bun_js_parser_jsc::expr_to_js(&s_expr.value, global) {
                             Ok(value) => value,
-                            // A thrown exception (e.g. constructing a Temporal
-                            // date/time while Temporal is disabled) fails the
-                            // module load with that exception pending.
+                            // A thrown exception fails the module load with
+                            // that exception pending.
                             Err(bun_ast::ToJSError::JSError | bun_ast::ToJSError::JSTerminated) => {
                                 return Err(crate::Error::JSError);
                             }

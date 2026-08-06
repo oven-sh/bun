@@ -3683,10 +3683,9 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EString(e) => {
-                    // A TOML date/time literal has no JS literal form; it
-                    // prints as the `Temporal.*.from` call that reconstructs
-                    // the value. (The bundler path rewrites these in
-                    // `to_lazy_export_ast` instead and never gets here.)
+                    // A TOML date/time literal prints as the `Temporal.*.from`
+                    // call that reconstructs it (the bundler rewrites these in
+                    // `to_lazy_export_ast` before printing).
                     if let Some(kind) = e.toml_datetime {
                         let wrap = level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall);
                         if wrap {

@@ -559,11 +559,9 @@ impl<'a> Parser<'a> {
 
         let mut final_expr = expr;
 
-        // Date/time literals (produced by the TOML parser) materialize as
-        // `Temporal.*.from("...")` calls. Bundled modules share one scope, so
-        // the reference must be a real unbound `Temporal` symbol: the chunk
-        // renamer then reserves the name and renames a user binding called
-        // `Temporal` instead of letting it capture these calls.
+        // TOML date/time literals become `Temporal.*.from("...")` calls over
+        // a real unbound symbol, so the chunk renamer reserves the name
+        // instead of letting a user `Temporal` binding capture it.
         let mut temporal_ref: Option<js_ast::Ref> = None;
         lower_date_time_literals(p, &mut final_expr, &mut temporal_ref)?;
 
@@ -615,11 +613,9 @@ impl<'a> Parser<'a> {
 }
 
 /// Rewrites every `toml_datetime`-tagged `E::String` in `expr` (in place)
-/// into the `Temporal.<Class>.from("<text>")` call it prints as, referencing
-/// an unbound `Temporal` symbol declared on first use. The calls are
-/// annotated as removable-if-unused: constructing a Temporal value from a
-/// validated literal has no observable side effects, so tree shaking may
-/// drop unused exports.
+/// into a `Temporal.<Class>.from("<text>")` call, declaring the unbound
+/// `Temporal` symbol on first use. The calls are pure-annotated so tree
+/// shaking may drop unused exports.
 fn lower_date_time_literals<'a>(
     p: &mut JavaScriptParser<'a>,
     expr: &mut Expr,

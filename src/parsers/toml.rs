@@ -190,9 +190,8 @@ const MAX_SAFE_INTEGER: i64 = (1 << 53) - 1;
 const BARE_CR: &[u8] = b"Bare carriage return is not allowed; use \\r\\n or \\n";
 const UNDERSCORE_IN_NUMBER: &[u8] = b"Underscores in numbers must be surrounded by digits";
 
-/// TOML allows unlimited fractional-second digits and says extra precision
-/// "should be truncated, not rounded"; Temporal carries nanoseconds and
-/// rejects more than 9 digits, so drop anything past the ninth here.
+/// TOML says excess fractional-second precision "should be truncated, not
+/// rounded"; Temporal rejects more than its 9 digits, so drop the rest here.
 fn truncate_fractional_seconds<'a>(text: &'a [u8], bump: &'a Bump) -> &'a [u8] {
     let Some(dot) = text.iter().position(|&b| b == b'.') else {
         return text;

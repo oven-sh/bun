@@ -204,7 +204,7 @@ describe("Bun.build", () => {
       Bun.build({
         entrypoints: [join(String(dir), "sub\0zz", "e.mjs")],
       }),
-    ).toThrow("The property 'root' must be a string without null bytes");
+    ).toThrow("The property 'entrypoints' must be a string without null bytes");
     expect(() =>
       Bun.build({
         entrypoints: [entry],

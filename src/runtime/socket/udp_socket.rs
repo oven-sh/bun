@@ -935,12 +935,7 @@ impl UDPSocket {
         }
 
         let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
-        if !this.parse_addr(
-            global_this,
-            0,
-            arguments[0],
-            &mut addr,
-        )? {
+        if !this.parse_addr(global_this, 0, arguments[0], &mut addr)? {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(
                     SystemErrno::EINVAL as c_int,
@@ -957,12 +952,8 @@ impl UDPSocket {
         };
 
         let res = if arguments.len() > 1
-            && this.parse_addr(
-                global_this,
-                0,
-                arguments[1],
-                &mut interface,
-            )? {
+            && this.parse_addr(global_this, 0, arguments[1], &mut interface)?
+        {
             if addr.ss_family != interface.ss_family {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Family mismatch between address and interface"
@@ -1027,12 +1018,7 @@ impl UDPSocket {
         // `parse_addr` only writes the sockaddr_in/in6 prefix, so
         // `assume_init()` on the full 128-byte storage would be UB.
         let mut source_addr: sockaddr_storage = bun_core::ffi::zeroed();
-        if !this.parse_addr(
-            global_this,
-            0,
-            arguments[0],
-            &mut source_addr,
-        )? {
+        if !this.parse_addr(global_this, 0, arguments[0], &mut source_addr)? {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(
                     SystemErrno::EINVAL as c_int,
@@ -1043,12 +1029,7 @@ impl UDPSocket {
         }
 
         let mut group_addr: sockaddr_storage = bun_core::ffi::zeroed();
-        if !this.parse_addr(
-            global_this,
-            0,
-            arguments[1],
-            &mut group_addr,
-        )? {
+        if !this.parse_addr(global_this, 0, arguments[1], &mut group_addr)? {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(
                     SystemErrno::EINVAL as c_int,
@@ -1071,12 +1052,8 @@ impl UDPSocket {
         };
 
         let res = if arguments.len() > 2
-            && this.parse_addr(
-                global_this,
-                0,
-                arguments[2],
-                &mut interface,
-            )? {
+            && this.parse_addr(global_this, 0, arguments[2], &mut interface)?
+        {
             if source_addr.ss_family != interface.ss_family {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Family mismatch among source, group and interface addresses"
@@ -1156,12 +1133,7 @@ impl UDPSocket {
         // address-family-specific fields `parse_addr` populated).
         let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
 
-        if !this.parse_addr(
-            global_this,
-            0,
-            arguments[0],
-            &mut addr,
-        )? {
+        if !this.parse_addr(global_this, 0, arguments[0], &mut addr)? {
             return Ok(JSValue::FALSE);
         }
 

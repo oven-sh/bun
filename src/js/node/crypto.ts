@@ -345,9 +345,8 @@ crypto_exports.randomUUIDv7 = randomUUIDv7;
 
 const kArgon2Types = { __proto__: null, argon2d: 0, argon2i: 1, argon2id: 2 };
 
-// Node's argon2 path (getArrayBufferOrView in lib/internal/crypto/util.js)
-// does not accept KeyObject and throws node-formatted ERR_INVALID_ARG_TYPE,
-// unlike the local `getArrayBufferOrView` above.
+// Node's argon2 path rejects KeyObject and throws node-formatted
+// ERR_INVALID_ARG_TYPE, unlike the local `getArrayBufferOrView` above.
 function getArgon2BufferSource(buffer, name) {
   if (isAnyArrayBuffer(buffer)) return buffer;
   if (typeof buffer === "string") return Buffer.from(buffer, "utf8");
@@ -357,10 +356,9 @@ function getArgon2BufferSource(buffer, name) {
   return buffer;
 }
 
-// Mirrors `check()` in node's lib/internal/crypto/argon2.js, except that a
-// wrong-typed secret/associatedData names the offending property: node passes
-// no name there and its error constructor asserts on the undefined name
-// (ERR_INTERNAL_ASSERTION).
+// Mirrors `check()` in node's lib/internal/crypto/argon2.js, except a
+// wrong-typed secret/associatedData names the property (node passes no name
+// there and trips ERR_INTERNAL_ASSERTION on it).
 function checkArgon2(algorithm, parameters) {
   validateString(algorithm, "algorithm");
   validateOneOf(algorithm, "algorithm", ["argon2d", "argon2i", "argon2id"]);

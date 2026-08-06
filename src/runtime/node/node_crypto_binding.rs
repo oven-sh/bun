@@ -3,8 +3,7 @@
 
 use core::ffi::{c_char, c_void};
 
-// The `rust-argon2` package exports its lib as crate name `argon2`; alias it
-// so it can't be confused with the `argon2` host fn below.
+// `rust-argon2` exports its lib as crate `argon2`; alias past the `argon2` host fn below.
 use ::argon2 as rust_argon2;
 use bun_boringssl as boringssl;
 use bun_collections::CaseInsensitiveAsciiStringArrayHashMap;
@@ -834,12 +833,10 @@ pub(crate) struct Scrypt {
 // Argon2 (crypto.argon2 / crypto.argon2Sync)
 // ───────────────────────────────────────────────────────────────────────────
 
-/// One argon2 derivation. BoringSSL has no argon2, so this routes to the
-/// pure-Rust `rust-argon2` crate `Bun.password` already uses (pwhash.rs).
-///
-/// All inputs are copied out of JS at call time, so the work-pool half never
-/// touches JS memory (no protect/detach hazards); node copies async-job
-/// inputs the same way (`ToCopy` in crypto_argon2.cc).
+/// One argon2 derivation, routed to the pure-Rust `rust-argon2` crate that
+/// `Bun.password` already uses (BoringSSL has no argon2). Inputs are copied
+/// out of JS at call time so the work-pool half never touches JS memory;
+/// node's async jobs copy the same way.
 pub(crate) struct Argon2 {
     message: Vec<u8>,
     nonce: Vec<u8>,
@@ -1394,9 +1391,8 @@ mod _impl {
     }
 
     impl Argon2 {
-        /// Arguments arrive pre-validated from `checkArgon2()` in `crypto.ts`
-        /// (mirroring node's `lib/internal/crypto/argon2.js`); the checks here
-        /// only defend the internal binding itself.
+        /// Arguments arrive pre-validated from `checkArgon2()` in `crypto.ts`;
+        /// the checks here only defend the internal binding itself.
         fn from_js(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<(Self, JSValue)> {
             fn copy_buffer_arg(
                 global: &JSGlobalObject,
@@ -1497,9 +1493,8 @@ mod _impl {
                 lanes: self.parallelism,
                 mem_cost: self.memory,
                 secret: &self.secret,
-                // Lanes shape the memory layout (and the output) but are
-                // computed on the calling thread; never spawn threads from a
-                // work-pool worker. Matches pwhash.rs.
+                // Lanes determine the output; they are computed on the calling
+                // thread. Never spawn threads from a work-pool worker (matches pwhash.rs).
                 thread_mode: rust_argon2::ThreadMode::Sequential,
                 time_cost: self.passes,
                 variant: self.variant,
@@ -1507,10 +1502,8 @@ mod _impl {
             };
             match rust_argon2::hash_raw(&self.message, &self.nonce, &config) {
                 Ok(hash) => self.output = hash,
-                // `checkArgon2()` enforces node's parameter ranges, which are a
-                // superset of rust-argon2's own constraints, so this is
-                // unreachable through `node:crypto`; keep node's error message
-                // for the internal binding.
+                // Unreachable via `node:crypto`: `checkArgon2()` bounds are a
+                // superset of rust-argon2's constraints.
                 Err(_) => self.failed = true,
             }
         }

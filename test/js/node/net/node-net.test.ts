@@ -908,6 +908,16 @@ describe("net.connect({ localPort }) with multiple lookup addresses #30697", () 
       await using _server = await listening;
       const { port } = server.address() as { port: number };
 
+      // Non-zero localPort is required to enter the branch that used to
+      // crash, and the local bind is actually applied during connect, so it
+      // must be a free unprivileged port: grab an ephemeral one and release it.
+      const { promise: probing, resolve: onProbe, reject: onProbeError } = Promise.withResolvers<number>();
+      const probe = createServer();
+      probe.once("error", onProbeError);
+      probe.listen(0, "127.0.0.1", () => onProbe((probe.address() as { port: number }).port));
+      const localPort = await probing;
+      await new Promise(resolve => probe.close(resolve));
+
       const { promise: connected, resolve: onConnect, reject: onError } = Promise.withResolvers<void>();
       const client = new Socket();
       client.on("error", onError);
@@ -916,9 +926,7 @@ describe("net.connect({ localPort }) with multiple lookup addresses #30697", () 
       client.connect({
         port,
         host: "localhost",
-        // Non-zero localPort is required to enter the branch that used to
-        // crash; the bind itself is not enforced today so any value works.
-        localPort: 1,
+        localPort,
         lookup: (_hostname, _opts, cb) => cb(null, addresses),
       } as any);
 

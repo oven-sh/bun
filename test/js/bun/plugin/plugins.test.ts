@@ -756,7 +756,7 @@ it.concurrent(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).not.toContain("late failure");
+    expect(stderr).toBe("");
     expect(stdout).toBe("caught: virt-async true\ncaught: virt-invalid true\nstill alive\n");
     expect(exitCode).toBe(0);
   },
@@ -795,7 +795,7 @@ it.concurrent("require() of an already-rejected plugin module promise throws its
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).not.toContain("boom");
+  expect(stderr).toBe("");
   expect(stdout).toBe("caught: boom caught\ncaught: boom unhandled\nimport rejected: boom import\nstill alive\n");
   expect(exitCode).toBe(0);
 });

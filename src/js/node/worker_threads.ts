@@ -1368,6 +1368,8 @@ export default {
   markAsUntransferable,
   markAsUncloneable,
   isMarkedAsUntransferable,
+  // Shared with navigator.locks: the same process-wide LockManager, like Node.
+  locks: require("internal/locks").locks,
   moveMessagePortToContext,
   postMessageToThread: messaging.postMessageToThread,
   receiveMessageOnPort,

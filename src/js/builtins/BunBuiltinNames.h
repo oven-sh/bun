@@ -121,6 +121,7 @@ using namespace JSC;
     macro(lazy) \
     macro(lineText) \
     macro(loadEsmIntoCjs) \
+    macro(locks) \
     macro(main) \
     macro(makeAbortError) \
     macro(makeDOMException) \
@@ -138,6 +139,7 @@ using namespace JSC;
     macro(normalize) \
     macro(onClose) \
     macro(onDrain) \
+    macro(onNativeEvent) \
     macro(originalColumn) \
     macro(originalLine) \
     macro(overridableRequire) \

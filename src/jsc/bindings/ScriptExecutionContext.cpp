@@ -7,6 +7,7 @@
 #include "_libusockets.h"
 #include "BunClientData.h"
 #include "EventLoopTask.h"
+#include "webcore/BunWebLocksRegistry.h"
 #include <wtf/Threading.h>
 extern "C" void Bun__startLoop(us_loop_t* loop);
 
@@ -98,6 +99,9 @@ ScriptExecutionContext::~ScriptExecutionContext()
     }
     m_inScriptExecutionContextDestructor = true;
 #endif // ASSERT_ENABLED
+
+    // Web Locks held or requested by this context die with it.
+    BunWebLocksRegistry::contextDestroyed(m_identifier);
 
     while (auto* destructionObserver = m_destructionObservers.takeAny())
         destructionObserver->contextDestroyed();

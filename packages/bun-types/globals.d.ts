@@ -1428,6 +1428,14 @@ interface Navigator {
   readonly userAgent: string;
   readonly platform: "MacIntel" | "Win32" | "Linux x86_64";
   readonly hardwareConcurrency: number;
+  /**
+   * The Web Locks API. The same process-wide `LockManager` instance is
+   * exposed as `worker_threads.locks`, so locks are shared between the main
+   * thread and worker threads.
+   *
+   * @see https://developer.mozilla.org/en-US/docs/Web/API/LockManager
+   */
+  readonly locks: import("node:worker_threads").LockManager;
 }
 
 declare var navigator: Navigator;

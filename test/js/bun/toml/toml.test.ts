@@ -437,21 +437,17 @@ describe("robustness", () => {
     expect(cur).toEqual({ a: 1 });
   });
 
-  test(
-    "extremely deep dotted keys and headers throw instead of crashing",
-    () => {
-      // Parsing these is iterative (every segment is processed before the limit
-      // can trip), so unlike OVERFLOW_DEPTH this depth is paid in full: it must
-      // stay small enough to be fast in debug builds while still overflowing
-      // the JS-conversion recursion at release frame sizes. The two parses
-      // take ~7s under debug+ASAN on slow machines, past the 5s default.
-      const depth = 250_000;
-      const path = Buffer.alloc(depth * 2 - 1, "a.").toString();
-      expect(() => TOML.parse(path + " = 1")).toThrow(RangeError);
-      expect(() => TOML.parse(`[${path}]`)).toThrow(RangeError);
-    },
-    60_000,
-  );
+  test("extremely deep dotted keys and headers throw instead of crashing", () => {
+    // Parsing these is iterative (every segment is processed before the limit
+    // can trip), so unlike OVERFLOW_DEPTH this depth is paid in full: it must
+    // stay small enough to be fast in debug builds while still overflowing
+    // the JS-conversion recursion at release frame sizes. The two parses
+    // take ~7s under debug+ASAN on slow machines, past the 5s default.
+    const depth = 250_000;
+    const path = Buffer.alloc(depth * 2 - 1, "a.").toString();
+    expect(() => TOML.parse(path + " = 1")).toThrow(RangeError);
+    expect(() => TOML.parse(`[${path}]`)).toThrow(RangeError);
+  }, 60_000);
 
   test("a very long string value round-trips", () => {
     const long = Buffer.alloc(1 << 20, "x").toString();

@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { exists } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, runBunInstall, stderrForInstall } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, runBunInstall } from "harness";
 import { join } from "path";
 
 var registry = new VerdaccioRegistry();
@@ -222,7 +222,7 @@ describe("update", () => {
     });
 
     const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
-    return { out, err: stderrForInstall(err), exitCode };
+    return { out, err, exitCode };
   }
 
   // https://github.com/oven-sh/bun/issues/23739
@@ -279,8 +279,7 @@ describe("update", () => {
       stderr: "pipe",
       env: bunEnv,
     });
-    const [, errText, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
-    const err = stderrForInstall(errText);
+    const [, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
     expect(err).not.toContain("lockfile had changes");
     expect(err).not.toContain("error:");
     expect(exitCode).toBe(0);
@@ -545,7 +544,7 @@ describe("errors", () => {
     });
 
     const out = await stdout.text();
-    const err = stderrForInstall(await stderr.text());
+    const err = await stderr.text();
 
     expect(err).toContain("no-deps@catalog: failed to resolve");
     expect(err).toContain("a-dep@catalog:aaaaaaaaaaaaaaaaa failed to resolve");
@@ -577,7 +576,7 @@ describe("errors", () => {
     });
 
     const out = await stdout.text();
-    const err = stderrForInstall(await stderr.text());
+    const err = await stderr.text();
 
     expect(err).toContain("no-deps@catalog: failed to resolve");
   });

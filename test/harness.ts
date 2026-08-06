@@ -74,6 +74,9 @@ export const bunEnv: NodeJS.Dict<string> = {
   CI: "1",
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
   BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+  // The `bun install` "Slow filesystem detected" warning is timing-dependent
+  // and flakes stderr assertions on slow CI filesystems.
+  BUN_DISABLE_SLOW_FILESYSTEM_WARNING: "1",
   // Tests drive `bun update --interactive` by writing keystrokes to a pipe;
   // the real command refuses on non-TTY stdin. Bypass that gate under test.
   BUN_INTERNAL_INTERACTIVE_ASSUME_TTY: "1",
@@ -1495,7 +1498,7 @@ export async function runBunInstall(
   });
   expect(stdout).toBeDefined();
   expect(stderr).toBeDefined();
-  let err: string = stderrForInstall(await stderr.text());
+  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
   expect(err).not.toContain("panic:");
   if (!options?.allowErrors) {
     expect(err).not.toContain("error:");
@@ -1506,14 +1509,8 @@ export async function runBunInstall(
   if ((options?.savesLockfile ?? true) && !production && !options?.frozenLockfile) {
     expect(err).toContain("Saved lockfile");
   }
-  let out: string = await stdout.text();
-  expect(await exited).toBe(options?.expectedExitCode ?? 0);
+  expect(exitCode).toBe(options?.expectedExitCode ?? 0);
   return { out, err, exited };
-}
-
-// stderr with `slow filesystem` warning removed
-export function stderrForInstall(err: string) {
-  return err.replace(/warn: Slow filesystem.*/g, "");
 }
 
 export async function runBunUpdate(

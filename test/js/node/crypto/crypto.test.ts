@@ -160,6 +160,207 @@ describe("crypto.getCurves", () => {
   });
 });
 
+describe("chacha20-poly1305", () => {
+  // RFC 8439, section 2.8.2.
+  const key = Buffer.from("808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f", "hex");
+  const iv = Buffer.from("070000004041424344454647", "hex");
+  const aad = Buffer.from("50515253c0c1c2c3c4c5c6c7", "hex");
+  const plaintext = Buffer.from(
+    "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.",
+  );
+  const ciphertext = Buffer.from(
+    "d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d6" +
+      "3dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b36" +
+      "92ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc" +
+      "3ff4def08e4b7a9de576d26586cec64b6116",
+    "hex",
+  );
+  const authTag = Buffer.from("1ae10b594f09e26a7e902ecbd0600691", "hex");
+
+  it("is listed by getCiphers()", () => {
+    expect(crypto.getCiphers()).toContain("chacha20-poly1305");
+  });
+
+  it("is described by getCipherInfo()", () => {
+    const { mode, name, keyLength, ivLength } = crypto.getCipherInfo("chacha20-poly1305")!;
+    expect({ mode, name, keyLength, ivLength }).toEqual({
+      mode: "stream",
+      name: "chacha20-poly1305",
+      keyLength: 32,
+      ivLength: 12,
+    });
+  });
+
+  it("encrypts the RFC 8439 vector", () => {
+    const cipher = crypto.createCipheriv("chacha20-poly1305", key, iv, { authTagLength: 16 });
+    cipher.setAAD(aad);
+    const out = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    expect(out.toString("hex")).toBe(ciphertext.toString("hex"));
+    expect(cipher.getAuthTag().toString("hex")).toBe(authTag.toString("hex"));
+  });
+
+  it("decrypts the RFC 8439 vector", () => {
+    const decipher = crypto.createDecipheriv("chacha20-poly1305", key, iv, { authTagLength: 16 });
+    decipher.setAAD(aad);
+    decipher.setAuthTag(authTag);
+    const out = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    expect(out.toString("utf8")).toBe(plaintext.toString("utf8"));
+  });
+
+  it("defaults authTagLength to 16 bytes", () => {
+    const cipher = crypto.createCipheriv("chacha20-poly1305", key, iv);
+    cipher.update(plaintext);
+    cipher.final();
+    expect(cipher.getAuthTag().length).toBe(16);
+  });
+
+  // ChaCha20 keeps 64-byte keystream blocks, so chunks that straddle a block
+  // boundary are the interesting case.
+  for (const chunkSize of [1, 7, 16, 31, 63, 64, 65, 127, 128]) {
+    it(`produces the same output in ${chunkSize}-byte chunks`, () => {
+      const cipher = crypto.createCipheriv("chacha20-poly1305", key, iv, { authTagLength: 16 });
+      cipher.setAAD(aad);
+      const chunks: Buffer[] = [];
+      for (let i = 0; i < plaintext.length; i += chunkSize) {
+        const chunk = plaintext.subarray(i, i + chunkSize);
+        const out = cipher.update(chunk);
+        // A stream cipher emits exactly as many bytes as it is fed.
+        expect(out.length).toBe(chunk.length);
+        chunks.push(out);
+      }
+      const final = cipher.final();
+      expect(final.length).toBe(0);
+      chunks.push(final);
+      expect(Buffer.concat(chunks).toString("hex")).toBe(ciphertext.toString("hex"));
+      expect(cipher.getAuthTag().toString("hex")).toBe(authTag.toString("hex"));
+
+      const decipher = crypto.createDecipheriv("chacha20-poly1305", key, iv, { authTagLength: 16 });
+      decipher.setAAD(aad);
+      decipher.setAuthTag(authTag);
+      const plain: Buffer[] = [];
+      for (let i = 0; i < ciphertext.length; i += chunkSize) {
+        plain.push(decipher.update(ciphertext.subarray(i, i + chunkSize)));
+      }
+      plain.push(decipher.final());
+      expect(Buffer.concat(plain).toString("utf8")).toBe(plaintext.toString("utf8"));
+    });
+  }
+
+  it("round-trips an empty message", () => {
+    const cipher = crypto.createCipheriv("chacha20-poly1305", key, iv);
+    expect(cipher.final().length).toBe(0);
+    const tag = cipher.getAuthTag();
+
+    const decipher = crypto.createDecipheriv("chacha20-poly1305", key, iv);
+    decipher.setAuthTag(tag);
+    expect(decipher.final().length).toBe(0);
+  });
+
+  it("round-trips additional data that is not a multiple of 16 bytes", () => {
+    const oddAad = Buffer.from("0102030405", "hex");
+    const cipher = crypto.createCipheriv("chacha20-poly1305", key, iv);
+    cipher.setAAD(oddAad);
+    const out = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    // The AAD is not encrypted, so only the tag changes.
+    expect(out.toString("hex")).toBe(ciphertext.toString("hex"));
+
+    const decipher = crypto.createDecipheriv("chacha20-poly1305", key, iv);
+    decipher.setAAD(oddAad);
+    decipher.setAuthTag(cipher.getAuthTag());
+    expect(Buffer.concat([decipher.update(out), decipher.final()]).toString("utf8")).toBe(plaintext.toString("utf8"));
+  });
+
+  it("rejects a corrupted authentication tag", () => {
+    const tampered = Buffer.from(authTag);
+    tampered[0] ^= 1;
+    const decipher = crypto.createDecipheriv("chacha20-poly1305", key, iv, { authTagLength: 16 });
+    decipher.setAAD(aad);
+    decipher.setAuthTag(tampered);
+    decipher.update(ciphertext);
+    expect(() => decipher.final()).toThrow("Unsupported state or unable to authenticate data");
+  });
+
+  it("rejects corrupted ciphertext", () => {
+    const tampered = Buffer.from(ciphertext);
+    tampered[0] ^= 1;
+    const decipher = crypto.createDecipheriv("chacha20-poly1305", key, iv, { authTagLength: 16 });
+    decipher.setAAD(aad);
+    decipher.setAuthTag(authTag);
+    decipher.update(tampered);
+    expect(() => decipher.final()).toThrow("Unsupported state or unable to authenticate data");
+  });
+
+  it("rejects corrupted additional data", () => {
+    const tampered = Buffer.from(aad);
+    tampered[0] ^= 1;
+    const decipher = crypto.createDecipheriv("chacha20-poly1305", key, iv, { authTagLength: 16 });
+    decipher.setAAD(tampered);
+    decipher.setAuthTag(authTag);
+    decipher.update(ciphertext);
+    expect(() => decipher.final()).toThrow("Unsupported state or unable to authenticate data");
+  });
+
+  // Node releases unauthenticated plaintext here for this cipher, unlike every
+  // other AEAD it exposes. Fail instead.
+  it("rejects decryption without an authentication tag", () => {
+    const decipher = crypto.createDecipheriv("chacha20-poly1305", key, iv, { authTagLength: 16 });
+    decipher.setAAD(aad);
+    decipher.update(ciphertext);
+    expect(() => decipher.final()).toThrow("Unsupported state or unable to authenticate data");
+  });
+
+  it("honours a truncated authTagLength", () => {
+    for (let authTagLength = 1; authTagLength <= 16; authTagLength++) {
+      const cipher = crypto.createCipheriv("chacha20-poly1305", key, iv, { authTagLength });
+      cipher.setAAD(aad);
+      const out = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+      expect(out.toString("hex")).toBe(ciphertext.toString("hex"));
+      const tag = cipher.getAuthTag();
+      expect(tag.toString("hex")).toBe(authTag.subarray(0, authTagLength).toString("hex"));
+
+      const decipher = crypto.createDecipheriv("chacha20-poly1305", key, iv, { authTagLength });
+      decipher.setAAD(aad);
+      decipher.setAuthTag(tag);
+      expect(Buffer.concat([decipher.update(out), decipher.final()]).toString("utf8")).toBe(plaintext.toString("utf8"));
+    }
+  });
+
+  it("rejects an authentication tag of the wrong length", () => {
+    const decipher = crypto.createDecipheriv("chacha20-poly1305", key, iv, { authTagLength: 12 });
+    expect(() => decipher.setAuthTag(authTag)).toThrow("Invalid authentication tag length: 16");
+  });
+
+  it("rejects additional data after the first update()", () => {
+    const cipher = crypto.createCipheriv("chacha20-poly1305", key, iv);
+    cipher.update(plaintext);
+    expect(() => cipher.setAAD(aad)).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_INVALID_STATE" }));
+  });
+
+  it("requires a 96-bit nonce", () => {
+    for (const ivLength of [0, 1, 8, 11, 13, 16, 24]) {
+      expect(() => crypto.createCipheriv("chacha20-poly1305", key, Buffer.alloc(ivLength))).toThrow(
+        expect.objectContaining({ code: "ERR_CRYPTO_INVALID_IV" }),
+      );
+    }
+  });
+
+  it("requires a 256-bit key", () => {
+    for (const keyLength of [16, 24, 31, 33]) {
+      expect(() => crypto.createCipheriv("chacha20-poly1305", Buffer.alloc(keyLength), iv)).toThrow(
+        expect.objectContaining({ code: "ERR_CRYPTO_INVALID_KEYLEN" }),
+      );
+    }
+  });
+
+  it("rejects an out-of-range authTagLength", () => {
+    for (const authTagLength of [0, 17, 32]) {
+      expect(() => crypto.createCipheriv("chacha20-poly1305", key, iv, { authTagLength })).toThrow(
+        `Invalid authentication tag length: ${authTagLength}`,
+      );
+    }
+  });
+});
+
 describe("crypto", () => {
   for (let Hash of HashClasses) {
     for (let [input, label] of [

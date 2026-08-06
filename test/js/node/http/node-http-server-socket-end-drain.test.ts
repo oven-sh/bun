@@ -63,6 +63,8 @@ test.concurrent("server.close() completes after res.socket.end() with a 2 MB upl
 // one-shot EVFILT_WRITE: the loop must close (like epoll's EPOLLERR|EPOLLHUP / libuv uv__write's error path),
 // not re-arm forever. Before the fix this spun a core on macOS and 'close' never fired.
 test.concurrent("upgrade socket with queued writes is closed, not spun, when the half-closed peer resets", async () => {
-  const { stdout, stderr, exitCode } = await bunRun(path.join(import.meta.dir, "node-http-upgrade-halfopen-reset-fixture.ts"));
+  const { stdout, stderr, exitCode } = await bunRun(
+    path.join(import.meta.dir, "node-http-upgrade-halfopen-reset-fixture.ts"),
+  );
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "closed", stderr: "", exitCode: 0 });
 });

@@ -398,7 +398,6 @@ impl Source {
 
     pub fn configure_named_thread(name: &crate::ZStr) {
         Global::set_thread_name(name);
-        Global::disable_transparent_huge_pages_for_current_stack();
         Self::configure_thread();
     }
 
@@ -428,7 +427,6 @@ impl Source {
     /// Named variant of [`configure_thread_no_js`].
     pub fn configure_named_thread_no_js(name: &crate::ZStr) {
         Global::set_thread_name(name);
-        Global::disable_transparent_huge_pages_for_current_stack();
         Self::configure_thread_no_js();
     }
 

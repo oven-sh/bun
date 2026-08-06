@@ -4094,31 +4094,29 @@ pub(super) fn finalize_bundle(
         // A CSS chunk that failed to print becomes a per-file failure instead
         // of an empty stylesheet. The entry point owns the failure so the
         // rebuild's `receive_chunk` clears it.
-        if let Some((err, err_source_index)) =
-            chunk
-                .compile_results_for_chunk
-                .iter()
-                .find_map(|compile_result| match compile_result {
-                    bundler::CompileResult::Css {
-                        result: Err(err),
-                        source_index,
-                        ..
-                    } => Some((err, *source_index)),
-                    _ => None,
-                })
-        {
-            let entry_source = &ctx.sources[index.get() as usize];
+        let entry_source = &ctx.sources[index.get() as usize];
+        let mut log = Log::init();
+        for compile_result in chunk.compile_results_for_chunk.iter() {
+            let (err, err_source_index) = match compile_result {
+                bundler::CompileResult::Css {
+                    result: Err(err),
+                    source_index,
+                    ..
+                } => (err, *source_index),
+                _ => continue,
+            };
             let err_source = if err_source_index != bun_ast::Index::INVALID.get() {
                 &ctx.sources[err_source_index as usize]
             } else {
                 entry_source
             };
-            let mut log = Log::init();
             log.add_error_fmt(
                 Some(err_source),
                 bun_ast::Loc::EMPTY,
                 format_args!("Failed to generate CSS for this file ({})", err.name()),
             );
+        }
+        if log.errors > 0 {
             let entry_key = entry_source.path.key_for_incremental_graph();
             dev.client_graph.insert_failure(
                 incremental_graph::InsertFailureKey::AbsPath(entry_key),

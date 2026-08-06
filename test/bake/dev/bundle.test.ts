@@ -1066,3 +1066,38 @@ devTest("stylesheet both linked and @imported recovers both chunks on one edit",
     await c.style(".main").color.expect.toBe("red");
   },
 });
+devTest("multiple unprintable @imports are each reported", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["main.css"],
+      body: "hello",
+    }),
+    "main.css": `@import "./child1.css";\n@import "./child2.css";\n`,
+    "child1.css":
+      Array.from({ length: 30 }, (_, i) => `.x${i}:fullscreen {`).join("\n") +
+      "\ncolor: red;\n" +
+      Buffer.alloc(30, "}").toString() +
+      "\n",
+    "child2.css":
+      Array.from({ length: 30 }, (_, i) => `.y${i}:fullscreen {`).join("\n") +
+      "\ncolor: red;\n" +
+      Buffer.alloc(30, "}").toString() +
+      "\n",
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [
+        "main.css: error: Failed to generate CSS for this file (PrintError)",
+        "main.css: error: Failed to generate CSS for this file (PrintError)",
+      ],
+    });
+
+    await c.expectReload(async () => {
+      await using _batch = await dev.batchChanges({ errors: null });
+      await dev.write("child1.css", ".a { color: red; }\n", { dedent: false });
+      await dev.write("child2.css", ".b { color: blue; }\n", { dedent: false });
+    });
+    await c.style(".a").color.expect.toBe("red");
+    await c.style(".b").color.expect.toBe("#00f");
+  },
+});

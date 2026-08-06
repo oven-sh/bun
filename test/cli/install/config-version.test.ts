@@ -18,7 +18,7 @@ async function install(cwd: string) {
     stderr: "pipe",
   });
   const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { out, err: err, exitCode };
+  return { out, err, exitCode };
 }
 
 describe.concurrent("configVersion", () => {

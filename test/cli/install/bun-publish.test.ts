@@ -27,9 +27,7 @@ export async function publish(
     env,
   });
 
-  const out = await stdout.text();
-  const err = await stderr.text();
-  const exitCode = await exited;
+  const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
   return { out, err, exitCode };
 }
 

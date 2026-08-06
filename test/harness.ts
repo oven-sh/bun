@@ -1498,7 +1498,7 @@ export async function runBunInstall(
   });
   expect(stdout).toBeDefined();
   expect(stderr).toBeDefined();
-  let err: string = await stderr.text();
+  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
   expect(err).not.toContain("panic:");
   if (!options?.allowErrors) {
     expect(err).not.toContain("error:");
@@ -1509,8 +1509,7 @@ export async function runBunInstall(
   if ((options?.savesLockfile ?? true) && !production && !options?.frozenLockfile) {
     expect(err).toContain("Saved lockfile");
   }
-  let out: string = await stdout.text();
-  expect(await exited).toBe(options?.expectedExitCode ?? 0);
+  expect(exitCode).toBe(options?.expectedExitCode ?? 0);
   return { out, err, exited };
 }
 

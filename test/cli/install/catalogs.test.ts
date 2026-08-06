@@ -222,7 +222,7 @@ describe("update", () => {
     });
 
     const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
-    return { out, err: err, exitCode };
+    return { out, err, exitCode };
   }
 
   // https://github.com/oven-sh/bun/issues/23739
@@ -279,8 +279,7 @@ describe("update", () => {
       stderr: "pipe",
       env: bunEnv,
     });
-    const [, errText, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
-    const err = errText;
+    const [, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
     expect(err).not.toContain("lockfile had changes");
     expect(err).not.toContain("error:");
     expect(exitCode).toBe(0);

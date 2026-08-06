@@ -7,8 +7,10 @@ Method: re-derived the "added in (24.3.0, 26.3.0]" list from the YAML `added:` b
 `doc/api/*.md` (315 raw doc entries), probed every public API against both runtimes with identical
 scripts (no flags, and with `--experimental-stream-iter`), verified flag/stability claims against
 Node's `lib/` and `src/` sources, and checked ecosystem usage via the repo's vendored test
-dependencies plus GitHub code search. Probe scripts and raw results: `/tmp/probe26.mjs`,
-`/tmp/probe-extra.mjs`, `/tmp/probe-{node,main}-*.json` (reproducible against any pair of binaries).
+dependencies plus GitHub code search. Probe scripts are in `node26-gap-probes/` on this branch:
+run `probe26.mjs` and `probe-extra.mjs` under any pair of binaries (plain and with
+`--experimental-stream-iter`) and diff the JSON; `derive.mjs` re-extracts the added-in-window list
+from a Node checkout's `doc/api/`.
 
 ## Headline numbers
 

@@ -691,18 +691,22 @@ unsafe extern "C" fn log_unclosed_cb(handle: *mut uv_handle_t, data: *mut c_void
     }
 }
 
+/// # Safety
+/// `handle` is a live libuv handle (only its header is read).
+unsafe fn handle_type_name<'a>(handle: *mut uv_handle_t) -> &'a str {
+    // SAFETY: fn contract; libuv returns a static C string or null.
+    unsafe {
+        let name = uv_handle_type_name(uv_handle_get_type(handle));
+        if name.is_null() { "?" } else { core::ffi::CStr::from_ptr(name).to_str().unwrap_or("?") }
+    }
+}
+
 unsafe extern "C" fn log_walk_cb(handle: *mut uv_handle_t, _data: *mut c_void) {
     // SAFETY: libuv passes a live handle; these calls only read its header.
     unsafe {
-        let name = uv_handle_type_name(uv_handle_get_type(handle));
-        let name = if name.is_null() {
-            "?"
-        } else {
-            core::ffi::CStr::from_ptr(name).to_str().unwrap_or("?")
-        };
         log!(
             "handle left open by its owner: {} @{:p} active={} closing={} ref={} data={:p}",
-            name,
+            handle_type_name(handle),
             handle,
             uv_is_active(handle),
             uv_is_closing(handle),

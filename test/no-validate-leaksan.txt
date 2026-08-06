@@ -3,6 +3,10 @@
 test/cli/install/bun-security-scanner-matrix-with-node-modules.test.ts
 test/cli/install/bun-security-scanner-matrix-without-node-modules.test.ts
 
+# Expect wrappers not yet finalized at process exit report as direct leaks;
+# the sibling deep-equals/deep-match spec files show the same class locally.
+test/js/bun/bun-object/deep-equals-temporal.test.ts
+
 test/js/node/test/parallel/test-worker-abort-on-uncaught-exception.js
 test/js/node/test/parallel/test-worker-arraybuffer-zerofill.js
 test/js/node/test/parallel/test-worker-cjs-workerdata.js

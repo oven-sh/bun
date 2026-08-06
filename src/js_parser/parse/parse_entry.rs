@@ -1259,8 +1259,10 @@ impl<'a> Parser<'a> {
                 // arm; peel to the live arm's single statement. `to_boolean` is
                 // the same predicate `s_if` used to pick the dead arm.
                 while let js_ast::StmtData::SIf(s_if) = &stmt.data {
-                    let effects = SideEffects::to_boolean(p, &s_if.test.data);
-                    if !effects.ok || effects.side_effects != SideEffects::NoSideEffects {
+                    let Some(effects) = SideEffects::to_boolean(p, &s_if.test.data) else {
+                        break;
+                    };
+                    if effects.side_effects != SideEffects::NoSideEffects {
                         break;
                     }
                     let (live, dead) = if effects.value {

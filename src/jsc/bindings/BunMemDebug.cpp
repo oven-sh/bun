@@ -1284,9 +1284,9 @@ extern "C" char** environ;
 static size_t platformLinkerOwnedRanges(uint64_t (*out)[2], size_t cap)
 {
     size_t n = 0; int fd = open("/proc/self/exe", O_RDONLY); if (fd < 0) return 0;
-    Elf64_Ehdr eh; if (ipread(fd, &eh, sizeof eh, 0) != (ssize_t)sizeof eh || !eh.e_shnum) { close(fd); return 0; }
-    std::vector<Elf64_Shdr> sh(eh.e_shnum); ipread(fd, sh.data(), eh.e_shnum * sizeof(Elf64_Shdr), eh.e_shoff);
-    std::vector<char> names(sh[eh.e_shstrndx].sh_size); ipread(fd, names.data(), names.size(), sh[eh.e_shstrndx].sh_offset);
+    Elf64_Ehdr eh; if (::pread(fd, &eh, sizeof eh, 0) != (ssize_t)sizeof eh || !eh.e_shnum) { close(fd); return 0; }
+    std::vector<Elf64_Shdr> sh(eh.e_shnum); ::pread(fd, sh.data(), eh.e_shnum * sizeof(Elf64_Shdr), eh.e_shoff);
+    std::vector<char> names(sh[eh.e_shstrndx].sh_size); ::pread(fd, names.data(), names.size(), sh[eh.e_shstrndx].sh_offset);
     for (auto& sec : sh) {
         if (sec.sh_name >= names.size() || !sec.sh_addr) continue; const char* nm = names.data() + sec.sh_name;
         if (!strcmp(nm, ".got") || !strcmp(nm, ".got.plt") || !strcmp(nm, ".init_array") || !strcmp(nm, ".fini_array") || !strcmp(nm, ".preinit_array")) { if (n < cap) { out[n][0] = sec.sh_addr; out[n][1] = sec.sh_addr + sec.sh_size; n++; } }

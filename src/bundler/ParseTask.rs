@@ -618,6 +618,40 @@ pub mod parse_worker {
         Ok(ast)
     }
 
+    fn guess_mime_type_for_data_url(path: &[u8], contents: &[u8]) -> Vec<u8> {
+        let ext = strings::trim_leading_char(bun_paths::extension(path), b'.');
+        let ext_lower;
+        let ext = if ext.iter().any(u8::is_ascii_uppercase) {
+            ext_lower = ext.to_ascii_lowercase();
+            ext_lower.as_slice()
+        } else {
+            ext
+        };
+        if let Some(mime) = bun_http_types::MimeType::by_extension_no_default(ext) {
+            let value = &*mime.value;
+            if strings::has_prefix_comptime(value, b"text/")
+                && !strings::contains(value, b"charset")
+            {
+                let mut v = Vec::with_capacity(value.len() + b";charset=utf-8".len());
+                v.extend_from_slice(value);
+                v.extend_from_slice(b";charset=utf-8");
+                return v;
+            }
+            return value.to_vec();
+        }
+        // https://mimesniff.spec.whatwg.org/#binary-data-byte
+        let n = contents.len().min(512);
+        let binary = !strings::is_valid_utf8(contents)
+            || contents[..n]
+                .iter()
+                .any(|&b| matches!(b, 0x00..=0x08 | 0x0B | 0x0E..=0x1A | 0x1C..=0x1F));
+        if binary {
+            b"application/octet-stream".to_vec()
+        } else {
+            b"text/plain;charset=utf-8".to_vec()
+        }
+    }
+
     fn get_empty_ast<RootType: Default + bun_ast::expr::IntoExprData>(
         log: &mut Log,
         transpiler: *mut Transpiler,
@@ -1253,8 +1287,69 @@ pub mod parse_worker {
                 ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
                 return Ok(ast);
             }
-            // TODO:
-            Loader::Dataurl | Loader::Base64 | Loader::Bunsh => {
+            Loader::Base64 => {
+                let contents = source.contents();
+                let mime = guess_mime_type_for_data_url(source.path.text, contents);
+                let encode_len = bun_base64::encode_len(contents);
+                let prefix_len = b"data:".len() + mime.len() + b";base64,".len();
+                let buf = bump.alloc_slice_fill_copy(prefix_len + encode_len, 0u8);
+                buf[..5].copy_from_slice(b"data:");
+                buf[5..5 + mime.len()].copy_from_slice(&mime);
+                buf[5 + mime.len()..prefix_len].copy_from_slice(b";base64,");
+                let len = bun_base64::encode(&mut buf[prefix_len..], contents);
+                let url: &[u8] = &buf[..prefix_len + len];
+                let encoded: &[u8] = &url[prefix_len..];
+                let root = Expr::init(
+                    E::String {
+                        data: encoded.into(),
+                        ..Default::default()
+                    },
+                    Loc { start: 0 },
+                );
+                let mut ast = JSAst::init(
+                    js_parser::new_lazy_export_ast(
+                        bump,
+                        &mut topts.define,
+                        opts,
+                        log,
+                        root,
+                        source,
+                        b"",
+                    )?
+                    .unwrap(),
+                );
+                ast.url_for_css = url;
+                return Ok(ast);
+            }
+            Loader::Dataurl => {
+                let contents = source.contents();
+                let mime = guess_mime_type_for_data_url(source.path.text, contents);
+                let encoded =
+                    bun_resolver::DataURL::encode_string_as_shortest_data_url(&mime, contents);
+                let encoded: &[u8] = bump.alloc_slice_copy(&encoded);
+                let root = Expr::init(
+                    E::String {
+                        data: encoded.into(),
+                        ..Default::default()
+                    },
+                    Loc { start: 0 },
+                );
+                let mut ast = JSAst::init(
+                    js_parser::new_lazy_export_ast(
+                        bump,
+                        &mut topts.define,
+                        opts,
+                        log,
+                        root,
+                        source,
+                        b"",
+                    )?
+                    .unwrap(),
+                );
+                ast.url_for_css = encoded;
+                return Ok(ast);
+            }
+            Loader::Bunsh => {
                 return get_empty_ast::<E::String>(log, transpiler, opts, bump, source);
             }
             Loader::File | Loader::Wasm => {

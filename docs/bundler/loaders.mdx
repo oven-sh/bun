@@ -254,6 +254,30 @@ export default "Hello, world!";
 
 ---
 
+### `base64`
+
+**Base64 loader.** The file is read and encoded as a base64 string. Not default for any extension; use `loader` or an import attribute.
+
+```js
+import contents from "./logo.png" with { type: "base64" };
+console.log(contents); // => "iVBORw0KGgo="
+```
+
+When referenced during a build, the encoded contents are inlined into the bundle as a string.
+
+---
+
+### `dataurl`
+
+**Data URL loader.** The file is read and inlined as a `data:` URL. The MIME type is derived from the file extension, falling back to a content sniff for unknown extensions. The contents are either percent-encoded or base64-encoded, whichever is shorter.
+
+```js
+import logo from "./logo.svg" with { type: "dataurl" };
+console.log(logo); // => "data:image/svg+xml,<svg ... />"
+```
+
+---
+
 ### `napi`
 
 **Native addon loader.** Default for `.node`.

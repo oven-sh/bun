@@ -1058,12 +1058,13 @@ impl<'a> Formatter<'a> {
         let temporal_type = bun_jsc::cpp::Bun__JSValue__temporalObjectType(value);
         let label = bun_jsc::temporal_class_label(temporal_type);
         let mut str = bun_core::OwnedString::new(bun_core::String::empty());
+        // SAFETY: the out-pointer is a live `BunString` the callee writes once.
         unsafe {
             bun_jsc::cpp::Bun__Temporal__toDisplayString(
                 self.global_this,
                 value,
                 temporal_type,
-                &mut *str,
+                &raw mut *str,
             )?;
         }
         self.add_for_new_line(label.len() + 1 + str.length());
@@ -1071,7 +1072,7 @@ impl<'a> Formatter<'a> {
             "{} {}{}{}",
             label,
             pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><magenta>"),
-            &*str,
+            str,
             pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
         ));
         if writer.failed {

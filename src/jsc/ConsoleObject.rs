@@ -4351,12 +4351,13 @@ pub mod formatter {
             let temporal_type = crate::cpp::Bun__JSValue__temporalObjectType(value);
             let label = temporal_class_label(temporal_type);
             let mut str = OwnedString::new(BunString::empty());
+            // SAFETY: the out-pointer is a live `BunString` the callee writes once.
             unsafe {
                 crate::cpp::Bun__Temporal__toDisplayString(
                     self.global_this,
                     value,
                     temporal_type,
-                    &mut *str,
+                    &raw mut *str,
                 )?;
             }
             writer.add_for_new_line(label.len() + 1 + str.length());
@@ -4364,7 +4365,7 @@ pub mod formatter {
                 "{} {}{}{}",
                 label,
                 pfmt!("<r><magenta>", C),
-                &*str,
+                str,
                 pfmt!("<r>", C)
             ));
             if writer.failed {

@@ -279,10 +279,5 @@ test("which rejects strings with interior null bytes", () => {
   expect(() => which("env", { cwd: "/tmp\0zz" })).toThrow(
     "The property 'options.cwd' must be a string without null bytes",
   );
-  try {
-    which("env\0zz");
-    expect.unreachable();
-  } catch (e: any) {
-    expect(e.code).toBe("ERR_INVALID_ARG_VALUE");
-  }
+  expect(() => which("env\0zz")).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
 });

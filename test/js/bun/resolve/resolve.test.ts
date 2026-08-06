@@ -1113,10 +1113,7 @@ it("does not resolve through a parent directory containing an interior null byte
 
   const req = createRequire(join(String(dir), "x.js"));
   expect(req.resolve("./m.cjs", { paths: [sub] })).toBe(join(sub, "m.cjs"));
-  try {
-    req.resolve("./m.cjs", { paths: [sub + "\0zz"] });
-    expect.unreachable();
-  } catch (e: any) {
-    expect(e.code).toBe("MODULE_NOT_FOUND");
-  }
+  expect(() => req.resolve("./m.cjs", { paths: [sub + "\0zz"] })).toThrow(
+    expect.objectContaining({ code: "MODULE_NOT_FOUND" }),
+  );
 });

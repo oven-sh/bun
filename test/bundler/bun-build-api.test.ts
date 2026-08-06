@@ -223,15 +223,41 @@ describe("Bun.build", () => {
     expect(() =>
       Bun.build({
         entrypoints: [entry],
+        outdir: join(String(dir), "out"),
+        metafile: { json: join(String(dir), "meta\0.json") },
+      } as any),
+    ).toThrow("The property 'metafile.json' must be a string without null bytes");
+    expect(() =>
+      Bun.build({
+        entrypoints: [entry],
+        outdir: join(String(dir), "out"),
+        metafile: { markdown: join(String(dir), "meta\0.md") },
+      } as any),
+    ).toThrow("The property 'metafile.markdown' must be a string without null bytes");
+    expect(() =>
+      Bun.build({
+        entrypoints: [entry],
         naming: "[name]\0-REQUESTED.[ext]",
       }),
     ).toThrow("The property 'naming' must be a string without null bytes");
     expect(() =>
       Bun.build({
         entrypoints: [entry],
+        naming: { entry: "[name]\0-REQUESTED.[ext]" },
+      }),
+    ).toThrow("The property 'naming.entry' must be a string without null bytes");
+    expect(() =>
+      Bun.build({
+        entrypoints: [entry],
         naming: { chunk: "[name]\0-REQUESTED.[ext]" },
       }),
     ).toThrow("The property 'naming.chunk' must be a string without null bytes");
+    expect(() =>
+      Bun.build({
+        entrypoints: [entry],
+        naming: { asset: "[name]\0-REQUESTED.[ext]" },
+      }),
+    ).toThrow("The property 'naming.asset' must be a string without null bytes");
     expect(() =>
       Bun.build({
         entrypoints: [entry],

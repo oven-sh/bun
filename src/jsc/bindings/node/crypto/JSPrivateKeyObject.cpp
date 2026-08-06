@@ -28,6 +28,7 @@ void setupPrivateKeyObjectClassStructure(JSC::LazyClassStructure::Initializer& i
     auto* prototypeStructure = JSPrivateKeyObjectPrototype::createStructure(init.vm, init.global, asymmetricKeyObjectPrototype);
     auto* prototype = JSPrivateKeyObjectPrototype::create(init.vm, init.global, prototypeStructure);
 
+    // Parented on KeyObject so statics (KeyObject.from) inherit, as in Node.
     auto* constructorStructure = JSPrivateKeyObjectConstructor::createStructure(init.vm, init.global, globalObject->KeyObject());
     auto* constructor = JSPrivateKeyObjectConstructor::create(init.vm, constructorStructure, prototype);
 

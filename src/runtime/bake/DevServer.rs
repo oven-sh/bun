@@ -3988,11 +3988,8 @@ pub(super) fn finalize_bundle(
         .zip(js_chunk.compile_results_for_chunk.iter())
     {
         let index = part_range.source_index;
-        // A part that failed to print (e.g. the printer's recursion guard
-        // tripped on a deeply nested AST) must not enter the incremental
-        // graph as empty code. Route it through the same per-file failure
-        // path as a parse error so the error overlay reports it and the
-        // file rebuilds once edited.
+        // A part that failed to print becomes a per-file failure, like a
+        // parse error, instead of entering the graph as empty code.
         if let bundler::CompileResult::Javascript {
             result: bun_js_printer::PrintResult::Err(err),
             ..
@@ -4094,10 +4091,9 @@ pub(super) fn finalize_bundle(
 
         let index = bun_ast::Index::init(chunk.entry_point.source_index());
 
-        // A CSS chunk that failed to print must not be served as an empty
-        // stylesheet. Attach the failure to the chunk's entry point (the file
-        // `receive_chunk` would register, so a successful rebuild clears it),
-        // naming the failing file in the message when it is known.
+        // A CSS chunk that failed to print becomes a per-file failure instead
+        // of an empty stylesheet. The entry point owns the failure so the
+        // rebuild's `receive_chunk` clears it.
         if let Some((err, err_source_index)) =
             chunk
                 .compile_results_for_chunk

@@ -28,8 +28,7 @@ void setupPublicKeyObjectClassStructure(JSC::LazyClassStructure::Initializer& in
     auto* prototypeStructure = JSPublicKeyObjectPrototype::createStructure(init.vm, init.global, asymmetricKeyObjectPrototype);
     auto* prototype = JSPublicKeyObjectPrototype::create(init.vm, init.global, prototypeStructure);
 
-    // Parent the constructor on KeyObject so statics (KeyObject.from) inherit, like
-    // Node's `class PublicKeyObject extends AsymmetricKeyObject extends KeyObject`.
+    // Parented on KeyObject, not Function.prototype, so statics (KeyObject.from) inherit like Node's class chain.
     auto* constructorStructure = JSPublicKeyObjectConstructor::createStructure(init.vm, init.global, globalObject->KeyObject());
     auto* constructor = JSPublicKeyObjectConstructor::create(init.vm, constructorStructure, prototype);
 

@@ -94,7 +94,6 @@ promisify.custom = kCustomPromisifiedSymbol;
 }
 
 export default {
-  defineCustomPromisify,
   defineCustomPromisifyArgs,
   promisify,
 };

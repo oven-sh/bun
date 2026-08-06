@@ -799,7 +799,12 @@ pub mod parse_worker {
                 let _trace = perf::trace("Bundler.ParseYAML");
                 let mut temp_log = Log::init();
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
-                    let root: Expr = bun_parsers::yaml::YAML::parse(source, &mut temp_log, bump)?;
+                    let root: Expr = bun_parsers::yaml::YAML::parse(
+                        source,
+                        &mut temp_log,
+                        bump,
+                        bun_parsers::yaml::CyclicAliases::Reject,
+                    )?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,

@@ -1188,14 +1188,15 @@ describe("spyOn", () => {
   });
 
   test("preserves property attributes when restoring through a Proxy", () => {
+    const original = () => "orig";
     const target = {};
-    Object.defineProperty(target, "m", { value: () => "orig", enumerable: false, configurable: true, writable: true });
+    Object.defineProperty(target, "m", { value: original, enumerable: false, configurable: true, writable: true });
     const proxy = new Proxy(target, {});
 
     spyOn(proxy, "m").mockRestore();
 
     expect(Object.getOwnPropertyDescriptor(target, "m")).toEqual({
-      value: expect.any(Function),
+      value: original,
       writable: true,
       enumerable: false,
       configurable: true,

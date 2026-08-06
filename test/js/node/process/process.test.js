@@ -1681,6 +1681,56 @@ it("proxy env vars assigned at runtime propagate to spawned children via {...pro
   expect(got).toEqual({ HTTP_PROXY: "http://x:8080", HTTPS_PROXY: "http://y:8080", NO_PROXY: "z" });
 });
 
+// Object.defineProperty() over a proxy-var CustomAccessor reifies it into a
+// plain accessor of wrapper functions; a later assignment then runs the native
+// setter through the set wrapper. The setter's DontEnum-clearing tail used to
+// re-install whatever getDirect() returned via putDirectCustomAccessor, which
+// requires a CustomGetterSetter — with the reified GetterSetter it corrupts
+// the slot (debug assert `value.isCustomGetterSetter()`). Covers the
+// attribute-only redefine and the jest-style descriptor snapshot/restore.
+it("proxy env vars survive assignment after their property is redefined", () => {
+  const env = { ...bunEnv };
+  for (const k of Object.keys(env)) {
+    if (/^(https?|no)_proxy$/i.test(k)) delete env[k];
+  }
+  const child = spawnSync({
+    cmd: [
+      bunExe(),
+      "-e",
+      `Object.defineProperty(process.env, "HTTP_PROXY", { enumerable: false });
+       process.env.HTTP_PROXY = "http://127.0.0.1:1";
+
+       const desc = Object.getOwnPropertyDescriptor(process.env, "HTTPS_PROXY");
+       delete process.env.HTTPS_PROXY;
+       Object.defineProperty(process.env, "HTTPS_PROXY", desc);
+       process.env.HTTPS_PROXY = "http://127.0.0.1:2";
+
+       const spread = { ...process.env };
+       console.log(JSON.stringify({
+         http: process.env.HTTP_PROXY,
+         https: process.env.HTTPS_PROXY,
+         spreadHttp: spread.HTTP_PROXY,
+         spreadHttps: spread.HTTPS_PROXY,
+       }));`,
+    ],
+    env,
+  });
+  expect({
+    stdout: child.stdout.toString().trim(),
+    stderr: child.stderr.toString(),
+    exitCode: child.exitCode,
+  }).toEqual({
+    stdout: JSON.stringify({
+      http: "http://127.0.0.1:1",
+      https: "http://127.0.0.1:2",
+      spreadHttp: "http://127.0.0.1:1",
+      spreadHttps: "http://127.0.0.1:2",
+    }),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 describe("NODE_NO_WARNINGS", () => {
   // Node suppresses only on the exact string "1" (test-env-var-no-warnings.js).
   // Bun's generic boolean env parse used to accept "true", "01", etc.

@@ -50,6 +50,7 @@ pub enum Loader {
     Yaml = 18,
     Json5 = 19,
     Md = 20,
+    Mdx = 21,
 }
 
 // Crosses FFI as `uint8_t default_loader` / `uint8_t loader` in
@@ -97,6 +98,7 @@ bun_core::comptime_string_map! {
         b"html" => Loader::Html,
         b"md" => Loader::Md,
         b"markdown" => Loader::Md,
+        b"mdx" => Loader::Mdx,
     };
 }
 
@@ -131,13 +133,22 @@ impl Loader {
     // methods (would back-edge into bun_http::MimeType).
 
     pub fn can_have_source_map(self) -> bool {
-        matches!(self, Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx)
+        matches!(
+            self,
+            Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx | Loader::Mdx
+        )
     }
 
     pub fn can_be_run_by_bun(self) -> bool {
         matches!(
             self,
-            Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx | Loader::Wasm | Loader::Bunsh
+            Loader::Jsx
+                | Loader::Js
+                | Loader::Ts
+                | Loader::Tsx
+                | Loader::Wasm
+                | Loader::Bunsh
+                | Loader::Mdx
         )
     }
 
@@ -160,6 +171,7 @@ impl Loader {
             Loader::Bunsh => "input.sh",
             Loader::Html => "input.html",
             Loader::Md => "input.md",
+            Loader::Mdx => "input.mdx",
             _ => "",
         }
     }
@@ -192,7 +204,10 @@ impl Loader {
 
     #[inline]
     pub fn is_javascript_like(self) -> bool {
-        matches!(self, Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx)
+        matches!(
+            self,
+            Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx | Loader::Mdx
+        )
     }
 
     // Spelling-aliases for the canonical `is_typescript` /

@@ -2973,7 +2973,8 @@ impl<'a> LinkerContext<'a> {
                         | Loader::Yaml
                         | Loader::Html
                         | Loader::SqliteEmbedded
-                        | Loader::Md => {
+                        | Loader::Md
+                        | Loader::Mdx => {
                             log.add_error_fmt(
                                 Some(source),
                                 record.range.loc,

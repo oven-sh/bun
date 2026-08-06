@@ -1261,7 +1261,7 @@ impl DirectoryWatchStore {
         }
 
         match loader {
-            Loader::Tsx | Loader::Ts | Loader::Jsx | Loader::Js => {
+            Loader::Tsx | Loader::Ts | Loader::Jsx | Loader::Js | Loader::Mdx => {
                 if !(specifier.starts_with(b"./") || specifier.starts_with(b"../")) {
                     return Ok(());
                 }

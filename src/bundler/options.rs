@@ -357,7 +357,9 @@ impl LoaderExt for Loader {
     fn to_mime_type(self, paths: &[&[u8]]) -> bun_http_types::MimeType::MimeType {
         use bun_http_types::MimeType;
         match self {
-            Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx => MimeType::JAVASCRIPT,
+            Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx | Loader::Mdx => {
+                MimeType::JAVASCRIPT
+            }
             Loader::Css => MimeType::CSS,
             Loader::Toml | Loader::Yaml | Loader::Json | Loader::Jsonc | Loader::Json5 => {
                 MimeType::JSON
@@ -602,6 +604,7 @@ const DEFAULT_LOADERS_POSIX: &[(&[u8], Loader)] = &[
     (b".json5", Loader::Json5),
     (b".md", Loader::Md),
     (b".markdown", Loader::Md),
+    (b".mdx", Loader::Mdx),
 ];
 
 #[cfg(all(windows, test))]
@@ -611,7 +614,7 @@ const DEFAULT_LOADERS_WIN32_EXTRA: &[(&[u8], Loader)] = &[(b".sh", Loader::Bunsh
 ///
 /// PERF: deliberately not a hashed map (the old `phf::Map` SipHash-ed the full
 /// key, probed a displacement table, and finished with a memcmp on every
-/// lookup). With only 22 keys bucketing into 5 distinct lengths
+/// lookup). With only 23 keys bucketing into 5 distinct lengths
 /// (3/4/5/6/9, all `.`-prefixed), a length-gated `match` is cheaper: one
 /// `usize` compare rejects every wrong-length probe, and within each bucket
 /// rustc lowers the fixed-width byte-slice arms to single u32/u64 compares (no
@@ -652,6 +655,7 @@ impl DefaultLoaders {
                 b".css" => Some(&Loader::Css),
                 b".yml" => Some(&Loader::Yaml),
                 b".txt" => Some(&Loader::Text),
+                b".mdx" => Some(&Loader::Mdx),
                 _ => None,
             },
             5 => match ext {
@@ -958,7 +962,7 @@ pub(crate) fn defines_from_transform_options(
     )?)
 }
 
-const DEFAULT_LOADER_EXT_BUN: &[&[u8]] = &[b".node", b".html"];
+const DEFAULT_LOADER_EXT_BUN: &[&[u8]] = &[b".node", b".html", b".mdx"];
 const DEFAULT_LOADER_EXT: &[&[u8]] = &[
     b".jsx", b".json", b".js", b".mjs", b".cjs", b".css",
     // https://devblogs.microsoft.com/typescript/announcing-typescript-4-5-beta/#new-file-extensions

@@ -1,0 +1,161 @@
+---
+title: "Complex Frontmatter + MDX Parse Torture Test"
+description: >-
+  Deliberately dense MDX fixture that combines rich YAML frontmatter, ESM,
+  JSX, markdown constructs, and inline expressions in a single valid document.
+lastUpdated: 2026-02-28
+documentType: Research
+region: STUS
+practice: ITMSP
+customerAbbr: "TESTCUST"
+year: 2026
+status: active
+priority: 1
+confidence: 0.975
+nullableField: null
+flags:
+  parserStrict: true
+  allowExperimental: false
+metadata:
+  owners:
+    - name: "Parser Bot"
+      email: "parser.bot@snyder.tech"
+      roles: [maintainer, reviewer]
+    - name: "Fixture Curator"
+      email: "fixture.curator@snyder.tech"
+      roles:
+        - author
+        - qa
+  tags:
+    - mdx
+    - frontmatter
+    - bun
+    - remark
+  nested:
+    level1:
+      level2:
+        level3:
+          key: value
+          array:
+            - one
+            - 2
+            - true
+            - null
+multilineLiteral: |-
+  First line in literal block.
+  Second line keeps indentation.
+  Third line includes symbols: [] {} () : ; , .
+quotedStrings:
+  jsonLike: '{"safe":true,"count":3}'
+  colonText: "A:B:C"
+timings:
+  generatedAt: 2026-02-28T12:34:56Z
+  schedule:
+    start: "2026-03-01"
+    end: "2026-12-31"
+matrix:
+  dimensions: { rows: 3, cols: 3 }
+  values:
+    - [1, 2, 3]
+    - [4, 5, 6]
+    - [7, 8, 9]
+"key:with:colons": "still valid"
+---
+
+import React from "react";
+import { Fragment } from "react";
+
+export const parserMatrix = {
+  name: "mdx-fixture",
+  version: "1.0.0",
+  axes: ["frontmatter", "mdx-esm", "jsx", "markdown"],
+  checks: [
+    { id: "fm-title", enabled: true },
+    { id: "jsx-inline", enabled: true },
+    { id: "code-fence", enabled: true },
+  ],
+};
+
+export const numericSequence = [0, 1, 1, 2, 3, 5, 8, 13];
+
+export function summarizeChecks(checks) {
+  const enabled = checks.filter(c => c.enabled).length;
+  return `${enabled}/${checks.length} checks enabled`;
+}
+
+export const InlineCard = ({ title, children }) => (
+  <section data-kind="inline-card">
+    <h3>{title}</h3>
+    <div>{children}</div>
+  </section>
+);
+
+# {frontmatter.title}
+
+**Description:** {frontmatter.description}
+
+**Customer:** `{frontmatter.customerAbbr}` | **Year:** `{frontmatter.year}` | **Status:** `{frontmatter.status}`
+
+This paragraph includes inline expression math: `{2 ** 5}` and JSON-length lookup: `{parserMatrix.axes.length}`.
+
+<InlineCard title="Parser Summary">
+  <p>{summarizeChecks(parserMatrix.checks)}</p>
+  <p>Latest update: {String(frontmatter.lastUpdated)}</p>
+</InlineCard>
+
+## Markdown Stress Section
+
+1. Ordered list with nested bullets:
+   - alpha
+   - beta
+     - beta.one
+     - beta.two
+2. Second item with `inline code` and an escaped brace: `\{literal\}`.
+3. Third item with a link: [Bun](https://bun.sh).
+
+> Blockquote with **formatting**, `code`, and a line break.  
+> Continues on the next line.
+
+### Fenced Code Samples
+
+```ts
+export function add(a: number, b: number): number {
+  return a + b;
+}
+```
+
+```json
+{
+  "message": "JSON fence inside MDX",
+  "valid": true,
+  "count": 3
+}
+```
+
+### JSX + Expressions
+
+<Fragment>
+  <ul>
+    {numericSequence.map((n, idx) => (
+      <li key={`${idx}-${n}`}>idx={idx}; value={n}; parity={n % 2 === 0 ? "even" : "odd"}</li>
+    ))}
+  </ul>
+</Fragment>
+
+### Markdown Table-Like Content
+
+| Key | Value |
+| --- | --- |
+| `frontmatter.title` | `{String(frontmatter.title)}` |
+| `parserMatrix.name` | `{parserMatrix.name}` |
+| `numericSequence.length` | `{numericSequence.length}` |
+
+### Final Expression
+
+{(() => {
+  const enabledIds = parserMatrix.checks
+    .filter(c => c.enabled)
+    .map(c => c.id)
+    .join(", ");
+  return `Enabled checks: ${enabledIds}`;
+})()}

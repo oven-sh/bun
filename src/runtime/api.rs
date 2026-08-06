@@ -71,6 +71,8 @@ pub mod json5_object;
 pub mod jsonc_object;
 #[path = "api/MarkdownObject.rs"]
 pub mod markdown_object;
+#[path = "api/MdxObject.rs"]
+pub mod mdx_object;
 #[path = "api/NativePromiseContext.rs"]
 pub mod native_promise_context;
 #[path = "api/output_file_jsc.rs"]
@@ -185,6 +187,7 @@ pub use crate::api::js_bundler::OutputKind;
 pub use crate::api::js_transpiler as JSTranspiler;
 pub use crate::api::json5_object as JSON5Object;
 pub use crate::api::markdown_object as MarkdownObject;
+pub use crate::api::mdx_object as MdxObject;
 pub use crate::api::native_promise_context as NativePromiseContext;
 pub use crate::api::toml_object as TOMLObject;
 pub use crate::api::unsafe_object as UnsafeObject;

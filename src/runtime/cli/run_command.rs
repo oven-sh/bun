@@ -2592,6 +2592,15 @@ impl RunCommand {
                     .copied()
                     .or_else(|| bun_bundler::options::DEFAULT_LOADERS.get(ext).copied())
                     .unwrap_or(Loader::Tsx);
+                if loader == Loader::Mdx {
+                    bun_core::scoped_log!(
+                        RUN_LOG,
+                        "Resolved to MDX direct-entry mode: `{}`",
+                        bstr::BStr::new(path.text),
+                    );
+                    let text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
+                    return Ok(Self::boot_and_handle_error(ctx, &text, Some(Loader::Html)));
+                }
                 if loader.can_be_run_by_bun() || loader == Loader::Html || loader == Loader::Md {
                     bun_core::scoped_log!(RUN_LOG, "Resolved to: `{}`", bstr::BStr::new(path.text));
                     // borrowck — `boot_and_handle_error` takes
@@ -2611,7 +2620,8 @@ impl RunCommand {
             }
             Err(_) => {
                 // Support globs for HTML entry points.
-                if strings::has_suffix_comptime(target_name, b".html")
+                if (strings::has_suffix_comptime(target_name, b".html")
+                    || strings::has_suffix_comptime(target_name, b".mdx"))
                     && strings::contains_char(target_name, b'*')
                 {
                     return Ok(Self::boot_and_handle_error(
@@ -2871,7 +2881,14 @@ impl RunCommand {
         };
         let _ = bun_sys::close(fd);
 
-        Self::boot_and_handle_error(ctx, &absolute_script_path, None)
+        // `.mdx` boots through the HTML entry point so a bare `bun file.mdx`
+        // serves the compiled document (MDX direct-serve mode).
+        let fast_run_loader = if strings::has_suffix_comptime(&absolute_script_path, b".mdx") {
+            Some(Loader::Html)
+        } else {
+            None
+        };
+        Self::boot_and_handle_error(ctx, &absolute_script_path, fast_run_loader)
     }
 
     /// `bun run -` — read script from stdin into `ctx.runtime_options.eval`

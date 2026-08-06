@@ -744,6 +744,55 @@ pub mod parse_worker {
                     get_empty_ast::<E::Object>(log, transpiler, fallback_opts, bump, source)
                 };
             }
+            Loader::Mdx => {
+                let _trace = perf::trace("Bundler.ParseMDX");
+                let compiled = match bun_md::mdx::compile(
+                    &source.contents,
+                    &bun_md::mdx::MdxOptions::default(),
+                ) {
+                    Ok(jsx) => jsx,
+                    Err(_) => {
+                        let _ = log.add_error(Some(source), Loc::EMPTY, b"Failed to compile MDX");
+                        return Err(crate::Error::ParserError);
+                    }
+                };
+
+                // Parse the generated JSX in place of the original source, but
+                // keep the .mdx path so diagnostics point at the real file.
+                // SAFETY: ARENA — `bump` is the parse arena and outlives the
+                // returned AST, which borrows the generated JSX text.
+                let jsx_text: &'static [u8] =
+                    unsafe { bun_ptr::detach_lifetime(bump.alloc_slice_copy(&compiled)) };
+                let jsx_source: &'static Source = bump.alloc(Source {
+                    contents: jsx_text.into(),
+                    contents_is_recycled: false,
+                    ..source.clone()
+                });
+
+                let mut opts = opts;
+                opts.ts = true;
+                opts.jsx.parse = true;
+                opts.features.react_fast_refresh =
+                    topts.react_fast_refresh && !source.path.is_node_module();
+
+                let fallback_opts = opts.clone_for_lazy_export();
+                let module_type = opts.module_type;
+                return if let Some(res) =
+                    (crate::cache::JavaScript {}).parse(bump, opts, &topts.define, log, jsx_source)?
+                {
+                    match res {
+                        bun_js_parser::Result::Ast(ast) => Ok(JSAst::init(*ast)),
+                        bun_js_parser::Result::Cached
+                        | bun_js_parser::Result::AlreadyBundled(_) => {
+                            unreachable!("bundler parse never yields Cached/AlreadyBundled")
+                        }
+                    }
+                } else if module_type == options::ModuleType::Esm {
+                    get_empty_ast::<E::Undefined>(log, transpiler, fallback_opts, bump, source)
+                } else {
+                    get_empty_ast::<E::Object>(log, transpiler, fallback_opts, bump, source)
+                };
+            }
             Loader::Json | Loader::Jsonc => {
                 let _trace = perf::trace("Bundler.ParseJSON");
                 let mode = if matches!(loader, Loader::Jsonc) {
@@ -2395,6 +2444,7 @@ pub mod parse_worker {
         // (both re-export `bun_options_types::jsx::Pragma`). `to_parser_jsx_pragma`
         // applies the `_None → Automatic` runtime fold the old `From` bridge did so
         // parser-side `== Automatic` checks keep their semantics.
+        task.jsx.parse = loader.is_jsx() || loader == Loader::Mdx;
         let mut opts = ParserOptions::init(
             crate::transpiler::to_parser_jsx_pragma(task.jsx.clone()),
             loader,
@@ -2569,7 +2619,7 @@ pub mod parse_worker {
         opts.code_splitting = topts.code_splitting;
         opts.module_type = task.module_type;
 
-        task.jsx.parse = loader.is_jsx();
+        task.jsx.parse = loader.is_jsx() || loader == Loader::Mdx;
 
         let mut unique_key_for_additional_file = FileLoaderHash {
             key: ast::StoreStr::EMPTY,

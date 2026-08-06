@@ -39,7 +39,7 @@ fn js_to_parser_err(e: bun_jsc::JsError) -> ParserError {
 /// `input_len` is the byte length of the rendered input, reported back by the
 /// `InputTooLarge` range error.
 #[cold]
-fn parser_err_to_js(
+pub(crate) fn parser_err_to_js(
     global_this: &JSGlobalObject,
     err: ParserError,
     input_len: usize,
@@ -72,10 +72,10 @@ fn parser_err_to_js(
     }
 }
 
-struct PinnedView(ArrayBuffer);
+pub(crate) struct PinnedView(ArrayBuffer);
 
 impl PinnedView {
-    fn pin(global: &JSGlobalObject, buffer: &StringOrBuffer) -> JsResult<Option<Self>> {
+    pub(crate) fn pin(global: &JSGlobalObject, buffer: &StringOrBuffer) -> JsResult<Option<Self>> {
         let Some(b) = buffer.buffer() else {
             return Ok(None);
         };
@@ -86,7 +86,7 @@ impl PinnedView {
     }
 
     #[inline]
-    fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         self.0.byte_slice()
     }
 }

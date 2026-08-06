@@ -284,7 +284,7 @@ impl Parser<'_> {
                     if emit_end > text_start {
                         self.emit_text(TextType::Normal, &content[text_start..emit_end])?;
                     }
-                    if is_hard {
+                    if is_hard || self.flags.hard_soft_breaks {
                         self.emit_text(TextType::Br, b"")?;
                     } else {
                         self.emit_text(TextType::Softbr, b"")?;

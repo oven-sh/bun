@@ -2129,7 +2129,7 @@ fn transpile_source_code_inner(
 
     match loader {
         // ────────────────────────────────────────────────────────────────────
-        // JS-like + JSON/TOML/YAML/text/md — the parse→print path.
+        // JS-like + JSON/TOML/YAML/text/md/mdx — the parse→print path.
         // ────────────────────────────────────────────────────────────────────
         L::Js
         | L::Jsx
@@ -2141,7 +2141,8 @@ fn transpile_source_code_inner(
         | L::Yaml
         | L::Json5
         | L::Text
-        | L::Md => {
+        | L::Md
+        | L::Mdx => {
             // `bun_ast::ASTMemoryAllocator::Scope`.
             let mut _ast_scope = bun_ast::ast_memory_allocator::Scope::default();
             _ast_scope.enter();
